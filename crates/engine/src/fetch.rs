@@ -1,0 +1,320 @@
+//! HTTP fetching with manual redirect following and a capped, streamed body
+//! (FR-012, FR-013, FR-018, FR-019; research R3, R4).
+
+use std::collections::HashSet;
+use std::error::Error as _;
+
+use reqwest::{Client, Response, StatusCode, header};
+use url::Url;
+
+use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop, RequestHeader};
+
+pub(crate) fn build_client(opts: &CheckOptions) -> Result<Client, CheckError> {
+    Client::builder()
+        .user_agent(&opts.user_agent)
+        // We follow redirects ourselves so every hop is recorded.
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(opts.connect_timeout)
+        .read_timeout(opts.read_timeout)
+        // Proxy support arrives with crawl configuration (spec 002). Until
+        // then, requests go direct so results do not depend on the shell's
+        // environment.
+        .no_proxy()
+        .build()
+        .map_err(|e| {
+            CheckError::new(
+                ErrorClass::Connection,
+                format!("Could not start the HTTP client: {e}"),
+            )
+        })
+}
+
+/// What to do when a body reaches the size limit.
+#[derive(Clone, Copy)]
+pub(crate) enum OnLimit {
+    /// Report a content problem (pages).
+    Fail,
+    /// Keep what was read so far (robots.txt).
+    Truncate,
+}
+
+pub(crate) struct BodyPolicy<'a> {
+    pub max_bytes: u64,
+    pub on_limit: OnLimit,
+    /// Decides from the content type whether the bytes are kept. Bytes that
+    /// are not kept are still read and counted, but dropped chunk by chunk.
+    pub keep: &'a dyn Fn(Option<&str>) -> bool,
+}
+
+pub(crate) struct Fetched {
+    pub status: StatusCode,
+    pub final_url: Url,
+    pub content_type: Option<String>,
+    pub charset: Option<String>,
+    pub body: Option<Vec<u8>>,
+}
+
+/// The redirect hops are returned even when the fetch fails part-way.
+pub(crate) struct FollowOutcome {
+    pub hops: Vec<RedirectHop>,
+    pub result: Result<Fetched, CheckError>,
+}
+
+pub(crate) async fn get_following(
+    client: &Client,
+    start: &Url,
+    max_redirects: usize,
+    body: &BodyPolicy<'_>,
+    headers: &[RequestHeader],
+) -> FollowOutcome {
+    let mut hops = Vec::new();
+    let result = follow(client, start, max_redirects, body, headers, &mut hops).await;
+    FollowOutcome { hops, result }
+}
+
+async fn follow(
+    client: &Client,
+    start: &Url,
+    max_redirects: usize,
+    body: &BodyPolicy<'_>,
+    headers: &[RequestHeader],
+    hops: &mut Vec<RedirectHop>,
+) -> Result<Fetched, CheckError> {
+    let mut current = start.clone();
+    let mut visited: HashSet<Url> = HashSet::from([current.clone()]);
+
+    loop {
+        let mut request = client.get(current.clone());
+        // Internal-only headers go to the requested page's host, never to a
+        // host a redirect leads to (spec 002, FR-019).
+        for h in headers
+            .iter()
+            .filter(|h| h.all_hosts || same_host(&current, start))
+        {
+            request = request.header(&h.name, &h.value);
+        }
+        let response = request.send().await.map_err(|e| classify(&e))?;
+        let status = response.status();
+
+        if let Some(location) = redirect_location(&response) {
+            let mut target = current.join(location).map_err(|_| {
+                CheckError::new(
+                    ErrorClass::ContentProblem,
+                    format!("The server redirected to an invalid address: {location}"),
+                )
+            })?;
+            target.set_fragment(None);
+            if !matches!(target.scheme(), "http" | "https") {
+                return Err(CheckError::new(
+                    ErrorClass::ContentProblem,
+                    format!("The server redirected to an unsupported address: {target}"),
+                ));
+            }
+            hops.push(RedirectHop {
+                url: current.to_string(),
+                status: status.as_u16(),
+                location: target.to_string(),
+            });
+            if hops.len() > max_redirects {
+                return Err(CheckError::new(
+                    ErrorClass::RedirectLoop,
+                    format!("The redirect chain is longer than the limit of {max_redirects} hops."),
+                ));
+            }
+            if !visited.insert(target.clone()) {
+                return Err(CheckError::new(
+                    ErrorClass::RedirectLoop,
+                    format!("The redirects loop back to {target}, which was already visited."),
+                ));
+            }
+            current = target;
+            continue;
+        }
+
+        let (content_type, charset) = parse_content_type(&response);
+        let keep = (body.keep)(content_type.as_deref());
+        let bytes = read_body(response, body.max_bytes, body.on_limit, keep).await?;
+        return Ok(Fetched {
+            status,
+            final_url: current,
+            content_type,
+            charset,
+            body: bytes,
+        });
+    }
+}
+
+/// Same host and same explicit port. An http-to-https upgrade on the same
+/// host keeps internal headers; another port on the same machine does not.
+fn same_host(a: &Url, b: &Url) -> bool {
+    a.host_str() == b.host_str() && a.port() == b.port()
+}
+
+fn redirect_location(response: &Response) -> Option<&str> {
+    let status = response.status();
+    if !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
+        return None;
+    }
+    response
+        .headers()
+        .get(header::LOCATION)?
+        .to_str()
+        .ok()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Returns the media type (lowercase, no parameters) and the charset label.
+fn parse_content_type(response: &Response) -> (Option<String>, Option<String>) {
+    let Some(raw) = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return (None, None);
+    };
+    let mut parts = raw.split(';');
+    let media = parts
+        .next()
+        .map(|m| m.trim().to_ascii_lowercase())
+        .filter(|m| !m.is_empty());
+    let charset = parts.find_map(|p| {
+        let (key, value) = p.split_once('=')?;
+        key.trim()
+            .eq_ignore_ascii_case("charset")
+            .then(|| value.trim().trim_matches('"').to_string())
+    });
+    (media, charset)
+}
+
+/// Streams the body chunk by chunk so memory never grows past `max_bytes`.
+async fn read_body(
+    mut response: Response,
+    max_bytes: u64,
+    on_limit: OnLimit,
+    keep: bool,
+) -> Result<Option<Vec<u8>>, CheckError> {
+    let too_large = || {
+        CheckError::new(
+            ErrorClass::ContentProblem,
+            format!(
+                "The response is larger than the limit of {}.",
+                human_bytes(max_bytes)
+            ),
+        )
+    };
+    if matches!(on_limit, OnLimit::Fail) && response.content_length().is_some_and(|n| n > max_bytes) {
+        return Err(too_large());
+    }
+
+    let mut kept = keep.then(Vec::new);
+    let mut total: u64 = 0;
+    while let Some(chunk) = response.chunk().await.map_err(|e| classify_body(&e))? {
+        let remaining = max_bytes - total;
+        if chunk.len() as u64 > remaining {
+            match on_limit {
+                OnLimit::Fail => return Err(too_large()),
+                OnLimit::Truncate => {
+                    if let Some(buf) = kept.as_mut() {
+                        buf.extend_from_slice(&chunk[..remaining as usize]);
+                    }
+                    break;
+                }
+            }
+        }
+        total += chunk.len() as u64;
+        if let Some(buf) = kept.as_mut() {
+            buf.extend_from_slice(&chunk);
+        }
+    }
+    Ok(kept)
+}
+
+fn human_bytes(n: u64) -> String {
+    if n >= 1024 * 1024 && n.is_multiple_of(1024 * 1024) {
+        format!("{} MB", n / (1024 * 1024))
+    } else {
+        format!("{n} bytes")
+    }
+}
+
+/// Text of every underlying cause, lowercased. The top-level reqwest message
+/// is skipped because it contains the URL, which could match our keywords.
+fn cause_text(err: &reqwest::Error) -> (String, Option<String>) {
+    let mut text = String::new();
+    let mut innermost = None;
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let s = cause.to_string();
+        text.push_str(&s.to_ascii_lowercase());
+        text.push('\n');
+        innermost = Some(s);
+        source = cause.source();
+    }
+    (text, innermost)
+}
+
+fn is_temporary_dns(err: &reqwest::Error, text: &str) -> bool {
+    if text.contains("temporary failure") || text.contains("try again") {
+        return true;
+    }
+    // Windows reports WSATRY_AGAIN (11002) for a temporary resolver failure.
+    let mut source = err.source();
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>()
+            && io.raw_os_error() == Some(11002)
+        {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
+}
+
+/// Maps a transport error to exactly one error class (FR-017).
+pub(crate) fn classify(err: &reqwest::Error) -> CheckError {
+    let (text, innermost) = cause_text(err);
+    let detail = innermost.unwrap_or_else(|| err.to_string());
+    let host = err
+        .url()
+        .and_then(|u| u.host_str())
+        .unwrap_or("the server")
+        .to_string();
+
+    let (class, message) = if err.is_timeout() || text.contains("timed out") {
+        (
+            ErrorClass::Timeout,
+            format!("{host} did not respond within the time limit."),
+        )
+    } else if text.contains("dns error") || text.contains("failed to lookup address") {
+        if is_temporary_dns(err, &text) {
+            (
+                ErrorClass::DnsTemporary,
+                format!("The address of {host} could not be looked up right now."),
+            )
+        } else {
+            (ErrorClass::Dns, format!("The host name {host} does not exist."))
+        }
+    } else if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
+        (
+            ErrorClass::TlsInvalid,
+            format!("The secure connection to {host} was rejected."),
+        )
+    } else if err.is_body() || err.is_decode() {
+        (
+            ErrorClass::ContentProblem,
+            format!("The response from {host} was cut off or unreadable."),
+        )
+    } else {
+        (ErrorClass::Connection, format!("Could not connect to {host}."))
+    };
+    CheckError::new(class, format!("{message} ({detail})"))
+}
+
+fn classify_body(err: &reqwest::Error) -> CheckError {
+    let e = classify(err);
+    match e.class {
+        ErrorClass::Timeout => e,
+        _ => CheckError::new(ErrorClass::ContentProblem, e.message),
+    }
+}
