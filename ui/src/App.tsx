@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BuildInfo, Transport } from "./transport";
+import { SettingsScreen } from "./settings/SettingsScreen";
 
 export function App({ transport }: { transport: Transport }) {
   const [info, setInfo] = useState<BuildInfo | null>(null);
@@ -10,7 +11,8 @@ export function App({ transport }: { transport: Transport }) {
   }, [transport]);
 
   return (
-    <main className="identity">
+    <main>
+      <header className="identity">
       <h1>SpiderLens</h1>
       {error && <p role="alert">Could not read build information: {error}</p>}
       {info && (
@@ -23,6 +25,8 @@ export function App({ transport }: { transport: Transport }) {
           <dd data-testid="build-id">{info.build_id}</dd>
         </dl>
       )}
+      </header>
+      <SettingsScreen transport={transport} />
     </main>
   );
 }

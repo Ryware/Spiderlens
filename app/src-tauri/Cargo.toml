@@ -17,7 +17,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 spiderlens-engine.workspace = true
+spiderlens-config.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
 serde_json.workspace = true
 
 [lints]

@@ -211,6 +211,32 @@ fn routes(robots: RobotsMode) -> Router {
                 ([(header::CONTENT_TYPE, "application/pdf")], b"%PDF-1.7".to_vec()).into_response()
             }),
         )
+        .route(
+            "/echo",
+            get(|headers: axum::http::HeaderMap| async move {
+                // Echoes request headers in the title so tests can see them.
+                let get = |n: &str| {
+                    headers
+                        .get(n)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("-")
+                        .to_string()
+                };
+                html(&format!(
+                    "<title>UA={} X-Key={}</title>",
+                    get("user-agent"),
+                    get("x-key")
+                ))
+            }),
+        )
+        .route(
+            "/redirect",
+            get(
+                |axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+                    Redirect::temporary(q.get("to").map(String::as_str).unwrap_or("/")).into_response()
+                },
+            ),
+        )
         .route("/private/page", get(|| async { html("<title>Secret</title>") }))
         .route(
             "/slow",

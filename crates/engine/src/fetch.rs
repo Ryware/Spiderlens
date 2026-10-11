@@ -7,7 +7,7 @@ use std::error::Error as _;
 use reqwest::{Client, Response, StatusCode, header};
 use url::Url;
 
-use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop};
+use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop, RequestHeader};
 
 pub(crate) fn build_client(opts: &CheckOptions) -> Result<Client, CheckError> {
     Client::builder()
@@ -65,9 +65,10 @@ pub(crate) async fn get_following(
     start: &Url,
     max_redirects: usize,
     body: &BodyPolicy<'_>,
+    headers: &[RequestHeader],
 ) -> FollowOutcome {
     let mut hops = Vec::new();
-    let result = follow(client, start, max_redirects, body, &mut hops).await;
+    let result = follow(client, start, max_redirects, body, headers, &mut hops).await;
     FollowOutcome { hops, result }
 }
 
@@ -76,17 +77,23 @@ async fn follow(
     start: &Url,
     max_redirects: usize,
     body: &BodyPolicy<'_>,
+    headers: &[RequestHeader],
     hops: &mut Vec<RedirectHop>,
 ) -> Result<Fetched, CheckError> {
     let mut current = start.clone();
     let mut visited: HashSet<Url> = HashSet::from([current.clone()]);
 
     loop {
-        let response = client
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|e| classify(&e))?;
+        let mut request = client.get(current.clone());
+        // Internal-only headers go to the requested page's host, never to a
+        // host a redirect leads to (spec 002, FR-019).
+        for h in headers
+            .iter()
+            .filter(|h| h.all_hosts || same_host(&current, start))
+        {
+            request = request.header(&h.name, &h.value);
+        }
+        let response = request.send().await.map_err(|e| classify(&e))?;
         let status = response.status();
 
         if let Some(location) = redirect_location(&response) {
@@ -135,6 +142,12 @@ async fn follow(
             body: bytes,
         });
     }
+}
+
+/// Same host and same explicit port. An http-to-https upgrade on the same
+/// host keeps internal headers; another port on the same machine does not.
+fn same_host(a: &Url, b: &Url) -> bool {
+    a.host_str() == b.host_str() && a.port() == b.port()
 }
 
 fn redirect_location(response: &Response) -> Option<&str> {

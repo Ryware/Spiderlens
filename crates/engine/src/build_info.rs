@@ -36,10 +36,7 @@ impl BuildInfo {
 
     /// Honest user agent sent with every request (principle IV, FR-016).
     pub fn user_agent() -> String {
-        format!(
-            "SpiderLens/{} (+https://github.com/Ryware/spiderlens)",
-            env!("CARGO_PKG_VERSION")
-        )
+        spiderlens_config::spiderlens_user_agent()
     }
 }
 

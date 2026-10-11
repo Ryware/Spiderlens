@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ryware/spiderlens/schemas/profile.schema.json",
+  "title": "SpiderLens profile file",
+  "description": "Envelope only. The config object is validated by the app, which reports unknown fields instead of rejecting them.",
+  "type": "object",
+  "required": ["format", "format_version", "app_version", "name", "config"],
+  "properties": {
+    "format": { "const": "spiderlens-profile" },
+    "format_version": { "type": "integer", "minimum": 1 },
+    "app_version": { "type": "string" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "start_url": { "type": ["string", "null"] },
+    "config": { "type": "object" }
+  }
+}

@@ -12,28 +12,11 @@ use crate::{CheckError, CheckOptions, ErrorClass, FinalState, PageCheckResult, T
 /// Parses user input into an http(s) URL. A missing scheme means `https://`.
 /// No network activity happens here (spec scenario US2-7).
 pub fn parse_input_url(input: &str) -> Result<Url, CheckError> {
-    let trimmed = input.trim();
-    let malformed = |why: &str| CheckError {
+    spiderlens_config::normalize_url(input).map_err(|e| CheckError {
         class: ErrorClass::MalformedUrl,
-        message: format!("\"{trimmed}\" is not a valid web address: {why}."),
+        message: format!("\"{}\" is not a valid web address: {}.", input.trim(), e.0),
         attempts: 0,
-    };
-    if trimmed.is_empty() {
-        return Err(malformed("it is empty"));
-    }
-    let candidate = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
-    };
-    let url = Url::parse(&candidate).map_err(|e| malformed(&e.to_string()))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(malformed("only http and https addresses are supported"));
-    }
-    if url.host_str().is_none_or(str::is_empty) {
-        return Err(malformed("it has no host name"));
-    }
-    Ok(url)
+    })
 }
 
 /// Runs one single-page check. It never returns a Rust error: every outcome,
@@ -50,7 +33,7 @@ pub async fn check_page(input: &str, opts: &CheckOptions) -> PageCheckResult {
         Err(e) => return PageCheckResult::failed(requested, e),
     };
 
-    match robots::check(&client, &url).await {
+    match robots::check(&client, &url, &opts.robots_token).await {
         Ok(RobotsDecision::Allowed) => {}
         Ok(RobotsDecision::Disallowed) => {
             return PageCheckResult::empty(requested, FinalState::BlockedByRobots);
@@ -65,7 +48,7 @@ pub async fn check_page(input: &str, opts: &CheckOptions) -> PageCheckResult {
         keep: &keep_html,
     };
     let started = Instant::now();
-    let outcome = get_following(&client, &url, opts.max_redirects, &policy).await;
+    let outcome = get_following(&client, &url, opts.max_redirects, &policy, &opts.headers).await;
     let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let mut result = PageCheckResult::empty(requested, FinalState::Fetched);

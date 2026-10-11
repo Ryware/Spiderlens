@@ -184,3 +184,27 @@ async fn result_serializes_to_the_documented_shape() {
     assert_eq!(v["title"]["value"], "Home | Example");
     assert!(v["error"].is_null());
 }
+
+#[tokio::test]
+async fn internal_headers_are_not_sent_to_other_hosts() {
+    use spiderlens_engine::RequestHeader;
+    let a = Fixture::start();
+    let b = Fixture::start();
+    let target = b.url("/echo");
+    let header = |all_hosts| CheckOptions {
+        headers: vec![RequestHeader {
+            name: "X-Key".into(),
+            value: "abc".into(),
+            all_hosts,
+        }],
+        ..opts()
+    };
+    let via_redirect = a.url(&format!("/redirect?to={target}"));
+    let internal = check_page(&via_redirect, &header(false)).await;
+    assert_eq!(internal.final_url, Some(target.clone()));
+    assert!(matches!(internal.title, Some(Title::Text(t)) if t.ends_with("X-Key=-")));
+    let all = check_page(&via_redirect, &header(true)).await;
+    assert!(matches!(all.title, Some(Title::Text(t)) if t.ends_with("X-Key=abc")));
+    let direct = check_page(&a.url("/echo"), &header(false)).await;
+    assert!(matches!(direct.title, Some(Title::Text(t)) if t.ends_with("X-Key=abc")));
+}

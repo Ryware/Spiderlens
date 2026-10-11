@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+spiderlens-config.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 url.workspace = true

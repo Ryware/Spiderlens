@@ -73,6 +73,12 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
 
+      # ts-rs regenerates ui/src/generated during the tests; a diff means a
+      # Rust type changed without committing the new TypeScript.
+      - name: Generated TypeScript types are current
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- ui/src/generated
+
       - name: UI tests
         run: pnpm test
 
