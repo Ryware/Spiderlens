@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-11
 
-**Status**: Draft
+**Status**: Approved (2026-10-11)
 
 **Input**: User description: "The current settings screen is bad design. Make SpiderLens look and feel like Headroom: a native desktop tool, not a web form. Approved direction (2026-10-11): a three-pane window with toolbar, sidebar, content, inspector and status bar; one small set of design tokens for color, type, spacing and density; light and dark themes; native window chrome per platform; keyboard-first with a command palette; crawl settings shown as a focused sheet with categories and grouped rows. The UI layer is replaced; the engine and its boundary stay as they are."
 
