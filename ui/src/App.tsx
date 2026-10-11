@@ -1,32 +1,15 @@
-import { useEffect, useState } from "react";
-import type { BuildInfo, Transport } from "./transport";
-import { SettingsScreen } from "./settings/SettingsScreen";
+import { CSPProvider } from "@base-ui/react/csp-provider";
+import type { Transport } from "./transport";
+import { TooltipProvider } from "./components/ui";
+import { AppShell } from "./shell/AppShell";
 
 export function App({ transport }: { transport: Transport }) {
-  const [info, setInfo] = useState<BuildInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    transport.buildInfo().then(setInfo, (e) => setError(String(e)));
-  }, [transport]);
-
   return (
-    <main>
-      <header className="identity">
-      <h1>SpiderLens</h1>
-      {error && <p role="alert">Could not read build information: {error}</p>}
-      {info && (
-        <dl>
-          <dt>Version</dt>
-          <dd data-testid="product-version">{info.product_version}</dd>
-          <dt>Engine</dt>
-          <dd data-testid="engine-version">{info.engine_version}</dd>
-          <dt>Build</dt>
-          <dd data-testid="build-id">{info.build_id}</dd>
-        </dl>
-      )}
-      </header>
-      <SettingsScreen transport={transport} />
-    </main>
+    // Base UI may not inject <style> tags: the CSP stays style-src 'self' (research R2).
+    <CSPProvider disableStyleElements>
+      <TooltipProvider delay={500}>
+        <AppShell transport={transport} />
+      </TooltipProvider>
+    </CSPProvider>
   );
 }

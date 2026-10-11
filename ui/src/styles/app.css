@@ -1,0 +1,142 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/*
+ * Tailwind sees only our tokens: its default palette, type scale and radii are
+ * cleared, so a class like bg-red-500 does not exist (FR-014, SC-004).
+ */
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --font-*: initial;
+}
+
+@theme inline {
+  --spacing: var(--unit);
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-sidebar: var(--sidebar);
+  --color-chrome: var(--chrome);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-control-border: var(--control-border);
+  --color-scrim: var(--scrim);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-selection: var(--selection);
+  --color-ok: var(--ok);
+  --color-info: var(--info);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-ok-soft: var(--ok-soft);
+  --color-info-soft: var(--info-soft);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad-soft: var(--bad-soft);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --font-ui: var(--font-ui);
+  --font-code: var(--font-code);
+
+  --text-2xs: var(--size-2xs);
+  --text-xs: var(--size-xs);
+  --text-sm: var(--size-sm);
+  --text-base: var(--size-base);
+  --text-md: var(--size-md);
+  --text-lg: var(--size-lg);
+  --text-xl: var(--size-xl);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  --shadow-popover: var(--shadow-popover);
+  --shadow-sheet: var(--shadow-sheet);
+  --shadow-raised: var(--shadow-raised);
+
+
+  --ease-ui: var(--ease);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    font-size: var(--size-base);
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+  }
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+    cursor: auto;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Sizes that are tokens rather than multiples of the spacing unit. */
+@utility h-control {
+  height: var(--control);
+}
+@utility h-control-lg {
+  height: var(--control-lg);
+}
+@utility h-row {
+  height: var(--row);
+}
+@utility h-toolbar {
+  height: var(--toolbar);
+}
+@utility h-statusbar {
+  height: var(--statusbar);
+}
+@utility pl-mac-inset {
+  padding-left: var(--mac-inset);
+}
+@utility sheet-max-w {
+  max-width: calc(100vw - 8 * var(--unit));
+}
+@utility sheet-max-h {
+  max-height: calc(100vh - 2 * var(--toolbar));
+}
+
+/* Base UI scrollbar rules, shipped here because inline <style> is disabled (research R2). */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
+}
