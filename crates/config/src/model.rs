@@ -242,6 +242,10 @@ impl Default for SpeedSettings {
     }
 }
 
+/// Speed values. Serialized with the derived preset name for readability;
+/// the name is ignored when loading (research R10).
+// Same doc as `SpeedSettings`: both export to SpeedSettings.ts, and parallel
+// test threads must write identical files or the generated-types check flakes.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export, rename = "SpeedSettings")]
