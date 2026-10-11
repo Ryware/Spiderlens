@@ -41,8 +41,10 @@ enum Command {
     /// Check a single page: robots.txt, redirects, status and title.
     Check(CheckArgs),
     /// Show, validate and test crawl configurations.
+    // Boxed: the shared crawl options make this variant large, and on Windows
+    // (larger path types) clippy's large_enum_variant lint fires.
     #[command(subcommand)]
-    Config(ConfigCommand),
+    Config(Box<ConfigCommand>),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -116,7 +118,7 @@ fn main() -> ExitCode {
             ExitCode::from(exit::FETCHED)
         }
         Command::Check(args) => run_check(args),
-        Command::Config(cmd) => run_config(cmd),
+        Command::Config(cmd) => run_config(*cmd),
     }
 }
 
