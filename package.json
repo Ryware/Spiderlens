@@ -1,0 +1,14 @@
+{
+  "name": "spiderlens",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "pnpm --filter spiderlens-ui test"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "packageManager": "pnpm@10.28.0"
+}

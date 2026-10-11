@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ryware/spiderlens/schemas/page-check.schema.json",
+  "title": "PageCheckResult",
+  "type": "object",
+  "required": ["requested_url", "state", "redirects", "final_url", "status", "content_type", "response_time_ms", "title", "error", "attempts"],
+  "additionalProperties": false,
+  "properties": {
+    "requested_url": { "type": "string" },
+    "state": { "enum": ["fetched", "blocked_by_robots", "failed"] },
+    "redirects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url", "status", "location"],
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string" },
+          "status": { "type": "integer" },
+          "location": { "type": "string" }
+        }
+      }
+    },
+    "final_url": { "type": ["string", "null"] },
+    "status": { "type": ["integer", "null"] },
+    "content_type": { "type": ["string", "null"] },
+    "response_time_ms": { "type": ["integer", "null"] },
+    "title": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "required": ["kind", "value"], "additionalProperties": false,
+          "properties": { "kind": { "const": "text" }, "value": { "type": "string" } } },
+        { "type": "object", "required": ["kind"], "additionalProperties": false,
+          "properties": { "kind": { "enum": ["missing", "not_applicable"] } } }
+      ]
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "required": ["class", "message", "attempts"], "additionalProperties": false,
+          "properties": {
+            "class": { "enum": ["dns", "dns_temporary", "connection", "timeout", "tls_invalid", "redirect_loop", "content_problem", "malformed_url"] },
+            "message": { "type": "string" },
+            "attempts": { "type": "integer", "minimum": 0 }
+          } }
+      ]
+    },
+    "attempts": { "type": "integer", "minimum": 0 }
+  }
+}

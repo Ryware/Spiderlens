@@ -1,0 +1,26 @@
+[package]
+name = "spiderlens-engine"
+description = "SpiderLens crawl engine. Has no dependency on the desktop shell or UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio.workspace = true
+reqwest.workspace = true
+url.workspace = true
+scraper.workspace = true
+encoding_rs.workspace = true
+texting_robots.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+spiderlens-test-fixtures.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
