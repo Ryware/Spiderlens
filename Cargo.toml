@@ -17,12 +17,14 @@ authors = ["Ryware"]
 spiderlens-config = { path = "crates/config" }
 spiderlens-engine = { path = "crates/engine" }
 spiderlens-test-fixtures = { path = "crates/test-fixtures" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 url = { version = "2", features = ["serde"] }
 scraper = "0.24"
 encoding_rs = "0.8"
-texting_robots = "0.2"
+rusqlite = { version = "0.40", features = ["bundled"] }
+quick-xml = "0.42"
+flate2 = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

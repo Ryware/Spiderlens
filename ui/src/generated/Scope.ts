@@ -2,4 +2,21 @@
 import type { QueryParams } from "./QueryParams";
 import type { SubdomainMode } from "./SubdomainMode";
 
-export type Scope = { include: Array<string>, exclude: Array<string>, subdomains: SubdomainMode, check_external: boolean, follow_nofollow: boolean, query_params: QueryParams, };
+export type Scope = { include: Array<string>, exclude: Array<string>, subdomains: SubdomainMode, 
+/**
+ * Internal URLs outside the start URL's folder are not crawled.
+ */
+stay_in_folder: boolean, check_external: boolean, 
+/**
+ * Spec 002 called this `follow_nofollow`. No crawl or profile files
+ * were released with that name, so it is not kept as an alias.
+ */
+follow_internal_nofollow: boolean, follow_external_nofollow: boolean, query_params: QueryParams, 
+/**
+ * Longer URLs are recorded as malformed and not crawled.
+ */
+max_url_length: number, 
+/**
+ * Seed the crawl with the sitemaps listed in the start host's robots.txt.
+ */
+use_sitemaps: boolean, };

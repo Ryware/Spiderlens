@@ -4,6 +4,10 @@
 //! touch a live site. Each fixture runs on its own thread with its own Tokio
 //! runtime, so both async engine tests and sync CLI tests can use it.
 
+mod site;
+
+pub use site::{Hit, Site, SiteBuilder};
+
 use std::net::{SocketAddr, TcpListener as StdListener};
 use std::sync::mpsc;
 use std::thread;

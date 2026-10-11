@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpiderLens crawl summary",
+  "type": "object",
+  "required": ["status", "discovered", "crawled", "not_crawled", "queued", "by_reason", "external_checked", "url_limit_reached", "hosts", "sitemaps", "warnings"],
+  "properties": {
+    "status": { "enum": ["running", "paused", "stopped", "completed"] },
+    "file": { "type": "string" },
+    "discovered": { "type": "integer", "minimum": 0 },
+    "crawled": { "type": "integer", "minimum": 0 },
+    "not_crawled": { "type": "integer", "minimum": 0 },
+    "queued": { "type": "integer", "minimum": 0 },
+    "by_reason": {
+      "type": "object",
+      "propertyNames": { "enum": ["malformed_url", "unsupported_scheme", "external", "outside_start_folder", "excluded", "not_included", "over_depth_limit", "nofollow", "blocked_by_robots", "robots_unavailable", "over_url_limit", "crawl_stopped"] },
+      "additionalProperties": { "type": "integer", "minimum": 1 }
+    },
+    "external_checked": { "type": "integer", "minimum": 0 },
+    "url_limit_reached": { "type": "boolean" },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["host", "robots"],
+        "properties": {
+          "host": { "type": "string" },
+          "robots": { "enum": ["ok", "not_found", "unavailable", "ignored", "pending"] },
+          "crawl_delay_secs": { "type": ["number", "null"] },
+          "error": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "sitemaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url", "urls"],
+        "properties": {
+          "url": { "type": "string" },
+          "urls": { "type": "integer" },
+          "error": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

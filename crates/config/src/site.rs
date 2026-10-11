@@ -48,10 +48,25 @@ impl InternalHosts {
         true
     }
 
+    /// The bare domain and its `www.` variant count as one host (spec 003
+    /// FR-007); scheme and port do not matter.
+    /// Makes another host internal, as List mode does for every listed host
+    /// (spec 003 edge case "List mode").
+    pub fn add(&mut self, host: &str) {
+        let host = host.to_ascii_lowercase();
+        let site = registrable_domain(&host);
+        if !self.sites.contains(&site) {
+            self.sites.push(site);
+        }
+        if !self.hosts.contains(&host) {
+            self.hosts.push(host);
+        }
+    }
+
     pub fn is_internal(&self, host: &str) -> bool {
         let host = host.to_ascii_lowercase();
         match self.mode {
-            SubdomainMode::ThisHost => self.hosts.contains(&host),
+            SubdomainMode::ThisHost => self.hosts.iter().any(|h| without_www(h) == without_www(&host)),
             SubdomainMode::AllSubdomains => self.sites.contains(&registrable_domain(&host)),
         }
     }
@@ -59,6 +74,10 @@ impl InternalHosts {
     pub fn hosts(&self) -> &[String] {
         &self.hosts
     }
+}
+
+fn without_www(host: &str) -> &str {
+    host.strip_prefix("www.").unwrap_or(host)
 }
 
 #[cfg(test)]
@@ -79,6 +98,11 @@ mod tests {
         let this = InternalHosts::new(SubdomainMode::ThisHost, "www.example.com");
         assert!(this.is_internal("www.example.com"));
         assert!(!this.is_internal("blog.example.com"));
+        assert!(
+            this.is_internal("example.com"),
+            "www and bare domain are one host"
+        );
+        assert!(InternalHosts::new(SubdomainMode::ThisHost, "example.com").is_internal("WWW.example.com"));
         let all = InternalHosts::new(SubdomainMode::AllSubdomains, "www.example.com");
         assert!(all.is_internal("blog.example.com"));
         assert!(!all.is_internal("example.org"));

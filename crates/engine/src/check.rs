@@ -5,7 +5,7 @@ use std::time::Instant;
 use url::Url;
 
 use crate::fetch::{BodyPolicy, OnLimit, build_client, get_following};
-use crate::robots::{self, RobotsDecision};
+use crate::robots::{self, RobotsFetch, RobotsVerdict};
 use crate::title::{extract_title, is_html};
 use crate::{CheckError, CheckOptions, ErrorClass, FinalState, PageCheckResult, Title};
 
@@ -33,12 +33,17 @@ pub async fn check_page(input: &str, opts: &CheckOptions) -> PageCheckResult {
         Err(e) => return PageCheckResult::failed(requested, e),
     };
 
-    match robots::check(&client, &url, &opts.robots_token).await {
-        Ok(RobotsDecision::Allowed) => {}
-        Ok(RobotsDecision::Disallowed) => {
-            return PageCheckResult::empty(requested, FinalState::BlockedByRobots);
+    // A network failure on robots.txt is the page's failure too: the host
+    // cannot be reached (spec 001 research R6).
+    let fetch = robots::fetch(&client, &url).await;
+    match &fetch {
+        RobotsFetch::Unreachable(e) if e.class != ErrorClass::ContentProblem => {
+            return PageCheckResult::failed(requested, e.clone());
         }
-        Err(e) => return PageCheckResult::failed(requested, e),
+        _ => {}
+    }
+    if let RobotsVerdict::Disallowed(_) = fetch.policy(&opts.robots_token).check(&url) {
+        return PageCheckResult::empty(requested, FinalState::BlockedByRobots);
     }
 
     let keep_html = |ct: Option<&str>| ct.is_none() || is_html(ct, b"");

@@ -70,7 +70,11 @@ fn meta_charset(prefix: &[u8]) -> Option<&'static Encoding> {
 pub fn extract_title(header_charset: Option<&str>, body: &[u8]) -> Title {
     let encoding = detect_encoding(header_charset, body);
     let (text, _, _) = encoding.decode(body);
-    let doc = Html::parse_document(&text);
+    title_of(&Html::parse_document(&text))
+}
+
+/// The title of an already parsed document.
+pub(crate) fn title_of(doc: &Html) -> Title {
     let selector = Selector::parse("head > title").expect("static selector is valid");
     let Some(node) = doc.select(&selector).next() else {
         return Title::Missing;

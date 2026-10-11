@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use spiderlens_config::{
-    CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, RobotsMode, SpeedSettings, SubdomainMode,
-    UaPreset, import_profile,
+    CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, QueryMode, RobotsMode, SpeedSettings,
+    SubdomainMode, UaPreset, import_profile,
 };
 
 #[derive(Args, Debug, Default)]
@@ -61,6 +61,9 @@ pub struct CrawlArgs {
     pub max_urls: Option<u64>,
     #[arg(long, value_name = "N", help_heading = "Limits")]
     pub max_depth: Option<u32>,
+    /// List mode: clicks to follow from listed URLs [default: 0].
+    #[arg(long, value_name = "N", help_heading = "Limits")]
+    pub list_depth: Option<u32>,
 
     /// Crawl only URLs matching this regex. Repeatable.
     #[arg(long, value_name = "REGEX", help_heading = "Scope")]
@@ -72,8 +75,34 @@ pub struct CrawlArgs {
     pub all_subdomains: bool,
     #[arg(long, help_heading = "Scope")]
     pub no_external_check: bool,
+    /// Follow nofollow links: internal (when no value), external or both.
+    #[arg(
+        long,
+        value_enum,
+        num_args = 0..=1,
+        default_missing_value = "internal",
+        value_name = "WHICH",
+        help_heading = "Scope"
+    )]
+    pub follow_nofollow: Option<NofollowArg>,
+    /// Only crawl URLs inside the start URL's folder.
     #[arg(long, help_heading = "Scope")]
-    pub follow_nofollow: bool,
+    pub stay_in_folder: bool,
+    /// Longer URLs are recorded as malformed [default: 2000].
+    #[arg(long, value_name = "N", help_heading = "Scope")]
+    pub max_url_length: Option<u32>,
+    /// Query strings: keep as written, or remove all.
+    #[arg(long, value_enum, help_heading = "Scope")]
+    pub query_params: Option<QueryArg>,
+    /// Remove this query parameter. Repeatable.
+    #[arg(long = "remove-param", value_name = "NAME", help_heading = "Scope")]
+    pub remove_params: Vec<String>,
+    /// Sort query parameters by name.
+    #[arg(long, help_heading = "Scope")]
+    pub sort_params: bool,
+    /// Also crawl URLs from the sitemaps listed in robots.txt.
+    #[arg(long, help_heading = "Scope")]
+    pub use_sitemaps: bool,
 
     #[command(flatten)]
     pub identity: IdentityArgs,
@@ -135,6 +164,19 @@ impl From<UaArg> for UaPreset {
             UaArg::Custom => Self::Custom,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum NofollowArg {
+    Internal,
+    External,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum QueryArg {
+    Keep,
+    RemoveAll,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -274,8 +316,41 @@ impl CrawlArgs {
         if self.no_external_check {
             c.scope.check_external = false;
         }
-        if self.follow_nofollow {
-            c.scope.follow_nofollow = true;
+        if let Some(v) = self.list_depth {
+            c.limits.list_depth = v;
+        }
+        match self.follow_nofollow {
+            Some(NofollowArg::Internal) => c.scope.follow_internal_nofollow = true,
+            Some(NofollowArg::External) => c.scope.follow_external_nofollow = true,
+            Some(NofollowArg::Both) => {
+                c.scope.follow_internal_nofollow = true;
+                c.scope.follow_external_nofollow = true;
+            }
+            None => {}
+        }
+        if self.stay_in_folder {
+            c.scope.stay_in_folder = true;
+        }
+        if let Some(v) = self.max_url_length {
+            c.scope.max_url_length = v;
+        }
+        match self.query_params {
+            Some(QueryArg::Keep) => c.scope.query_params.mode = QueryMode::Keep,
+            Some(QueryArg::RemoveAll) => c.scope.query_params.mode = QueryMode::RemoveAll,
+            None => {}
+        }
+        if !self.remove_params.is_empty() {
+            c.scope.query_params.mode = QueryMode::Remove;
+            c.scope
+                .query_params
+                .names
+                .extend(self.remove_params.iter().cloned());
+        }
+        if self.sort_params {
+            c.scope.query_params.sort = true;
+        }
+        if self.use_sitemaps {
+            c.scope.use_sitemaps = true;
         }
 
         self.identity.apply(&mut c)?;
