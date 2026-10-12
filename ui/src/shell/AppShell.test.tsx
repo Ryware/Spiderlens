@@ -82,13 +82,15 @@ test("theme_choice_applies_and_persists", async () => {
 
 test("keyboard_only_configure_and_start", async () => {
   // US4 task list as far as it exists today: settings, speed, start URL, start.
-  await renderApp();
+  const t = fakeTransport();
+  await renderApp(t);
   fireEvent.change(document.activeElement!, { target: { value: "example.com" } });
   await palette("Speed: Fast");
   // Start enables once the engine has checked the new settings.
   await waitFor(() => expect((screen.getByRole("button", { name: /Start$/ }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.keyDown(window, { key: "Enter", code: "Enter", ctrlKey: true });
-  await waitFor(() => expect(screen.getByText(/Ready to crawl https:\/\/example.com\//)).toBeTruthy());
+  await waitFor(() => expect(t.crawls.started.map((s) => s.startUrl)).toEqual(["https://example.com/"]));
+  expect(t.crawls.started[0].config.speed.max_concurrent).toBe(64);
   expect(screen.getByRole("contentinfo", { name: "Crawl status" }).textContent).toContain("Fast");
 });
 

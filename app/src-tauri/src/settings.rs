@@ -27,6 +27,11 @@ impl State {
             list: Mutex::new(None),
         })
     }
+
+    /// The list most recently parsed in this window, for List mode crawls.
+    pub fn list(&self) -> Option<ListInput> {
+        self.list.lock().expect("list lock").clone()
+    }
 }
 
 type Cmd<T> = Result<T, String>;

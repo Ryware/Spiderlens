@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod crawl;
 mod settings;
 
 use spiderlens_engine::BuildInfo;
@@ -28,6 +29,7 @@ fn main() {
         .setup(|app| {
             let dir = app.path().app_config_dir()?.join("profiles");
             app.manage(settings::State::open(dir)?);
+            app.manage(crawl::State::new(app.path().app_data_dir()?.join("crawls")));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,6 +49,11 @@ fn main() {
             settings::profile_set_default,
             settings::profile_export,
             settings::profile_import,
+            crawl::crawl_start,
+            crawl::crawl_resume,
+            crawl::crawl_pause,
+            crawl::crawl_stop,
+            crawl::crawl_summary,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

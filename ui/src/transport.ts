@@ -59,6 +59,53 @@ export interface LoadedProfile {
 
 export type SaveResult = { result: "saved" } | { result: "name_taken" };
 
+/** A crawl the engine accepted. Its file is saved as the crawl runs. */
+export interface CrawlStarted {
+  id: number;
+  path: string;
+}
+
+export interface CrawlProgress {
+  id: number;
+  discovered: number;
+  crawled: number;
+  in_flight: number;
+  queued: number;
+  not_crawled: number;
+  errors: number;
+}
+
+export type CrawlStatus = "running" | "paused" | "stopped" | "completed";
+
+/** contracts/crawl-summary.schema.json (spec 003). */
+export interface CrawlSummary {
+  status: CrawlStatus;
+  discovered: number;
+  crawled: number;
+  not_crawled: number;
+  queued: number;
+  by_reason: Record<string, number>;
+  external_checked: number;
+  url_limit_reached: boolean;
+  hosts: { host: string; robots: "ok" | "not_found" | "unavailable" | "ignored" | "pending"; crawl_delay_secs: number | null; error: string | null }[];
+  sitemaps: { url: string; urls: number; error: string | null }[];
+  warnings: string[];
+}
+
+export interface CrawlReport {
+  path: string;
+  summary: CrawlSummary;
+  /** Not-crawled reasons with the engine's labels, in FR-038 order. */
+  reasons: { reason: string; label: string; count: number }[];
+}
+
+export interface CrawlFinished {
+  id: number;
+  path: string;
+  report: CrawlReport | null;
+  error: string | null;
+}
+
 export interface Transport {
   buildInfo(): Promise<BuildInfo>;
   defaults(builtin: boolean): Promise<CrawlConfig>;
@@ -80,6 +127,14 @@ export interface Transport {
   setDefaultProfile(name: string | null): Promise<void>;
   exportProfile(name: string, path: string): Promise<void>;
   importProfile(path: string): Promise<LoadedProfile>;
+  crawlStart(config: CrawlConfig, startUrl: string | null): Promise<CrawlStarted>;
+  crawlResume(path: string): Promise<CrawlStarted>;
+  crawlPause(id: number): Promise<void>;
+  crawlStop(id: number): Promise<void>;
+  crawlSummary(path: string): Promise<CrawlReport>;
+  onCrawlProgress(cb: (p: CrawlProgress) => void): Promise<() => void>;
+  onCrawlWarning(cb: (w: { id: number; message: string }) => void): Promise<() => void>;
+  onCrawlFinished(cb: (f: CrawlFinished) => void): Promise<() => void>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -108,4 +163,12 @@ export const tauriTransport: Transport = {
   setDefaultProfile: (name) => invoke("profile_set_default", { name }),
   exportProfile: (name, path) => invoke("profile_export", { name, path }),
   importProfile: (path) => invoke("profile_import", { path }),
+  crawlStart: (config, startUrl) => invoke("crawl_start", { config, startUrl }),
+  crawlResume: (path) => invoke("crawl_resume", { path }),
+  crawlPause: (id) => invoke("crawl_pause", { id }),
+  crawlStop: (id) => invoke("crawl_stop", { id }),
+  crawlSummary: (path) => invoke("crawl_summary", { path }),
+  onCrawlProgress: (cb) => listen<CrawlProgress>("crawl-progress", (e) => cb(e.payload)),
+  onCrawlWarning: (cb) => listen<{ id: number; message: string }>("crawl-warning", (e) => cb(e.payload)),
+  onCrawlFinished: (cb) => listen<CrawlFinished>("crawl-finished", (e) => cb(e.payload)),
 };

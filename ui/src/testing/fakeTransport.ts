@@ -4,7 +4,7 @@
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
-import type { LoadedProfile, Presets, Transport } from "../transport";
+import type { CrawlFinished, CrawlProgress, CrawlReport, CrawlStatus, LoadedProfile, Presets, Transport } from "../transport";
 
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
 const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per_sec: null, adaptive: true };
@@ -49,11 +49,65 @@ const presets: Presets = {
   fast,
 };
 
-export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile> } {
+/** A finished-crawl report with the given figures, for tests. */
+export function fakeReport(status: CrawlStatus, crawled: number, path = "/crawls/example.com.spiderlens"): CrawlReport {
+  return {
+    path,
+    summary: {
+      status,
+      discovered: crawled + 3,
+      crawled,
+      not_crawled: 3,
+      queued: 0,
+      by_reason: { external: 2, blocked_by_robots: 1 },
+      external_checked: 2,
+      url_limit_reached: false,
+      hosts: [{ host: "example.com", robots: "ok", crawl_delay_secs: null, error: null }],
+      sitemaps: [],
+      warnings: [],
+    },
+    reasons: [
+      { reason: "external", label: "External", count: 2 },
+      { reason: "blocked_by_robots", label: "Blocked by robots.txt", count: 1 },
+    ],
+  };
+}
+
+type Listeners<T> = Set<(v: T) => void>;
+
+/** What a test can see of crawls and how it drives their events. */
+export interface FakeCrawls {
+  started: { config: CrawlConfig; startUrl: string | null }[];
+  resumed: string[];
+  controls: string[];
+  progress(p: Partial<CrawlProgress>): void;
+  warn(message: string): void;
+  finish(f: Partial<CrawlFinished>): void;
+}
+
+export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
+  let nextId = 1;
+  const onProgress: Listeners<CrawlProgress> = new Set();
+  const onWarning: Listeners<{ id: number; message: string }> = new Set();
+  const onFinished: Listeners<CrawlFinished> = new Set();
+  const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
+    set.add(cb);
+    return () => void set.delete(cb);
+  };
+  const crawls: FakeCrawls = {
+    started: [],
+    resumed: [],
+    controls: [],
+    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, ...p })),
+    warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
+    finish: (f) =>
+      onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
+  };
   return {
     saved,
+    crawls,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",
@@ -133,5 +187,19 @@ export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile>
     importProfile: async () => {
       throw new Error("not in tests");
     },
+    crawlStart: async (config, startUrl) => {
+      crawls.started.push({ config, startUrl });
+      return { id: nextId++, path: "/crawls/example.com.spiderlens" };
+    },
+    crawlResume: async (path) => {
+      crawls.resumed.push(path);
+      return { id: nextId++, path };
+    },
+    crawlPause: async (id) => void crawls.controls.push(`pause ${id}`),
+    crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
+    crawlSummary: async (path) => fakeReport("completed", 1, path),
+    onCrawlProgress: (cb) => subscribe(onProgress, cb),
+    onCrawlWarning: (cb) => subscribe(onWarning, cb),
+    onCrawlFinished: (cb) => subscribe(onFinished, cb),
   };
 }

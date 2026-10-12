@@ -9,7 +9,8 @@ use spiderlens_config::{
     CrawlConfig, ListInput, Mode, ModeInput, QueryMode, RobotsMode, SpeedSettings, SubdomainMode,
 };
 use spiderlens_engine::crawl::{
-    Control, CrawlStore, CrawlSummary, Crawler, DiscoverySource, NotCrawledReason, UrlRow, UrlState,
+    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, DiscoverySource, NotCrawledReason, UrlRow,
+    UrlState,
 };
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -724,4 +725,45 @@ async fn guard_2000_pages_once_each_at_shortest_depth() {
         let url = site.url(E, &format!("/p/{i}"));
         assert_eq!(done.row(&url).depth, d, "SC-002 for {url}");
     }
+}
+
+/// The desktop status bar reads these figures (crawled, queued, not crawled,
+/// errors) straight from the progress events.
+#[tokio::test]
+async fn progress_events_carry_status_bar_figures() {
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &["/a", "/missing", "/private/x"])
+        .page(E, "/a", "", &[])
+        .robots(E, "User-agent: *\nDisallow: /private/\n")
+        .start();
+    let mut c = CrawlConfig::default();
+    fast(&mut c);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.spiderlens");
+    let input = ModeInput::Spider {
+        start_url: site.url(E, "/"),
+    };
+    let crawler = Crawler::create(&path, c, &input)
+        .unwrap()
+        .with_resolve(site.resolve());
+    let (_tx, rx) = watch::channel(Control::Run);
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = tokio::time::timeout(Duration::from_secs(60), crawler.run(rx, Some(events_tx)))
+        .await
+        .expect("crawl finishes")
+        .unwrap();
+    let mut last = None;
+    while let Ok(e) = events_rx.try_recv() {
+        if let CrawlEvent::Progress(p) = e {
+            last = Some(p);
+        }
+    }
+    let p = last.expect("at least the final progress event");
+    assert_eq!(p.crawled, summary.crawled);
+    assert_eq!(p.crawled, 3, "/, /a and /missing");
+    assert_eq!(p.errors, 1, "/missing answers 404");
+    assert_eq!(p.not_crawled, 1, "/private/x is blocked by robots.txt");
+    assert_eq!(p.queued, 0);
+    assert_eq!(p.in_flight, 0);
+    assert_eq!(p.discovered, summary.discovered);
 }

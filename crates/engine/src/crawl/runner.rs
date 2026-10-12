@@ -61,6 +61,12 @@ pub struct Progress {
     pub discovered: u64,
     pub crawled: u64,
     pub in_flight: u32,
+    /// Waiting to be requested (in flight not included).
+    pub queued: u64,
+    /// Found but not crawled, for any reason (external checks included).
+    pub not_crawled: u64,
+    /// Crawled pages that failed or answered 4xx/5xx.
+    pub errors: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +158,20 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
 }
 
 /// `scheme://host:port`: the unit for robots.txt and politeness (FR-023).
+/// The crawl file name used when none is given: `<host>-<UTC time>.spiderlens`,
+/// or `list-<UTC time>.spiderlens` in List mode (contracts/cli.md).
+pub fn default_file_name(input: &ModeInput) -> String {
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
+    let name = match input {
+        ModeInput::Spider { start_url } => normalize_url(start_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_else(|| "crawl".into()),
+        ModeInput::List(_) => "list".into(),
+    };
+    format!("{name}-{stamp}.spiderlens")
+}
+
 pub fn host_key(url: &Url) -> String {
     format!(
         "{}://{}:{}",
@@ -411,6 +431,7 @@ struct Run {
     sitemaps_pending: bool,
     discovered: u64,
     crawled: u64,
+    errors: u64,
     last_progress: Instant,
     warnings: Vec<String>,
 }
@@ -457,6 +478,7 @@ impl Run {
             .iter()
             .find(|(s, _)| *s == UrlState::Crawled)
             .map_or(0, |(_, n)| *n);
+        let errors = c.store.page_errors()?;
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
@@ -476,6 +498,7 @@ impl Run {
             sitemaps_pending: false,
             discovered,
             crawled,
+            errors,
             last_progress: Instant::now() - PROGRESS_EVERY,
             warnings,
         })
@@ -503,10 +526,29 @@ impl Run {
     fn progress(&mut self, force: bool) {
         if force || self.last_progress.elapsed() >= PROGRESS_EVERY {
             self.last_progress = Instant::now();
+            if self.events.is_none() {
+                return;
+            }
+            // One indexed GROUP BY, a few times a second: cheaper and less
+            // fragile than keeping a counter at every place a state changes.
+            // A failed read only costs this one update.
+            let (mut queued, mut not_crawled) = (0, 0);
+            if let Ok(counts) = self.c.store.state_counts() {
+                for (state, n) in counts {
+                    match state {
+                        UrlState::Queued => queued = n,
+                        UrlState::NotCrawled => not_crawled = n,
+                        UrlState::InFlight | UrlState::Crawled => {}
+                    }
+                }
+            }
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
                 in_flight: self.in_flight,
+                queued,
+                not_crawled,
+                errors: self.errors,
             }));
         }
     }
@@ -1056,6 +1098,10 @@ impl Run {
                     }
                 }
             }
+        }
+        if !entry.check_only && (response.error_class.is_some() || response.status.is_some_and(|s| s >= 400))
+        {
+            self.errors += 1;
         }
         self.c
             .store

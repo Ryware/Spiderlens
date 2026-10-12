@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Copy, MousePointerClick } from "lucide-react";
+import { formatElapsed, type CrawlRun, type Phase } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { BuildInfo, Transport } from "../transport";
-import { Badge, Button, EmptyState, Kbd, Modal, Notice } from "../components/ui";
+import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
 
 /** Detail panel (FR-001): explains the selected URL once results exist (spec 007). */
@@ -18,24 +19,47 @@ export function DetailPanel() {
 
 const robotsLabel = { respect: "robots.txt respected", ignore_report: "robots.txt ignored, reported", ignore: "robots.txt ignored" } as const;
 
-/** Live crawl figures (FR-006). They read zero until crawling arrives with spec 003. */
-export function StatusBar({ setup }: { setup: CrawlSetup }) {
+/** How each phase reads in the status bar and the overview. */
+export const phaseInfo: Record<Phase, { label: string; tone: Tone | "accent" }> = {
+  idle: { label: "Idle", tone: "neutral" },
+  starting: { label: "Starting…", tone: "accent" },
+  running: { label: "Crawling", tone: "accent" },
+  pausing: { label: "Pausing…", tone: "warn" },
+  stopping: { label: "Stopping…", tone: "warn" },
+  paused: { label: "Paused", tone: "warn" },
+  stopped: { label: "Stopped", tone: "neutral" },
+  completed: { label: "Completed", tone: "ok" },
+  failed: { label: "Failed", tone: "bad" },
+};
+
+const dots: Record<Tone | "accent", string> = { accent: "bg-accent", ok: "bg-ok", info: "bg-info", warn: "bg-warn", bad: "bg-bad", neutral: "bg-fg-3" };
+
+const count = (n: number | undefined) => (n ?? 0).toLocaleString();
+
+/** Live crawl figures (FR-006), from the engine's progress events. */
+export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) {
+  const p = run.progress;
+  const s = run.report?.summary;
+  const info = phaseInfo[run.phase];
   const figures: [string, string][] = [
-    ["0", "crawled"],
-    ["0", "queued"],
-    ["0", "errors"],
-    ["–", "URLs/s"],
-    ["00:00", "elapsed"],
+    [count(p?.crawled ?? s?.crawled), "crawled"],
+    [count(run.running ? p?.queued : (s?.queued ?? p?.queued)), "queued"],
+    [count(p?.errors), p?.errors === 1 ? "error" : "errors"],
+    [run.rate === null ? "–" : run.rate.toFixed(run.rate < 10 ? 1 : 0), "URLs/s"],
+    [formatElapsed(run.elapsedMs), "elapsed"],
   ];
   const speed = setup.speedPreset === "polite" ? "Polite" : setup.speedPreset === "fast" ? "Fast" : "Custom speed";
   return (
     <footer aria-label="Crawl status" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">
-      <span className="flex items-center gap-1.5 text-fg-2">
-        <span aria-hidden className="size-1.5 rounded-full bg-fg-3" />
-        {setup.ready ? "Ready to start" : "Idle"}
+      <span className="flex min-w-0 items-center gap-1.5 text-fg-2" role="status" data-phase={run.phase}>
+        <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dots[info.tone], run.running && "motion-safe:animate-pulse")} />
+        <span className="truncate">
+          {info.label}
+          {run.phase !== "idle" && run.target ? ` ${run.target}` : ""}
+        </span>
       </span>
       {figures.map(([n, label]) => (
-        <span key={label}>
+        <span key={label} data-figure={label}>
           <span className="font-medium text-fg-2">{n}</span> {label}
         </span>
       ))}
@@ -45,6 +69,130 @@ export function StatusBar({ setup }: { setup: CrawlSetup }) {
         {setup.config ? ` · ${robotsLabel[setup.config.robots.mode]}` : ""}
       </span>
     </footer>
+  );
+}
+
+const robotsOutcome = { ok: "Read", not_found: "None found", unavailable: "Unavailable", ignored: "Ignored", pending: "Not read yet" } as const;
+
+/** One large figure in the overview. */
+function Figure({ label, value, tone }: { label: string; value: string; tone?: "bad" }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-4 py-3">
+      <dt className="text-xs text-fg-3">{label}</dt>
+      <dd className={cn("m-0 text-xl font-semibold tracking-tight tabular", tone === "bad" ? "text-bad" : "text-fg")}>{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * The Overview section once a crawl exists: live figures while it runs, then
+ * why URLs were not crawled, robots.txt per site and sitemaps (spec 003 US2).
+ * The URL table itself arrives with spec 007.
+ */
+export function CrawlOverview({ run }: { run: CrawlRun }) {
+  const p = run.progress;
+  const s = run.report?.summary;
+  const info = phaseInfo[run.phase];
+  const discovered = s?.discovered ?? p?.discovered ?? 0;
+  const crawled = s?.crawled ?? p?.crawled ?? 0;
+  const notCrawled = s?.not_crawled ?? p?.not_crawled ?? 0;
+  const queued = s?.queued ?? p?.queued ?? 0;
+  const done = discovered === 0 ? 0 : (crawled + notCrawled) / discovered;
+  const warnings = s?.warnings.length ? s.warnings : run.warnings;
+  return (
+    <section aria-label="Overview" className="h-full overflow-y-auto">
+      <div className="mx-auto flex max-w-3xl flex-col gap-5 p-6">
+        <header className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <h1 className="m-0 min-w-0 truncate text-lg font-semibold tracking-tight">{run.target || "Crawl"}</h1>
+            {info.tone === "accent" ? <Badge tone="info">{info.label}</Badge> : <Badge tone={info.tone}>{info.label}</Badge>}
+            <span className="ml-auto text-sm text-fg-3 tabular">{formatElapsed(run.elapsedMs)}</span>
+          </div>
+          <Bar value={done} label="URLs handled" tone={run.running ? "accent" : info.tone === "accent" ? "neutral" : info.tone} className="w-full" />
+          {run.path && (
+            <p className="m-0 truncate text-sm text-fg-3" title={run.path}>
+              Saved to <span className="font-code text-fg-2" data-selectable>{run.path}</span>
+            </p>
+          )}
+        </header>
+
+        {run.error && (
+          <Notice kind="bad" role="alert">
+            {run.error}
+          </Notice>
+        )}
+        {s?.url_limit_reached && <Notice kind="info">The URL limit was reached: the remaining URLs are listed as "Over URL limit".</Notice>}
+        {warnings.map((w) => (
+          <Notice key={w} kind="warn">
+            {w}
+          </Notice>
+        ))}
+
+        <dl className="m-0 grid grid-cols-5 divide-x divide-line overflow-hidden rounded-lg border border-line bg-surface">
+          <Figure label="Discovered" value={count(discovered)} />
+          <Figure label="Crawled" value={count(crawled)} />
+          <Figure label="Not crawled" value={count(notCrawled)} />
+          <Figure label="Queued" value={count(queued)} />
+          <Figure label="Errors" value={count(p?.errors)} tone={p?.errors ? "bad" : undefined} />
+        </dl>
+
+        {run.report && run.report.reasons.length > 0 && (
+          <Table title="Not crawled" head={["Reason", "URLs"]}>
+            {run.report.reasons.map((r) => (
+              <tr key={r.reason} data-reason={r.reason}>
+                <td className="px-3 py-1.5">{r.label}</td>
+                <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
+        {s && s.hosts.length > 0 && (
+          <Table title="robots.txt" head={["Site", "robots.txt"]}>
+            {s.hosts.map((h) => (
+              <tr key={h.host}>
+                <td className="px-3 py-1.5 font-code">{h.host}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {robotsOutcome[h.robots]}
+                  {h.crawl_delay_secs !== null ? `, crawl-delay ${h.crawl_delay_secs} s` : ""}
+                  {h.error ? ` (${h.error})` : ""}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+        {s && s.sitemaps.length > 0 && (
+          <Table title="Sitemaps" head={["Sitemap", "URLs"]}>
+            {s.sitemaps.map((m) => (
+              <tr key={m.url}>
+                <td className="max-w-0 truncate px-3 py-1.5 font-code" title={m.url}>
+                  {m.url}
+                </td>
+                <td className={cn("px-3 py-1.5 text-right tabular", m.error && "text-bad")}>{m.error ?? count(m.urls)}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Table({ title, head, children }: { title: string; head: [string, string]; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-1.5">
+      <h2 className="m-0 px-1 text-xs font-semibold text-fg-3">{title}</h2>
+      <div className="overflow-hidden rounded-lg border border-line bg-surface">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <thead className="sr-only">
+            <tr>
+              <th>{head[0]}</th>
+              <th>{head[1]}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">{children}</tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -63,11 +211,6 @@ export function StartState({ setup, onFocusUrl, onOpenSettings }: { setup: Crawl
         </p>
       </div>
 
-      {setup.ready && (
-        <p role="status" className="m-0 rounded-md bg-ok-soft px-3 py-1.5 font-medium text-ok">
-          {setup.ready}
-        </p>
-      )}
       {mode === "spider" && setup.startUrl !== "" && <IssueList issues={urlIssues} />}
 
       {setup.warnings.length > 0 && (

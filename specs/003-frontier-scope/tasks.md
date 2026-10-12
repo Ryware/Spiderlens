@@ -40,3 +40,11 @@
 ## Phase 7: Polish
 
 - [x] T018 2,000-page guard test; fmt, clippy, full test suite; quickstart map; spec 002 T020
+
+## Phase 8: Desktop (after spec 017's shell)
+
+- [x] T019 Engine: progress events carry queued, not crawled and errors for the status bar; `default_file_name` shared by CLI and desktop
+- [x] T020 Desktop commands `crawl_start`, `crawl_pause`, `crawl_stop`, `crawl_resume`, `crawl_summary` (app/src-tauri/src/crawl.rs); one crawl at a time on its own thread; files go to the app data folder under `crawls/`
+- [x] T021 UI: Start, Pause, Resume and Stop in the toolbar; live figures in the status bar; Overview shows figures, not-crawled reasons, robots.txt per site and sitemaps
+- [x] T022 Settings sheet: list depth, stay in folder, sitemaps from robots.txt, query parameters (keep, remove some, remove all, sort), max URL length
+- [ ] T023 `crawl_urls` and `scope_test` commands: with spec 007's results table
