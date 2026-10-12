@@ -6,10 +6,11 @@
 mod build_info;
 mod check;
 mod config;
+pub mod crawl;
 mod error;
 mod fetch;
 mod result;
-mod robots;
+pub mod robots;
 mod title;
 
 pub use build_info::BuildInfo;

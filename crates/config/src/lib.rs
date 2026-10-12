@@ -18,8 +18,8 @@ mod validate;
 
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    CrawlConfig, CustomHeader, HeaderTarget, Identity, Limits, Mode, ModeInput, NetworkSettings, QueryParams,
-    RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings, SubdomainMode, UserAgent,
+    CrawlConfig, CustomHeader, HeaderTarget, Identity, Limits, Mode, ModeInput, NetworkSettings, QueryMode,
+    QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings, SubdomainMode, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
@@ -28,5 +28,5 @@ pub use secret::HeaderValue;
 pub use site::{InternalHosts, registrable_domain};
 pub use store::{ProfileEntry, ProfileStore, StoreError};
 pub use stored::{Change, ConfigChange, StoredCrawlConfig, unavailable_settings};
-pub use url_norm::{NormError, normalize_url};
+pub use url_norm::{LinkProblem, NormError, apply_query_rules, normalize_link, normalize_url, tidy_percent};
 pub use validate::{Issue, Severity, validate, validate_config};

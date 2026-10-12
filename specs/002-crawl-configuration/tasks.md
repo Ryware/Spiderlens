@@ -44,4 +44,4 @@
 
 ## Phase 8: Polish
 
-- [ ] T020 fmt, clippy, full test suite; quickstart map updated
+- [x] T020 fmt, clippy, full test suite; quickstart map updated

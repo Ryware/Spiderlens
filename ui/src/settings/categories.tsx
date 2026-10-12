@@ -104,8 +104,11 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             <Row label="Check external links" help="Request each once to see if it works; never follow it.">
               {(_, l) => <Switch labelledBy={l} checked={config.scope.check_external} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, check_external: v } }))} />}
             </Row>
-            <Row label="Follow nofollow links">
-              {(_, l) => <Switch labelledBy={l} checked={config.scope.follow_nofollow} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_nofollow: v } }))} />}
+            <Row label="Follow internal nofollow links">
+              {(_, l) => <Switch labelledBy={l} checked={config.scope.follow_internal_nofollow} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_internal_nofollow: v } }))} />}
+            </Row>
+            <Row label="Follow external nofollow links">
+              {(_, l) => <Switch labelledBy={l} checked={config.scope.follow_external_nofollow} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_external_nofollow: v } }))} />}
             </Row>
           </Group>
         </>

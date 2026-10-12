@@ -12,14 +12,18 @@ const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per
 export function defaultConfig(): CrawlConfig {
   return {
     mode: "spider",
-    limits: { max_urls: null, max_depth: null },
+    limits: { max_urls: null, max_depth: null, list_depth: 0 },
     scope: {
       include: [],
       exclude: [],
       subdomains: "this_host",
+      stay_in_folder: false,
       check_external: true,
-      follow_nofollow: false,
-      query_params: "keep",
+      follow_internal_nofollow: false,
+      follow_external_nofollow: false,
+      query_params: { mode: "keep", names: [], sort: false },
+      max_url_length: 2000,
+      use_sitemaps: false,
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
