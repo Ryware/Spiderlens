@@ -794,15 +794,21 @@ async fn retry_after_holds_the_site() {
         .page(E, "/", "", &["/busy", "/b"])
         .raw(E, "/busy", 429, "text/plain", b"slow down")
         .header(E, "/busy", "Retry-After", "2")
-        .page(E, "/b", "", &["/c"])
-        .page(E, "/c", "", &[])
+        .page(E, "/b", "", &[])
         .start();
-    let d = crawl(&site, "/", fast).await;
+    // One request at a time, so /b cannot already be in flight when the 429
+    // arrives and the gap is the hold alone.
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.speed.max_per_host = 1;
+        c.speed.adaptive = false;
+    })
+    .await;
     assert_eq!(d.row(&site.url(E, "/busy")).status, Some(429));
-    assert_eq!(d.row(&site.url(E, "/c")).state, UrlState::Crawled);
+    assert_eq!(d.row(&site.url(E, "/b")).state, UrlState::Crawled);
     let hits = site.page_hits();
     let at = |path: &str| hits.iter().find(|h| h.path == path).unwrap().at;
-    let waited = at("/c").duration_since(at("/busy"));
+    let waited = at("/b").duration_since(at("/busy"));
     assert!(
         waited >= Duration::from_millis(1900),
         "next request after {waited:?}, Retry-After asked for 2 s"
