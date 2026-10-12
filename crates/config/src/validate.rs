@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::patterns::{UrlFilter, check_pattern};
+use crate::patterns::{Decision, UrlFilter, check_pattern};
 use crate::presets::{UaPreset, suggest_robots_token};
 use crate::{CrawlConfig, HeaderValue, Mode, ModeInput, RobotsMode, normalize_url};
 
@@ -72,15 +72,25 @@ pub fn validate(config: &CrawlConfig, input: &ModeInput) -> Vec<Issue> {
     match (config.mode, input) {
         (Mode::Spider, ModeInput::Spider { start_url }) => match normalize_url(start_url) {
             Ok(url) => {
-                if let Ok(filter) = UrlFilter::new(&config.scope.include, &config.scope.exclude)
-                    && !filter.decide(url.as_str()).crawls()
-                {
-                    issues.warn(
-                        "input.start_url",
-                        "start_url_excluded",
-                        "Your patterns would exclude the start URL. It will still be crawled, \
-                         but links to it from other pages will not be. Check the include and exclude patterns.",
-                    );
+                if let Ok(filter) = UrlFilter::new(&config.scope.include, &config.scope.exclude) {
+                    match filter.decide(url.as_str()) {
+                        Decision::Excluded { exclude } => issues.error(
+                            "input.start_url",
+                            "start_url_excluded",
+                            format!(
+                                "Exclude pattern {} matches the start URL, so nothing would be crawled. \
+                                 Change the pattern or the start URL.",
+                                config.scope.exclude[exclude as usize]
+                            ),
+                        ),
+                        Decision::NotIncluded => issues.warn(
+                            "input.start_url",
+                            "start_url_not_included",
+                            "The start URL does not match your include patterns. It will still be crawled, \
+                             but only links matching the include patterns will be followed.",
+                        ),
+                        Decision::Crawl { .. } => {}
+                    }
                 }
             }
             Err(e) => issues.error(
@@ -141,6 +151,23 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
                 i.error(format!("scope.{group}[{index}]"), "pattern_syntax", message);
             }
         }
+    }
+
+    // Scope additions (spec 003)
+    if !(256..=65_536).contains(&c.scope.max_url_length) {
+        i.error(
+            "scope.max_url_length",
+            "out_of_range",
+            "Maximum URL length must be between 256 and 65,536 characters.",
+        );
+    }
+    let q = &c.scope.query_params;
+    if q.mode == crate::QueryMode::Remove && q.names.iter().all(|n| n.trim().is_empty()) {
+        i.error(
+            "scope.query_params.names",
+            "query_names_missing",
+            "List at least one parameter name to remove, or choose another option.",
+        );
     }
 
     // Identity
@@ -407,13 +434,35 @@ mod tests {
     }
 
     #[test]
-    fn start_url_excluded_warns() {
+    fn start_url_excluded_is_error_and_not_included_warns() {
         let mut c = CrawlConfig::default();
         c.scope.exclude = vec!["example".into()];
         let issues = validate(&c, &spider("example.com"));
         assert_eq!(
             codes(&issues),
-            vec![("input.start_url", "start_url_excluded", Severity::Warning)]
+            vec![("input.start_url", "start_url_excluded", Severity::Error)]
+        );
+        let mut c = CrawlConfig::default();
+        c.scope.include = vec!["/blog/".into()];
+        let issues = validate(&c, &spider("example.com"));
+        assert_eq!(
+            codes(&issues),
+            vec![("input.start_url", "start_url_not_included", Severity::Warning)]
+        );
+    }
+
+    #[test]
+    fn scope_additions_are_validated() {
+        let mut c = CrawlConfig::default();
+        c.scope.max_url_length = 10;
+        c.scope.query_params.mode = crate::QueryMode::Remove;
+        let issues = validate_config(&c);
+        assert_eq!(
+            codes(&issues),
+            vec![
+                ("scope.max_url_length", "out_of_range", Severity::Error),
+                ("scope.query_params.names", "query_names_missing", Severity::Error),
+            ]
         );
     }
 

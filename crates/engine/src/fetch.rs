@@ -10,7 +10,20 @@ use url::Url;
 use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop, RequestHeader};
 
 pub(crate) fn build_client(opts: &CheckOptions) -> Result<Client, CheckError> {
-    Client::builder()
+    build_client_with(opts, &[])
+}
+
+/// `resolve` pins host names to addresses; tests use it to serve several
+/// `.test` host names from 127.0.0.1 (spec 003 research R13).
+pub(crate) fn build_client_with(
+    opts: &CheckOptions,
+    resolve: &[(String, std::net::SocketAddr)],
+) -> Result<Client, CheckError> {
+    let mut builder = Client::builder();
+    for (host, addr) in resolve {
+        builder = builder.resolve(host, *addr);
+    }
+    builder
         .user_agent(&opts.user_agent)
         // We follow redirects ourselves so every hop is recorded.
         .redirect(reqwest::redirect::Policy::none())
@@ -43,7 +56,7 @@ pub(crate) struct BodyPolicy<'a> {
     pub on_limit: OnLimit,
     /// Decides from the content type whether the bytes are kept. Bytes that
     /// are not kept are still read and counted, but dropped chunk by chunk.
-    pub keep: &'a dyn Fn(Option<&str>) -> bool,
+    pub keep: &'a (dyn Fn(Option<&str>) -> bool + Sync),
 }
 
 pub(crate) struct Fetched {
@@ -142,6 +155,70 @@ async fn follow(
             body: bytes,
         });
     }
+}
+
+/// One response without following redirects, for the crawler (spec 003
+/// research R8): a redirect is recorded and its target becomes a discovery.
+pub(crate) struct Once {
+    pub status: u16,
+    /// Raw `Location` of a 3xx response.
+    pub location: Option<String>,
+    pub content_type: Option<String>,
+    pub charset: Option<String>,
+    pub x_robots_tag: Vec<String>,
+    pub link_header: Vec<String>,
+    /// HTML bodies only, and only when `read_body` was set.
+    pub body: Option<Vec<u8>>,
+}
+
+pub(crate) async fn fetch_once(
+    client: &Client,
+    url: &Url,
+    headers: &[RequestHeader],
+    internal: bool,
+    read_body: bool,
+    max_bytes: u64,
+) -> Result<Once, CheckError> {
+    let mut request = client.get(url.clone());
+    for h in headers.iter().filter(|h| h.all_hosts || internal) {
+        request = request.header(&h.name, &h.value);
+    }
+    let response = request.send().await.map_err(|e| classify(&e))?;
+    let status = response.status().as_u16();
+    let location = redirect_location(&response).map(str::to_string);
+    let (content_type, charset) = parse_content_type(&response);
+    let all = |name: header::HeaderName| -> Vec<String> {
+        response
+            .headers()
+            .get_all(name)
+            .iter()
+            .filter_map(|v| v.to_str().ok().map(str::to_string))
+            .collect()
+    };
+    let x_robots_tag = all(header::HeaderName::from_static("x-robots-tag"));
+    let link_header = all(header::LINK);
+    let html = content_type
+        .as_deref()
+        .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
+    let body = if read_body && location.is_none() && html {
+        read_body_capped(response, max_bytes).await?
+    } else {
+        // Dropping the response closes the stream without reading the body.
+        None
+    };
+    Ok(Once {
+        status,
+        location,
+        content_type,
+        charset,
+        x_robots_tag,
+        link_header,
+        body,
+    })
+}
+
+async fn read_body_capped(response: Response, max_bytes: u64) -> Result<Option<Vec<u8>>, CheckError> {
+    read_body(response, max_bytes, OnLimit::Fail, true).await
 }
 
 /// Same host and same explicit port. An http-to-https upgrade on the same

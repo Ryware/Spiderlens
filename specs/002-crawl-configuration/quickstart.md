@@ -19,19 +19,19 @@ must list it in its own plan.
 | US1-1 defaults used, start URL first | here (config) + 003 (first request) | `config::defaults::tests::all_defaults_match_spec` |
 | US1-2 scheme added | here | `config::validate::tests::start_url_gets_https`, UI `StartField.test` |
 | US1-3 invalid start URL | here | `validate::tests::bad_start_url_is_error`, UI `StartField.test` |
-| US1-4 start redirect sets internal host | 003 | uses `site::same_site` from here |
+| US1-4 start redirect sets internal host | 003 | engine `start_redirect_to_www_is_adopted` |
 | US1-5 every value visible | here (serialization) + 006 (reopen) | `model::tests::serializes_every_field` |
 | US2-1 counts and invalid lines | here | `list_input::tests::counts_7_2_1` |
 | US2-2 text and CSV upload | here | `list_input::tests::csv_every_cell` |
-| US2-3 only listed URLs requested | 003 | |
+| US2-3 only listed URLs requested | 003 | engine `list_mode_depth_zero_and_hosts_internal` |
 | US2-4 empty list refused | here | `validate::tests::empty_list_is_error` |
-| US2-5 per-site robots and speed | 003, 008 | |
-| US3-1/2 URL and depth limits | 003 | |
+| US2-5 per-site robots and speed | 003 (robots), 008 (speed) | engine `list_mode_depth_zero_and_hosts_internal` |
+| US3-1/2 URL and depth limits | 003 | engine `us3_5_url_limit`, `us3_rules_limits_and_params` |
 | US3-3 include and exclude | here (matcher) + 003 (crawl) | `patterns::tests::exclude_beats_include` |
 | US3-4 invalid pattern | here | `validate::tests::pattern_syntax_error_names_field` |
 | US3-5 pattern tester | here | `patterns::tests::tester_names_deciding_pattern`, CLI `test_patterns` |
 | US3-6 subdomains | here (rule) + 003 | `site::tests::subdomain_modes` |
-| US3-7 external checking | 003 | |
+| US3-7 external checking | 003 | engine `us1_1_spellings_dedupe_and_external_not_followed` |
 | US4-1 Googlebot preset and token | here (preset) + 004 (requests) | `presets::tests::googlebot_token` |
 | US4-2 custom UA needs token | here | `validate::tests::custom_ua_requires_token` |
 | US4-3 header sent to internal URLs | 004 | |

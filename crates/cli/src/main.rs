@@ -3,13 +3,15 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod crawl_cmd;
 mod options;
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
+use crawl_cmd::{CrawlCmd, ReportArgs, ScopeTestArgs};
 use options::{CrawlArgs, IdentityArgs, NetworkArgs};
 use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
@@ -20,11 +22,13 @@ use spiderlens_engine::{
 };
 
 /// Exit codes from the CLI contract.
-mod exit {
+pub(crate) mod exit {
     pub const FETCHED: u8 = 0;
     pub const USAGE: u8 = 2;
     pub const BLOCKED: u8 = 3;
     pub const FAILED: u8 = 4;
+    /// The crawl was paused (Ctrl-C) and can be resumed.
+    pub const PAUSED: u8 = 5;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -45,12 +49,25 @@ enum Command {
     // (larger path types) clippy's large_enum_variant lint fires.
     #[command(subcommand)]
     Config(Box<ConfigCommand>),
+    /// Crawl a site (Spider mode) or a URL list (List mode) into a crawl file.
+    Crawl(Box<CrawlCmd>),
+    /// List the URLs in a crawl file, or its summary.
+    Report(ReportArgs),
+    /// Explain crawl scope decisions.
+    #[command(subcommand)]
+    Scope(ScopeCommand),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ScopeCommand {
+    /// Would these URLs be crawled from this start URL, and if not, why?
+    Test(Box<ScopeTestArgs>),
 }
 
 #[derive(Args)]
@@ -119,6 +136,12 @@ fn main() -> ExitCode {
         }
         Command::Check(args) => run_check(args),
         Command::Config(cmd) => run_config(*cmd),
+        Command::Crawl(cmd) => {
+            let sub = matches.subcommand_matches("crawl").expect("crawl matches");
+            crawl_cmd::run_crawl(*cmd, sub)
+        }
+        Command::Report(args) => crawl_cmd::run_report(args),
+        Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }
 
@@ -163,7 +186,7 @@ fn run_check(args: CheckArgs) -> ExitCode {
 }
 
 /// Prints issues to stderr. Returns true if any blocks the run.
-fn print_issues(issues: &[Issue]) -> bool {
+pub(crate) fn print_issues(issues: &[Issue]) -> bool {
     for i in issues {
         let level = match i.severity {
             Severity::Error => "error",
@@ -227,28 +250,9 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     for n in &resolved.notices {
         eprintln!("notice: {n}");
     }
-    let input = match (&args.url, &args.list) {
-        (Some(url), _) => Some(ModeInput::Spider {
-            start_url: url.clone(),
-        }),
-        (None, Some(path)) => match std::fs::read(path) {
-            Ok(bytes) => {
-                let format = ListFormat::from_file_name(&path.to_string_lossy());
-                let list = parse_list_bytes(&bytes, format, &mut |_| {});
-                eprintln!(
-                    "list: {} URLs to crawl, {} duplicates removed, {} invalid",
-                    list.urls.len(),
-                    list.duplicates,
-                    list.invalid_count
-                );
-                Some(ModeInput::List(list))
-            }
-            Err(e) => {
-                eprintln!("error: cannot read {}: {e}", path.display());
-                return ExitCode::from(exit::USAGE);
-            }
-        },
-        (None, None) => None,
+    let input = match read_input(args.url.as_deref(), args.list.as_deref()) {
+        Ok(i) => i,
+        Err(code) => return code,
     };
     let issues = match &input {
         Some(i) => validate(&resolved.config, i),
@@ -270,6 +274,33 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     }
 }
 
+/// Reads the Spider start URL or the List file into a mode input.
+pub(crate) fn read_input(url: Option<&str>, list: Option<&Path>) -> Result<Option<ModeInput>, ExitCode> {
+    match (url, list) {
+        (Some(url), _) => Ok(Some(ModeInput::Spider {
+            start_url: url.to_string(),
+        })),
+        (None, Some(path)) => match std::fs::read(path) {
+            Ok(bytes) => {
+                let format = ListFormat::from_file_name(&path.to_string_lossy());
+                let list = parse_list_bytes(&bytes, format, &mut |_| {});
+                eprintln!(
+                    "list: {} URLs to crawl, {} duplicates removed, {} invalid",
+                    list.urls.len(),
+                    list.duplicates,
+                    list.invalid_count
+                );
+                Ok(Some(ModeInput::List(list)))
+            }
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", path.display());
+                Err(ExitCode::from(exit::USAGE))
+            }
+        },
+        (None, None) => Ok(None),
+    }
+}
+
 fn exit_code(r: &PageCheckResult) -> u8 {
     match r.state {
         FinalState::Fetched => exit::FETCHED,
@@ -281,7 +312,7 @@ fn exit_code(r: &PageCheckResult) -> u8 {
     }
 }
 
-fn print_json<T: serde::Serialize>(value: &T) {
+pub(crate) fn print_json<T: serde::Serialize>(value: &T) {
     let mut out = std::io::stdout().lock();
     // Serializing our own types cannot fail; a closed pipe is not worth a panic.
     let _ = serde_json::to_writer_pretty(&mut out, value);

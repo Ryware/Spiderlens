@@ -43,6 +43,9 @@ pub struct Limits {
     pub max_urls: Option<u64>,
     /// Spider mode only. The start URL is depth 0.
     pub max_depth: Option<u32>,
+    /// List mode only: how many clicks to follow from listed URLs. 0 means
+    /// links are recorded but not followed (spec 003 FR-041).
+    pub list_depth: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -52,9 +55,18 @@ pub struct Scope {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub subdomains: SubdomainMode,
+    /// Internal URLs outside the start URL's folder are not crawled.
+    pub stay_in_folder: bool,
     pub check_external: bool,
-    pub follow_nofollow: bool,
+    /// Spec 002 called this `follow_nofollow`. No crawl or profile files
+    /// were released with that name, so it is not kept as an alias.
+    pub follow_internal_nofollow: bool,
+    pub follow_external_nofollow: bool,
     pub query_params: QueryParams,
+    /// Longer URLs are recorded as malformed and not crawled.
+    pub max_url_length: u32,
+    /// Seed the crawl with the sitemaps listed in the start host's robots.txt.
+    pub use_sitemaps: bool,
 }
 
 impl Default for Scope {
@@ -63,9 +75,13 @@ impl Default for Scope {
             include: Vec::new(),
             exclude: Vec::new(),
             subdomains: SubdomainMode::ThisHost,
+            stay_in_folder: false,
             check_external: true,
-            follow_nofollow: false,
-            query_params: QueryParams::Keep,
+            follow_internal_nofollow: false,
+            follow_external_nofollow: false,
+            query_params: QueryParams::default(),
+            max_url_length: 2000,
+            use_sitemaps: false,
         }
     }
 }
@@ -74,20 +90,71 @@ impl Default for Scope {
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum SubdomainMode {
-    /// Only the start URL's exact host is internal.
+    /// The start URL's host, with and without `www.`, is internal.
     #[default]
     ThisHost,
     /// Every host of the same registrable domain is internal.
     AllSubdomains,
 }
 
-/// Query parameter handling. Spec 003 adds the other options.
+/// Query parameter handling (spec 003 FR-005).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, TS)]
+#[ts(export)]
+pub struct QueryParams {
+    pub mode: QueryMode,
+    /// Parameter names removed when `mode` is `remove`. Case-sensitive.
+    pub names: Vec<String>,
+    /// Sort parameters by name so that order differences de-duplicate.
+    pub sort: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
-pub enum QueryParams {
+pub enum QueryMode {
     #[default]
     Keep,
+    RemoveAll,
+    Remove,
+}
+
+impl<'de> Deserialize<'de> for QueryParams {
+    /// Accepts the spec 002 form `"keep"` as well as the object form.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(default)]
+        struct Full {
+            mode: QueryMode,
+            names: Vec<String>,
+            sort: bool,
+        }
+        impl Default for Full {
+            fn default() -> Self {
+                Self {
+                    mode: QueryMode::Keep,
+                    names: Vec::new(),
+                    sort: false,
+                }
+            }
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Legacy(QueryMode),
+            Full(Full),
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Legacy(mode) => Self {
+                mode,
+                ..Self::default()
+            },
+            Wire::Full(f) => Self {
+                mode: f.mode,
+                names: f.names,
+                sort: f.sort,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
@@ -175,6 +242,10 @@ impl Default for SpeedSettings {
     }
 }
 
+/// Speed values. Serialized with the derived preset name for readability;
+/// the name is ignored when loading (research R10).
+// Same doc as `SpeedSettings`: both export to SpeedSettings.ts, and parallel
+// test threads must write identical files or the generated-types check flakes.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export, rename = "SpeedSettings")]
@@ -325,13 +396,18 @@ mod tests {
             c.limits,
             Limits {
                 max_urls: None,
-                max_depth: None
+                max_depth: None,
+                list_depth: 0
             }
         );
         assert!(c.scope.include.is_empty() && c.scope.exclude.is_empty());
         assert_eq!(c.scope.subdomains, SubdomainMode::ThisHost);
         assert!(c.scope.check_external);
-        assert!(!c.scope.follow_nofollow);
+        assert!(!c.scope.follow_internal_nofollow && !c.scope.follow_external_nofollow);
+        assert!(!c.scope.stay_in_folder && !c.scope.use_sitemaps);
+        assert_eq!(c.scope.max_url_length, 2000);
+        assert_eq!(c.scope.query_params.mode, QueryMode::Keep);
+        assert_eq!(c.limits.list_depth, 0);
         assert_eq!(c.identity.user_agent.preset, UaPreset::Spiderlens);
         assert!(c.identity.headers.is_empty());
         assert_eq!(c.speed, SpeedSettings::POLITE);
@@ -374,6 +450,18 @@ mod tests {
         let c: CrawlConfig =
             serde_json::from_value(json!({"speed": {"max_concurrent": 64, "preset": "polite"}})).unwrap();
         assert_eq!(c.speed.preset(), SpeedPreset::Custom);
+    }
+
+    #[test]
+    fn spec_002_scope_fields_still_load() {
+        let c: CrawlConfig = serde_json::from_value(json!({"scope": {"query_params": "keep"}})).unwrap();
+        assert_eq!(c.scope.query_params, QueryParams::default());
+        let c: CrawlConfig = serde_json::from_value(
+            json!({"scope": {"query_params": {"mode": "remove", "names": ["utm_source"], "sort": true}}}),
+        )
+        .unwrap();
+        assert_eq!(c.scope.query_params.mode, QueryMode::Remove);
+        assert!(c.scope.query_params.sort);
     }
 
     #[test]

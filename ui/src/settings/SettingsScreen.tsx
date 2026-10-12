@@ -183,8 +183,8 @@ export function SettingsScreen({ transport }: { transport: Transport }) {
         />
         <Toggle
           label="Follow nofollow links"
-          checked={config.scope.follow_nofollow}
-          onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_nofollow: v } }))}
+          checked={config.scope.follow_internal_nofollow}
+          onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_internal_nofollow: v } }))}
         />
       </Section>
 

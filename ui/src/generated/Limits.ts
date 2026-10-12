@@ -8,4 +8,9 @@ max_urls: number | null,
 /**
  * Spider mode only. The start URL is depth 0.
  */
-max_depth: number | null, };
+max_depth: number | null, 
+/**
+ * List mode only: how many clicks to follow from listed URLs. 0 means
+ * links are recorded but not followed (spec 003 FR-041).
+ */
+list_depth: number, };
