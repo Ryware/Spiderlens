@@ -167,6 +167,8 @@ pub(crate) struct Once {
     pub charset: Option<String>,
     pub x_robots_tag: Vec<String>,
     pub link_header: Vec<String>,
+    /// Raw `Retry-After`, read on 429 and 503 (spec 008 FR-015).
+    pub retry_after: Option<String>,
     /// HTML bodies only, and only when `read_body` was set.
     pub body: Option<Vec<u8>>,
 }
@@ -197,6 +199,11 @@ pub(crate) async fn fetch_once(
     };
     let x_robots_tag = all(header::HeaderName::from_static("x-robots-tag"));
     let link_header = all(header::LINK);
+    let retry_after = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let html = content_type
         .as_deref()
         .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
@@ -213,6 +220,7 @@ pub(crate) async fn fetch_once(
         charset,
         x_robots_tag,
         link_header,
+        retry_after,
         body,
     })
 }

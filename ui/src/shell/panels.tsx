@@ -48,6 +48,8 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
     [run.rate === null ? "–" : run.rate.toFixed(run.rate < 10 ? 1 : 0), "URLs/s"],
     [formatElapsed(run.elapsedMs), "elapsed"],
   ];
+  // Spider mode keeps finding URLs, so this is for the ones found so far.
+  if (run.running && p?.eta_secs != null) figures.push([`~${formatElapsed(p.eta_secs * 1000)}`, "left"]);
   const speed = setup.speedPreset === "polite" ? "Polite" : setup.speedPreset === "fast" ? "Fast" : "Custom speed";
   return (
     <footer aria-label="Crawl status" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">

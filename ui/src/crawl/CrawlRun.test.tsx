@@ -30,6 +30,9 @@ test("start_runs_a_crawl_and_shows_live_figures", async () => {
   expect(figure("crawled")).toBe("12 crawled");
   expect(figure("queued")).toBe("25 queued");
   expect(figure("errors")).toBe("2 errors");
+  expect(figure("left")).toBeUndefined();
+  act(() => t.crawls.progress({ discovered: 40, crawled: 12, queued: 25, urls_per_sec: 100, eta_secs: 90 }));
+  expect(figure("left")).toBe("~01:30 left");
   const overview = screen.getByRole("region", { name: "Overview" });
   expect(within(overview).getByText("Discovered").nextSibling?.textContent).toBe("40");
 });

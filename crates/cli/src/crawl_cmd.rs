@@ -165,7 +165,8 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         // Ctrl-C pauses; a second Ctrl-C exits at once (the file stays
-        // consistent: every page is written in its own transaction).
+        // consistent: results are committed in transactions a fraction of a
+        // second apart, so at most that much work is lost).
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
                 eprintln!("\npausing: waiting for requests in flight (Ctrl-C again to quit now)...");
@@ -177,25 +178,38 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             // Keep the sender alive so the crawl does not see a closed channel.
             std::future::pending::<()>().await;
         });
-        tokio::spawn(async move {
+        let speed = tokio::spawn(async move {
             let mut last = Instant::now() - Duration::from_secs(1);
+            let mut speed = SpeedSummary::default();
             while let Some(e) = event_rx.recv().await {
                 match e {
                     CrawlEvent::Warning(w) => eprintln!("warning: {w}"),
-                    CrawlEvent::Progress(p) if !quiet && last.elapsed() >= Duration::from_secs(1) => {
-                        last = Instant::now();
-                        eprintln!(
-                            "crawled {}  discovered {}  in flight {}",
-                            p.crawled, p.discovered, p.in_flight
-                        );
+                    CrawlEvent::Progress(p) => {
+                        speed.peak = speed.peak.max(p.urls_per_sec);
+                        speed.average = p.avg_urls_per_sec;
+                        if !quiet && last.elapsed() >= Duration::from_secs(1) {
+                            last = Instant::now();
+                            let eta = p
+                                .eta_secs
+                                .map(|s| format!("  ~{} left for the URLs found so far", duration(s)))
+                                .unwrap_or_default();
+                            eprintln!(
+                                "crawled {}  queued {}  in flight {}  {:.0} URLs/s{eta}",
+                                p.crawled, p.queued, p.in_flight, p.urls_per_sec
+                            );
+                        }
                     }
-                    CrawlEvent::Progress(_) => {}
                 }
             }
+            speed
         });
-        crawler.run(control_rx, Some(event_tx)).await
+        let started = Instant::now();
+        let result = crawler.run(control_rx, Some(event_tx)).await;
+        let mut speed = speed.await.unwrap_or_default();
+        speed.secs = started.elapsed().as_secs();
+        result.map(|s| (s, speed))
     });
-    let summary = match result {
+    let (summary, speed) = match result {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: {e}");
@@ -203,6 +217,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         }
     };
     print_summary(&summary, cmd.json, &file);
+    if !cmd.json && !quiet {
+        eprintln!(
+            "took {} at {:.0} URLs/s on average, {:.0} at peak",
+            duration(speed.secs),
+            speed.average,
+            speed.peak
+        );
+    }
     if summary.status == "paused" {
         eprintln!(
             "paused; resume with: spiderlens crawl --resume {}",
@@ -217,6 +239,23 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         return ExitCode::from(exit::USAGE);
     }
     ExitCode::from(exit::FETCHED)
+}
+
+/// End-of-crawl speed (spec 008 FR-030, FR-031).
+#[derive(Debug, Default)]
+struct SpeedSummary {
+    secs: u64,
+    average: f64,
+    peak: f64,
+}
+
+/// `42s`, `3m 05s`, `2h 10m`.
+fn duration(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
+        s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
+    }
 }
 
 fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {

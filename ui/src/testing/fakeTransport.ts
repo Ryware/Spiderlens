@@ -100,7 +100,7 @@ export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile>
     started: [],
     resumed: [],
     controls: [],
-    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, ...p })),
+    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, urls_per_sec: 0, avg_urls_per_sec: 0, eta_secs: null, ...p })),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
