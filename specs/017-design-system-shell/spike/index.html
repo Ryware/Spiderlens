@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>grid spike</title>
+<style>
+html,body,#root{margin:0;height:100%;font:13px system-ui,sans-serif}
+.vp{height:100%;overflow:auto;contain:strict}
+.row{position:absolute;left:0;right:0;height:28px;display:grid;grid-template-columns:34% 64px 120px 1fr 80px 80px 80px;align-items:center;white-space:nowrap}
+.row>span{overflow:hidden;text-overflow:ellipsis;padding:0 8px}
+.row:nth-child(even){background:#f4f6f6}
+.pill{border-radius:99px;padding:0 6px;background:#dff3ea}
+</style></head><body><div id="root"></div><script type="module" src="./main.tsx"></script></body></html>
