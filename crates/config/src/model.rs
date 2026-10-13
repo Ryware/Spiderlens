@@ -24,6 +24,10 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// Issue rule overrides (spec 009 FR-021, FR-022). Only what differs from
+    /// the rule catalogue's defaults is stored.
+    #[serde(skip_serializing_if = "IssueSettings::is_empty")]
+    pub issues: IssueSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -391,6 +395,70 @@ impl Default for ExtractionSettings {
     }
 }
 
+/// How urgent an issue is (spec 009). Declaration order is display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Priority {
+    High,
+    Medium,
+    Low,
+    Opportunity,
+}
+
+impl Priority {
+    pub const ALL: [Priority; 4] = [Self::High, Self::Medium, Self::Low, Self::Opportunity];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::High => "High",
+            Self::Medium => "Medium",
+            Self::Low => "Low",
+            Self::Opportunity => "Opportunity",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|p| p.label().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// Per-rule overrides of the issue rule catalogue (spec 009, plan D7). Rule
+/// ids are checked against the catalogue by `spiderlens-results`, which owns
+/// it; unknown ids are ignored there with a notice.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct IssueSettings {
+    pub rules: std::collections::BTreeMap<String, RuleOverride>,
+}
+
+impl IssueSettings {
+    pub fn is_empty(&self) -> bool {
+        self.rules.values().all(RuleOverride::is_empty)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RuleOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+}
+
+impl RuleOverride {
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.priority.is_none() && self.threshold.is_none()
+    }
+}
+
 /// What the crawl starts from: one URL or a list (FR-001).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -404,6 +472,41 @@ pub enum ModeInput {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn issue_settings_store_only_overrides() {
+        // Spec 009 FR-022: old profiles load unchanged and defaults are not written.
+        let c = CrawlConfig::default();
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("issues").is_none());
+        let back: CrawlConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(back, c);
+
+        let mut c = CrawlConfig::default();
+        c.issues.rules.insert(
+            "title.over".into(),
+            RuleOverride {
+                threshold: Some(70.0),
+                ..Default::default()
+            },
+        );
+        c.issues
+            .rules
+            .insert("canonical.missing".into(), RuleOverride::default());
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["issues"]["rules"]["title.over"], json!({ "threshold": 70.0 }));
+        let back: CrawlConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(back.issues.rules["title.over"].threshold, Some(70.0));
+    }
+
+    #[test]
+    fn priorities_parse_and_order() {
+        assert_eq!(Priority::parse("high"), Some(Priority::High));
+        assert_eq!(Priority::parse(" Opportunity "), Some(Priority::Opportunity));
+        assert_eq!(Priority::parse("urgent"), None);
+        assert!(Priority::High < Priority::Opportunity);
+        assert_eq!(serde_json::to_value(Priority::Medium).unwrap(), json!("medium"));
+    }
 
     #[test]
     fn all_defaults_match_spec() {

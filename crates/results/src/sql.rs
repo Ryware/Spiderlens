@@ -12,7 +12,36 @@ use spiderlens_engine::crawl::NotCrawledReason;
 
 const FLAGS: FunctionFlags = FunctionFlags::SQLITE_UTF8.union(FunctionFlags::SQLITE_DETERMINISTIC);
 
+/// Issue rule thresholds by rule id (spec 009 plan D3).
+pub type Thresholds = std::collections::HashMap<&'static str, f64>;
+
+/// `thr('<rule id>')`: the threshold in force. Not deterministic, so a
+/// settings change applies to the next query without new SQL.
+pub fn register_thresholds(
+    conn: &Connection,
+    values: std::sync::Arc<std::sync::RwLock<Thresholds>>,
+) -> rusqlite::Result<()> {
+    conn.create_scalar_function("thr", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
+        let key: String = ctx.get(0)?;
+        let map = values.read().unwrap_or_else(|e| e.into_inner());
+        Ok(map.get(key.as_str()).copied())
+    })
+}
+
 pub fn register(conn: &Connection) -> rusqlite::Result<()> {
+    conn.create_scalar_function("has_header", 2, FLAGS, |ctx| {
+        let headers: Option<String> = ctx.get(0)?;
+        let name: String = ctx.get(1)?;
+        Ok(headers.map(|h| has_header(&h, &name)))
+    })?;
+    conn.create_scalar_function("lang_code_ok", 1, FLAGS, |ctx| {
+        let s: Option<String> = ctx.get(0)?;
+        Ok(s.is_some_and(|s| lang_code_ok(&s)))
+    })?;
+    conn.create_scalar_function("weak_anchor", 1, FLAGS, |ctx| {
+        let s: Option<String> = ctx.get(0)?;
+        Ok(s.is_some_and(|s| weak_anchor(&s)))
+    })?;
     conn.create_scalar_function("natkey", 1, FLAGS, |ctx| {
         let s: Option<String> = ctx.get(0)?;
         Ok(s.map(|s| natkey(&s)))
@@ -69,6 +98,61 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
         }))
     })?;
     Ok(())
+}
+
+/// Whether a stored header list (a JSON array of name and value pairs)
+/// has `name`, ignoring case.
+pub fn has_header(json: &str, name: &str) -> bool {
+    serde_json::from_str::<Vec<(String, String)>>(json)
+        .is_ok_and(|h| h.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)))
+}
+
+/// The shape of an hreflang value (spec 009 research R6): `x-default`, or a
+/// 2 or 3 letter language, an optional 4 letter script and an optional
+/// region of 2 letters or 3 digits. `en-UK` passes the shape; known wrong
+/// regions are listed separately.
+pub fn lang_code_ok(s: &str) -> bool {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("x-default") {
+        return true;
+    }
+    let parts: Vec<&str> = s.split(['-', '_']).collect();
+    let alpha = |p: &str, n: std::ops::RangeInclusive<usize>| {
+        n.contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphabetic())
+    };
+    let region = |p: &str| {
+        (p.len() == 2 && alpha(p, 2..=2)) || (p.len() == 3 && p.chars().all(|c| c.is_ascii_digit()))
+    };
+    let ok = match parts.as_slice() {
+        [l] => alpha(l, 2..=3),
+        [l, x] => alpha(l, 2..=3) && (alpha(x, 4..=4) || region(x)),
+        [l, sc, r] => alpha(l, 2..=3) && alpha(sc, 4..=4) && region(r),
+        _ => false,
+    };
+    // Common mistakes search engines reject: UK is not a region code (GB is).
+    ok && !parts.iter().skip(1).any(|p| p.eq_ignore_ascii_case("uk"))
+}
+
+/// Link text that says nothing about its target (spec 009 research R7).
+pub fn weak_anchor(text: &str) -> bool {
+    const WEAK: [&str; 10] = [
+        "click here",
+        "here",
+        "read more",
+        "more",
+        "learn more",
+        "this page",
+        "link",
+        "go",
+        "continue",
+        "details",
+    ];
+    let t = text
+        .trim()
+        .trim_end_matches(['.', '!', '>', '»', '…'])
+        .trim()
+        .to_lowercase();
+    WEAK.contains(&t.as_str())
 }
 
 pub struct IndexabilityArgs {
@@ -432,6 +516,25 @@ fn percent_decode_utf8(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn issue_helpers() {
+        assert!(has_header(
+            r#"[["Strict-Transport-Security","max-age=1"]]"#,
+            "strict-transport-security"
+        ));
+        assert!(!has_header(r#"[["Server","x"]]"#, "strict-transport-security"));
+        for ok in ["en", "en-GB", "he-IL", "zh-Hant-TW", "es-419", "x-default"] {
+            assert!(lang_code_ok(ok), "{ok}");
+        }
+        for bad in ["english", "en-UK", "e", "en-GB-x", ""] {
+            assert!(!lang_code_ok(bad), "{bad}");
+        }
+        assert!(weak_anchor(" Click here "));
+        assert!(weak_anchor("Read more »"));
+        assert!(!weak_anchor("Shipping rates"));
+    }
+
     use super::*;
 
     #[test]

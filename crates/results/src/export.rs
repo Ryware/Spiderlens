@@ -145,12 +145,11 @@ pub fn write_csv(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
-    let (conn, features) = connect(crawl)?;
+    let settings = crate::issues::ResolvedSettings::default();
+    let (conn, features, _) = connect(crawl, &settings)?;
     let c = compile(q, &features)?;
     let cols = pick_columns(c.tab, columns)?;
-    for d in &c.derived {
-        crate::tabs::build_derived(&conn, *d)?;
-    }
+    crate::issues::build_derived_with(&conn, &features, &settings, &c.derived)?;
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;
     for (n, (_, col)) in cols.iter().enumerate() {

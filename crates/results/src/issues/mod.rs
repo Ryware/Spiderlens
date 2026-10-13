@@ -1,0 +1,437 @@
+//! The issue rule catalogue (spec 009, plan D1).
+//!
+//! A rule is data: a SQL condition over `urls u`, the URLs it applies to, the
+//! data it needs and the texts that explain it. The desktop app, the CLI and
+//! later features (report, compare, agents) all read this one catalogue, so
+//! a rule can never mean two things (FR-002). Thresholds are read through
+//! the `thr('<key>')` SQL function, so a settings change needs no new SQL
+//! and no user value ever reaches SQL text (plan D3).
+//!
+//! Rules live in one file per category under `rules/`; a later spec adds its
+//! file and one line in [`catalogue`].
+
+mod eval;
+pub mod rules;
+mod settings;
+
+use serde::Serialize;
+use ts_rs::TS;
+
+pub(crate) use eval::build_derived_with;
+pub use eval::{IssueCount, IssuesSummary, PriorityTotal, UrlIssue};
+pub use settings::{ResolvedRule, ResolvedSettings, SettingsNotice, resolve};
+pub use spiderlens_config::Priority;
+
+use crate::tabs::{Derived, Need};
+
+/// Increases whenever a rule is added, removed or changes its condition
+/// (FR-003).
+pub const RULES_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Category {
+    ResponseCodes,
+    Links,
+    PageTitles,
+    MetaDescription,
+    H1,
+    H2,
+    Headings,
+    Content,
+    Images,
+    Canonicals,
+    Directives,
+    Hreflang,
+    Pagination,
+    StructuredData,
+    Security,
+    Url,
+}
+
+impl Category {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ResponseCodes => "Response codes",
+            Self::Links => "Links",
+            Self::PageTitles => "Page titles",
+            Self::MetaDescription => "Meta description",
+            Self::H1 => "H1",
+            Self::H2 => "H2",
+            Self::Headings => "Headings",
+            Self::Content => "Content",
+            Self::Images => "Images",
+            Self::Canonicals => "Canonicals",
+            Self::Directives => "Directives",
+            Self::Hreflang => "Hreflang",
+            Self::Pagination => "Pagination",
+            Self::StructuredData => "Structured data",
+            Self::Security => "Security",
+            Self::Url => "URL",
+        }
+    }
+}
+
+/// Which URLs a rule looks at. Each maps to one SQL clause; rules sharing a
+/// scope are evaluated in one scan (plan D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Scope {
+    /// Every URL with a response or a blocking decision (Response codes tab).
+    AllUrls,
+    /// Internal URLs that were requested.
+    InternalUrls,
+    /// External URLs that were checked.
+    ExternalUrls,
+    /// Internal HTML pages that returned 2xx (spec 007 FR-010).
+    Pages,
+    /// Image URLs (Images tab).
+    Images,
+}
+
+impl Scope {
+    pub const ALL: [Scope; 5] = [
+        Self::AllUrls,
+        Self::InternalUrls,
+        Self::ExternalUrls,
+        Self::Pages,
+        Self::Images,
+    ];
+
+    pub fn sql(self) -> &'static str {
+        match self {
+            Self::AllUrls => crate::tabs::RESPONSES,
+            Self::InternalUrls => crate::tabs::INTERNAL,
+            Self::ExternalUrls => "u.internal = 0 AND u.state = 'crawled'",
+            Self::Pages => crate::tabs::HTML_OK,
+            Self::Images => crate::tabs::IMAGES,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AllUrls => "All URLs with a response or a blocking decision",
+            Self::InternalUrls => "Internal URLs that were requested",
+            Self::ExternalUrls => "External URLs that were checked",
+            Self::Pages => "Internal HTML pages that returned 2xx",
+            Self::Images => "Images",
+        }
+    }
+}
+
+/// Whether a rule's result for a URL depends on other URLs. Site-wide
+/// results can change until the crawl ends (FR-019).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RuleKind {
+    PerUrl,
+    SiteWide,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Unit {
+    Chars,
+    Ms,
+    Bytes,
+    Words,
+    Hops,
+    Links,
+    Depth,
+    Score,
+}
+
+impl Unit {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Chars => "characters",
+            Self::Ms => "ms",
+            Self::Bytes => "bytes",
+            Self::Words => "words",
+            Self::Hops => "hops",
+            Self::Links => "links",
+            Self::Depth => "levels",
+            Self::Score => "points",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct Threshold {
+    pub unit: Unit,
+    pub default: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+/// One issue check (FR-001). The rule id doubles as its threshold key.
+#[derive(Debug, Clone, Copy)]
+pub struct Rule {
+    /// Stable, never reused (FR-003): `<category>.<check>`.
+    pub id: &'static str,
+    pub name: &'static str,
+    pub category: Category,
+    pub priority: Priority,
+    pub scope: Scope,
+    pub kind: RuleKind,
+    /// SQL boolean over `urls u`, evaluated within [`Scope::sql`].
+    pub cond: &'static str,
+    pub threshold: Option<Threshold>,
+    pub need: Need,
+    pub derived: &'static [Derived],
+    /// SQL text expression: why this URL has the issue ("74 characters").
+    pub evidence: &'static str,
+    /// Standards references, such as a WCAG 2.2 success criterion.
+    pub standards: &'static [&'static str],
+    pub why: &'static str,
+    pub fix: &'static str,
+}
+
+/// Starts a rule; the `const fn` setters below fill in the rest, the way
+/// 007 builds its filters.
+pub const fn rule(
+    id: &'static str,
+    name: &'static str,
+    category: Category,
+    priority: Priority,
+    scope: Scope,
+    cond: &'static str,
+) -> Rule {
+    Rule {
+        id,
+        name,
+        category,
+        priority,
+        scope,
+        kind: RuleKind::PerUrl,
+        cond,
+        threshold: None,
+        need: Need::Base,
+        derived: &[],
+        evidence: "NULL",
+        standards: &[],
+        why: "",
+        fix: "",
+    }
+}
+
+impl Rule {
+    pub const fn site_wide(mut self) -> Self {
+        self.kind = RuleKind::SiteWide;
+        self
+    }
+    pub const fn threshold(mut self, unit: Unit, default: f64, min: f64, max: f64) -> Self {
+        self.threshold = Some(Threshold {
+            unit,
+            default,
+            min,
+            max,
+        });
+        self
+    }
+    pub const fn needs(mut self, need: Need) -> Self {
+        self.need = need;
+        self
+    }
+    pub const fn reads(mut self, derived: &'static [Derived]) -> Self {
+        self.derived = derived;
+        self
+    }
+    pub const fn evidence(mut self, sql: &'static str) -> Self {
+        self.evidence = sql;
+        self
+    }
+    pub const fn standards(mut self, refs: &'static [&'static str]) -> Self {
+        self.standards = refs;
+        self
+    }
+    pub const fn explain(mut self, why: &'static str, fix: &'static str) -> Self {
+        self.why = why;
+        self.fix = fix;
+        self
+    }
+}
+
+/// Every rule, in display order within its category.
+pub fn catalogue() -> &'static [Rule] {
+    static ALL: std::sync::LazyLock<Vec<Rule>> = std::sync::LazyLock::new(|| {
+        [
+            rules::response::RULES,
+            rules::links::RULES,
+            rules::titles::RULES,
+            rules::meta::RULES,
+            rules::headings::RULES,
+            rules::content::RULES,
+            rules::images::RULES,
+            rules::canonicals::RULES,
+            rules::directives::RULES,
+            rules::hreflang::RULES,
+            rules::other::RULES,
+            rules::security::RULES,
+            rules::url::RULES,
+        ]
+        .concat()
+    });
+    &ALL
+}
+
+/// A rule's position in the catalogue: its id in temp tables.
+pub fn index_of(id: &str) -> Option<usize> {
+    catalogue().iter().position(|r| r.id == id)
+}
+
+pub fn get(id: &str) -> Option<&'static Rule> {
+    catalogue().iter().find(|r| r.id == id)
+}
+
+/// What the app and CLI show for a rule (data-model.md `RuleInfo`).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct RuleInfo {
+    pub id: String,
+    pub name: String,
+    pub category: Category,
+    pub category_label: String,
+    pub priority: Priority,
+    pub default_priority: Priority,
+    pub enabled: bool,
+    pub kind: RuleKind,
+    pub scope: String,
+    pub threshold: Option<ThresholdInfo>,
+    pub standards: Vec<String>,
+    pub why: String,
+    pub fix: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ThresholdInfo {
+    pub unit: Unit,
+    pub unit_label: String,
+    pub value: f64,
+    pub default: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+/// The catalogue with `settings` applied.
+pub fn rule_infos(settings: &ResolvedSettings) -> Vec<RuleInfo> {
+    catalogue()
+        .iter()
+        .zip(&settings.rules)
+        .map(|(r, s)| RuleInfo {
+            id: r.id.into(),
+            name: display_name(r, s.threshold),
+            category: r.category,
+            category_label: r.category.label().into(),
+            priority: s.priority,
+            default_priority: r.priority,
+            enabled: s.enabled,
+            kind: r.kind,
+            scope: r.scope.label().into(),
+            threshold: r.threshold.map(|t| ThresholdInfo {
+                unit: t.unit,
+                unit_label: t.unit.label().into(),
+                value: s.threshold.unwrap_or(t.default),
+                default: t.default,
+                min: t.min,
+                max: t.max,
+            }),
+            standards: r.standards.iter().map(|s| s.to_string()).collect(),
+            why: r.why.into(),
+            fix: r.fix.into(),
+        })
+        .collect()
+}
+
+/// The rule's name with its current threshold: "Page title: over 70
+/// characters" (FR-016, US4 scenario 1).
+pub fn display_name(r: &Rule, value: Option<f64>) -> String {
+    match (r.threshold, value) {
+        (Some(t), v) => r.name.replace("{n}", &fmt_num(v.unwrap_or(t.default))),
+        (None, _) => r.name.to_string(),
+    }
+}
+
+pub fn fmt_num(v: f64) -> String {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        let n = v as i64;
+        let s = n.unsigned_abs().to_string();
+        let mut out = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if i > 0 && (s.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        if n < 0 { format!("-{out}") } else { out }
+    } else {
+        format!("{v}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn catalogue_is_complete_and_consistent() {
+        // FR-001, FR-003, FR-004, SC-008.
+        let all = catalogue();
+        assert_eq!(all.len(), 75, "first rule set (spec table, with readability)");
+        let mut ids = HashSet::new();
+        let mut cats = HashSet::new();
+        for r in all {
+            assert!(ids.insert(r.id), "duplicate rule id {}", r.id);
+            cats.insert(r.category);
+            let (cat, check) = r.id.split_once('.').expect("id is category.check");
+            assert!(!cat.is_empty() && !check.is_empty(), "{}", r.id);
+            assert!(
+                r.id.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_' || c.is_ascii_digit()),
+                "{}",
+                r.id
+            );
+            assert!(!r.name.is_empty(), "{} name", r.id);
+            assert!(r.why.len() > 20, "{} why", r.id);
+            assert!(r.fix.len() > 20, "{} fix", r.id);
+            assert!(!r.cond.trim().is_empty(), "{} cond", r.id);
+            assert_ne!(r.evidence, "NULL", "{} has no evidence", r.id);
+            match r.threshold {
+                Some(t) => {
+                    assert!(r.name.contains("{n}"), "{} names its threshold", r.id);
+                    assert!(
+                        r.cond.contains(&format!("thr('{}')", r.id)),
+                        "{} reads its threshold",
+                        r.id
+                    );
+                    assert!(
+                        t.min <= t.default && t.default <= t.max,
+                        "{} default in range",
+                        r.id
+                    );
+                }
+                None => {
+                    assert!(!r.name.contains("{n}"), "{}", r.id);
+                    assert!(!r.cond.contains("thr("), "{} reads a threshold it lacks", r.id);
+                }
+            }
+        }
+        assert_eq!(cats.len(), 16);
+    }
+
+    #[test]
+    fn names_carry_the_current_threshold() {
+        let r = get("title.over").unwrap();
+        assert_eq!(display_name(r, None), "Page title: over 60 characters");
+        assert_eq!(display_name(r, Some(70.0)), "Page title: over 70 characters");
+        assert_eq!(fmt_num(1_048_576.0), "1,048,576");
+        assert_eq!(fmt_num(2.5), "2.5");
+    }
+}

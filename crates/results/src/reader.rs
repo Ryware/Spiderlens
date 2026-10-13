@@ -5,11 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use rusqlite::functions::FunctionFlags;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use crate::features::Features;
+use crate::issues::ResolvedSettings;
+use crate::sql::Thresholds;
 use crate::tabs::Derived;
 use crate::view::View;
 use crate::{Error, Result, sql};
@@ -22,13 +25,19 @@ pub struct Reader {
     pub(crate) next_view: u32,
     /// Data version each derived table was built from.
     pub(crate) derived: HashMap<Derived, u64>,
+    /// Issue settings in force, and the values `thr()` reads (spec 009).
+    pub(crate) issue_settings: ResolvedSettings,
+    pub(crate) thresholds: Arc<RwLock<Thresholds>>,
     version: u64,
     data_version: i64,
 }
 
 /// Opens a crawl file the way every reader in this crate does: read-only,
-/// with the SQL functions registered.
-pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
+/// with the SQL functions registered. `thr()` reads `settings`' thresholds.
+pub(crate) fn connect(
+    path: &Path,
+    settings: &ResolvedSettings,
+) -> Result<(Connection, Features, Arc<RwLock<Thresholds>>)> {
     if !path.exists() {
         return Err(Error::invalid(format!("{} does not exist", path.display())));
     }
@@ -51,6 +60,8 @@ pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
     conn.pragma_update(None, "cache_size", -32_768)?;
     conn.pragma_update(None, "temp_store", "FILE")?;
     sql::register(&conn)?;
+    let thresholds = Arc::new(RwLock::new(settings.thresholds()));
+    sql::register_thresholds(&conn, thresholds.clone())?;
     let features = Features::detect(&conn)?;
     let limit = features.redirect_limit;
     conn.create_scalar_function(
@@ -66,12 +77,18 @@ pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         move |_| Ok(token.clone()),
     )?;
-    Ok((conn, features))
+    Ok((conn, features, thresholds))
 }
 
 impl Reader {
     pub fn open(path: &Path) -> Result<Self> {
-        let (conn, features) = connect(path)?;
+        Self::open_with(path, ResolvedSettings::default())
+    }
+
+    /// Opens with issue settings already applied (spec 009, the active
+    /// profile's or the file's own).
+    pub fn open_with(path: &Path, issue_settings: ResolvedSettings) -> Result<Self> {
+        let (conn, features, thresholds) = connect(path, &issue_settings)?;
         let data_version = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
         Ok(Self {
             conn,
@@ -80,6 +97,8 @@ impl Reader {
             views: HashMap::new(),
             next_view: 1,
             derived: HashMap::new(),
+            issue_settings,
+            thresholds,
             version: 1,
             data_version,
         })
@@ -103,13 +122,23 @@ impl Reader {
         Ok(self.version)
     }
 
+    /// Marks everything shown as changed without new crawl data (a settings
+    /// change), so views and counts refresh.
+    pub(crate) fn bump_version(&mut self) {
+        self.version += 1;
+    }
+
     /// Makes sure each derived table is current for this data version.
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
         let v = self.version()?;
         for d in needed {
             if self.derived.get(&d) != Some(&v) {
-                crate::tabs::build_derived(&self.conn, d)?;
-                self.derived.insert(d, v);
+                if d == Derived::IssueHits {
+                    self.build_issue_hits()?;
+                } else {
+                    crate::tabs::build_derived(&self.conn, d)?;
+                }
+                self.derived.insert(d, self.version);
             }
         }
         Ok(())

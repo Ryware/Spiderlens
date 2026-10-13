@@ -30,6 +30,9 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Sentence and syllable counts for the readability score (spec 009
+    /// FR-031).
+    Readability,
 }
 
 impl Need {
@@ -44,6 +47,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Readability => {
+                "Readability was not measured in this crawl file; it was made before SpiderLens scored readability."
+            }
         }
     }
 
@@ -55,6 +61,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Readability => "readability",
         }
     }
 }
@@ -94,6 +101,12 @@ pub enum Derived {
     OccH1,
     /// `temp.occ_h2(v, n)`: each first H2 and how many pages use it.
     OccH2,
+    /// `temp.occ_text(v, n)`: each visible text fingerprint and how many
+    /// pages share it (spec 009).
+    OccText,
+    /// `temp.issue_hits(rule, url_id)` for the issue settings in force
+    /// (spec 009 plan D4).
+    IssueHits,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -155,16 +168,19 @@ impl TabDef {
 
 /// Internal pages that were fetched successfully as HTML: the rows of the
 /// content tabs (FR-010).
-const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
+pub(crate) const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND content_kind(u.content_type) = 'html'";
 
-const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
+pub(crate) const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
 const EXTERNAL: &str = "u.internal = 0 AND u.state IN ('crawled', 'not_crawled')";
 /// URLs with a response, plus URLs blocked by robots.txt or by the crawl's
 /// rules (Assumptions: blocked URLs are listed here, not counted as errors).
-const RESPONSES: &str = "u.state = 'crawled' \
+pub(crate) const RESPONSES: &str = "u.state = 'crawled' \
      OR (u.check_only = 1 AND u.state = 'not_crawled' AND (u.fetched_at IS NOT NULL OR u.reason_detail IS NOT NULL)) \
      OR u.reason IN ('blocked_by_robots', 'robots_unavailable', 'excluded', 'not_included', 'outside_start_folder')";
+
+/// Image URLs: found in img elements first, or answering with an image type.
+pub(crate) const IMAGES: &str = "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')";
 
 const NORM_TITLE: &str = "norm_ws(u.title)";
 
@@ -532,7 +548,49 @@ pub fn tabs() -> &'static [TabDef] {
 }
 
 pub fn tab(id: &str) -> Option<&'static TabDef> {
-    tabs().iter().find(|t| t.id == id)
+    tabs().iter().chain(issue_tabs()).find(|t| t.id == id)
+}
+
+/// One tab per issue rule, `issue:<rule id>` (spec 009 FR-015): the URLs
+/// the rule flags, with its evidence. Views, counts, copy and export work on
+/// them as on any tab, so the CLI exports an issue with the same rows.
+pub fn issue_tabs() -> &'static [TabDef] {
+    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(build_issue_tabs);
+    &TABS
+}
+
+fn build_issue_tabs() -> Vec<TabDef> {
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    crate::issues::catalogue()
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut evidence = col("evidence", "Evidence", r.evidence, ValueKind::Text, 320).needs(r.need);
+            evidence.derived = r.derived.first().copied();
+            let mut all = filter("all", "All", "1").needs(r.need);
+            all.derived = Some(Derived::IssueHits);
+            let mut columns = vec![c::ADDRESS, evidence, c::STATUS_CODE];
+            if r.scope == crate::issues::Scope::Pages {
+                columns.push(c::TITLE);
+                columns.push(c::INDEXABILITY);
+            } else {
+                columns.push(c::CONTENT_TYPE);
+                columns.push(c::FINAL_STATE);
+            }
+            columns.extend([c::INLINKS, c::DEPTH.hidden(), c::FOUND_ON]);
+            TabDef {
+                id: leak(format!("issue:{}", r.id)),
+                title: r.name,
+                eligible: leak(format!(
+                    "u.id IN (SELECT h.url_id FROM temp.issue_hits h WHERE h.rule = {i})"
+                )),
+                columns,
+                filters: vec![all],
+                search_column: Some("evidence"),
+                scoped: false,
+            }
+        })
+        .collect()
 }
 
 fn build() -> Vec<TabDef> {
@@ -764,8 +822,7 @@ fn build() -> Vec<TabDef> {
         TabDef {
             id: "images",
             title: "Images",
-            // Image URLs: found in img elements first, or answering with an image type.
-            eligible: "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')",
+            eligible: IMAGES,
             columns: vec![
                 c::ADDRESS,
                 ext("alt", "Alt text", IMG_ALT, Text, 280),
@@ -870,6 +927,14 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
+        Derived::OccText => conn.execute_batch(&format!(
+            "DROP TABLE IF EXISTS temp.occ_text;
+             CREATE TEMP TABLE occ_text(v INTEGER PRIMARY KEY, n INTEGER NOT NULL);
+             INSERT INTO temp.occ_text SELECT p.text_hash, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
+               WHERE {HTML_OK} AND p.text_hash IS NOT NULL AND p.word_count > 0 GROUP BY 1;"
+        )),
+        // Built by the reader or export, which know the issue settings.
+        Derived::IssueHits => Ok(()),
     }
 }
 
