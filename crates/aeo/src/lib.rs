@@ -11,3 +11,4 @@ pub mod llms;
 pub mod rules;
 pub mod score;
 pub mod signals;
+pub mod structured;
