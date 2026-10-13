@@ -4,7 +4,7 @@
 
 ## Summary
 
-Issues are computed on the read side of a crawl file, in the `spiderlens-results` crate that the desktop app and the CLI already share (spec 007). Every rule is an entry in a static catalogue: a SQL condition over `urls u` (with thresholds read through a settings function), the scope it applies to, the data it needs, the columns and evidence to show, and its texts. The 007 filters that test the same thing become references to rules, so filter and issue cannot drift. Evaluation fills one temporary table of hits per data version, incrementally while a crawl runs, never touching the engine's write path. No crawl file schema change is needed; the rule set version and the issue settings used go into two `meta` keys.
+Issues are computed on the read side of a crawl file, in the `spiderlens-results` crate that the desktop app and the CLI already share (spec 007). Every rule is an entry in a static catalogue: a SQL condition over `urls u` (with thresholds read through a settings function), the scope it applies to, the data it needs, the columns and evidence to show, and its texts. The 007 filters that test the same thing become references to rules, so filter and issue cannot drift. Evaluation fills one temporary table of hits per data version, incrementally while a crawl runs, never touching the engine's write path. The rule set version and the issue settings used go into two `meta` keys. The only schema change is for readability (FR-031): two nullable columns on `pages`, filled by the extraction walk, as one migration step.
 
 ## Technical Context
 
@@ -25,7 +25,7 @@ Issues are computed on the read side of a crawl file, in the `spiderlens-results
 | V Correct and complete data | Rules whose data is missing report "unavailable", never zero (FR-010); targets not fetched are "not checked" (FR-011). |
 | VI Scales by design | Hits are a temporary table on disk, counts are SQL aggregates, views reuse the 007 windowing. Nothing loads the crawl into memory. Performance impact stated below. |
 | VII Test first | Every rule has a positive and a negative fixture case; acceptance scenarios map to tests in [tasks.md](tasks.md). |
-| VIII Simplicity | Rules reuse the 007 filter mechanism (SQL conditions as data) instead of a new rule language. One new temp table, no new crate, no new dependency. |
+| VIII Simplicity | Rules reuse the 007 filter mechanism (SQL conditions as data) instead of a new rule language. One new temp table, no new crate, no new dependency. Readability adds two counters to an existing walk rather than a text-analysis library. |
 
 ## Design decisions
 
@@ -49,6 +49,8 @@ Issues are computed on the read side of a crawl file, in the `spiderlens-results
 
 **D10. UI.** A new "Issues" group at the top of the sidebar (above Crawl results) shows four priority rows with totals; expanding a priority lists its issues with counts (virtualised, keyboard navigable as a tree, `aria-expanded`). Selecting an issue opens the results table in an `issues` tab whose filter is the rule id: the 007 grid, column menu, search, copy and export work unchanged. An `IssueHeader` above the grid shows name, priority badge, threshold, why and fix (collapsible). The inspector gets an Issues section first in its list. A new optional "Issues" column (highest priority badge and count) is available on every tab. Settings › Issues joins the profile categories: search, rules grouped by category, a switch, a priority select and a threshold field per rule, "Reset to defaults". Priority colours come from new tokens in `tokens.css` (`--priority-high`, `--priority-medium`, `--priority-low`, `--priority-opportunity`) checked by the existing contrast test; colour is never the only signal (text label on every badge).
 
+**D11a. Readability is counted during extraction, not re-parsed (FR-031).** The spec 005 walk already visits every visible text node to count words; it also counts sentences (runs ending in `.`, `!`, `?` followed by space or end, minimum 1) and English syllables (vowel groups, minus a silent final `e`, minimum 1 per word), only when the page's `lang` is absent or starts with `en`. Two nullable integers, `pages.sentence_count` and `pages.syllable_count`, are added by a migration step (number taken at merge, expected 8); the score is a SQL expression, `206.835 - 1.015 * words / sentences - 84.6 * syllables / words`, clamped to 0..100, NULL under 100 words. Older files have NULL counts, so the column and rule report unavailable through a new `Need::Readability` feature id. Cost: one byte-class check per character already being scanned; the benchmark task verifies the 005 speed is kept.
+
 **D11. Exit code.** `spiderlens issues --fail-on <priority>` exits with a new code `ISSUES_FOUND`. Codes 0, 2 to 6 are taken; the number is taken at merge time as the next free one (expected 7), the same way migration steps are numbered, and recorded in the CLI contract.
 
 ## Structure
@@ -64,6 +66,8 @@ crates/results/src/
                     pagination.rs structured.rs security.rs url.rs
   tabs.rs           FilterDef.rule; filters that duplicate rules point at them; `issues` tab
   sql.rs            thr, headings_skip, lang_code_ok, weak_anchor, has_header
+crates/engine/src/extract/text.rs  sentence and syllable counting (readability)
+crates/engine/src/crawl/migrate.rs  step: pages.sentence_count, pages.syllable_count
 crates/config/src/model.rs     IssueSettings, RuleOverride, Priority
 crates/cli/src/issues_cmd.rs   spiderlens rules / spiderlens issues
 app/src-tauri/src/results.rs   issues_summary, url_issues, rule_catalogue, set_issue_settings
@@ -89,7 +93,7 @@ crates/test-fixtures/src/issues.rs   the issues fixture site (one positive and o
 
 ## Coordination
 
-- **Schema**: none (D8). Told to the Storage thread so the expected step 8 is free.
+- **Schema**: one additive step for the two readability columns (D11a), number taken at merge as main's latest plus one, per the Storage thread's rule. Issues themselves need no schema (D8).
 - **Spec 004** error classes are read through `u.error_class`; rules for "no response" use the classes as stored after PR 29.
 - **Specs 011, 014, 015, 016** add rule files to `issues/rules/` with the shape in D1; ids are namespaced by category (`sitemap.*`, `render.*`, `aeo.*`, `agent.*`).
 - **Exit code** number taken at merge (D11).

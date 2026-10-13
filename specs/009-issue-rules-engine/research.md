@@ -38,3 +38,9 @@
 ## R8. Exit code numbering
 
 - **Decision**: taken at merge time as the next free code (expected 7). Matches the migration step rule agreed with the Storage thread, avoids reserving numbers across parallel PRs.
+
+## R9. Readability formula
+
+- **Decision**: Flesch reading ease for English (and pages with no declared language), counted during extraction; no score under 100 words.
+- **Why**: it is the score SEO tools and editors know, needs only word, sentence and syllable counts, and the walk already has the text. Computing it later from stored HTML would re-parse every page and fail when HTML storage is off.
+- **Rejected**: a text-analysis crate (new dependency for three counters); scoring every language with the English formula (meaningless numbers for Hebrew or Chinese).

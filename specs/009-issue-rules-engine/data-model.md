@@ -1,6 +1,10 @@
 # Data Model: Issue Rules Engine
 
-No crawl file schema change. New `meta` keys, temporary tables in the reader connection, and a new section of the crawl profile.
+New `meta` keys, temporary tables in the reader connection, a new section of the crawl profile, and one additive migration step for readability.
+
+## Migration step (readability, FR-031)
+
+`ALTER`-free additive step in `migrate.rs` (number taken at merge): `pages.sentence_count INTEGER` and `pages.syllable_count INTEGER`, both nullable, NULL for pages in another language and for files made before the step. `data_features` gains `readability`.
 
 ## Catalogue (Rust, static)
 

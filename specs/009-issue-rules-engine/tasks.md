@@ -47,8 +47,13 @@ Code in one draft PR on branch `009-issue-rules-engine`. [P] = can run in parall
 
 - [ ] T024 Fixture files format 1 and pre-extraction: unavailable rules with reasons; read-only files never written
 
+## Readability (FR-031)
+
+- [ ] T024a Sentence and syllable counting in the extraction walk for English or undeclared pages, unit tests on known passages
+- [ ] T024b Migration step for `pages.sentence_count` and `pages.syllable_count` (number at merge), `Need::Readability`, Readability column on Internal, "Difficult to read" rule, unavailable on older files
+
 ## Polish
 
-- [ ] T025 Benchmarks in `benchmarks.md`: 100k crawl with live evaluation (SC-002), final pass 100k and 1M (SC-003), setting change (SC-004), memory (SC-006)
+- [ ] T025 Benchmarks in `benchmarks.md`: 100k crawl with live evaluation (SC-002), final pass 100k and 1M (SC-003), setting change (SC-004), memory (SC-006); extraction speed with readability against the 005 benchmark
 - [ ] T026 Screenshots of the Issues sidebar, header, inspector and settings in light and dark, `screenshots/`
 - [ ] T027 `/speckit-converge` reports Converged
