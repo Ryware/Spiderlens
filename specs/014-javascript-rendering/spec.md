@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: User description: "JavaScript rendering, in the spirit of Screaming Frog's JavaScript rendering mode: an opt-in crawl mode that renders pages in a real browser engine, extracts SEO data from the rendered page, compares it with the raw HTML, discovers links that only exist after JavaScript runs, lets the user control timeouts, blocked resources and rendering concurrency, shows rendered data and raw-versus-rendered differences in the results table, and records the data the later answer engine, generative engine and AI agent features need. Crawl speed is the top priority: rendering must be opt-in and must not slow the raw crawl."
 

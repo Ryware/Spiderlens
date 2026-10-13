@@ -80,7 +80,7 @@ Licensing: Chromium is BSD-3-Clause; downloading or driving it is fine for an MI
 
 ## Decisions for the owner
 
-Each item has a recommended default, which the spec already assumes.
+**Resolved 2026-10-13**: Ryware approved the spec with the recommended option (a) for all five items below.
 
 1. **Browser source**: (a) installed Chrome or Edge first, else download with consent *(recommended)*; (b) always download a pinned version; (c) bundle in the installer.
 2. **What to render**: (a) every eligible internal HTML page, with optional include and exclude patterns *(recommended, matches SF)*; (b) a sample first (for example 100 pages per URL pattern), then only the patterns where rendering changes something. (b) is much faster on big sites but more complex; it could come later as a "Smart" mode.
