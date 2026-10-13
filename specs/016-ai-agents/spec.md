@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft, awaiting owner approval
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions (D1 to D6 in research.md)
 
 **Input**: User description: "AI agent features, both sides. First, agent readiness of the crawled site: can AI agents find, read and act on it (agent-facing user agents, llms.txt and machine-readable entry points, forms and actions reachable without JavaScript, API or MCP endpoints the site exposes). Second, SpiderLens itself as a tool for agents: a local MCP server over the crawl file and the command line, no cloud, no servers, secrets never stored. Desktop only. Crawl speed is the top priority: checks run from stored data, never in the fetch path."
 
