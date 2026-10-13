@@ -2,15 +2,19 @@
 // against the real token file and the real sources.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { ACCENTS, LEVELS } from "../shell/appearance";
 
 const here = join(process.cwd(), "src");
 const tokensCss = readFileSync(join(here, "styles/tokens.css"), "utf8");
 
 type Rgba = [number, number, number, number];
 
+/** Tokens declared in the rule whose selector list starts with `selector`. */
 function block(selector: string): Record<string, string> {
-  const start = tokensCss.indexOf(selector + " {");
-  const body = tokensCss.slice(start, tokensCss.indexOf("\n}", start));
+  const start = tokensCss.indexOf(selector);
+  if (start < 0) throw new Error(`no block ${selector}`);
+  const open = tokensCss.indexOf("{", start);
+  const body = tokensCss.slice(open, tokensCss.indexOf("\n}", open));
   const out: Record<string, string> = {};
   for (const m of body.matchAll(/--([\w-]+):\s*([^;]+);/g)) out[m[1]] = m[2].trim();
   return out;
@@ -44,10 +48,35 @@ function contrast(fg: Rgba, bg: Rgba) {
   return (a + 0.05) / (b + 0.05);
 }
 
-const light = block(":root");
-const themes = { light, dark: { ...light, ...block(':root[data-theme="dark"]') } };
+const light = block(":root {");
+const darkBlock = block(':root[data-tone="dark"],');
+const dark = { ...light, ...darkBlock };
+const levelBlock = (id: string) => block(`:root[data-level="${id}"] {`);
 
-describe.each(Object.entries(themes))("%s theme contrast (FR-018)", (_, t) => {
+// Every step as the token set a region actually sees (spec 018 R2). Island is
+// Light content plus Dark chrome, so it is covered by checking both.
+const levels: Record<string, Record<string, string>> = {
+  light,
+  soft: { ...light, ...levelBlock("soft") },
+  "island content": { ...light, ...levelBlock("island") },
+  "island chrome": dark,
+  dark,
+  deep: { ...dark, ...levelBlock("deep") },
+  midnight: { ...dark, ...levelBlock("midnight") },
+};
+const lightTone = new Set(["light", "soft", "island content"]);
+
+const ACCENT_TOKENS = ["accent", "accent-hover", "accent-fg", "accent-text", "accent-soft", "selection"];
+function accentBlock(id: string, tone: "light" | "dark"): Record<string, string> {
+  if (id === "teal") return Object.fromEntries(ACCENT_TOKENS.map((k) => [k, (tone === "light" ? light : dark)[k]]));
+  return block(tone === "light" ? `:root[data-accent="${id}"] {` : `:root[data-accent="${id}"][data-tone="dark"],`);
+}
+
+const combos = Object.entries(levels).flatMap(([lv, t]) =>
+  ACCENTS.map((a) => [`${lv} / ${a.name}`, { ...t, ...accentBlock(a.id, lightTone.has(lv) ? "light" : "dark") }] as const),
+);
+
+describe.each(combos)("%s contrast (spec 017 FR-018, spec 018 FR-017)", (_, t) => {
   const c = (name: string) => oklchToRgba(t[name]);
   const surfaces = ["bg", "surface", "surface-2", "sidebar", "chrome"];
 
@@ -70,8 +99,62 @@ describe.each(Object.entries(themes))("%s theme contrast (FR-018)", (_, t) => {
   );
 });
 
-test("dark theme only redefines tokens that light defines", () => {
-  expect(Object.keys(block(':root[data-theme="dark"]')).filter((k) => !(k in light))).toEqual([]);
+test("step blocks only redefine tokens that light defines (spec 018 FR-018)", () => {
+  const blocks = [darkBlock, ...["soft", "island", "deep", "midnight"].map(levelBlock)];
+  expect(blocks.flatMap((b) => Object.keys(b)).filter((k) => !(k in light))).toEqual([]);
+});
+
+test("Light and Dark keep the spec 017 values", () => {
+  expect(light.bg).toBe("oklch(0.985 0.002 195)");
+  expect(light.accent).toBe("oklch(0.50 0.095 188)");
+  expect(dark.bg).toBe("oklch(0.175 0.006 195)");
+  expect(dark.accent).toBe("oklch(0.80 0.10 178)");
+});
+
+describe.each(ACCENTS.filter((a) => a.id !== "teal"))("palette $name", (a) => {
+  test("defines exactly the six accent tokens in both tones (FR-009)", () => {
+    for (const tone of ["light", "dark"] as const) expect(Object.keys(accentBlock(a.id, tone)).sort()).toEqual([...ACCENT_TOKENS].sort());
+  });
+  test("Island chrome uses the dark-tone values", () => {
+    expect(block(`:root[data-level="island"][data-accent="${a.id}"] [data-region="chrome"] {`)).toEqual(accentBlock(a.id, "dark"));
+  });
+});
+
+test.each(ACCENTS)("$name swatch matches its palette in both tones", (a) => {
+  expect(block(`[data-swatch="${a.id}"] {`).swatch).toBe(accentBlock(a.id, "light").accent);
+  expect(block(`:root[data-tone="dark"] [data-swatch="${a.id}"],`).swatch).toBe(accentBlock(a.id, "dark").accent);
+});
+
+test.each(LEVELS.map((l) => [l.id]))("%s preview in Settings shows that step's sidebar and surface", (id) => {
+  const pv = block(`[data-preview="${id}"] {`);
+  const side = id === "island" ? levels["island chrome"] : levels[id];
+  const main = id === "island" ? levels["island content"] : levels[id];
+  expect(pv).toEqual({ "preview-side": side.sidebar, "preview-main": main.surface });
+});
+
+// FR-010: an accent is never mistaken for a status colour.
+function hue(v: string): { c: number; h: number } {
+  const m = v.match(/^oklch\(\s*[\d.]+\s+([\d.]+)\s+([\d.]+)/)!;
+  return { c: Number(m[1]), h: Number(m[2]) };
+}
+test.each(ACCENTS.flatMap((a) => (["light", "dark"] as const).map((tone) => [a.name, tone, a.id] as const)))(
+  "%s (%s tone) sits 20 degrees of hue away from every status colour",
+  (_, tone, id) => {
+    const acc = hue(accentBlock(id, tone).accent);
+    if (acc.c < 0.03) return; // no visible hue (Cloud)
+    const statuses = Object.values(levels).flatMap((t) => ["ok", "info", "warn", "bad"].map((m) => hue(t[m]).h));
+    for (const h of statuses) {
+      const d = Math.abs(acc.h - h) % 360;
+      expect(Math.min(d, 360 - d)).toBeGreaterThanOrEqual(20);
+    }
+  },
+);
+
+test("every palette in the token file is offered in the app, and the reverse (FR-011)", () => {
+  const inCss = [...tokensCss.matchAll(/:root\[data-accent="([\w-]+)"\] \{/g)].map((m) => m[1]);
+  expect(["teal", ...inCss].sort()).toEqual(ACCENTS.map((a) => a.id).sort());
+  const levelsInCss = [...tokensCss.matchAll(/:root\[data-level="([\w-]+)"\] \{/g)].map((m) => m[1]);
+  expect(["light", "dark", ...levelsInCss].sort()).toEqual(LEVELS.map((l) => l.id).sort());
 });
 
 // SC-004: no raw colors or one-off sizes outside the token file.

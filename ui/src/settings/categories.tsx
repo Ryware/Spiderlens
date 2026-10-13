@@ -12,7 +12,7 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -21,6 +21,8 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
+  /** An app preference, not part of the crawl profile (spec 018 FR-012). */
+  app?: boolean;
 }
 
 export const categories: Category[] = [
@@ -32,6 +34,13 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "appearance",
+    title: "Appearance",
+    description: "Brightness and accent colour. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
 ];
 
 export const issuesFor = (setup: CrawlSetup, c: Category) => c.prefixes.flatMap((p) => issuesAt(setup.issues, p));

@@ -52,7 +52,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
   if (run.running && p?.eta_secs != null) figures.push([`~${formatElapsed(p.eta_secs * 1000)}`, "left"]);
   const speed = setup.speedPreset === "polite" ? "Polite" : setup.speedPreset === "fast" ? "Fast" : "Custom speed";
   return (
-    <footer aria-label="Crawl status" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">
+    <footer aria-label="Crawl status" data-region="chrome" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">
       <span className="flex min-w-0 items-center gap-1.5 text-fg-2" role="status" data-phase={run.phase}>
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dots[info.tone], run.running && "motion-safe:animate-pulse")} />
         <span className="truncate">
