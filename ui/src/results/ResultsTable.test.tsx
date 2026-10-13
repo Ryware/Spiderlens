@@ -398,11 +398,7 @@ test("each_tab_remembers_its_filter_search_sort_and_row", async () => {
   await focusedIs(`https://example.com/page-${Number(picked) - 1}`);
 });
 
-// Known bug: on a tab switch ResultsView renders once with the new tab but
-// the old selection, and the focus effect saves the old tab's row id into the
-// new tab's session (ResultsView.tsx, the onFocusId/onSession effect), so the
-// new tab opens with that URL selected.
-test.fails("a_tab_opened_for_the_first_time_has_no_row_selected", async () => {
+test("a_tab_opened_for_the_first_time_has_no_row_selected", async () => {
   const t = await openInternal();
   fireEvent.click(rows()[3]);
   await focusedIs("https://example.com/page-3");
