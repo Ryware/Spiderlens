@@ -131,9 +131,12 @@ export function AppShell({ transport }: { transport: Transport }) {
     if (path && (await crawl.open(path))) setSection((s) => (s === "overview" ? "internal" : s));
   }, [transport, crawl]);
 
+  const hasInput = setup.config?.mode === "list" || setup.startUrl.trim() !== "";
   const commands: Command[] = useMemo(
     () => [
-      { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: setup.canStart && !crawl.active, run: startCrawl },
+      // Not gated on setup.canStart either: Mod+Enter right after typing must
+      // reach startCrawl, which checks the field as it is now (like Enter).
+      { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: hasInput && !crawl.active, run: startCrawl },
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
       { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
@@ -162,7 +165,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "theme-dark", title: "Appearance: Dark", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "dark" }) },
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
+    [setup, crawl, retry, hasInput, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
   );
 
   const run = useCallback(
@@ -202,7 +205,9 @@ export function AppShell({ transport }: { transport: Transport }) {
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {resultTab && crawl.path ? (
             <ResultsView
-              key={crawl.path}
+              // One instance per tab: a tab switch must not carry the old
+              // tab's selection into the new tab's first render.
+              key={`${crawl.path}\n${resultTab.id}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -213,7 +218,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
           ) : (
             <CrawlOverview run={crawl} />
           )}
