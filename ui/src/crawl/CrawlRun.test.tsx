@@ -96,3 +96,30 @@ test("elapsed_time_format", () => {
   expect(formatElapsed(65_000)).toBe("01:05");
   expect(formatElapsed(3_723_000)).toBe("1:02:03");
 });
+
+test("enter_right_after_typing_crawls_what_is_in_the_field", async () => {
+  // Found on a Mac: typing "r", then the rest, then Enter before the debounced
+  // check of "ryware.dev" landed crawled https://r/ and put it in the field.
+  const t = fakeTransport();
+  render(<App transport={t} />);
+  const field = (await screen.findByLabelText("Start URL")) as HTMLInputElement;
+  fireEvent.change(field, { target: { value: "r" } });
+  await waitFor(() => expect(field.getAttribute("aria-invalid")).toBe("true"));
+  fireEvent.change(field, { target: { value: "ryware.dev" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await screen.findByRole("button", { name: /Pause/ });
+  expect(t.crawls.started.map((c) => c.startUrl)).toEqual(["https://ryware.dev/"]);
+  expect(field.value).toBe("https://ryware.dev/");
+});
+
+test("enter_on_a_host_without_a_dot_shows_an_error_and_does_not_crawl", async () => {
+  const t = fakeTransport();
+  render(<App transport={t} />);
+  const field = (await screen.findByLabelText("Start URL")) as HTMLInputElement;
+  fireEvent.change(field, { target: { value: "ryware" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(field.getAttribute("aria-invalid")).toBe("true"));
+  expect(t.crawls.started).toEqual([]);
+  expect(field.value).toBe("ryware");
+  expect(button(/Start$/).disabled).toBe(true);
+});

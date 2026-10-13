@@ -128,7 +128,10 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
       const issues: Issue[] = [];
       let normalized: string | null = null;
       if (config.mode === "spider" && startUrl !== null) {
-        if (/^[a-z0-9.-]+(\/.*)?$/i.test(startUrl.replace(/^https?:\/\//, "")) && !startUrl.includes("!")) {
+        const host = startUrl.replace(/^https?:\/\//, "").split(/[/:]/)[0];
+        if (/^[a-z0-9-]+$/i.test(host) && host !== "localhost") {
+          issues.push({ path: "input.start_url", severity: "error", code: "start_url_no_dot", message: `"${host}" is not a full web address.` });
+        } else if (/^[a-z0-9.-]+(\/.*)?$/i.test(startUrl.replace(/^https?:\/\//, "")) && !startUrl.includes("!")) {
           normalized = startUrl.includes("://") ? startUrl : `https://${startUrl}/`;
         } else {
           issues.push({ path: "input.start_url", severity: "error", code: "start_url_invalid", message: "The start URL is not usable." });
