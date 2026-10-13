@@ -414,13 +414,6 @@ impl Crawler {
         if let Some(s) = &start {
             store.set_meta("start_url", s.as_str())?;
         }
-        // What this file holds, read by the results view (spec 007 plan D3).
-        let features = if config.extraction.store_html {
-            "extraction,timing,raw_html"
-        } else {
-            "extraction,timing"
-        };
-        store.set_meta("data_features", features)?;
 
         store.begin()?;
         let source = match config.mode {
