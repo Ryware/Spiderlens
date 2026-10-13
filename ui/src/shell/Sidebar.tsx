@@ -28,8 +28,8 @@ const later: NavItem[] = [
   { id: "llms-txt", title: "llms.txt", icon: Sparkles, later: "M4" },
 ];
 
-/** Where you are (FR-003). Result tabs fill in when crawls arrive (specs 003, 007). */
-export function Sidebar({ active, onSelect, collapsed, onAbout }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void }) {
+/** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
+export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean }) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
     const Icon = it.icon;
@@ -59,7 +59,7 @@ export function Sidebar({ active, onSelect, collapsed, onAbout }: { active: stri
     <nav aria-label="Sections" className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
       {heading("Crawl results")}
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, false))}</ul>
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

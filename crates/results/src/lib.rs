@@ -25,7 +25,7 @@ pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row}
 pub use features::Features;
 pub use reader::Reader;
 pub use rusqlite::InterruptHandle;
-pub use sql::{ci_contains, natural_cmp, norm_ws};
+pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
 pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, tab, tabs};
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
 

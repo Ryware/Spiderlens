@@ -17,6 +17,7 @@ use spiderlens_results::{
     UrlScope, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 type Cmd<T> = Result<T, String>;
 type Job = Box<dyn FnOnce(&mut Reader) + Send>;
@@ -244,18 +245,25 @@ pub async fn url_list(
         .await
 }
 
-/// Selected rows as TSV with a header (FR-026); over 10,000 rows is refused.
+/// Puts the selected rows on the clipboard as TSV with a header (FR-026)
+/// and returns the text; over 10,000 rows is refused. Written from here
+/// because a web view only allows clipboard writes during the click itself.
 #[tauri::command]
 pub async fn copy_rows(
+    app: AppHandle,
     state: tauri::State<'_, State>,
     path: PathBuf,
     view: u32,
     ranges: Vec<(u32, u32)>,
     columns: Vec<String>,
 ) -> Cmd<String> {
-    state
+    let text = state
         .with(&path, move |r| r.copy_tsv(view, &ranges, &columns).map_err(err))
-        .await
+        .await?;
+    app.clipboard()
+        .write_text(text.clone())
+        .map_err(|e| format!("Could not copy: {e}"))?;
+    Ok(text)
 }
 
 /// Starts a CSV export on its own thread; progress arrives as

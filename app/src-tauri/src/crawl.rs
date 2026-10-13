@@ -79,6 +79,15 @@ pub struct Report {
     path: PathBuf,
     summary: CrawlSummary,
     reasons: Vec<ReasonCount>,
+    /// Crawled URLs that got no response, per error class (spec 007 FR-004).
+    failures: Vec<FailureCount>,
+}
+
+#[derive(Serialize, Clone)]
+struct FailureCount {
+    class: String,
+    label: String,
+    count: u64,
 }
 
 impl Report {
@@ -92,10 +101,20 @@ impl Report {
                 count: *n,
             })
             .collect();
+        let failures = summary
+            .failed_by_class
+            .iter()
+            .map(|(c, n)| FailureCount {
+                label: spiderlens_results::error_class_label(c).to_string(),
+                class: c.clone(),
+                count: *n,
+            })
+            .collect();
         Self {
             path,
             summary,
             reasons,
+            failures,
         }
     }
 }

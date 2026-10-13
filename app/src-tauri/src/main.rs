@@ -27,6 +27,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?.join("profiles");
             app.manage(settings::State::open(dir)?);

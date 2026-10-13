@@ -89,7 +89,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
 /**
  * The Overview section once a crawl exists: live figures while it runs, then
  * why URLs were not crawled, robots.txt per site and sitemaps (spec 003 US2).
- * The URL table itself arrives with spec 007.
+ * The URLs themselves are in the result tabs (spec 007).
  */
 export function CrawlOverview({ run }: { run: CrawlRun }) {
   const p = run.progress;
@@ -146,6 +146,18 @@ export function CrawlOverview({ run }: { run: CrawlRun }) {
                 <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
               </tr>
             ))}
+          </Table>
+        )}
+        {run.report?.failures && run.report.failures.length > 0 && (
+          <Table title="Failed without a response" head={["Error", "URLs"]}>
+            {[...run.report.failures]
+              .sort((a, b) => b.count - a.count)
+              .map((f) => (
+                <tr key={f.class} data-failure={f.class}>
+                  <td className="px-3 py-1.5">{f.label}</td>
+                  <td className="px-3 py-1.5 text-right text-bad tabular">{count(f.count)}</td>
+                </tr>
+              ))}
           </Table>
         )}
         {s && s.hosts.length > 0 && (
