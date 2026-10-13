@@ -74,6 +74,23 @@ test("not_collected_columns_are_marked", async () => {
   expect(within(h1).getByLabelText("Not collected")).toBeTruthy();
 });
 
+test("content_columns_and_filters_work_when_the_crawl_collected_them", async () => {
+  const urls = fakeUrls(30).map((u, i) => ({ ...u, h1: i % 3 === 0 ? null : `Heading ${i}` }));
+  const t = fakeTransport(urls);
+  t.results.features = ["base", "extraction", "timing", "raw_html"];
+  await openInternal(t);
+  const h1 = within(grid()).getByRole("columnheader", { name: /H1/ });
+  expect(within(h1).queryByLabelText("Not collected")).toBeNull();
+  expect(within(rows()[1]).getAllByRole("gridcell")[3].textContent).toBe("Heading 1");
+  const missing = (await screen.findByRole("button", { name: /Missing H1/ })) as HTMLButtonElement;
+  expect(missing.disabled).toBe(false);
+  // Every third URL has no H1 (10 of 30); page-9 is a 404, not an HTML page.
+  await waitFor(() => expect(missing.textContent).toBe("Missing H19"));
+  fireEvent.click(missing);
+  await waitFor(() => expect(t.results.opened.at(-1)?.filter).toBe("missing_h1"));
+  await waitFor(() => expect(rowCount()).toContain("9 URLs"));
+});
+
 test("selection_copies_rows_with_a_header", async () => {
   const t = await openInternal();
   fireEvent.click(rows()[0]);
@@ -103,6 +120,9 @@ test("keyboard_moves_the_selection_and_feeds_the_detail_pane", async () => {
   fireEvent.click(within(details).getByRole("radio", { name: "Headings 2" }));
   expect(await within(details).findByText("Section one")).toBeTruthy();
   expect(within(details).getByText("H2")).toBeTruthy();
+  fireEvent.click(within(details).getByRole("radio", { name: /^Images/ }));
+  expect(await within(details).findByText("No alt attribute")).toBeTruthy();
+  expect(within(details).getByText("Empty alt")).toBeTruthy();
 });
 
 test("export_shows_progress_then_where_the_file_went", async () => {

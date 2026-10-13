@@ -3,6 +3,7 @@
 // (crates/results/tests).
 
 import type { ColumnDef } from "../generated/ColumnDef";
+import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
@@ -14,6 +15,8 @@ export interface FakeUrl {
   title: string | null;
   depth: number;
   internal: boolean;
+  /** First H1, when the crawl collected page content. */
+  h1?: string | null;
 }
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
@@ -51,13 +54,15 @@ export const fakeTabs: TabDef[] = [
   },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: null, depth: u.depth })[c] ?? null;
+const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
 
 export interface FakeResults {
   urls: FakeUrl[];
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
+  /** What the open crawl file holds; base only unless a test adds more. */
+  features: Need[];
   /** Announces that the open view's full order is ready. */
   ready(): void;
   progress(p: Partial<ExportProgress>): void;
@@ -93,6 +98,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     copied: [],
     exports: [],
     opened: [],
+    features: ["base"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
     },
@@ -107,6 +113,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     const tab = fakeTabs.find((t) => t.id === q.tab)!;
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
+    if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
@@ -126,7 +133,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
-    return [id, ...tab.columns.map((c) => (c.need === "base" ? cell(u, c.id) : null))];
+    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id) : null))];
   };
   const page = (view: number, from: number, count: number) => {
     const v = views.get(view)!;
@@ -135,7 +142,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   return {
     results,
     resultsTabs: async () => fakeTabs,
-    resultsOpen: async () => ({ features: { available: ["base"], redirect_limit: 10 } }),
+    resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
       results.opened.push({ tab: q.tab, filter: q.filter, search: q.search, sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null });
@@ -160,7 +167,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
       for (const f of t.filters) {
-        if (f.need !== "base") {
+        if (!results.features.includes(f.need)) {
           counts[f.id] = null;
           unavailable[f.id] = "Not collected yet: arrives with page extraction.";
         } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null }).ids.length;
@@ -216,7 +223,15 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false }].filter(() => id !== -1), headings: [], unavailable: null }
         : kind === "headings"
           ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
-          : { total: 0, from, rows: [], headings: [], unavailable: null },
+          : kind === "images"
+            ? {
+                total: 2,
+                from,
+                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false })),
+                headings: [],
+                unavailable: null,
+              }
+            : { total: 0, from, rows: [], headings: [], unavailable: null },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;
       const cols = columns.map((c) => v.tab.columns.findIndex((x) => x.id === c));
