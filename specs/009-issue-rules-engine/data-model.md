@@ -29,6 +29,7 @@ pub struct Rule {
     derived: &'static [Derived],  // temp tables it reads
     columns: &'static [&'static str], // 007 column ids shown with the issue
     evidence: &'static str,       // SQL expression giving the evidence text for one row
+    standards: &'static [&'static str], // e.g. "WCAG 2.2 1.1.1" (spec 026); empty for most rules
     why: &'static str,
     fix: &'static str,
 }
