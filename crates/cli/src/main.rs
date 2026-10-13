@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod crawl_cmd;
+mod export_cmd;
 mod options;
 
 use std::io::Write;
@@ -57,6 +58,8 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// Export a tab and filter of a crawl file as CSV (same rows as the app).
+    Export(Box<export_cmd::ExportArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -147,6 +150,7 @@ fn main() -> ExitCode {
         Command::Report(args) => crawl_cmd::run_report(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

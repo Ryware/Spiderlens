@@ -48,6 +48,9 @@ export function useCrawlRun(transport: Transport) {
   const elapsedBefore = useRef(0);
   const segmentStart = useRef<number | null>(null);
   const samples = useRef<Sample[]>([]);
+  // When the last progress event arrived: the engine's active time is
+  // counted on from there between events.
+  const progressAt = useRef(0);
   const idRef = useRef<number | null>(null);
   // A crawl that fails at once can finish before its start call returns.
   const early = useRef(new Map<number, CrawlFinished>());
@@ -70,6 +73,7 @@ export function useCrawlRun(transport: Transport) {
         if (p.id !== idRef.current) return;
         const t = Date.now();
         samples.current = [...samples.current.filter((x) => t - x.t <= RATE_WINDOW_MS), { t, crawled: p.crawled }];
+        progressAt.current = t;
         setState((s) => ({ ...s, progress: p }));
       }),
       transport.onCrawlWarning((w) => {
@@ -126,6 +130,32 @@ export function useCrawlRun(transport: Transport) {
     return begin(() => transport.crawlResume(path), { report: null });
   }, [transport, begin, state.path]);
 
+  /** Opens a saved crawl file to browse its results (spec 007 D14). */
+  const open = useCallback(
+    async (path: string) => {
+      if (activePhases.includes(state.phase)) return false;
+      try {
+        const report = await transport.crawlSummary(path);
+        const status = report.summary.status;
+        elapsedBefore.current = report.summary.active_ms ?? 0;
+        segmentStart.current = null;
+        samples.current = [];
+        setState({
+          ...initial,
+          phase: status === "running" ? "stopped" : (status as Phase),
+          path,
+          report,
+          target: report.summary.hosts[0]?.host ?? path.split(/[\\/]/).pop() ?? path,
+        });
+        return true;
+      } catch (e) {
+        setState((s) => ({ ...s, error: `Could not open ${path}: ${String(e)}` }));
+        return false;
+      }
+    },
+    [transport, state.phase],
+  );
+
   const pause = useCallback(() => {
     if (state.id === null || state.phase !== "running") return;
     setState((s) => ({ ...s, phase: "pausing" }));
@@ -148,7 +178,15 @@ export function useCrawlRun(transport: Transport) {
     transport.crawlStop(state.id);
   }, [transport, state.id, state.phase, resume]);
 
-  const elapsedMs = elapsedBefore.current + (segmentStart.current !== null ? Math.max(0, now - segmentStart.current) : 0);
+  // The engine's own active time once it reports one (it survives restarts
+  // of the app); before that, time measured here.
+  const p = state.progress;
+  const fallback = elapsedBefore.current + (segmentStart.current !== null ? Math.max(0, now - segmentStart.current) : 0);
+  const elapsedMs = running
+    ? p?.active_ms != null
+      ? p.active_ms + Math.max(0, now - progressAt.current)
+      : fallback
+    : (state.report?.summary.active_ms ?? p?.active_ms ?? fallback);
   const w = samples.current;
   const rate =
     running && w.length >= 2 && w[w.length - 1].t > w[0].t
@@ -162,6 +200,7 @@ export function useCrawlRun(transport: Transport) {
     elapsedMs,
     rate,
     start,
+    open,
     pause,
     resume,
     stop,

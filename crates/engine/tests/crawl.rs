@@ -869,3 +869,49 @@ async fn external_checks_record_robots_blocks_redirects_and_forbidden_robots() {
     assert_eq!(d.row(&site.url("closed.test", "/")).status, Some(200));
     assert_eq!(d.summary.external_checked, 3);
 }
+
+/// Spec 007 FR-004 and FR-005: active time accumulates across runs of the
+/// same file, and the summary breaks failures down by error class.
+#[tokio::test]
+async fn spec007_active_time_and_failures_by_class() {
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &["/a", "http://dead.test/x"])
+        .page(E, "/a", "", &[])
+        .start();
+    // dead.test resolves to a port nothing listens on: a connection error.
+    let closed: url::Url = spiderlens_test_fixtures::closed_port_url().parse().unwrap();
+    let dead: std::net::SocketAddr = format!("127.0.0.1:{}", closed.port().unwrap()).parse().unwrap();
+    let mut resolve = site.resolve();
+    resolve.push(("dead.test".into(), dead));
+    let mut c = CrawlConfig::default();
+    fast(&mut c);
+    // Otherwise the unreachable robots.txt blocks the check instead.
+    c.robots.mode = RobotsMode::Ignore;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.spiderlens");
+    let input = ModeInput::Spider {
+        start_url: site.url(E, "/"),
+    };
+    let run = |crawler: Crawler| async move {
+        let (_tx, rx) = watch::channel(Control::Run);
+        tokio::time::timeout(Duration::from_secs(60), crawler.run(rx, None))
+            .await
+            .expect("crawl finishes")
+            .unwrap()
+    };
+    let crawler = Crawler::create(&path, c, &input)
+        .unwrap()
+        .with_resolve(resolve.clone())
+        .with_retry_base(Duration::from_millis(10));
+    let summary = run(crawler).await;
+    assert!(summary.active_ms > 0);
+    assert_eq!(
+        summary.failed_by_class.get("connection"),
+        Some(&1),
+        "{:?}",
+        summary.failed_by_class
+    );
+    let first = summary.active_ms;
+    let again = run(Crawler::open(&path).unwrap().with_resolve(resolve)).await;
+    assert!(again.active_ms >= first, "{} < {first}", again.active_ms);
+}

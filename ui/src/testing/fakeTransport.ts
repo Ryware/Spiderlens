@@ -4,6 +4,7 @@
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type { CrawlFinished, CrawlProgress, CrawlReport, CrawlStatus, LoadedProfile, Presets, Transport } from "../transport";
 
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
@@ -87,7 +88,7 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
-export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls } {
+export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -102,14 +103,18 @@ export function fakeTransport(): Transport & { saved: Map<string, LoadedProfile>
     started: [],
     resumed: [],
     controls: [],
-    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, urls_per_sec: 0, avg_urls_per_sec: 0, eta_secs: null, ...p })),
+    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, urls_per_sec: 0, avg_urls_per_sec: 0, eta_secs: null, active_ms: 0, ...p })),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
+  const resultsApi = fakeResultsTransport(urls);
   return {
+    ...resultsApi,
     saved,
     crawls,
+    pickCrawlFile: async () => null,
+    pickCsvPath: async (name) => `/exports/${name}.csv`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",

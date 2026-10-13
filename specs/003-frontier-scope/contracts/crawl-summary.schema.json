@@ -18,6 +18,8 @@
     "external_checked": { "type": "integer", "minimum": 0 },
     "external_blocked": { "type": "integer", "minimum": 0, "description": "External checks robots.txt did not allow." },
     "url_limit_reached": { "type": "boolean" },
+    "failed_by_class": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 }, "description": "Spec 007 FR-005: failed URLs per error class." },
+    "active_ms": { "type": "integer", "minimum": 0, "description": "Spec 007 FR-004: time spent crawling, pauses excluded, across runs." },
     "hosts": {
       "type": "array",
       "items": {
