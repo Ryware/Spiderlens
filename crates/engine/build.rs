@@ -45,10 +45,29 @@ fn git_head() -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    // Rebuild when HEAD moves, so local builds carry the right id.
-    if let Ok(dir) = Command::new("git").args(["rev-parse", "--git-dir"]).output() {
-        let dir = String::from_utf8_lossy(&dir.stdout).trim().to_string();
+    // Rebuild when HEAD moves, so local builds carry the right id. A pull or
+    // commit on the same branch leaves HEAD alone and moves the branch ref
+    // (or packed-refs), so watch those too.
+    if let Some(dir) = git(&["rev-parse", "--git-dir"]) {
         println!("cargo:rerun-if-changed={dir}/HEAD");
     }
+    if let Some(common) = git(&["rev-parse", "--git-common-dir"]) {
+        let mut watch = vec![format!("{common}/packed-refs")];
+        if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+            watch.push(format!("{common}/{branch}"));
+        }
+        // A missing path would make cargo rerun this script on every build.
+        for path in watch.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git").args(args).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
 }
