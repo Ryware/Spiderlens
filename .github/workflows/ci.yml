@@ -82,6 +82,37 @@ jobs:
       - name: UI tests
         run: pnpm test
 
+  # The UI in a real browser (ui/e2e): layout, scrolling, keys and pointer,
+  # over the in-memory transport. No Rust needed.
+  e2e:
+    name: UI end-to-end (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium for Playwright
+        run: pnpm --filter spiderlens-ui exec playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: pnpm --filter spiderlens-ui test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.os }}
+          retention-days: 14
+          path: |
+            ui/playwright-report
+            ui/test-results
+
   build:
     name: Build (${{ matrix.name }})
     needs: test
