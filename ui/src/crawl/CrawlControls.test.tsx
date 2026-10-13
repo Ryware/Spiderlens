@@ -228,11 +228,7 @@ test("opening_a_bad_file_after_a_crawl_says_why", async () => {
   expect(phase()).toBe("Completed example.com");
 });
 
-// Bug: from the start state (no crawl yet, the usual case right after launch)
-// the error is stored in the run state but nothing renders it: the main area
-// shows StartState, which does not read run.error, and the status bar stays
-// "Idle". Opening a broken file fails silently.
-test.fails("opening_a_bad_file_from_the_start_state_says_why", async () => {
+test("opening_a_bad_file_from_the_start_state_says_why", async () => {
   const t = fakeTransport();
   t.pickCrawlFile = async () => "/crawls/bad.spiderlens";
   t.crawlSummary = async () => {

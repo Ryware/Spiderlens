@@ -209,7 +209,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
           ) : (
             <CrawlOverview run={crawl} />
           )}
