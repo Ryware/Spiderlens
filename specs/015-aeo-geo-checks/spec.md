@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: User description: "Answer engine optimisation (AEO) and generative engine optimisation (GEO): what SpiderLens checks and reports so a site is found, read and cited by AI answer engines and generative search. Robots rules for AI crawlers (GPTBot, ClaudeBot, PerplexityBot, Google-Extended and the others) and their user agents; llms.txt; structured data and entity clarity; content that is answerable and citable without JavaScript; freshness and author signals; per-page and site-wide scores with explanations. Use the JavaScript dependence data from spec 014 when the crawl was rendered. Crawl speed is the top priority: checks run from stored data, never in the fetch path."
 

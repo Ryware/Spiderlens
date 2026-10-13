@@ -99,7 +99,7 @@ Gap SpiderLens fills: no desktop crawler runs per-crawler, per-purpose access ch
 
 ## Decisions for the owner
 
-Each has a default the spec already assumes.
+**Resolved 2026-10-13**: Ryware approved the spec ("מאושר בכל") with the recommended option (a) for all four items below.
 
 1. **User agent probe (FR-012)**: (a) included, off by default, explicit start *(recommended: it is the only way to see firewall blocks and pay-per-crawl 402s)*; (b) left out, because it sends other vendors' user agent strings.
 2. **Score weights**: (a) Access 30, Readable without JavaScript 25, Answer readiness 20, Trust and freshness 15, Structured data 10 *(recommended, follows the evidence in R4)*; (b) equal parts of 20.
