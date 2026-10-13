@@ -11,8 +11,8 @@ cannot be read.
 
 ## `spiderlens crawl --resume FILE`
 
-New options allowed with `--resume`: `--speed`, `--max-concurrent`,
-`--max-per-host`, `--rate`, `--max-urls`, `--header-secret NAME=VALUE`,
+New options allowed with `--resume`: `--speed`, `--concurrency`,
+`--per-host`, `--rate`, `--max-urls`, `--header-secret NAME=VALUE`,
 `--no-backup`, `--disk-reserve MB`, `--json`, `--quiet`. Any other crawl
 option is refused as today. Behaviour:
 

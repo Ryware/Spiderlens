@@ -224,8 +224,8 @@ from `meta.config.app_version`.
 `StoredCrawlConfig` already records mid-crawl changes and can only express
 speed and retry changes. We add `Change::MaxUrls(Option<u64>)`; depth
 limits are scope (FR-011), so they stay fixed. The app's resume sheet shows
-speed and the URL limit; the CLI accepts `--speed`, `--max-concurrent`,
-`--max-per-host`, `--rate` and `--max-urls` with `--resume` and refuses the
+speed and the URL limit; the CLI accepts `--speed`, `--concurrency`,
+`--per-host`, `--rate` and `--max-urls` with `--resume` and refuses the
 rest as today. Each change adds a `config_changed` event.
 
 Secrets (FR-034) are already never written (`Secret(None)` on load). On
