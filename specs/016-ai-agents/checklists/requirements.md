@@ -26,6 +26,11 @@
 
 - [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
 - The spec names conventions (MCP, AI Catalog, RFC 9727, WebMCP attributes) because checking them is the product requirement; it does not name a library or the MCP SDK. Those choices are in [research.md](../research.md) for `/speckit-plan`.
 - No [NEEDS CLARIFICATION] markers. Owner decisions D1 to D6 are in research.md, each with the default the spec assumes: no built-in LLM calls, assistants may start crawls only when allowed (off), agent user agent test opt-in, entry point probes on, transparent score, standard input and output only.
 - Ownership: 015 (AI bot registry, llms.txt, AI robots evaluation), 014 (JavaScript dependence), 009 (rule shape and Issues view). Dependent rules are "not checked" until those land.
