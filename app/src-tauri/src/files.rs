@@ -340,6 +340,17 @@ pub fn recover_at_launch(app: &AppHandle) {
         }
         candidates.sort();
         candidates.dedup();
+        // Copies cut off by a crash during Save As.
+        let mut dirs: Vec<PathBuf> = candidates
+            .iter()
+            .filter_map(|p| p.parent().map(Path::to_path_buf))
+            .collect();
+        dirs.push(state.unsaved_dir.clone());
+        dirs.sort();
+        dirs.dedup();
+        for dir in &dirs {
+            file::remove_stale_partials(dir);
+        }
         let mut recovered = Vec::new();
         for path in candidates {
             if let Ok(Some(_)) = file::recover_path(&path) {
