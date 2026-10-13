@@ -4393,6 +4393,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "spiderlens-aeo"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "thiserror 2.0.21",
+ "ts-rs",
+ "url",
+]
+
+[[package]]
 name = "spiderlens-config"
 version = "0.1.0"
 dependencies = [
