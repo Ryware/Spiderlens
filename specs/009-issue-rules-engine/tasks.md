@@ -47,6 +47,11 @@ Code in one draft PR on branch `009-issue-rules-engine`. [P] = can run in parall
 
 - [ ] T024 Fixture files format 1 and pre-extraction: unavailable rules with reasons; read-only files never written
 
+## Crawl Analysis phase (plan D12)
+
+- [ ] T024c `analysis/` module: `Pass` trait, `PASSES`, runner with topological order, staleness from `analysis` meta, main or temp schema, progress and cancel; tests with two fake passes
+- [ ] T024d Run the phase at crawl end in the app and CLI before releasing the writer lock; on demand for opened files; `spiderlens analyse`; status bar progress; rules that read pass outputs report "available when the crawl ends"
+
 ## Readability (FR-031)
 
 - [ ] T024a Sentence and syllable counting in the extraction walk for English or undeclared pages, unit tests on known passages
