@@ -79,7 +79,7 @@ ignored tests now and enabled when spec 005 lands.
 
 ## After spec 005 (tracked here, done with 005)
 
-- [ ] T044 Enable the ignored tests: content tabs and filters (SC-002 complete), indexability, detail sections, raw HTML streaming
+- [x] T044 Content tabs and filters wired to spec 005's tables (SC-002 complete: `crates/results/tests/content.rs`), indexability, detail sections (size, response time, indexability, response headers, headings, anchor and alt text). Engine writes `data_features`; files from before it fall back to `extraction_version`. Settings › Page data › Store page HTML. Not yet: a viewer for the stored HTML (`spiderlens html` reads it today)
 - [ ] T045 Final `/speckit-converge` for 007
 
 ## Dependencies

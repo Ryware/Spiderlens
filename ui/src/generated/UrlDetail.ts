@@ -16,6 +16,30 @@ fetched_at: number | null,
  */
 redirects: Array<RedirectHop>, redirect_loop: boolean, redirect_over_limit: boolean, inlinks: number, outlinks: number, images: number, 
 /**
+ * Body size after transfer decoding, in bytes.
+ */
+size: number | null, 
+/**
+ * Request sent to last body byte read.
+ */
+response_ms: number | null, 
+/**
+ * "Indexable" or "Non-indexable: <reason>".
+ */
+indexability: string | null, 
+/**
+ * Response headers in received order, names lowercase (FR-020).
+ */
+headers: Array<[string, string]>, 
+/**
+ * Number of headings, for the Headings list.
+ */
+headings: number, 
+/**
+ * The page's HTML is stored in the crawl file.
+ */
+html_stored: boolean, 
+/**
  * Fields and sections this file has no data for, with the reason.
  */
 unavailable: Record<string, string>, };

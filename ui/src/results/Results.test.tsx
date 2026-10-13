@@ -74,6 +74,23 @@ test("not_collected_columns_are_marked", async () => {
   expect(within(h1).getByLabelText("Not collected")).toBeTruthy();
 });
 
+test("content_columns_and_filters_work_when_the_crawl_collected_them", async () => {
+  const urls = fakeUrls(30).map((u, i) => ({ ...u, h1: i % 3 === 0 ? null : `Heading ${i}` }));
+  const t = fakeTransport(urls);
+  t.results.features = ["base", "extraction", "timing", "raw_html"];
+  await openInternal(t);
+  const h1 = within(grid()).getByRole("columnheader", { name: /H1/ });
+  expect(within(h1).queryByLabelText("Not collected")).toBeNull();
+  expect(within(rows()[1]).getAllByRole("gridcell")[3].textContent).toBe("Heading 1");
+  const missing = (await screen.findByRole("button", { name: /Missing H1/ })) as HTMLButtonElement;
+  expect(missing.disabled).toBe(false);
+  // Every third URL has no H1 (10 of 30); page-9 is a 404, not an HTML page.
+  await waitFor(() => expect(missing.textContent).toBe("Missing H19"));
+  fireEvent.click(missing);
+  await waitFor(() => expect(t.results.opened.at(-1)?.filter).toBe("missing_h1"));
+  await waitFor(() => expect(rowCount()).toContain("9 URLs"));
+});
+
 test("selection_copies_rows_with_a_header", async () => {
   const t = await openInternal();
   fireEvent.click(rows()[0]);
@@ -95,8 +112,17 @@ test("keyboard_moves_the_selection_and_feeds_the_detail_pane", async () => {
   expect(rows()[1].getAttribute("aria-selected")).toBe("true");
   const details = screen.getByRole("complementary", { name: "Details" });
   await waitFor(() => expect(within(details).getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-1"));
-  expect(within(details).getByText("Headings.")).toBeTruthy();
+  expect(within(details).getByText("Indexable")).toBeTruthy();
+  expect(within(details).getByText("2.0 KB")).toBeTruthy();
+  expect(within(details).getByText("x-robots-tag")).toBeTruthy();
   await waitFor(() => expect(within(details).getByText("https://example.com/")).toBeTruthy());
+  expect(within(details).getByText("Home")).toBeTruthy();
+  fireEvent.click(within(details).getByRole("radio", { name: "Headings 2" }));
+  expect(await within(details).findByText("Section one")).toBeTruthy();
+  expect(within(details).getByText("H2")).toBeTruthy();
+  fireEvent.click(within(details).getByRole("radio", { name: /^Images/ }));
+  expect(await within(details).findByText("No alt attribute")).toBeTruthy();
+  expect(within(details).getByText("Empty alt")).toBeTruthy();
 });
 
 test("export_shows_progress_then_where_the_file_went", async () => {
@@ -141,4 +167,26 @@ test("open_crawl_file_browses_its_results", async () => {
   fireEvent.keyDown(window, { key: "o", code: "KeyO", ctrlKey: true });
   await waitFor(() => expect(screen.getByRole("region", { name: "Internal" })).toBeTruthy());
   await waitFor(() => expect(rows().length).toBeGreaterThan(0));
+});
+
+test("live_refresh_never_blanks_the_rows_on_screen", async () => {
+  const t = fakeTransport();
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect((screen.getByRole("button", { name: /Start$/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: /Start$/ }));
+  await screen.findByRole("button", { name: /Pause/ });
+  fireEvent.click(screen.getByRole("button", { name: "Internal" }));
+  act(() => t.results.ready());
+  await waitFor(() => expect(rows().length).toBeGreaterThan(2));
+  const filled = () => rows().every((r) => r.getAttribute("data-id") !== null && within(r).getAllByRole("gridcell")[0].textContent !== "");
+  expect(filled()).toBe(true);
+  // Every refresh while the crawl runs rebuilds the view; the rows on screen
+  // must stay filled through it, not drop to empty placeholders.
+  act(() => t.results.add(fakeUrls(2).map((u, i) => ({ ...u, id: 100 + i, url: `https://example.com/zz-${i}` }))));
+  await waitFor(() => expect(rowCount()).toContain("32 URLs"), { timeout: 3000 });
+  expect(filled()).toBe(true);
+  act(() => t.results.add(fakeUrls(1).map((u) => ({ ...u, id: 200, url: "https://example.com/zz-late" }))));
+  await waitFor(() => expect(rowCount()).toContain("33 URLs"), { timeout: 3000 });
+  expect(filled()).toBe(true);
 });

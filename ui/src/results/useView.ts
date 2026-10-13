@@ -46,6 +46,8 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
   const current = useRef<ViewState>(closed);
   current.current = state;
   const early = useRef(new Map<number, number>());
+  /** The rows last asked for: what is on screen. */
+  const shown = useRef<[number, number]>([0, 0]);
   const optsRef = useRef(opts);
   optsRef.current = opts;
   const [retry, setRetry] = useState(0);
@@ -106,6 +108,7 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
     (first: number, last: number) => {
       const s = current.current;
       if (!path || s.view === null || last <= first) return;
+      shown.current = [first, last];
       const view = s.view;
       const version = s.version;
       for (let p = Math.floor(first / PAGE); p <= Math.floor((last - 1) / PAGE); p++) {
@@ -128,6 +131,25 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
         );
       }
     },
+    // A new version empties the cache, so the table asks again.
+    [transport, path, state.version],
+  );
+
+  /** The pages covering what is on screen, shifted by `delta`, read at `version`. */
+  const rowsAround = useCallback(
+    async (view: number, version: number, total: number, delta: number) => {
+      const out = new Map<number, Row[]>();
+      const first = Math.max(0, shown.current[0] + delta);
+      const last = Math.min(total, shown.current[1] + delta);
+      if (!path || last <= first) return out;
+      const want: number[] = [];
+      for (let p = Math.floor(first / PAGE); p <= Math.floor((last - 1) / PAGE); p++) want.push(p);
+      const got = await Promise.all(want.map((p) => transport.viewRows(path, view, p * PAGE, PAGE)));
+      got.forEach((g, k) => {
+        if (g.version === version) out.set(want[k], g.rows);
+      });
+      return out;
+    },
     [transport, path],
   );
 
@@ -135,14 +157,30 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
     const s = current.current;
     if (!path || s.view === null || !s.ready) return null;
     const view = s.view;
-    const r = await transport.viewRefresh(path, view, optsRef.current.anchors());
+    const anchors = optsRef.current.anchors();
+    const r = await transport.viewRefresh(path, view, anchors);
     if (!r || current.current.view !== view) return r?.build_ms ?? null;
-    pages.current = new Map();
+    // The rows on screen stay until the new version's rows for the same
+    // place have arrived, then both swap at once. Dropping the cache first
+    // blanked the table every second while a crawl ran.
+    const fresh = await rowsAround(view, r.version, r.total, moved(anchors[0], r.positions[0])).catch(() => new Map<number, Row[]>());
+    if (current.current.view !== view || current.current.version !== s.version) return r.build_ms;
+    pages.current = fresh;
     pending.current = new Set();
     setState((x) => ({ ...x, version: r.version, total: r.total }));
     optsRef.current.onRefresh(r.positions, r.total);
     return r.build_ms;
-  }, [transport, path]);
+
+    /** How far the top anchor moved, so the pages fetched are the ones that will be on screen. */
+    function moved(id: number | undefined, to: number | null | undefined): number {
+      if (id === undefined || id < 0 || to == null) return 0;
+      for (const [p, rows] of pages.current) {
+        const i = rows.findIndex((x) => x[0] === id);
+        if (i >= 0) return to - (p * PAGE + i);
+      }
+      return 0;
+    }
+  }, [transport, path, rowsAround]);
 
   // Live rebuilds while the crawl runs, then one more when it ends so the
   // last rows written show up.
