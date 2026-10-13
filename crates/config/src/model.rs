@@ -23,6 +23,7 @@ pub struct CrawlConfig {
     pub robots: RobotsSettings,
     pub network: NetworkSettings,
     pub retry: RetrySettings,
+    pub extraction: ExtractionSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -374,6 +375,22 @@ impl Default for RetrySettings {
     }
 }
 
+/// Page data extraction (spec 005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ExtractionSettings {
+    /// Keep each page's raw HTML, compressed, in the crawl file (FR-030,
+    /// FR-031).
+    pub store_html: bool,
+}
+
+impl Default for ExtractionSettings {
+    fn default() -> Self {
+        Self { store_html: true }
+    }
+}
+
 /// What the crawl starts from: one URL or a list (FR-001).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -423,13 +440,14 @@ mod tests {
         assert_eq!(c.network.max_body_mb, 50);
         assert_eq!(c.retry.attempts, 3);
         assert_eq!(c.retry.max_wait_secs, 60.0);
+        assert!(c.extraction.store_html);
     }
 
     #[test]
     fn serializes_every_field_including_untouched_defaults() {
         let v = serde_json::to_value(CrawlConfig::default()).unwrap();
         for group in [
-            "mode", "limits", "scope", "identity", "speed", "robots", "network", "retry",
+            "mode", "limits", "scope", "identity", "speed", "robots", "network", "retry", "extraction",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");
         }
@@ -443,6 +461,8 @@ mod tests {
         assert_eq!(c.speed.max_concurrent, 16);
         assert_eq!(c.speed.max_per_host, 4);
         assert_eq!(c.retry, RetrySettings::default());
+        // Configs from before spec 005 keep raw HTML (the default).
+        assert!(c.extraction.store_html);
     }
 
     #[test]

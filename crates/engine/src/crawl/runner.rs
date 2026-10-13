@@ -16,22 +16,24 @@ use serde::Serialize;
 use spiderlens_config::{
     CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings, StoredCrawlConfig, normalize_url,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Semaphore, mpsc, watch};
 use url::Url;
 
-use super::links::{self, PageLinks};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
 use super::store::{
-    Counts, CrawlStore, Discovery, HostRow, NewLink, Placement, QueueEntry, QueueKey, Recorded, Response,
+    Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded, Response,
     SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
-use crate::fetch::{build_client_with, fetch_once};
+use crate::extract::directives::page_flags;
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
+use crate::fetch::{Once, build_client_with, fetch_once};
+use crate::title::is_html;
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
-use crate::{CheckError, CheckOptions, RequestHeader, Title};
+use crate::{CheckError, CheckOptions, RequestHeader};
 
 const WINDOW: usize = 4096;
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -42,6 +44,9 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 /// loses at most this much work (spec 008 plan D2, FR-024).
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
+/// At most this much HTML (in KiB) is being extracted at once, which bounds
+/// the memory parsed documents take (spec 005 plan D3).
+const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlError {
@@ -269,7 +274,81 @@ struct PageOutcome {
     content_type: Option<String>,
     location: Option<String>,
     retry_after: Option<String>,
-    page: Option<PageLinks>,
+    headers: Vec<(String, String)>,
+    content_length: Option<u64>,
+    /// Bytes of body read, when it was read.
+    body_len: Option<u64>,
+    /// Body cut off; what was read is still extracted.
+    body_problem: Option<CheckError>,
+    header_facts: HeaderFacts,
+    page: Option<Extracted>,
+}
+
+/// What the extraction step produced for an HTML body.
+struct Extracted {
+    data: Result<PageData, String>,
+    /// Compressed body and its size, when raw HTML is kept.
+    html: Option<(Vec<u8>, usize)>,
+}
+
+/// Header facts for every response; for HTML bodies, extraction and
+/// compression on Tokio's blocking pool under the memory budget, so parsing
+/// never stalls network I/O (spec 005 plan D3).
+async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+    let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
+    let body_len = o.body.as_ref().map(|b| b.len() as u64);
+    let truncated = o.body_problem.is_some();
+    let page = match o.body {
+        Some(bytes) if is_html(o.content_type.as_deref(), &bytes) => {
+            let kib = (bytes.len() / 1024 + 1).min(EXTRACT_BUDGET_KIB) as u32;
+            let _permit = budget.acquire_many(kib).await.expect("the budget is never closed");
+            let charset = o.charset.clone();
+            let job = tokio::task::spawn_blocking(move || {
+                let data = extract::extract_page_caught(&PageInput {
+                    url: &url,
+                    charset: charset.as_deref(),
+                    body: &bytes,
+                    truncated,
+                    robots_token: &token,
+                });
+                let html = if store_html {
+                    body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
+                } else {
+                    None
+                };
+                Extracted { data, html }
+            });
+            Some(job.await.unwrap_or_else(|e| Extracted {
+                data: Err(format!("Page extraction failed: {e}")),
+                html: None,
+            }))
+        }
+        _ => None,
+    };
+    PageOutcome {
+        status: o.status,
+        content_type: o.content_type,
+        location: o.location,
+        retry_after: o.retry_after,
+        headers: o.headers,
+        content_length: o.content_length,
+        body_len,
+        body_problem: o.body_problem,
+        header_facts,
+        page,
+    }
+}
+
+/// Why a reference that resolves to no new URL is not crawlable (FR-024).
+fn self_reason(raw: &str) -> &'static str {
+    let t = raw.trim_matches(|c: char| c.is_ascii_whitespace());
+    if t.is_empty() {
+        "empty"
+    } else if t.starts_with('#') {
+        "fragment"
+    } else {
+        "self"
+    }
 }
 
 /// A crawl bound to its crawl file.
@@ -366,6 +445,13 @@ impl Crawler {
     /// Opens a crawl file to resume it with its stored configuration.
     pub fn open(path: &Path) -> Result<Self, CrawlError> {
         let store = CrawlStore::open(path)?;
+        if store.format_version()? < 2 {
+            return Err(CrawlError::Config(
+                "This crawl file was made by an earlier SpiderLens build, before page data extraction. \
+                 It can still be opened and viewed, but not resumed; start a new crawl instead."
+                    .into(),
+            ));
+        }
         let stored: StoredCrawlConfig = store
             .meta("config")?
             .and_then(|c| serde_json::from_str(&c).ok())
@@ -479,6 +565,7 @@ struct Run {
     started_at: Instant,
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
+    extract_budget: Arc<Semaphore>,
 }
 
 impl Run {
@@ -545,6 +632,7 @@ impl Run {
             finished: 0,
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
+            extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
         })
     }
 
@@ -867,27 +955,17 @@ impl Run {
         let token = self.opts.robots_token.clone();
         let tx = self.tx.clone();
         let check_only = e.check_only;
+        let budget = self.extract_budget.clone();
+        let store_html = self.c.config.extraction.store_html;
         tokio::spawn(async move {
             let sent = Instant::now();
-            let result = fetch_once(&client, &url, &headers, internal, !check_only, max_body)
-                .await
-                .map(|o| PageOutcome {
-                    page: o.body.as_deref().map(|b| {
-                        links::extract(
-                            &url,
-                            o.charset.as_deref(),
-                            b,
-                            &token,
-                            &o.x_robots_tag,
-                            &o.link_header,
-                        )
-                    }),
-                    status: o.status,
-                    content_type: o.content_type,
-                    location: o.location,
-                    retry_after: o.retry_after,
-                });
+            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
+            // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
+            let result = match fetched {
+                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Err(e) => Err(e),
+            };
             let _ = tx.send(Msg::Page {
                 entry: e,
                 internal,
@@ -1066,12 +1144,12 @@ impl Run {
                         h.next_start = h.next_start.max(until);
                     }
                 }
-                self.on_page(entry, internal, robots_rule, result)
+                self.on_page(entry, internal, robots_rule, took, result)
             }
             Msg::SitemapUrls { sitemap, urls } => {
                 for loc in urls {
                     let parsed = self.c.rules.normalize(&sitemap, &loc);
-                    self.discover(None, &loc, LinkKind::Anchor, parsed, 1, None, false, true)?;
+                    self.discover(None, &loc, LinkKind::Anchor, parsed, 1, None, false, true, None)?;
                 }
                 Ok(())
             }
@@ -1158,6 +1236,7 @@ impl Run {
         entry: QueueEntry,
         internal: bool,
         robots_rule: Option<String>,
+        took: Duration,
         result: Result<PageOutcome, CheckError>,
     ) -> Result<(), CrawlError> {
         let mut response = Response {
@@ -1167,6 +1246,7 @@ impl Run {
         if !entry.check_only {
             self.crawled += 1;
         }
+        let mut outcome = None;
         match result {
             Err(e) => {
                 response.error_class = Some(e.class.as_str().into());
@@ -1174,11 +1254,19 @@ impl Run {
             }
             Ok(o) => {
                 response.status = Some(o.status);
-                response.content_type = o.content_type;
+                response.content_type.clone_from(&o.content_type);
+                response.response_ms = Some(u64::try_from(took.as_millis()).unwrap_or(u64::MAX));
+                response.transfer_bytes = o.content_length;
+                response.size_bytes = o.body_len.or(o.content_length);
+                if let Some(p) = &o.body_problem {
+                    response.error_class = Some(p.class.as_str().into());
+                    response.error_message = Some(p.message.clone());
+                }
                 let url = Url::parse(&entry.url).expect("stored URLs parse");
                 // External checks record their redirect target too; it is
                 // queued as another check, so the chain ends where it lands.
                 if let Some(loc) = o.location.as_deref() {
+                    response.redirect_kind = Some("http");
                     let target = self.c.rules.normalize(&url, loc);
                     let mut seed = false;
                     if entry.source == DiscoverySource::Start
@@ -1212,34 +1300,80 @@ impl Run {
                         None,
                         seed,
                         false,
+                        None,
                     )?;
+                } else {
+                    response.resource_type = Some(if o.page.is_some() { "html" } else { "other" });
                 }
-                if let Some(page) = o.page {
-                    if let Title::Text(t) = &page.title {
-                        response.title = Some(t.clone());
-                    }
-                    if internal && !entry.check_only {
-                        for link in &page.links {
-                            let nofollow = match link.kind {
-                                LinkKind::Anchor if link.nofollow => Some(Nofollow::Link),
-                                LinkKind::Anchor if page.page_nofollow => Some(Nofollow::Page),
-                                _ => None,
-                            };
-                            let parsed = self.c.rules.normalize(&page.base, &link.raw);
-                            let to = self.discover(
-                                Some(entry.id),
-                                &link.raw,
-                                link.kind,
-                                parsed,
-                                entry.depth + 1,
-                                nofollow,
-                                false,
-                                false,
-                            )?;
-                            let _ = (to, page.page_nofollow);
+
+                let data = o.page.as_ref().and_then(|p| p.data.as_ref().ok());
+                let meta_dirs: &[Directive] = data.map_or(&[], |d| &d.directives);
+                let all_dirs: Vec<Directive> = meta_dirs
+                    .iter()
+                    .chain(&o.header_facts.directives)
+                    .cloned()
+                    .collect();
+                let (noindex, page_nofollow) = page_flags(&all_dirs, &self.opts.robots_token);
+                response.noindex = Some(noindex);
+                response.nofollow = Some(page_nofollow);
+                if let Some(t) = data.and_then(PageData::title).filter(|t| !t.is_empty()) {
+                    response.title = Some(t.to_string());
+                }
+
+                // HTML references resolve against the base; header ones
+                // against the URL itself.
+                let base = data.map_or(&url, |d| &d.base).clone();
+                let refs: Vec<(&Ref, &Url)> = data
+                    .map_or(&[][..], |d| &d.refs[..])
+                    .iter()
+                    .map(|r| (r, &base))
+                    .chain(o.header_facts.refs.iter().map(|r| (r, &url)))
+                    .collect();
+
+                let canonicals: Vec<String> = refs
+                    .iter()
+                    .filter(|(r, _)| r.kind == LinkKind::Canonical)
+                    .filter_map(|(r, b)| b.join(r.raw.trim()).ok())
+                    .map(|mut u| {
+                        u.set_fragment(None);
+                        u.to_string()
+                    })
+                    .collect();
+                if !canonicals.is_empty() {
+                    let mut distinct = canonicals.clone();
+                    distinct.sort();
+                    distinct.dedup();
+                    response.canonical = canonicals.first().cloned();
+                    response.canonical_count = Some(canonicals.len() as u32);
+                    response.canonical_conflict = Some(distinct.len() > 1);
+                }
+
+                if internal && !entry.check_only {
+                    for (pos, (r, b)) in refs.iter().enumerate() {
+                        let nofollow = match r.kind {
+                            LinkKind::Anchor if r.nofollow => Some(Nofollow::Link),
+                            LinkKind::Anchor if page_nofollow => Some(Nofollow::Page),
+                            _ => None,
+                        };
+                        let parsed = self.c.rules.normalize(b, &r.raw);
+                        let to = self.discover(
+                            Some(entry.id),
+                            &r.raw,
+                            r.kind,
+                            parsed,
+                            entry.depth + 1,
+                            nofollow,
+                            false,
+                            false,
+                            Some((pos as u32, r)),
+                        )?;
+                        if r.kind == LinkKind::MetaRefresh && response.redirect_to.is_none() && to.is_some() {
+                            response.redirect_to = to;
+                            response.redirect_kind = Some("meta_refresh");
                         }
                     }
                 }
+                outcome = Some(o);
             }
         }
         if !entry.check_only && (response.error_class.is_some() || response.status.is_some_and(|s| s >= 400))
@@ -1249,6 +1383,25 @@ impl Run {
         self.c
             .store
             .record_response(entry.id, entry.check_only, &response, now_ms())?;
+        if let Some(o) = outcome {
+            let store = &self.c.store;
+            store.record_headers(entry.id, &o.headers)?;
+            let meta_count = match &o.page {
+                Some(p) => {
+                    store.record_page(
+                        entry.id,
+                        &PageRecord {
+                            data: p.data.as_ref().ok(),
+                            extract_error: p.data.as_ref().err().map(String::as_str),
+                            html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+                        },
+                    )?;
+                    p.data.as_ref().map_or(0, |d| d.directives.len())
+                }
+                None => 0,
+            };
+            store.record_directives(entry.id, &o.header_facts.directives, meta_count)?;
+        }
         Ok(())
     }
 
@@ -1265,6 +1418,7 @@ impl Run {
         nofollow: Option<Nofollow>,
         seed: bool,
         in_sitemap: bool,
+        context: Option<(u32, &Ref)>,
     ) -> Result<Option<i64>, CrawlError> {
         let source = if in_sitemap {
             DiscoverySource::Sitemap
@@ -1288,6 +1442,23 @@ impl Run {
             }
             Err(problem) => {
                 let Some((stored, Verdict::NotCrawled { reason, detail })) = problem_verdict(&problem) else {
+                    // Empty, fragment-only or self links: stored on the
+                    // page with a reason, never queued (FR-024).
+                    if let Some(from) = from {
+                        self.c.store.add_link(&NewLink {
+                            from,
+                            to: Some(from),
+                            raw,
+                            kind,
+                            nofollow: nofollow == Some(Nofollow::Link),
+                            page_nofollow: nofollow == Some(Nofollow::Page),
+                            followed: false,
+                            pos: context.map(|(p, _)| p),
+                            target: None,
+                            skip_reason: Some(self_reason(raw)),
+                            context: context.map(|(_, r)| r),
+                        })?;
+                    }
                     return Ok(None);
                 };
                 (
@@ -1297,6 +1468,17 @@ impl Run {
                     Placement::NotCrawled { reason, detail },
                 )
             }
+        };
+        let skip_reason = match &placement {
+            Placement::NotCrawled {
+                reason: NotCrawledReason::MalformedUrl,
+                ..
+            } => Some("malformed"),
+            Placement::NotCrawled {
+                reason: NotCrawledReason::UnsupportedScheme,
+                ..
+            } => Some("unsupported_scheme"),
+            _ => None,
         };
         let followed = matches!(
             placement,
@@ -1336,12 +1518,16 @@ impl Run {
             let page_nofollow = nofollow == Some(Nofollow::Page);
             self.c.store.add_link(&NewLink {
                 from,
-                to: id,
+                to: Some(id),
                 raw,
                 kind,
                 nofollow: link_nofollow,
                 page_nofollow,
                 followed,
+                pos: context.map(|(p, _)| p),
+                target: None,
+                skip_reason,
+                context: context.map(|(_, r)| r),
             })?;
         }
         Ok(Some(id))

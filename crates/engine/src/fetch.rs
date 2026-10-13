@@ -171,6 +171,14 @@ pub(crate) struct Once {
     pub retry_after: Option<String>,
     /// HTML bodies only, and only when `read_body` was set.
     pub body: Option<Vec<u8>>,
+    /// The body was cut off (size limit or dropped connection); `body`
+    /// holds the part received and this says why (spec 005 plan D7).
+    pub body_problem: Option<CheckError>,
+    /// Every response header in received order, names lowercase.
+    pub headers: Vec<(String, String)>,
+    /// `Content-Length` as sent, when reqwest did not decompress the body
+    /// (it removes the header when it does).
+    pub content_length: Option<u64>,
 }
 
 pub(crate) async fn fetch_once(
@@ -198,6 +206,16 @@ pub(crate) async fn fetch_once(
             .collect()
     };
     let x_robots_tag = all(header::HeaderName::from_static("x-robots-tag"));
+    let all_headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .collect();
+    let content_length = response
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse().ok());
     let link_header = all(header::LINK);
     let retry_after = response
         .headers()
@@ -207,11 +225,12 @@ pub(crate) async fn fetch_once(
     let html = content_type
         .as_deref()
         .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
-    let body = if read_body && location.is_none() && html {
-        read_body_capped(response, max_bytes).await?
+    let (body, body_problem) = if read_body && location.is_none() && html {
+        let (bytes, problem) = read_body_partial(response, max_bytes).await;
+        (Some(bytes), problem)
     } else {
         // Dropping the response closes the stream without reading the body.
-        None
+        (None, None)
     };
     Ok(Once {
         status,
@@ -222,11 +241,40 @@ pub(crate) async fn fetch_once(
         link_header,
         retry_after,
         body,
+        body_problem,
+        headers: all_headers,
+        content_length,
     })
 }
 
-async fn read_body_capped(response: Response, max_bytes: u64) -> Result<Option<Vec<u8>>, CheckError> {
-    read_body(response, max_bytes, OnLimit::Fail, true).await
+/// Reads up to `max_bytes`. Unlike [`read_body`], a body over the limit or
+/// cut off by the connection keeps what was received, so the page can
+/// still be extracted (spec 005 FR-008); the problem is returned with it.
+async fn read_body_partial(mut response: Response, max_bytes: u64) -> (Vec<u8>, Option<CheckError>) {
+    let too_large = || {
+        CheckError::new(
+            ErrorClass::ContentProblem,
+            format!(
+                "The response is larger than the limit of {}; only the first part was read.",
+                human_bytes(max_bytes)
+            ),
+        )
+    };
+    let mut buf = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let remaining = (max_bytes - buf.len() as u64) as usize;
+                if chunk.len() > remaining {
+                    buf.extend_from_slice(&chunk[..remaining]);
+                    return (buf, Some(too_large()));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => return (buf, None),
+            Err(e) => return (buf, Some(classify_body(&e))),
+        }
+    }
 }
 
 /// Same host and same explicit port. An http-to-https upgrade on the same

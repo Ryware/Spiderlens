@@ -100,6 +100,9 @@ string_enum! {
         Canonical = "canonical",
         Hreflang = "hreflang",
         Image = "image",
+        MetaRefresh = "meta_refresh",
+        Next = "next",
+        Prev = "prev",
     }
 }
 
@@ -111,6 +114,8 @@ impl LinkKind {
             Self::Canonical => DiscoverySource::Canonical,
             Self::Hreflang => DiscoverySource::Hreflang,
             Self::Image => DiscoverySource::Image,
+            Self::MetaRefresh => DiscoverySource::Redirect,
+            Self::Next | Self::Prev => DiscoverySource::Link,
         }
     }
 }

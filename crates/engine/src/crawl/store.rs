@@ -10,9 +10,13 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use crate::extract::{Directive, PageData, Ref, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
-pub const FORMAT_VERSION: i64 = 1;
+/// 2: page data extraction (spec 005, data-model.md).
+pub const FORMAT_VERSION: i64 = 2;
+/// Written to `meta.extraction_version` when a crawl collects page data.
+pub const EXTRACTION_VERSION: &str = "1";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -48,18 +52,44 @@ CREATE TABLE urls (
     title TEXT,
     error_class TEXT,
     error_message TEXT,
-    fetched_at INTEGER
+    fetched_at INTEGER,
+    response_ms INTEGER,
+    size_bytes INTEGER,
+    transfer_bytes INTEGER,
+    resource_type TEXT,
+    redirect_kind TEXT,
+    noindex INTEGER,
+    nofollow INTEGER,
+    canonical TEXT,
+    canonical_count INTEGER,
+    canonical_conflict INTEGER
 );
 CREATE INDEX urls_queue ON urls(depth, queue_seq) WHERE state = 'queued';
 CREATE INDEX urls_state ON urls(state, reason);
 CREATE TABLE links (
     from_id INTEGER NOT NULL,
-    to_id INTEGER NOT NULL,
+    to_id INTEGER,
     raw TEXT NOT NULL,
     kind TEXT NOT NULL,
     nofollow INTEGER NOT NULL,
     page_nofollow INTEGER NOT NULL,
-    followed INTEGER NOT NULL
+    followed INTEGER NOT NULL,
+    pos INTEGER,
+    target TEXT,
+    skip_reason TEXT,
+    text TEXT,
+    alt TEXT,
+    rel TEXT,
+    sponsored INTEGER NOT NULL DEFAULT 0,
+    ugc INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'html',
+    in_head INTEGER,
+    noscript INTEGER NOT NULL DEFAULT 0,
+    lang TEXT,
+    width INTEGER,
+    height INTEGER,
+    srcset INTEGER NOT NULL DEFAULT 0,
+    in_link INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX links_to ON links(to_id);
 CREATE INDEX links_from ON links(from_id);
@@ -76,6 +106,72 @@ CREATE TABLE sitemaps (
     parent TEXT,
     url_count INTEGER NOT NULL DEFAULT 0,
     error TEXT
+);
+CREATE TABLE pages (
+    url_id INTEGER PRIMARY KEY,
+    title_count INTEGER NOT NULL,
+    meta_description TEXT,
+    meta_description_count INTEGER NOT NULL,
+    h1_1 TEXT,
+    h1_2 TEXT,
+    h1_count INTEGER NOT NULL,
+    h2_1 TEXT,
+    h2_2 TEXT,
+    h2_count INTEGER NOT NULL,
+    heading_counts TEXT NOT NULL,
+    word_count INTEGER NOT NULL,
+    lang TEXT,
+    text_hash INTEGER,
+    title_hash INTEGER,
+    meta_description_hash INTEGER,
+    meta_refresh_delay REAL,
+    meta_refresh_url TEXT,
+    partial INTEGER NOT NULL,
+    encoding_errors INTEGER NOT NULL,
+    encoding TEXT,
+    extract_error TEXT,
+    no_content INTEGER NOT NULL,
+    html_stored INTEGER NOT NULL
+);
+CREATE INDEX pages_title_hash ON pages(title_hash) WHERE title_hash IS NOT NULL;
+CREATE INDEX pages_md_hash ON pages(meta_description_hash) WHERE meta_description_hash IS NOT NULL;
+CREATE TABLE page_text (
+    url_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    level INTEGER,
+    pos INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    in_head INTEGER
+);
+CREATE INDEX page_text_url ON page_text(url_id, kind, pos);
+CREATE TABLE directives (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    directive TEXT NOT NULL,
+    value TEXT,
+    known INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    crawler TEXT NOT NULL,
+    in_head INTEGER
+);
+CREATE INDEX directives_url ON directives(url_id);
+CREATE TABLE structured_data (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    parseable INTEGER NOT NULL
+);
+CREATE INDEX structured_data_url ON structured_data(url_id);
+CREATE TABLE bodies (
+    url_id INTEGER PRIMARY KEY,
+    codec TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    body BLOB NOT NULL
+);
+CREATE TABLE headers (
+    url_id INTEGER PRIMARY KEY,
+    headers TEXT NOT NULL
 );
 "#;
 
@@ -159,6 +255,17 @@ pub struct Response {
     pub error_message: Option<String>,
     /// Set when robots.txt is ignored but reported (FR-028).
     pub robots_rule: Option<String>,
+    /// Spec 005 response facts (data-model.md, `urls`).
+    pub response_ms: Option<u64>,
+    pub size_bytes: Option<u64>,
+    pub transfer_bytes: Option<u64>,
+    pub resource_type: Option<&'static str>,
+    pub redirect_kind: Option<&'static str>,
+    pub noindex: Option<bool>,
+    pub nofollow: Option<bool>,
+    pub canonical: Option<String>,
+    pub canonical_count: Option<u32>,
+    pub canonical_conflict: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -230,7 +337,8 @@ impl StateCounts {
 #[derive(Debug, Clone, Copy)]
 pub struct NewLink<'a> {
     pub from: i64,
-    pub to: i64,
+    /// None for references that were not recorded as URLs.
+    pub to: Option<i64>,
     pub raw: &'a str,
     pub kind: LinkKind,
     /// The link itself carries rel=nofollow.
@@ -238,6 +346,23 @@ pub struct NewLink<'a> {
     /// The page's meta robots or X-Robots-Tag says nofollow.
     pub page_nofollow: bool,
     pub followed: bool,
+    /// Document order on the page.
+    pub pos: Option<u32>,
+    /// Resolved absolute URL when `to` is None.
+    pub target: Option<&'a str>,
+    /// Why the reference is not crawlable (FR-024).
+    pub skip_reason: Option<&'a str>,
+    /// Extracted context (spec 005); None for redirects.
+    pub context: Option<&'a Ref>,
+}
+
+/// Extracted data for one HTML page, for [`CrawlStore::record_page`].
+pub struct PageRecord<'a> {
+    /// None when extraction failed.
+    pub data: Option<&'a PageData>,
+    pub extract_error: Option<&'a str>,
+    /// Compressed body and its uncompressed size.
+    pub html: Option<(&'a [u8], usize)>,
 }
 
 /// Totals from [`CrawlStore::counts`].
@@ -271,6 +396,7 @@ impl CrawlStore {
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("format_version", &FORMAT_VERSION.to_string())?;
+        store.set_meta("extraction_version", EXTRACTION_VERSION)?;
         store.set_meta("status", "running")?;
         Ok(store)
     }
@@ -520,30 +646,189 @@ impl CrawlStore {
     }
 
     pub fn add_link(&self, link: &NewLink) -> Result<()> {
-        let NewLink {
-            from,
-            to,
-            raw,
-            kind,
-            nofollow,
-            page_nofollow,
-            followed,
-        } = *link;
+        let c = link.context;
         self.conn
             .prepare_cached(
-                "INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed, pos, target,
+                 skip_reason, text, alt, rel, sponsored, ugc, source, in_head, noscript, lang, width, height,
+                 srcset, in_link)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
+                 ?20, ?21, ?22, ?23)",
             )?
             .execute(params![
-                from,
-                to,
-                raw,
-                kind.as_str(),
-                nofollow,
-                page_nofollow,
-                followed
+                link.from,
+                link.to,
+                link.raw,
+                link.kind.as_str(),
+                link.nofollow,
+                link.page_nofollow,
+                link.followed,
+                link.pos,
+                link.target,
+                link.skip_reason,
+                c.and_then(|c| c.text.as_deref()),
+                c.and_then(|c| c.alt.as_deref()),
+                c.and_then(|c| c.rel.as_deref()),
+                c.is_some_and(|c| c.sponsored),
+                c.is_some_and(|c| c.ugc),
+                c.map_or("html", |c| c.source.as_str()),
+                c.and_then(|c| c.in_head),
+                c.is_some_and(|c| c.noscript),
+                c.and_then(|c| c.lang.as_deref()),
+                c.and_then(|c| c.width),
+                c.and_then(|c| c.height),
+                c.is_some_and(|c| c.srcset),
+                c.is_some_and(|c| c.in_link),
             ])?;
         Ok(())
+    }
+
+    /// Stores what was extracted from one HTML page (spec 005,
+    /// data-model.md): the `pages` row, every title, description and
+    /// heading, meta directives, structured data and the raw HTML.
+    pub fn record_page(&self, id: i64, page: &PageRecord<'_>) -> Result<()> {
+        let empty;
+        let d = match page.data {
+            Some(d) => d,
+            None => {
+                empty = PageData::failed();
+                &empty
+            }
+        };
+        let h = |level: u8, n: usize| {
+            d.headings
+                .iter()
+                .filter(|x| x.level == level)
+                .nth(n)
+                .map(|x| x.text.as_str())
+        };
+        let count = |level: u8| d.headings.iter().filter(|x| x.level == level).count() as i64;
+        let heading_counts = (1..=6).map(|l| count(l).to_string()).collect::<Vec<_>>().join(",");
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO pages (url_id, title_count, meta_description, meta_description_count,
+                 h1_1, h1_2, h1_count, h2_1, h2_2, h2_count, heading_counts, word_count, lang, text_hash,
+                 title_hash, meta_description_hash, meta_refresh_delay, meta_refresh_url, partial,
+                 encoding_errors, encoding, extract_error, no_content, html_stored)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                 ?19, ?20, ?21, ?22, ?23, ?24)",
+            )?
+            .execute(params![
+                id,
+                d.titles.len() as i64,
+                d.meta_description(),
+                d.meta_descriptions.len() as i64,
+                h(1, 0),
+                h(1, 1),
+                count(1),
+                h(2, 0),
+                h(2, 1),
+                count(2),
+                heading_counts,
+                d.word_count,
+                d.lang,
+                page.data.map(|d| d.text_hash),
+                d.title().map(text::hash),
+                d.meta_description().map(text::hash),
+                d.meta_refresh.as_ref().map(|r| r.delay),
+                d.meta_refresh.as_ref().and_then(|r| r.url.as_deref()),
+                d.partial,
+                d.encoding_errors,
+                page.data.map(|d| d.encoding),
+                page.extract_error,
+                d.no_content,
+                page.html.is_some(),
+            ])?;
+        let mut text_row = self.conn.prepare_cached(
+            "INSERT INTO page_text (url_id, kind, level, pos, text, in_head) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (pos, t) in d.titles.iter().enumerate() {
+            text_row.execute(params![id, "title", None::<u8>, pos as i64, t.text, t.in_head])?;
+        }
+        for (pos, t) in d.meta_descriptions.iter().enumerate() {
+            text_row.execute(params![id, "meta_description", None::<u8>, pos as i64, t.text, t.in_head])?;
+        }
+        for (pos, x) in d.headings.iter().enumerate() {
+            text_row.execute(params![id, "heading", x.level, pos as i64, x.text, None::<bool>])?;
+        }
+        self.record_directives(id, &d.directives, 0)?;
+        let mut sd = self.conn.prepare_cached(
+            "INSERT INTO structured_data (url_id, pos, kind, raw, parseable) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (pos, b) in d.structured.iter().enumerate() {
+            sd.execute(params![id, pos as i64, b.kind.as_str(), b.raw, b.parseable])?;
+        }
+        if let Some((packed, size)) = page.html {
+            self.conn
+                .prepare_cached("INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)")?
+                .execute(params![id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+
+    /// Robots directives of one resource, numbered from `first_pos`.
+    pub fn record_directives(&self, id: i64, directives: &[Directive], first_pos: usize) -> Result<()> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO directives (url_id, pos, directive, value, known, source, crawler, in_head)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for (i, d) in directives.iter().enumerate() {
+            stmt.execute(params![
+                id,
+                (first_pos + i) as i64,
+                d.directive,
+                d.value,
+                d.known,
+                d.source.as_str(),
+                d.crawler,
+                d.in_head
+            ])?;
+        }
+        Ok(())
+    }
+
+    /// Response headers of one fetched URL, as a JSON array of pairs.
+    pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
+        self.conn
+            .prepare_cached("INSERT OR REPLACE INTO headers (url_id, headers) VALUES (?1, ?2)")?
+            .execute(params![id, serde_json::to_string(headers).expect("pairs serialize")])?;
+        Ok(())
+    }
+
+    /// The stored raw HTML of a page, byte-identical to the received body
+    /// (FR-030). None when the crawl did not keep it.
+    pub fn page_html(&self, url_id: i64) -> Result<Option<Vec<u8>>> {
+        let row: Option<(String, i64, Vec<u8>)> = self
+            .conn
+            .prepare_cached("SELECT codec, size, body FROM bodies WHERE url_id = ?1")?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        let Some((codec, size, packed)) = row else {
+            return Ok(None);
+        };
+        if codec != body::CODEC {
+            return Err(StoreError::Format(format!("unknown body codec {codec}")));
+        }
+        body::decompress(&packed, size as usize)
+            .map(Some)
+            .map_err(|e| StoreError::Format(format!("stored HTML is damaged: {e}")))
+    }
+
+    /// The row id of a URL.
+    pub fn id_of(&self, url: &str) -> Result<Option<i64>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT id FROM urls WHERE url = ?1")?
+            .query_row([url], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// The crawl file's format version.
+    pub fn format_version(&self) -> Result<i64> {
+        Ok(self
+            .meta("format_version")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0))
     }
 
     /// Up to `limit` queued rows after `after`, in queue order.
@@ -589,7 +874,10 @@ impl CrawlStore {
             .conn
             .prepare_cached(
                 "UPDATE urls SET state = ?2, status = ?3, content_type = ?4, redirect_to = ?5, title = ?6,
-                 error_class = ?7, error_message = ?8, robots_rule = COALESCE(?9, robots_rule), fetched_at = ?10
+                 error_class = ?7, error_message = ?8, robots_rule = COALESCE(?9, robots_rule), fetched_at = ?10,
+                 response_ms = ?11, size_bytes = ?12, transfer_bytes = ?13, resource_type = ?14,
+                 redirect_kind = ?15, noindex = ?16, nofollow = ?17, canonical = ?18, canonical_count = ?19,
+                 canonical_conflict = ?20
                  WHERE id = ?1 AND state = 'in_flight'",
             )?
             .execute(params![
@@ -603,6 +891,16 @@ impl CrawlStore {
                 r.error_message,
                 r.robots_rule,
                 now_ms,
+                r.response_ms.map(|v| v as i64),
+                r.size_bytes.map(|v| v as i64),
+                r.transfer_bytes.map(|v| v as i64),
+                r.resource_type,
+                r.redirect_kind,
+                r.noindex,
+                r.nofollow,
+                r.canonical,
+                r.canonical_count,
+                r.canonical_conflict,
             ])?;
         self.shift(Some(UrlState::InFlight), state, n);
         Ok(())

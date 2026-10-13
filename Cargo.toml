@@ -21,6 +21,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time",
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli"] }
 url = { version = "2", features = ["serde"] }
 scraper = "0.24"
+html5ever = "0.35"
+ego-tree = "0.10"
+zstd = "0.13"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 encoding_rs = "0.8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 quick-xml = "0.42"

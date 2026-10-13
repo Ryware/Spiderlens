@@ -8,6 +8,7 @@ mod check;
 mod config;
 pub mod crawl;
 mod error;
+pub mod extract;
 mod fetch;
 mod result;
 pub mod robots;
