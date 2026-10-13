@@ -20,15 +20,18 @@ This file records the technology choices the spec leaves to planning, the hooks 
 
 **Version pinning**: one axe version per SpiderLens release, recorded in the crawl file (FR-008) and in the rule catalogue (FR-019). Upgrading axe is a normal PR that regenerates the catalogue entries from axe's own rule metadata (`axe.getRules()`), bumps the catalogue version and runs the fixture suite.
 
-## R2. Hook into the rendering stage of spec 014 (to agree with the "JS rendering" thread)
+## R2. Hook into the rendering stage of spec 014 (agreed with the "JS rendering" thread, 2026-10-13)
+
+The 014 thread accepted this hook and will publish it in `contracts/render-crate.md` with its first code PR.
 
 Spec 014's renderer (`crates/render`, plan D1) loads each page in a fresh browser context, waits for the settle rule, serialises the HTML and optionally takes a screenshot, then closes the context. Accessibility needs one step between "settled" and "closed". Proposal, generic so specs 015 and 016 can use it too:
 
 - `RenderJob` gains `probes: Vec<PageProbe>`. A `PageProbe` is `{ name, script, args_json, budget }`. Empty by default, so a crawl without probes runs exactly the spec 014 code path (no extra CDP calls, no allocation).
 - After the settle rule, after the HTML serialisation and after the screenshot (FR-009 of this spec: probes cannot change what 014 stores), the renderer runs each probe in an **isolated world** (`Page.createIsolatedWorld`), so page scripts cannot see or tamper with the probe and the probe's globals do not leak into the page. The probe's script returns a JSON string.
-- Each probe has its own time budget (`Runtime.evaluate` with `awaitPromise` and a timeout); a timeout returns `ProbeOutcome::TimedOut { spent }` and never fails the render. The maximum result size is capped (default 4 MB) and anything larger is `ProbeOutcome::TooLarge`.
+- Each probe has its own time budget (`Runtime.evaluate` with `awaitPromise` and a timeout), and all probes of one page share a total cap (default 5 s, set from this feature's FR-005 when it is on); a timeout returns `ProbeOutcome::TimedOut { spent }` and never fails the render. The maximum result size is capped (4 MB) and anything larger is `ProbeOutcome::TooLarge`; any other error is `ProbeOutcome::Failed(reason)`.
 - `RenderOutcome` gains `probes: Vec<(name, ProbeOutcome)>`. The engine's `on_rendered` hands each outcome to the feature that registered the probe, which parses and stores it.
-- When accessibility or mobile checks are on, the render job asks for fonts to be loaded (FR-012); everything else about resource blocking stays as spec 014 decides.
+- `RenderJob.load_types` overrides which resource types load for that job. When accessibility or mobile checks are on, this feature adds fonts and images (FR-012); everything else about resource blocking stays as spec 014 decides.
+- Each page starts in a clean browser state seeded from the crawl's cookie jar and proxy (agreed with 014 for spec 025), so checks see the same page the crawl saw.
 
 Two probes from this feature: `a11y` (axe with the chosen tags and result limits) and `mobile_layout` (a small script of our own measuring document width against the window, computed font sizes of visible text nodes weighted by characters, and interactive element boxes with WCAG 2.5.8 spacing; axe's own `target-size` check gives the WCAG verdict, our script gives the numbers for the Mobile tab).
 
@@ -79,7 +82,7 @@ Each has a default the spec already assumes.
 1. **Default level**: (a) "Static checks" on by default, falling back to "Off" if the benchmark shows more than 3% cost *(default)*; (b) "Off" by default.
 2. **Engine**: (a) axe-core, pinned per release *(default)*; (b) IBM Equal Access.
 3. **WCAG target default**: (a) WCAG 2.2 AA *(default, what the European Accessibility Act points to through EN 301 549 and the most common contract level)*; (b) WCAG 2.1 AA.
-4. **Fonts during rendering**: (a) load web fonts when accessibility or mobile checks are on, even though spec 014 blocks fonts by default *(default, measured sizes and contrast are wrong otherwise)*; (b) keep spec 014's blocking and accept less accurate results.
+4. **Fonts and images during rendering**: (a) load web fonts and images when accessibility or mobile checks are on, even though spec 014 blocks them by default *(default, measured sizes and contrast are wrong otherwise; costs more bandwidth on the site)*; (b) keep spec 014's blocking and accept less accurate results.
 5. **Mobile layout on desktop-rendered crawls**: (a) not measured, no second render *(default, keeps rendering cost unchanged)*; (b) a second render at the mobile size when mobile checks are on.
 
 ## Sources
