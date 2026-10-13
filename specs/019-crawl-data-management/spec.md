@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: User description: "Did we discuss management and cleanup of the stored crawl data?" Owner direction for the draft: a crawl files manager in the app (list with size and date, open, delete to the trash, purge stored HTML from a file, total disk usage), automatic cleanup only of unsaved crawls and leftover temporary files with a configurable age, and never silent deletion of saved crawls.
 
