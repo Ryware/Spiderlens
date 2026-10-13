@@ -1,13 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs, toolbar window dragging plus open and save dialogs for list files and profiles. No network, shell or general file system access.",
+  "description": "Main window: core APIs, toolbar window dragging, matching the title bar to the brightness step plus open and save dialogs for list files and profiles. No network, shell or general file system access.",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-theme",
     "dialog:allow-open",
     "dialog:allow-save"
   ]
