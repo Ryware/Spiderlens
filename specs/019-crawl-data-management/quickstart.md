@@ -3,12 +3,12 @@
 ## CLI
 
 ```sh
-cargo run -p spiderlens-cli -- crawl https://example.com --out a.spiderlens   # stores page HTML by default
-cargo run -p spiderlens-cli -- files .
-cargo run -p spiderlens-cli -- export a.spiderlens --tab internal -o before.csv
-cargo run -p spiderlens-cli -- purge-html a.spiderlens --yes
-cargo run -p spiderlens-cli -- files .           # size drops, HTML 0 B
-cargo run -p spiderlens-cli -- export a.spiderlens --tab internal -o after.csv
+cargo run -p spiderlens -- crawl https://example.com --out a.spiderlens   # stores page HTML by default
+cargo run -p spiderlens -- files .
+cargo run -p spiderlens -- export a.spiderlens --tab internal -o before.csv
+cargo run -p spiderlens -- purge-html a.spiderlens --yes
+cargo run -p spiderlens -- files .           # size drops, HTML 0 B
+cargo run -p spiderlens -- export a.spiderlens --tab internal -o after.csv
 cmp before.csv after.csv                          # identical
 ```
 
