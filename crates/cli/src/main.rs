@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod crawl_cmd;
+mod export_cmd;
 mod options;
 
 use std::io::Write;
@@ -53,6 +54,8 @@ enum Command {
     Crawl(Box<CrawlCmd>),
     /// List the URLs in a crawl file, or its summary.
     Report(ReportArgs),
+    /// Export a tab and filter of a crawl file as CSV (same rows as the app).
+    Export(Box<export_cmd::ExportArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -141,6 +144,7 @@ fn main() -> ExitCode {
             crawl_cmd::run_crawl(*cmd, sub)
         }
         Command::Report(args) => crawl_cmd::run_report(args),
+        Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

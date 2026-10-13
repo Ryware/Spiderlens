@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod crawl;
+mod results;
 mod settings;
 
 use spiderlens_engine::BuildInfo;
@@ -26,10 +27,12 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?.join("profiles");
             app.manage(settings::State::open(dir)?);
             app.manage(crawl::State::new(app.path().app_data_dir()?.join("crawls")));
+            app.manage(results::State::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +57,19 @@ fn main() {
             crawl::crawl_pause,
             crawl::crawl_stop,
             crawl::crawl_summary,
+            results::results_tabs,
+            results::results_open,
+            results::view_open,
+            results::view_rows,
+            results::view_locate,
+            results::view_refresh,
+            results::view_counts,
+            results::view_close,
+            results::url_detail,
+            results::url_list,
+            results::copy_rows,
+            results::export_start,
+            results::export_cancel,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {
