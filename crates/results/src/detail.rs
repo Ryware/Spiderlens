@@ -57,6 +57,21 @@ pub struct UrlDetail {
     pub outlinks: u64,
     #[ts(type = "number")]
     pub images: u64,
+    /// Body size after transfer decoding, in bytes.
+    #[ts(type = "number | null")]
+    pub size: Option<i64>,
+    /// Request sent to last body byte read.
+    #[ts(type = "number | null")]
+    pub response_ms: Option<i64>,
+    /// "Indexable" or "Non-indexable: <reason>".
+    pub indexability: Option<String>,
+    /// Response headers in received order, names lowercase (FR-020).
+    pub headers: Vec<(String, String)>,
+    /// Number of headings, for the Headings list.
+    #[ts(type = "number")]
+    pub headings: u64,
+    /// The page's HTML is stored in the crawl file.
+    pub html_stored: bool,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
@@ -88,8 +103,19 @@ pub struct LinkRow {
     pub internal: bool,
     pub status: Option<u16>,
     pub final_state: String,
-    /// Anchor text, or alt text for images; null until extraction stores it.
+    /// Anchor text, or alt text for images. For images, null means the alt
+    /// attribute is missing.
     pub text: Option<String>,
+    pub sponsored: bool,
+    pub ugc: bool,
+}
+
+/// One heading of a page, in document order (FR-023).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct HeadingRow {
+    pub level: u8,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -99,6 +125,8 @@ pub struct ListPage {
     pub total: u64,
     pub from: u32,
     pub rows: Vec<LinkRow>,
+    /// The rows of the Headings list (empty for the link lists).
+    pub headings: Vec<HeadingRow>,
     /// Set when this file cannot list this section.
     pub unavailable: Option<String>,
 }
@@ -164,6 +192,47 @@ impl Reader {
         let inlinks = count("SELECT COUNT(*) FROM links WHERE to_id = ?1")?;
         let outlinks = count("SELECT COUNT(*) FROM links WHERE from_id = ?1")?;
         let images = count("SELECT COUNT(*) FROM links WHERE from_id = ?1 AND kind = 'image'")?;
+        let content = self.features.has(Need::Extraction);
+        let headings = if content {
+            count("SELECT COUNT(*) FROM page_text WHERE url_id = ?1 AND kind = 'heading'")?
+        } else {
+            0
+        };
+        let (indexability, headers) = if content {
+            let ix: Option<String> = self.conn.query_row(
+                "SELECT indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url)
+                 FROM urls u WHERE u.id = ?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            let raw: Option<String> = self
+                .conn
+                .query_row("SELECT headers FROM headers WHERE url_id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            let headers = raw
+                .and_then(|h| serde_json::from_str::<Vec<(String, String)>>(&h).ok())
+                .unwrap_or_default();
+            (ix, headers)
+        } else {
+            (None, vec![])
+        };
+        let (size, response_ms) = if self.features.has(Need::Timing) {
+            self.conn.query_row(
+                "SELECT size_bytes, response_ms FROM urls WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?
+        } else {
+            (None, None)
+        };
+        let html_stored = self.features.has(Need::RawHtml)
+            && self.conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)",
+                [id],
+                |r| r.get(0),
+            )?;
         let mut unavailable = BTreeMap::new();
         for (field, need) in [
             ("indexability", Need::Extraction),
@@ -212,6 +281,12 @@ impl Reader {
             inlinks,
             outlinks,
             images,
+            size,
+            response_ms,
+            indexability,
+            headers,
+            headings,
+            html_stored,
             unavailable,
         })
     }
@@ -266,22 +341,22 @@ impl Reader {
             ListKind::Inlinks => ("l.to_id = ?1", "l.from_id"),
             ListKind::Outlinks => ("l.from_id = ?1", "l.to_id"),
             ListKind::Images => ("l.from_id = ?1 AND l.kind = 'image'", "l.to_id"),
-            ListKind::Headings => {
-                return Ok(ListPage {
-                    total: 0,
-                    from,
-                    rows: vec![],
-                    unavailable: Some(Need::Extraction.unavailable_reason().to_string()),
-                });
-            }
+            ListKind::Headings => return self.headings(id, from, count),
         };
         let total: i64 =
             self.conn
                 .query_row(&format!("SELECT COUNT(*) FROM links l WHERE {cond}"), [id], |r| {
                     r.get(0)
                 })?;
+        let text = if !self.features.has(Need::Extraction) {
+            "NULL, 0, 0"
+        } else if kind == ListKind::Images {
+            "l.alt, l.sponsored, l.ugc"
+        } else {
+            "COALESCE(NULLIF(l.text, ''), l.alt), l.sponsored, l.ugc"
+        };
         let sql = format!(
-            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}
+            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text}
              FROM links l JOIN urls x ON x.id = {join}
              WHERE {cond} ORDER BY l.rowid LIMIT ?2 OFFSET ?3"
         );
@@ -298,7 +373,9 @@ impl Reader {
                     internal: r.get(6)?,
                     status: r.get(7)?,
                     final_state: r.get(8)?,
-                    text: None,
+                    text: r.get(9)?,
+                    sponsored: r.get(10)?,
+                    ugc: r.get(11)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -306,6 +383,43 @@ impl Reader {
             total: total as u64,
             from,
             rows,
+            headings: vec![],
+            unavailable: None,
+        })
+    }
+
+    fn headings(&self, id: i64, from: u32, count: u32) -> Result<ListPage> {
+        if !self.features.has(Need::Extraction) {
+            return Ok(ListPage {
+                total: 0,
+                from,
+                rows: vec![],
+                headings: vec![],
+                unavailable: Some(Need::Extraction.unavailable_reason().to_string()),
+            });
+        }
+        let total: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM page_text WHERE url_id = ?1 AND kind = 'heading'",
+            [id],
+            |r| r.get(0),
+        )?;
+        let mut stmt = self.conn.prepare(
+            "SELECT level, text FROM page_text WHERE url_id = ?1 AND kind = 'heading'
+             ORDER BY pos LIMIT ?2 OFFSET ?3",
+        )?;
+        let headings = stmt
+            .query_map(rusqlite::params![id, count, from], |r| {
+                Ok(HeadingRow {
+                    level: r.get(0)?,
+                    text: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ListPage {
+            total: total as u64,
+            from,
+            rows: vec![],
+            headings,
             unavailable: None,
         })
     }

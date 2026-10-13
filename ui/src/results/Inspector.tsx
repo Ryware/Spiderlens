@@ -7,7 +7,7 @@ import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
-import { cellTone, toneText } from "./format";
+import { cellTone, formatBytes, toneText } from "./format";
 
 const LIST_PAGE = 100;
 
@@ -54,6 +54,20 @@ function Facts({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
+/** Anchor text, or for images whether the alt text is there. */
+function LinkText({ kind, text }: { kind: ListKind; text: string | null }) {
+  if (kind === "images") {
+    if (text === null) return <span className="shrink-0 text-xs text-warn">No alt attribute</span>;
+    if (text === "") return <span className="shrink-0 text-xs text-warn">Empty alt</span>;
+  }
+  if (!text) return null;
+  return (
+    <span className="max-w-2/5 shrink-0 truncate text-fg-3" title={text}>
+      {text}
+    </span>
+  );
+}
+
 function LinkList({ transport, path, id, kind, total }: { transport: Transport; path: string; id: number; kind: ListKind; total: number }) {
   const [page, setPage] = useState<ListPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,15 +86,26 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
   const more = () =>
     page &&
     transport.urlList(path, id, kind, page.rows.length, LIST_PAGE).then(
-      (p) => setPage({ ...p, from: 0, rows: [...page.rows, ...p.rows] }),
+      (p) => setPage({ ...p, from: 0, rows: [...page.rows, ...p.rows], headings: [...page.headings, ...p.headings] }),
       (e) => setError(String(e)),
     );
   if (error) return <Notice kind="bad">{error}</Notice>;
   if (!page) return <div className="text-sm text-fg-3">Loading…</div>;
   if (page.unavailable) return <div className="text-sm text-fg-3">{page.unavailable}</div>;
-  if (page.rows.length === 0) return <div className="text-sm text-fg-3">None.</div>;
+  const shown = kind === "headings" ? page.headings.length : page.rows.length;
+  if (shown === 0) return <div className="text-sm text-fg-3">None.</div>;
   return (
     <div className="flex flex-col">
+      {kind === "headings" ? (
+        <ol className="m-0 flex list-none flex-col p-0" data-selectable>
+          {page.headings.map((h, i) => (
+            <li key={i} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
+              <span className="w-6 shrink-0 text-xs font-medium text-fg-3">H{h.level}</span>
+              <span className={cn("min-w-0 flex-1 break-words", h.level === 1 ? "text-fg" : "text-fg-2")}>{h.text || <span className="text-fg-3">(empty)</span>}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
       <ul className="m-0 flex list-none flex-col p-0" data-selectable>
         {page.rows.map((r, i) => {
           const tone = cellTone("status", r.status);
@@ -90,14 +115,20 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
               <span className="min-w-0 flex-1 truncate" title={r.url}>
                 {r.url}
               </span>
-              {(r.nofollow || !r.followed) && <span className="shrink-0 text-xs text-fg-3">{r.nofollow ? "nofollow" : "not followed"}</span>}
+              <LinkText kind={kind} text={r.text} />
+              {(r.nofollow || !r.followed || r.sponsored || r.ugc) && (
+                <span className="shrink-0 text-xs text-fg-3">
+                  {[r.nofollow ? "nofollow" : !r.followed ? "not followed" : null, r.sponsored && "sponsored", r.ugc && "ugc"].filter(Boolean).join(", ")}
+                </span>
+              )}
             </li>
           );
         })}
       </ul>
-      {page.rows.length < total && (
+      )}
+      {shown < total && (
         <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={() => void more()}>
-          Show more ({(total - page.rows.length).toLocaleString()} left)
+          Show more ({(total - shown).toLocaleString()} left)
         </Button>
       )}
     </div>
@@ -153,8 +184,14 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
     ["Discovered via", d.discovered_via],
     ["In sitemap", d.in_sitemap ? "Yes" : "No"],
   ];
+  if (d.size !== null) facts.push(["Size", formatBytes(d.size)]);
+  if (d.response_ms !== null) facts.push(["Response time", `${d.response_ms.toLocaleString()} ms`]);
+  if (d.indexability) {
+    const non = d.indexability.startsWith("Non-indexable");
+    facts.push(["Indexability", <span className={non ? "text-warn" : undefined}>{d.indexability}</span>]);
+  }
   if (d.fetched_at !== null) facts.push(["Fetched", new Date(d.fetched_at).toLocaleString()]);
-  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: 0 };
+  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings };
   // Fields the file has no data for, grouped by why.
   const missing = new Map<string, string[]>();
   for (const [k, why] of Object.entries(d.unavailable)) missing.set(why, [...(missing.get(why) ?? []), fieldLabels[k] ?? k]);
@@ -218,6 +255,7 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
               { value: "inlinks", label: `In ${d.inlinks.toLocaleString()}` },
               { value: "outlinks", label: `Out ${d.outlinks.toLocaleString()}` },
               { value: "images", label: `Images ${d.images.toLocaleString()}` },
+              ...(d.unavailable.headings ? [] : [{ value: "headings" as const, label: `Headings ${d.headings.toLocaleString()}` }]),
             ]}
           />
         }
@@ -225,8 +263,21 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
         <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} />
       </Section>
 
+      {d.headers.length > 0 && (
+        <Section title={`Response headers (${d.headers.length})`}>
+          <dl className="m-0 flex flex-col gap-0.5 font-mono text-xs" data-selectable>
+            {d.headers.map(([k, v], i) => (
+              <div key={`${k}-${i}`} className="flex gap-2">
+                <dt className="shrink-0 text-fg-3">{k}</dt>
+                <dd className="m-0 min-w-0 break-all text-fg-2">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </Section>
+      )}
+
       {missing.size > 0 && (
-        <Section title="Not collected yet">
+        <Section title="Not collected">
           {[...missing].map(([why, fields]) => (
             <p key={why} className="m-0 text-sm text-fg-3">
               <span className="text-fg-2">{fields.join(", ")}.</span> {why}

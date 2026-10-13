@@ -7,7 +7,9 @@
 //!
 //! Every column and filter names the data it needs (plan D3). Data the crawl
 //! file does not have yet is reported as unavailable instead of silently
-//! empty; extraction-based expressions are `NULL` until spec 005 stores them.
+//! empty. Page content comes from spec 005's tables (`pages`, `page_text`,
+//! `directives`, extended `links`), read through primary-key lookups so a
+//! column costs one index probe per row on screen.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -35,10 +37,12 @@ impl Need {
         match self {
             Self::Base => "",
             Self::Extraction => {
-                "Page content (descriptions, headings, canonicals, directives, images) is not collected yet."
+                "Page content (descriptions, headings, canonicals, directives, images) was not collected in this crawl file; it was made before SpiderLens read page content."
             }
             Self::Attempts => "Request attempts are not recorded in this crawl yet.",
-            Self::Timing => "Response time and size are not recorded in this crawl yet.",
+            Self::Timing => {
+                "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
+            }
             Self::RawHtml => "This crawl does not store page HTML.",
         }
     }
@@ -84,6 +88,12 @@ pub enum Derived {
     OccTitle,
     /// `temp.redirects(id, hops, final_id, is_loop)`: each redirect chain.
     Redirects,
+    /// `temp.occ_md(v, n)`: each meta description and how many pages use it.
+    OccMeta,
+    /// `temp.occ_h1(v, n)`: each first H1 and how many pages use it.
+    OccH1,
+    /// `temp.occ_h2(v, n)`: each first H2 and how many pages use it.
+    OccH2,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -157,6 +167,14 @@ const RESPONSES: &str = "u.state = 'crawled' \
      OR u.reason IN ('blocked_by_robots', 'robots_unavailable', 'excluded', 'not_included', 'outside_start_folder')";
 
 const NORM_TITLE: &str = "norm_ws(u.title)";
+
+/// Page content, one primary-key lookup each (spec 005 data model).
+const MD: &str = "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)";
+const H1_1: &str = "(SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id)";
+/// The alt text of the first place an image is used. NULL when the
+/// attribute is missing, `''` when it is empty.
+const IMG_ALT: &str =
+    "(SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1)";
 
 const fn col(
     id: &'static str,
@@ -234,23 +252,35 @@ mod c {
         ValueKind::State,
         150,
     );
-    pub const INDEXABILITY: ColumnDef =
-        col("indexability", "Indexability", "NULL", ValueKind::Text, 130).needs(Need::Extraction);
-    pub const TITLE: ColumnDef = col("title", "Title", "u.title", ValueKind::Text, 320);
-    pub const META_DESCRIPTION: ColumnDef = col(
-        "meta_description",
-        "Meta description",
-        "NULL",
+    pub const INDEXABILITY: ColumnDef = col(
+        "indexability",
+        "Indexability",
+        "indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url)",
         ValueKind::Text,
-        320,
+        200,
     )
     .needs(Need::Extraction);
-    pub const H1: ColumnDef = col("h1", "H1", "NULL", ValueKind::Text, 260).needs(Need::Extraction);
-    pub const WORD_COUNT: ColumnDef =
-        col("word_count", "Word count", "NULL", ValueKind::Int, 100).needs(Need::Extraction);
-    pub const SIZE: ColumnDef = col("size", "Size", "NULL", ValueKind::Bytes, 90).needs(Need::Timing);
-    pub const RESPONSE_TIME: ColumnDef =
-        col("response_time", "Response time", "NULL", ValueKind::Ms, 120).needs(Need::Timing);
+    pub const TITLE: ColumnDef = col("title", "Title", "u.title", ValueKind::Text, 320);
+    pub const META_DESCRIPTION: ColumnDef =
+        col("meta_description", "Meta description", MD, ValueKind::Text, 320).needs(Need::Extraction);
+    pub const H1: ColumnDef = col("h1", "H1", H1_1, ValueKind::Text, 260).needs(Need::Extraction);
+    pub const WORD_COUNT: ColumnDef = col(
+        "word_count",
+        "Word count",
+        "(SELECT p.word_count FROM pages p WHERE p.url_id = u.id)",
+        ValueKind::Int,
+        100,
+    )
+    .needs(Need::Extraction);
+    pub const SIZE: ColumnDef = col("size", "Size", "u.size_bytes", ValueKind::Bytes, 90).needs(Need::Timing);
+    pub const RESPONSE_TIME: ColumnDef = col(
+        "response_time",
+        "Response time",
+        "u.response_ms",
+        ValueKind::Ms,
+        120,
+    )
+    .needs(Need::Timing);
     pub const DEPTH: ColumnDef = col("depth", "Depth", "u.depth", ValueKind::Int, 70);
     pub const INLINKS: ColumnDef = col(
         "inlinks",
@@ -326,21 +356,16 @@ const TYPE_FILTERS: [FilterDef; 7] = [
     filter("other", "Other", "content_kind(u.content_type) = 'other'"),
 ];
 
-/// Text tabs that wait for page extraction: All lists the eligible pages,
-/// every other filter needs extracted content.
+/// A content tab (FR-010): HTML pages fetched successfully, with All first.
 fn content_tab(
     id: &'static str,
     title: &'static str,
     columns: Vec<ColumnDef>,
-    filters: &[(&'static str, &'static str)],
+    filters: Vec<FilterDef>,
     search_column: &'static str,
 ) -> TabDef {
     let mut fs = vec![filter("all", "All", "1")];
-    fs.extend(
-        filters
-            .iter()
-            .map(|(fid, label)| filter(fid, label, "0").needs(Need::Extraction)),
-    );
+    fs.extend(filters.into_iter().map(|f| f.needs(Need::Extraction)));
     TabDef {
         id,
         title,
@@ -352,8 +377,152 @@ fn content_tab(
     }
 }
 
-fn ext(id: &'static str, label: &'static str, kind: ValueKind, width: u16) -> ColumnDef {
-    col(id, label, "NULL", kind, width).needs(Need::Extraction)
+fn ext(id: &'static str, label: &'static str, expr: &'static str, kind: ValueKind, width: u16) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::Extraction)
+}
+
+/// A robots directive that applies to this crawl: for all crawlers, or for
+/// the crawl's robots token (FR-013).
+macro_rules! directive {
+    ($names:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM directives d WHERE d.url_id = u.id \
+             AND (d.crawler = 'all' OR d.crawler = robots_token()) AND d.directive IN (",
+            $names,
+            "))"
+        )
+    };
+}
+
+/// The directives from one source, as written: `noindex, max-snippet:50`,
+/// with the crawler named when it is not all of them.
+macro_rules! directives_from {
+    ($source:literal) => {
+        concat!(
+            "(SELECT group_concat(v, ', ') FROM (SELECT CASE WHEN d.crawler = 'all' THEN '' ELSE d.crawler || ': ' END \
+             || d.directive || COALESCE(':' || d.value, '') AS v FROM directives d \
+             WHERE d.url_id = u.id AND d.source = '",
+            $source,
+            "' ORDER BY d.pos))"
+        )
+    };
+}
+
+/// The first canonical declared in one place, as an absolute URL.
+macro_rules! canonical_from {
+    ($source:literal) => {
+        concat!(
+            "(SELECT COALESCE(t.url, l.target) FROM links l LEFT JOIN urls t ON t.id = l.to_id \
+             WHERE l.from_id = u.id AND l.kind = 'canonical' AND l.source = '",
+            $source,
+            "' ORDER BY l.pos LIMIT 1)"
+        )
+    };
+}
+
+/// Filters on an image's uses: any page that shows it this way.
+macro_rules! image_use {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+/// Columns and filters of the H1 and H2 tabs, which differ only in level.
+macro_rules! heading_tab {
+    ($id:literal, $label:literal, $occ:expr) => {
+        content_tab(
+            $id,
+            $label,
+            vec![
+                c::ADDRESS,
+                ext(
+                    $id,
+                    $label,
+                    concat!("(SELECT p.", $id, "_1 FROM pages p WHERE p.url_id = u.id)"),
+                    ValueKind::Text,
+                    300,
+                ),
+                ext(
+                    concat!($id, "_length"),
+                    concat!($label, " length"),
+                    concat!(
+                        "length((SELECT p.",
+                        $id,
+                        "_1 FROM pages p WHERE p.url_id = u.id))"
+                    ),
+                    ValueKind::Int,
+                    90,
+                ),
+                ext(
+                    concat!($id, "_2"),
+                    concat!($label, " (second)"),
+                    concat!("(SELECT p.", $id, "_2 FROM pages p WHERE p.url_id = u.id)"),
+                    ValueKind::Text,
+                    260,
+                ),
+                ext(
+                    "occurrences",
+                    "Occurrences",
+                    concat!(
+                        "(SELECT o.n FROM temp.occ_",
+                        $id,
+                        " o WHERE o.v = (SELECT p.",
+                        $id,
+                        "_1 FROM pages p WHERE p.url_id = u.id))"
+                    ),
+                    ValueKind::Int,
+                    110,
+                )
+                .reads($occ),
+            ],
+            vec![
+                filter(
+                    "missing",
+                    "Missing",
+                    concat!(
+                        "COALESCE((SELECT p.",
+                        $id,
+                        "_1 FROM pages p WHERE p.url_id = u.id), '') = ''"
+                    ),
+                ),
+                filter(
+                    "duplicate",
+                    "Duplicate",
+                    concat!(
+                        "(SELECT p.",
+                        $id,
+                        "_1 FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_",
+                        $id,
+                        " o WHERE o.n > 1)"
+                    ),
+                )
+                .reads($occ),
+                filter(
+                    "over_70",
+                    "Over 70 characters",
+                    concat!(
+                        "length((SELECT p.",
+                        $id,
+                        "_1 FROM pages p WHERE p.url_id = u.id)) > 70"
+                    ),
+                ),
+                filter(
+                    "multiple",
+                    "Multiple",
+                    concat!(
+                        "(SELECT p.",
+                        $id,
+                        "_count FROM pages p WHERE p.url_id = u.id) > 1"
+                    ),
+                ),
+            ],
+            $id,
+        )
+    };
 }
 
 /// Every tab in display order (FR-007, FR-009).
@@ -506,8 +675,15 @@ fn build() -> Vec<TabDef> {
                 c::TITLE,
                 col("title_length", "Title length", "length(norm_ws(u.title))", Int, 100),
                 c::OCCURRENCES_TITLE,
-                ext("title_2", "Title (second)", Text, 260).hidden(),
-                ext("h1", "H1", Text, 260).hidden(),
+                ext(
+                    "title_2",
+                    "Title (second)",
+                    "(SELECT t.text FROM page_text t WHERE t.url_id = u.id AND t.kind = 'title' AND t.pos = 1)",
+                    Text,
+                    260,
+                )
+                .hidden(),
+                c::H1.hidden(),
                 c::INDEXABILITY.hidden(),
             ],
             filters: vec![
@@ -525,8 +701,18 @@ fn build() -> Vec<TabDef> {
                     "Below 30 characters",
                     "norm_ws(u.title) <> '' AND length(norm_ws(u.title)) < 30",
                 ),
-                filter("same_as_h1", "Same as H1", "0").needs(Need::Extraction),
-                filter("multiple", "Multiple", "0").needs(Need::Extraction),
+                filter(
+                    "same_as_h1",
+                    "Same as H1",
+                    "norm_ws(u.title) <> '' AND lower(norm_ws(u.title)) = lower((SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id))",
+                )
+                .needs(Need::Extraction),
+                filter(
+                    "multiple",
+                    "Multiple",
+                    "(SELECT p.title_count FROM pages p WHERE p.url_id = u.id) > 1",
+                )
+                .needs(Need::Extraction),
             ],
             search_column: Some("title"),
             scoped: false,
@@ -536,55 +722,45 @@ fn build() -> Vec<TabDef> {
             "Meta description",
             vec![
                 c::ADDRESS,
-                ext("meta_description", "Meta description", Text, 360),
-                ext("length", "Length", Int, 80),
-                ext("occurrences", "Occurrences", Int, 110),
+                ext("meta_description", "Meta description", MD, Text, 360),
+                ext("length", "Length", "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))", Int, 80),
+                ext(
+                    "occurrences",
+                    "Occurrences",
+                    "(SELECT o.n FROM temp.occ_md o WHERE o.v = (SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))",
+                    Int,
+                    110,
+                )
+                .reads(Derived::OccMeta),
             ],
-            &[
-                ("missing", "Missing"),
-                ("duplicate", "Duplicate"),
-                ("over_155", "Over 155 characters"),
-                ("below_70", "Below 70 characters"),
-                ("multiple", "Multiple"),
+            vec![
+                filter("missing", "Missing", "COALESCE((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id), '') = ''"),
+                filter(
+                    "duplicate",
+                    "Duplicate",
+                    "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_md o WHERE o.n > 1)",
+                )
+                .reads(Derived::OccMeta),
+                filter(
+                    "over_155",
+                    "Over 155 characters",
+                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) > 155",
+                ),
+                filter(
+                    "below_70",
+                    "Below 70 characters",
+                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) BETWEEN 1 AND 69",
+                ),
+                filter(
+                    "multiple",
+                    "Multiple",
+                    "(SELECT p.meta_description_count FROM pages p WHERE p.url_id = u.id) > 1",
+                ),
             ],
             "meta_description",
         ),
-        content_tab(
-            "h1",
-            "H1",
-            vec![
-                c::ADDRESS,
-                ext("h1", "H1", Text, 300),
-                ext("h1_length", "H1 length", Int, 90),
-                ext("h1_2", "H1 (second)", Text, 260),
-                ext("occurrences", "Occurrences", Int, 110),
-            ],
-            &[
-                ("missing", "Missing"),
-                ("duplicate", "Duplicate"),
-                ("over_70", "Over 70 characters"),
-                ("multiple", "Multiple"),
-            ],
-            "h1",
-        ),
-        content_tab(
-            "h2",
-            "H2",
-            vec![
-                c::ADDRESS,
-                ext("h2", "H2", Text, 300),
-                ext("h2_length", "H2 length", Int, 90),
-                ext("h2_2", "H2 (second)", Text, 260),
-                ext("occurrences", "Occurrences", Int, 110),
-            ],
-            &[
-                ("missing", "Missing"),
-                ("duplicate", "Duplicate"),
-                ("over_70", "Over 70 characters"),
-                ("multiple", "Multiple"),
-            ],
-            "h2",
-        ),
+        heading_tab!("h1", "H1", Derived::OccH1),
+        heading_tab!("h2", "H2", Derived::OccH2),
         TabDef {
             id: "images",
             title: "Images",
@@ -592,8 +768,14 @@ fn build() -> Vec<TabDef> {
             eligible: "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')",
             columns: vec![
                 c::ADDRESS,
-                ext("alt", "Alt text", Text, 280),
-                ext("alt_length", "Alt length", Int, 90),
+                ext("alt", "Alt text", IMG_ALT, Text, 280),
+                ext(
+                    "alt_length",
+                    "Alt length",
+                    "length((SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1))",
+                    Int,
+                    90,
+                ),
                 c::STATUS_CODE,
                 c::SIZE,
                 col(
@@ -607,10 +789,11 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing_alt", "Missing alt attribute", "0").needs(Need::Extraction),
-                filter("empty_alt", "Empty alt text", "0").needs(Need::Extraction),
-                filter("alt_over_100", "Alt text over 100 characters", "0").needs(Need::Extraction),
-                filter("over_100kb", "Over 100 KB", "0").needs(Need::Timing),
+                filter("missing_alt", "Missing alt attribute", image_use!("l.alt IS NULL")).needs(Need::Extraction),
+                filter("empty_alt", "Empty alt text", image_use!("l.alt = ''")).needs(Need::Extraction),
+                filter("alt_over_100", "Alt text over 100 characters", image_use!("length(l.alt) > 100"))
+                    .needs(Need::Extraction),
+                filter("over_100kb", "Over 100 KB", "u.size_bytes > 102400").needs(Need::Timing),
             ],
             search_column: Some("alt"),
             scoped: false,
@@ -620,16 +803,16 @@ fn build() -> Vec<TabDef> {
             "Canonicals",
             vec![
                 c::ADDRESS,
-                ext("canonical_html", "Canonical (HTML)", Url, 320),
-                ext("canonical_http", "Canonical (HTTP header)", Url, 320),
+                ext("canonical_html", "Canonical (HTML)", canonical_from!("html"), Url, 320),
+                ext("canonical_http", "Canonical (HTTP header)", canonical_from!("header"), Url, 320),
                 c::INDEXABILITY,
             ],
-            &[
-                ("contains", "Contains canonical"),
-                ("self", "Self-referencing"),
-                ("canonicalised", "Canonicalised"),
-                ("missing", "Missing"),
-                ("conflicting", "Multiple or conflicting"),
+            vec![
+                filter("contains", "Contains canonical", "u.canonical IS NOT NULL"),
+                filter("self", "Self-referencing", "u.canonical = u.url"),
+                filter("canonicalised", "Canonicalised", "u.canonical <> u.url"),
+                filter("missing", "Missing", "u.canonical IS NULL"),
+                filter("conflicting", "Multiple or conflicting", "u.canonical_count > 1"),
             ],
             "canonical_html",
         ),
@@ -638,20 +821,24 @@ fn build() -> Vec<TabDef> {
             "Directives",
             vec![
                 c::ADDRESS,
-                ext("meta_robots", "Meta robots", Text, 220),
-                ext("x_robots_tag", "X-Robots-Tag", Text, 220),
+                ext("meta_robots", "Meta robots", directives_from!("meta"), Text, 220),
+                ext("x_robots_tag", "X-Robots-Tag", directives_from!("header"), Text, 220),
                 c::INDEXABILITY,
             ],
-            &[
-                ("index", "Index"),
-                ("noindex", "Noindex"),
-                ("follow", "Follow"),
-                ("nofollow", "Nofollow"),
-                ("none", "None"),
-                ("noarchive", "Noarchive"),
-                ("nosnippet", "Nosnippet"),
-                ("max_preview", "Max-snippet / max-image-preview / max-video-preview"),
-                ("unavailable_after", "Unavailable_after"),
+            vec![
+                filter("index", "Index", "COALESCE(u.noindex, 0) = 0"),
+                filter("noindex", "Noindex", "u.noindex = 1"),
+                filter("follow", "Follow", "COALESCE(u.nofollow, 0) = 0"),
+                filter("nofollow", "Nofollow", "u.nofollow = 1"),
+                filter("none", "None", directive!("'none'")),
+                filter("noarchive", "Noarchive", directive!("'noarchive'")),
+                filter("nosnippet", "Nosnippet", directive!("'nosnippet'")),
+                filter(
+                    "max_preview",
+                    "Max-snippet / max-image-preview / max-video-preview",
+                    directive!("'max-snippet', 'max-image-preview', 'max-video-preview'"),
+                ),
+                filter("unavailable_after", "Unavailable_after", directive!("'unavailable_after'")),
             ],
             "meta_robots",
         ),
@@ -680,7 +867,21 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
              INSERT INTO temp.redirects
                SELECT start, MAX(n), cur, instr(path, ',' || cur || ',') > 0 FROM c GROUP BY start;",
         ),
+        Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
+        Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
+        Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
     }
+}
+
+/// `temp.<table>(v, n)`: each non-empty value of `pages.<field>` on the
+/// content tabs' pages, and how many pages use it.
+fn occ(conn: &rusqlite::Connection, table: &str, field: &str) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS temp.{table};
+         CREATE TEMP TABLE {table}(v TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
+         INSERT INTO temp.{table} SELECT p.{field}, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
+           WHERE {HTML_OK} AND p.{field} <> '' GROUP BY 1;"
+    ))
 }
 
 #[cfg(test)]
