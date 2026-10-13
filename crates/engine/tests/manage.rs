@@ -93,9 +93,9 @@ fn dump(path: &Path) -> Vec<String> {
         let rows = stmt
             .query_map([], |r| {
                 let mut row = Vec::with_capacity(n);
-                for i in 0..n {
+                for (i, name) in names.iter().enumerate() {
                     // html_stored is the one column a purge must change.
-                    if t == "pages" && names[i] == "html_stored" {
+                    if t == "pages" && name == "html_stored" {
                         continue;
                     }
                     row.push(format!("{:?}", r.get_ref(i)?));
