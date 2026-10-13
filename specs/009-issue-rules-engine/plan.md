@@ -53,10 +53,34 @@ Issues are computed on the read side of a crawl file, in the `spiderlens-results
 
 **D11. Exit code.** `spiderlens issues --fail-on <priority>` exits with a new code `ISSUES_FOUND`. Codes 0, 2 to 6 are taken; the number is taken at merge time as the next free one (expected 7), the same way migration steps are numbered, and recorded in the CLI contract.
 
+**D12. The Crawl Analysis phase (shared with specs 010, 011, 012, 015, 020, 022, 023).** Some checks need a global computation over the whole crawl that is too slow to repeat on every open or every 5 s: Link Score (an iterative graph computation), near duplicates (similarity clustering), orphan pages (sitemap against link graph), AEO aggregates, the health score. Instead of each feature making its own pass, there is one phase with registered passes, and this spec owns it because the rule catalogue reads every pass's output and runs last.
+
+- **A pass** is a value implementing a small trait, the way 007 tabs are values:
+
+  ```rust
+  pub trait Pass: Sync {
+      fn id(&self) -> &'static str;                 // "link_score", "near_duplicates", "orphans", ...
+      fn version(&self) -> u32;                     // bump to make old files rerun this pass
+      fn after(&self) -> &'static [&'static str];   // passes whose output it reads
+      fn needs(&self) -> &'static [Need];           // crawl data it reads; missing = skipped with reason
+      fn budget(&self) -> Budget;                   // target per 100k URLs, stated in its own spec
+      fn run(&self, cx: &mut PassContext<'_>) -> Result<PassOutcome>;
+  }
+  ```
+
+  `PassContext` gives a connection, the output schema (`main` or `temp`), a progress sink (`cx.progress(done, total, label)`), a cancel flag checked between batches, and the crawl's settings. Passes are listed in one static `PASSES` slice in `crates/results/src/analysis/`; a feature adds its pass file and one line.
+- **Outputs** are tables the pass owns, named after it (`link_score`, `near_dup_groups`, ...), created by that feature's own migration step (number at merge, per the Storage rule) and replaced in one transaction per pass. Meta key `analysis` holds `{ pass_id: { version, data_version, ms } }`.
+- **When it runs**: automatically when a crawl finishes or is stopped, by the process that holds the writer lock (app or CLI), before the lock is released; and on demand for an opened file whose `analysis` meta is missing a pass, has an older pass version, or was made before more URLs were crawled (resume). During a crawl, passes do not run; rules that read pass outputs report "available when the crawl ends" (shown like provisional, never as zero).
+- **Order and rerun**: topological order of `after`, ties by `PASSES` order; always a full rerun of a stale pass (the computations are global), and a pass reruns its dependants. The issue rule evaluation (D4) is not a pass: it stays live on temp tables so settings changes apply in seconds, and it reads pass outputs like any other table.
+- **Read-only viewers** (view-only files, spec 006): passes run into the reader connection's `temp` schema with the same table names, so the results are visible for the session but nothing is written; the Issues section says "Analysis not saved: file is read-only". If a pass's budget for that file size would exceed 60 s, the viewer offers the run instead of starting it.
+- **Progress and cancel**: one progress event stream (`analysis_progress { pass, label, done, total }`) shown in the status bar as "Analysing: Link Score 40%"; starting or resuming a crawl cancels the phase, which leaves earlier completed passes in place. The CLI prints the same lines and has `spiderlens analyse <file>` to run stale passes.
+- **Budgets**: each pass states its target in its spec; the phase logs the measured time per pass to the crawl log (spec 006 events) so slow passes are visible. This spec's evaluation stays within SC-003 on top of the passes.
+
 ## Structure
 
 ```text
 crates/results/src/
+  analysis/         Pass trait, PASSES, runner (order, staleness, temp or main schema, progress, cancel)
   issues/
     mod.rs          Rule, Priority, Scope, Threshold, CATALOGUE, RULES_VERSION, lookups
     settings.rs     ResolvedSettings from IssueSettings; validation; notices
@@ -97,3 +121,4 @@ crates/test-fixtures/src/issues.rs   the issues fixture site (one positive and o
 - **Spec 004** error classes are read through `u.error_class`; rules for "no response" use the classes as stored after PR 29.
 - **Specs 011, 014, 015, 016** add rule files to `issues/rules/` with the shape in D1; ids are namespaced by category (`sitemap.*`, `render.*`, `aeo.*`, `agent.*`).
 - **Exit code** number taken at merge (D11).
+- **Analysis phase** (D12): this spec ships the runner with no passes of its own; specs 010, 011, 015, 020 and 022/023 add their passes. The app's status bar and the CLI `analyse` command come with the runner.
