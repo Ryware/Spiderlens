@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
+import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { cn } from "./cn";
 
@@ -112,6 +113,44 @@ export function Menu({ trigger, items, label }: { trigger: ReactElement<Record<s
         </BaseMenu.Positioner>
       </BaseMenu.Portal>
     </BaseMenu.Root>
+  );
+}
+
+/** Non-modal panel anchored to its trigger, for details behind a compact control (paused sites). */
+export function Popover({
+  trigger,
+  title,
+  children,
+  side = "bottom",
+  align = "start",
+  className,
+}: {
+  trigger: ReactElement<Record<string, unknown>>;
+  title: string;
+  children: ReactNode;
+  side?: "top" | "bottom";
+  align?: "start" | "center" | "end";
+  className?: string;
+}) {
+  return (
+    <BasePopover.Root>
+      <BasePopover.Trigger render={trigger} />
+      <BasePopover.Portal>
+        <BasePopover.Positioner side={side} align={align} sideOffset={6} className="z-50">
+          <BasePopover.Popup
+            className={cn(
+              "flex max-w-110 min-w-72 flex-col rounded-lg bg-surface text-fg shadow-popover outline-none",
+              "origin-(--transform-origin) transition-[opacity,scale] duration-(--dur-fast)",
+              "data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+              className,
+            )}
+          >
+            <BasePopover.Title className="m-0 border-b border-line px-3 py-2 text-xs font-semibold text-fg-3">{title}</BasePopover.Title>
+            {children}
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
   );
 }
 

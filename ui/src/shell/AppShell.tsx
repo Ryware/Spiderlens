@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
+import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
@@ -79,6 +80,8 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [retryOpen, setRetryOpen] = useState(false);
+  const retry = useRetryAvailability(transport, crawl);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
@@ -133,6 +136,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: setup.canStart && !crawl.active, run: startCrawl },
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
+      { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
       { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], enabled: !crawl.active, run: () => void openCrawl() },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
@@ -158,7 +162,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "theme-dark", title: "Appearance: Dark", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "dark" }) },
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
+    [setup, crawl, retry, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
   );
 
   const run = useCallback(
@@ -176,7 +180,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen) return;
+      if (settingsOpen || paletteOpen || aboutOpen || retryOpen) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -185,11 +189,11 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, retryOpen]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <Toolbar ref={urlRef} setup={setup} run={crawl} onStart={startCrawl} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} />
+      <Toolbar ref={urlRef} setup={setup} run={crawl} onStart={startCrawl} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} retry={retry} onRetry={() => setRetryOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <div className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
@@ -229,12 +233,14 @@ export function AppShell({ transport }: { transport: Transport }) {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         setup={setup}
+        run={crawl}
         transport={transport}
         category={ui.settingsCategory as CategoryId}
         onCategory={(c) => updateUi({ settingsCategory: c })}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
+      <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
     </div>
   );
 }

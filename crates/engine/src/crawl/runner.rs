@@ -1627,7 +1627,21 @@ impl Run {
                 h.in_flight -= 1;
                 // Retry-After pauses the whole host, up to the maximum wait
                 // (FR-018).
-                if let Some(until) = h.speed.on_response(took, signal_of(&result), now) {
+                // A lone 503 that will be retried says little about load:
+                // treating it as overload halved the host's concurrency for
+                // every flaky page (2% flaky pages took a 100k crawl from 34
+                // to 64 s). A 503 that is still there after the last
+                // attempt, a 429, and any Retry-After still slow the host
+                // down; a real outage trips the host breaker (D6).
+                let mut signal = signal_of(&result);
+                if let Signal::Overloaded { retry_after: None } = signal
+                    && matches!(&result, Ok(o) if o.status == 503)
+                    && settings.retry_5xx
+                    && attempt.round_attempts < settings.attempts
+                {
+                    signal = Signal::Other;
+                }
+                if let Some(until) = h.speed.on_response(took, signal, now) {
                     h.next_start = h.next_start.max(until.min(now + max_wait));
                 }
                 matches!(

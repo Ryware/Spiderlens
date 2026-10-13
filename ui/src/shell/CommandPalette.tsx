@@ -18,7 +18,7 @@ export function CommandPalette({
   recent: string[];
   onRun: (c: Command) => void;
 }) {
-  const available = commands.filter((c) => c.enabled !== false);
+  const available = commands.filter((c) => c.enabled !== false || c.reason);
   const recentCommands = recent.map((id) => available.find((c) => c.id === id)).filter((c): c is Command => !!c);
   const groups = ["Crawl", "Go to", "View", "Help"] as const;
 
@@ -27,13 +27,15 @@ export function CommandPalette({
       key={prefix + c.id}
       value={prefix + c.id + " " + c.title}
       keywords={c.keywords}
+      disabled={c.enabled === false}
       onSelect={() => {
         onOpenChange(false);
         onRun(c);
       }}
-      className="flex h-8 items-center gap-2 rounded-md px-2.5 text-base text-fg data-[selected=true]:bg-selection"
+      className="flex h-8 items-center gap-2 rounded-md px-2.5 text-base text-fg data-[disabled=true]:text-fg-3 data-[selected=true]:bg-selection"
     >
-      <span className="flex-1 truncate">{c.title}</span>
+      <span className="truncate">{c.title}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-fg-3">{c.enabled === false ? c.reason : null}</span>
       {c.shortcut && <Kbd keys={c.shortcut} className="border-current text-current opacity-70" />}
     </Cmdk.Item>
   );
