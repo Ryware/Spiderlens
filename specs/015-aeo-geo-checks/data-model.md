@@ -17,7 +17,7 @@ All tables arrive in one additive migration step (plan D14). Columns are nullabl
 - `custom_ai_bots: Vec<AiBot>` (FR-007).
 - `page_type_overrides: Vec<{ pattern, page_type }>` (FR-019), saved with the crawl when used.
 
-## `AiBot` (`crates/config/src/ai_bots.toml`)
+## `AiBot` (`crates/config/src/ai_bots.json`)
 
 | Field | Type | Meaning |
 |---|---|---|

@@ -20,7 +20,7 @@ description: "Task list for spec 015, AEO and GEO checks"
 
 ## Phase 2: Foundational
 
-- [ ] T004 AI crawler list `crates/config/src/ai_bots.toml` and `ai_bots.rs` (contracts/ai-bots.md, research R1), with tests for unique tokens and indexes, docs URLs, purposes; custom entries merged; `spiderlens aeo bots`.
+- [ ] T004 AI crawler list `crates/config/src/ai_bots.json` and `ai_bots.rs` (contracts/ai-bots.md, research R1), with tests for unique tokens and indexes, docs URLs, purposes; custom entries merged; `spiderlens aeo bots`.
 - [ ] T005 [P] Scoring profile `crates/config/src/aeo_profile.rs` and `CrawlConfig.ai_checks` (`auto`, `site_files`) with serde defaults so older configs load; CLI flags `--no-ai-checks`, `--no-site-files`.
 - [ ] T006 robots.txt additions in `crates/engine/src/robots.rs` (plan D6): rule line numbers, `other_lines`, `for_agent_with_fallback`; existing tests unchanged, new tests for each addition.
 - [ ] T007 Migration step in `crates/engine/src/crawl/migrate.rs` with every table of data-model.md (additive); test that a format-6 file upgrades and that `read_compat` is unchanged. Version = latest on main plus one at merge.
@@ -41,10 +41,10 @@ description: "Task list for spec 015, AEO and GEO checks"
 ## Phase 5: US3, US4, structured data (P2, no rendering needed)
 
 - [ ] T015 [US3] Page type classification with reasons and URL-pattern overrides (FR-019).
-- [ ] T016 [US3] `content/` DOM facts (plan D7): main content, question headings (`data/questions.toml`, eight languages), direct answers, structure, facts and sources, Q&A sections, snippet markers; `NotAvailable` without stored HTML. Tests: US3.1 to US3.6, SC-004 for these checks.
-- [ ] T017 [P] [US4] Dates (`data/dates.toml`): structured data, `<time>`, visible near H1 or byline, `Last-Modified`, agreement, future dates, staleness. Tests: US4.1, US4.2, US4.5.
+- [ ] T016 [US3] `content/` DOM facts (plan D7): main content, question headings (`data/questions.json`, eight languages), direct answers, structure, facts and sources, Q&A sections, snippet markers; `NotAvailable` without stored HTML. Tests: US3.1 to US3.6, SC-004 for these checks.
+- [ ] T017 [P] [US4] Dates (`data/dates.json`): structured data, `<time>`, visible near H1 or byline, `Last-Modified`, agreement, future dates, staleness. Tests: US4.1, US4.2, US4.5.
 - [ ] T018 [P] [US4] Authors and site entity: bylines, `author` items, author pages, Organization or Person and WebSite, `sameAs`, name consistency, about and contact pages (FR-028 to FR-030). Tests: US4.3, US4.4.
-- [ ] T019 [P] Structured data validation (plan D8): `build.rs` tables from the trimmed Schema.org file, `type_rules.toml` for the 20 types, JSON pointers in messages, coverage per page type, disagreement with visible content (FR-031 to FR-033). Tests: fixtures per type with expected errors and warnings; US3.5.
+- [ ] T019 [P] Structured data validation (plan D8): `build.rs` tables from the trimmed Schema.org file, `type_rules.json` for the 20 types, JSON pointers in messages, coverage per page type, disagreement with visible content (FR-031 to FR-033). Tests: fixtures per type with expected errors and warnings; US3.5.
 
 ## Phase 6: US2 Readable without JavaScript (P1)
 

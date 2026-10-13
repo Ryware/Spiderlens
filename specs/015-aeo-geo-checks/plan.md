@@ -11,7 +11,7 @@ Add an AI search area that answers, per page and per site: can AI crawlers reach
 The approach:
 
 - A new library crate, `crates/aeo`, holds the analysis: the AI crawler access matrix, llms.txt and other site files, content checks on stored HTML, dates, authors, entities, structured data validation, rules and scores. It has no Tauri dependency; the app and the CLI both call `aeo::analyze`.
-- The AI crawler list is a data file in `crates/config` (`ai_bots.toml`), versioned and embedded at build time. It is the one list SpiderLens has; spec 016 reads it from there.
+- The AI crawler list is a data file in `crates/config` (`ai_bots.json`), versioned and embedded at build time. It is the one list SpiderLens has; spec 016 reads it from there.
 - Every check is a rule in the spec 009 rule shape plus three fields of our own (score part, points, basis). The score is a pure integer function of rule outcomes and a scoring profile, so the same file always gives the same bytes (SC-006).
 - Spec 014 is used only through its `render_comparisons` table. When the table or a page's row is missing, the readability checks fall back to raw-HTML evidence and say so.
 
@@ -21,7 +21,7 @@ Speed first: the crawl pays three extra requests per internal host (`/llms.txt`,
 
 **Language/Version**: Rust 2024 (toolchain from `rust-toolchain.toml`, workspace `rust-version` 1.97), TypeScript 5 with React 18 for the UI.
 
-**Primary Dependencies**: existing only: rusqlite, scraper/html5ever, zstd, serde/serde_json, toml (via config), regex, jiff, url, ts-rs, Tauri 2. No new crates (research R6, constitution VIII). Parallel workers use `std::thread::scope`, not a thread-pool crate.
+**Primary Dependencies**: existing only: rusqlite, scraper/html5ever, zstd, serde/serde_json, regex, jiff, url, ts-rs, Tauri 2. No new crates (research R6, constitution VIII). Parallel workers use `std::thread::scope`, not a thread-pool crate.
 
 **Storage**: the crawl file (SQLite). One additive migration step (expected Step 7; the number is taken at merge time, latest on main plus one).
 
@@ -70,9 +70,9 @@ pub async fn probe(file: &Path, opts: &ProbeOptions, progress: ...) -> Result<Pr
 
 In Rust terms the crate is "functional core, imperative shell": every check is a pure function from a page's facts to an outcome (`fn(&PageFacts, &Profile) -> Outcome`), and only `analyze` touches SQLite. That keeps SC-004 and SC-007 testable with plain unit tests and fixtures.
 
-### D2. The AI crawler list (`crates/config/src/ai_bots.rs`, `ai_bots.toml`)
+### D2. The AI crawler list (`crates/config/src/ai_bots.rs`, `ai_bots.json`)
 
-`ai_bots.toml` holds `version`, `date` and one `[[bot]]` per crawler with the fields of FR-006 plus `fallback_tokens` (Applebot falls back to Googlebot) and `robots_may_not_apply`. It is embedded with `include_str!` and parsed once into `&'static [AiBot]` (a `LazyLock`, the Rust counterpart of a lazily initialised static in other languages). A unit test checks unique tokens, a documentation URL for every entry and a known purpose. User entries live in the app settings (`config::store`) and are merged at analysis time; built-in entries win on token clashes and the clash is reported. Each bot has a stable index inside a list version, used for the per-page bitmask in D5. The list's version is stored with the results, so a reopened file knows which bit means which crawler.
+`ai_bots.json` holds `version`, `date` and one `[[bot]]` per crawler with the fields of FR-006 plus `fallback_tokens` (Applebot falls back to Googlebot) and `robots_may_not_apply`. It is embedded with `include_str!` and parsed once into `&'static [AiBot]` (a `LazyLock`, the Rust counterpart of a lazily initialised static in other languages). A unit test checks unique tokens, a documentation URL for every entry and a known purpose. User entries live in the app settings (`config::store`) and are merged at analysis time; built-in entries win on token clashes and the clash is reported. Each bot has a stable index inside a list version, used for the per-page bitmask in D5. The list's version is stored with the results, so a reopened file knows which bit means which crawler.
 
 Spec 016 reads `config::ai_bots::all()`; the coordinator has told that thread.
 
@@ -111,12 +111,12 @@ Filters in the results tab are SQL conditions on `aeo_pages.flags` and `blocked_
 The page body is parsed once with the same html5ever pipeline spec 005 uses, into a `scraper::Html`. From it:
 
 - **Main content**: `main`, else the single `article`, else `body` without `nav`, `header`, `footer`, `aside` and elements with `role` navigation, banner, contentinfo or complementary.
-- **Question headings**: H2 to H4 text ending with `?` or starting with a question word from `questions.toml` (English, Hebrew, Spanish, French, German, Italian, Portuguese, Dutch), selected by the page's `lang`, else by the site's most common language.
+- **Question headings**: H2 to H4 text ending with `?` or starting with a question word from `questions.json` (English, Hebrew, Spanish, French, German, Italian, Portuguese, Dutch), selected by the page's `lang`, else by the site's most common language.
 - **Direct answer**: the first element after the heading in document order that is a paragraph or list; its first sentence (split on `.`, `?`, `!` and their Hebrew and CJK counterparts) must be at most 60 words.
 - **Structure**: paragraph word counts, subheadings per 1,000 words, lists and tables in the main content.
 - **Facts with sources**: figures by regular expressions (numbers with `%`, currency signs, units, four-digit years), quotations (`blockquote` with `cite` or a following attribution, quotation marks followed by a name pattern), external links inside the main content.
 - **Q&A sections**: `details`/`summary`, `dl`, question-heading runs, and FAQPage or QAPage items; structured questions are compared with the visible text after normalisation.
-- **Bylines and dates**: `rel=author`, `itemprop=author`, elements whose class or id contains `author` or `byline`, `<time datetime>`, and visible dates near the H1 parsed with per-language month names (`dates.toml`) into `jiff::civil::Date`.
+- **Bylines and dates**: `rel=author`, `itemprop=author`, elements whose class or id contains `author` or `byline`, `<time datetime>`, and visible dates near the H1 parsed with per-language month names (`dates.json`) into `jiff::civil::Date`.
 - **Snippet markers**: counts of `data-nosnippet` and `data-snippet` elements.
 - **Raw-only JavaScript evidence** (FR-017): text-to-HTML ratio, script bytes share, empty application containers (`#root`, `#app`, `#__next`, `[data-reactroot]` with no text), framework markers.
 
@@ -124,7 +124,7 @@ Not-available rules (FR-025): when `pages.html_stored = 0`, the checks that need
 
 ### D8. Structured data validation (`crates/aeo/src/schema/`)
 
-A build script (`crates/aeo/build.rs`) reads a checked-in, trimmed Schema.org vocabulary file (`vocab/schemaorg-<version>.json`: types with parents, properties with domains and expected types, about 300 KB) and emits a compact `phf`-free table as Rust source: sorted arrays searched with `binary_search`, so lookups are cheap and no new dependency is needed. The required and recommended properties for the 20 types in research.md R4 live in `type_rules.toml`. JSON-LD is parsed with `serde_json` (the raw text is already stored); `@graph`, nested items and `@type` arrays are followed; microdata items come from spec 005's stored items. Messages carry a JSON pointer to the value.
+A build script (`crates/aeo/build.rs`) reads a checked-in, trimmed Schema.org vocabulary file (`vocab/schemaorg-<version>.json`: types with parents, properties with domains and expected types, about 300 KB) and emits a compact `phf`-free table as Rust source: sorted arrays searched with `binary_search`, so lookups are cheap and no new dependency is needed. The required and recommended properties for the 20 types in research.md R4 live in `type_rules.json`. JSON-LD is parsed with `serde_json` (the raw text is already stored); `@graph`, nested items and `@type` arrays are followed; microdata items come from spec 005's stored items. Messages carry a JSON pointer to the value.
 
 ### D9. llms.txt validator and generator (`crates/aeo/src/llms.rs`)
 
@@ -215,7 +215,7 @@ specs/015-aeo-geo-checks/
 ```text
 crates/config/src/
 ├── ai_bots.rs           # AiBot, all(), merge with custom entries
-├── ai_bots.toml         # the built-in list (research R1)
+├── ai_bots.json         # the built-in list (research R1)
 └── aeo_profile.rs       # scoring profile and thresholds
 crates/engine/src/
 ├── robots.rs            # + line numbers, other lines, fallback tokens
@@ -225,8 +225,8 @@ crates/engine/src/
     └── store.rs         # + site_files writes
 crates/aeo/              # new
 ├── build.rs             # Schema.org tables
-├── vocab/               # trimmed vocabulary, type_rules.toml
-├── data/                # questions.toml, dates.toml
+├── vocab/               # trimmed vocabulary, type_rules.json
+├── data/                # questions.json, dates.json
 └── src/
     ├── lib.rs           # analyze, summary, page_result
     ├── access.rs        # robots per crawler, meta and header directives, signals
