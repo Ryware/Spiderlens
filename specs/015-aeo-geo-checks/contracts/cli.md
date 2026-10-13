@@ -4,7 +4,8 @@ Every command takes a crawl file. Output is human-readable by default; `--json` 
 
 | Command | What it does | Spec |
 |---|---|---|
-| `spiderlens aeo run <file> [--profile <name>] [--fail-under <score>]` | Runs the AI checks (migrating the file with a backup if needed), prints the site score, parts and top 10 fixes. Exits with the quality-gate code when the site score is below `--fail-under`. | FR-002, FR-048 |
+| `spiderlens analyse <file>` | Runs every analysis pass (spec 009 D12), this one included. | FR-002 |
+| `spiderlens aeo run <file> [--profile <name>] [--fail-under <score>]` | Runs only the AI pass (migrating the file with a backup if needed), prints the site score, parts and top 10 fixes. Exits with the quality-gate code when the site score is below `--fail-under`. | FR-002, FR-048 |
 | `spiderlens aeo summary <file>` | Prints stored results without running anything. Exit 2 with the reason when the file has no AI results. | FR-005 |
 | `spiderlens aeo export <file> --format csv\|json [--filter <id>] [-o <path>]` | Exports the AI search tab rows (same columns and filters as the app). | FR-041, US7 |
 | `spiderlens aeo page <file> <url>` | Prints one page's explanation: parts, checks with points and basis, access per crawler. | FR-043 |

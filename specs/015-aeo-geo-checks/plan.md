@@ -66,7 +66,7 @@ pub fn generate_llms_txt(file: &Path, opts: &LlmsTxtOptions) -> Result<String>;
 pub async fn probe(file: &Path, opts: &ProbeOptions, progress: ...) -> Result<ProbeSummary>;
 ```
 
-`analyze` opens the file as a writer (taking the spec 006 writer lock; a running crawl calls it from its own finish step with the connection it already holds), applies any missing migration steps with spec 006's backup rule, clears previous AI results and writes new ones in three passes (D4). It is called automatically when a crawl completes unless the crawl's `ai_checks.auto` setting is off (FR-002, FR-003), and on demand from the app and the CLI.
+**It runs as a pass of spec 009's Crawl Analysis phase** (009 plan D12), not as a mechanism of its own. `crates/aeo` registers `AeoPass` implementing 009's `Pass` trait (`id = "aeo"`, `version`, `after = []` for now, `needs`, `budget`, `run(cx)`). The phase gives the connection, the target schema (main, or temp for a read-only file, which is then not saved), progress and cancel; it runs at crawl end before the writer lock is released, and on demand for old or stale files; `meta.analysis` records the pass version and data version, and a stale pass reruns fully. `analyze` above is the pass body (`run(cx)` calls it with `cx`'s connection); the AEO tables come from the pass's own migration step. The automatic run follows `ai_checks.auto` (FR-002, FR-003): when it is off the pass is registered but skipped until asked for. CLI: `spiderlens analyse` runs all passes, including this one; `spiderlens aeo run` runs only this pass. Until 009's phase code merges, the crawl's finish step calls `analyze_open` directly and task T061 moves it under the phase.
 
 In Rust terms the crate is "functional core, imperative shell": every check is a pure function from a page's facts to an outcome (`fn(&PageFacts, &Profile) -> Outcome`), and only `analyze` touches SQLite. That keeps SC-004 and SC-007 testable with plain unit tests and fixtures.
 
@@ -160,9 +160,9 @@ The scoring profile (weights per part, thresholds) is a struct in `crates/config
 - UI (`ui/src/aeo/`): AI search overview (site score, parts, access matrix, llms.txt, signals, entity, coverage, distribution, top fixes), the AI search tab in the results table, the detail section, the probe confirm dialog, the llms.txt draft sheet, and Settings › AI search (automatic run, site files, scoring profile, custom crawlers). OKLCH tokens only; access verdict colours come from existing status tokens.
 - CLI: `spiderlens aeo` subcommands (contracts/cli.md), JSON and CSV output, `--fail-under <score>` exits with spec 009's quality-gate code (7 unless 009 picks another).
 
-### D13. Issue rules (spec 009)
+### D13. Issue rules and the analysis phase (spec 009)
 
-Spec 009 owns the rule table and the issue list. When its code merges, task T060 replaces the local `RuleDef` with 009's type and registers the AI rules in its static slice, so failed AI checks appear in the issue list, reports and exports, and the user's per-profile changes there (disable, priority, threshold) apply. Until then the AI search tab and overview show the findings alone.
+Spec 009 owns the rule table and the issue list. When its code merges, task T060 replaces the local `RuleDef` with 009's type and registers the AI rules in its static slice, so failed AI checks appear in the issue list, reports and exports, and the user's per-profile changes there (disable, priority, threshold) apply. Until then the AI search tab and overview show the findings alone. The AEO computation is a registered pass of 009's Crawl Analysis phase (D1); the AI rules are rules, not a pass.
 
 ### D14. Crawl file change: one additive step
 

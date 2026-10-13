@@ -70,6 +70,7 @@ description: "Task list for spec 015, AEO and GEO checks"
 ## Phase 9: Probe and issue rules
 
 - [ ] T032 [US1] User agent probe (FR-012): explicit start, per-host limits, robots.txt for SpiderLens's token, Retry-After, 10 pages per host, outcome classes including 402 with `crawler-price`; `aeo_probe`; CLI requires `--yes`. Tests against fixture hosts that block by user agent, serve a challenge page and answer 402.
+- [ ] T061 Register `AeoPass` in spec 009's Crawl Analysis phase (009 plan D12): pass id, version, needs, budget; temp schema on read-only files; staleness rerun; replace the direct call from T026. Depends on 009's phase code.
 - [ ] T060 Spec 009 integration (FR-044): replace the local `RuleDef` with 009's type, register the AI rules in its rule slice, apply per-profile disable, priority and threshold. Depends on spec 009's code merge.
 
 ## Phase 10: Performance and polish
@@ -83,5 +84,5 @@ description: "Task list for spec 015, AEO and GEO checks"
 ## Dependencies
 
 - T001 → everything in `crates/aeo`. T004, T006, T007 → T009 → Phases 3 to 7. T013, T014 → T024 to T029.
-- T021's end-to-end test waits for spec 014's code; T060 waits for spec 009's code. Neither blocks the first code PR.
+- T021's end-to-end test waits for spec 014's code; T060 and T061 wait for spec 009's code. Neither blocks the first code PR.
 - T008 is the only task that changes the crawl path; T070 must pass before merge.
