@@ -9,7 +9,7 @@ import { Chip, Tooltip } from "../components/ui";
 export function FilterStrip({ tab, active, counts, onSelect }: { tab: TabDef; active: string; counts: FilterCounts | null; onSelect: (id: string) => void }) {
   const mine = counts?.tab === tab.id ? counts : null;
   return (
-    <div role="toolbar" aria-label="Filters" className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
+    <div role="toolbar" aria-label="Filters" className="flex min-w-0 flex-wrap items-center gap-0.5">
       {tab.filters.map((f) => {
         const reason = mine?.unavailable[f.id];
         const chip = (
