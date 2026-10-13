@@ -125,6 +125,46 @@ pub fn patterns_test(include: Vec<String>, exclude: Vec<String>, samples: Vec<St
     test_patterns(&include, &exclude, &samples)
 }
 
+/// One URL's answer from the scope tester, with the reason's label so the UI
+/// keeps no copy of the wording.
+#[derive(Serialize, Clone)]
+pub struct ScopeVerdict {
+    input: String,
+    url: Option<String>,
+    would_crawl: bool,
+    reason: Option<spiderlens_engine::crawl::NotCrawledReason>,
+    label: Option<&'static str>,
+    detail: Option<String>,
+    robots_checked: bool,
+}
+
+/// What the crawler would do with each URL under these settings (spec 003
+/// FR-016, spec 007 T041). Requests nothing unless `fetch_robots`, and then
+/// only each host's robots.txt.
+#[tauri::command]
+pub async fn scope_test(
+    config: CrawlConfig,
+    start_url: String,
+    urls: Vec<String>,
+    fetch_robots: bool,
+) -> Result<Vec<ScopeVerdict>, String> {
+    let start = spiderlens_config::normalize_url(&start_url).map_err(|e| format!("Start URL: {e}"))?;
+    let urls: Vec<String> = urls.into_iter().filter(|u| !u.trim().is_empty()).collect();
+    let tests = spiderlens_engine::crawl::scope_test(&config, &start, &urls, fetch_robots).await?;
+    Ok(tests
+        .into_iter()
+        .map(|t| ScopeVerdict {
+            label: t.reason.map(|r| r.label()),
+            input: t.input,
+            url: t.url,
+            would_crawl: t.would_crawl,
+            reason: t.reason,
+            detail: t.detail,
+            robots_checked: t.robots_checked,
+        })
+        .collect())
+}
+
 /// What the UI sees of a parsed list: counts and the invalid lines.
 #[derive(Serialize, Clone)]
 pub struct ListSummary {

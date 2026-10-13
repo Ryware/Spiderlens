@@ -1,18 +1,15 @@
 //! `spiderlens crawl`, `report` and `scope test` (spec 003 contracts/cli.md).
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::{ArgMatches, Args, parser::ValueSource};
-use spiderlens_config::{ModeInput, RobotsMode, normalize_url, validate};
+use spiderlens_config::{ModeInput, normalize_url, validate};
 use spiderlens_engine::crawl::{
-    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ScopeRules, UrlState,
-    default_file_name, fetch_robots, host_key, test_url,
+    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, UrlState, default_file_name,
 };
-use spiderlens_engine::robots::RobotsPolicy;
 use tokio::sync::{mpsc, watch};
 
 use crate::options::CrawlArgs;
@@ -381,35 +378,22 @@ pub fn run_scope_test(args: ScopeTestArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    let rules = match ScopeRules::new(&config, std::slice::from_ref(&start)) {
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(code) => return code,
+    };
+    let results = match rt.block_on(spiderlens_engine::crawl::scope_test(
+        &config,
+        &start,
+        &args.urls,
+        args.fetch_robots,
+    )) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(exit::USAGE);
         }
     };
-    let rt = match runtime() {
-        Ok(rt) => rt,
-        Err(code) => return code,
-    };
-    let mut policies: HashMap<String, RobotsPolicy> = HashMap::new();
-    let mut results = Vec::new();
-    for input in &args.urls {
-        let policy = match rules.normalize(&start, input) {
-            Ok(url) if args.fetch_robots && config.robots.mode != RobotsMode::Ignore => {
-                let key = host_key(&url);
-                if !policies.contains_key(&key) {
-                    let p = rt
-                        .block_on(fetch_robots(&config, &url))
-                        .unwrap_or_else(|_| RobotsPolicy::disallow_all());
-                    policies.insert(key.clone(), p);
-                }
-                policies.get(&key)
-            }
-            _ => None,
-        };
-        results.push(test_url(&rules, &start, input, policy, config.robots.mode));
-    }
     if args.json {
         print_json(&results);
         return ExitCode::from(exit::FETCHED);
