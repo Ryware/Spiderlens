@@ -91,6 +91,7 @@ async fn refused_connections_are_connection_errors() {
         ..Default::default()
     };
     quick(&mut c);
+    allow_slow_refusal(&mut c);
     c.retry.attempts = 2;
     c.robots.mode = spiderlens_config::RobotsMode::Ignore;
     let mut resolve = site.resolve();

@@ -182,6 +182,7 @@ async fn fr_029_a_dead_network_pauses_the_crawl() {
         ..CrawlConfig::default()
     };
     quick(&mut c);
+    allow_slow_refusal(&mut c);
     c.robots.mode = spiderlens_config::RobotsMode::Ignore;
     c.retry.host_pause_after = 50;
     let mut resolve = site.resolve();

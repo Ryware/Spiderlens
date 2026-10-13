@@ -21,6 +21,14 @@ pub fn quick(c: &mut CrawlConfig) {
     c.network.connect_timeout_secs = 1.0;
 }
 
+/// For requests to a closed port: Windows retries a refused connection for
+/// about two seconds before reporting it, which a 1 s limit would turn into
+/// a timeout.
+pub fn allow_slow_refusal(c: &mut CrawlConfig) {
+    c.network.read_timeout_secs = 10.0;
+    c.network.connect_timeout_secs = 10.0;
+}
+
 pub struct Done {
     pub dir: tempfile::TempDir,
     pub path: PathBuf,
