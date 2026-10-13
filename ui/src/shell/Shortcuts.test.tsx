@@ -126,11 +126,9 @@ test("shortcuts_need_exactly_their_modifiers", async () => {
   expect(details()).toBeTruthy();
 });
 
-// Probe for the Enter race fixed in PR #13, through Ctrl+Enter instead of
-// Enter in the field. The "start" command is enabled by setup.canStart, the
-// result of the last (debounced) validation, so right after typing a valid
-// URL over an invalid one the shortcut is disabled and nothing happens.
-test.fails("ctrl_enter_right_after_typing_crawls_what_is_in_the_field", async () => {
+// The Enter race fixed in PR #13, through Ctrl+Enter: the shortcut must not
+// wait for the debounced check of the new value.
+test("ctrl_enter_right_after_typing_crawls_what_is_in_the_field", async () => {
   const t = fakeTransport();
   await renderApp(t);
   const field = screen.getByLabelText("Start URL") as HTMLInputElement;
