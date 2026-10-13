@@ -43,6 +43,9 @@ export const Toolbar = forwardRef<HTMLInputElement, {
           ref={urlRef}
           aria-label="Start URL"
           aria-invalid={setup.startUrl !== "" && !!urlError}
+          // A native title, not <Tooltip>: wrapping the field when an error
+          // appears would remount it and drop focus while typing.
+          title={setup.startUrl !== "" ? urlError?.message : undefined}
           placeholder="Enter a website, for example example.com"
           mono
           spellCheck={false}

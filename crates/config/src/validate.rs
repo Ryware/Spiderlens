@@ -66,11 +66,28 @@ impl Issues {
     }
 }
 
+/// A host name with no dot, such as `r` or `intranet`, other than
+/// `localhost`. Such start URLs are almost always a half-typed address
+/// (`r` while typing `ryware.dev`), so Start refuses them. IP addresses
+/// are fine.
+fn is_single_label(url: &url::Url) -> bool {
+    matches!(url.host(), Some(url::Host::Domain(d))
+        if !d.trim_end_matches('.').contains('.') && !d.eq_ignore_ascii_case("localhost"))
+}
+
 /// Validates a configuration together with what the crawl starts from.
 pub fn validate(config: &CrawlConfig, input: &ModeInput) -> Vec<Issue> {
     let mut issues = Issues(validate_config(config));
     match (config.mode, input) {
         (Mode::Spider, ModeInput::Spider { start_url }) => match normalize_url(start_url) {
+            Ok(url) if is_single_label(&url) => issues.error(
+                "input.start_url",
+                "start_url_no_dot",
+                format!(
+                    "\"{}\" is not a full web address. Enter the whole domain, such as example.com.",
+                    url.host_str().unwrap_or_default()
+                ),
+            ),
             Ok(url) => {
                 if let Ok(filter) = UrlFilter::new(&config.scope.include, &config.scope.exclude) {
                     match filter.decide(url.as_str()) {
@@ -407,6 +424,28 @@ mod tests {
             codes(&issues),
             vec![("input.start_url", "start_url_invalid", Severity::Error)]
         );
+    }
+
+    #[test]
+    fn host_without_a_dot_is_error() {
+        for bad in ["r", "https://r/", "ryware", "intranet/a"] {
+            assert_eq!(
+                codes(&validate(&CrawlConfig::default(), &spider(bad))),
+                vec![("input.start_url", "start_url_no_dot", Severity::Error)],
+                "{bad}"
+            );
+        }
+        for good in [
+            "ryware.dev",
+            "localhost:3000",
+            "http://127.0.0.1:8080/",
+            "http://[::1]/",
+        ] {
+            assert!(
+                validate(&CrawlConfig::default(), &spider(good)).is_empty(),
+                "{good}"
+            );
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { ListSummary, Presets, Transport, Validation } from "../transport";
@@ -23,6 +23,12 @@ export function useCrawlSetup(transport: Transport) {
   const [list, setList] = useState<ListSummary | null>(null);
   const [validation, setValidation] = useState<Validation | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  // Only the newest validate reply may land: a slow reply for "r" must not
+  // overwrite the one for "ryware.dev".
+  const seq = useRef(0);
+  // Start reads the field as it is now, not as of the last render.
+  const latest = useRef({ config, startUrl });
+  latest.current = { config, startUrl };
 
   useEffect(() => {
     transport.defaults(false).then(setConfig);
@@ -32,7 +38,10 @@ export function useCrawlSetup(transport: Transport) {
   useEffect(() => {
     if (!config) return;
     const t = setTimeout(() => {
-      transport.validate(config, config.mode === "spider" ? startUrl : null).then(setValidation);
+      const n = ++seq.current;
+      transport.validate(config, config.mode === "spider" ? startUrl : null).then((v) => {
+        if (n === seq.current) setValidation(v);
+      });
     }, VALIDATE_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [transport, config, startUrl, list]);
@@ -52,12 +61,23 @@ export function useCrawlSetup(transport: Transport) {
   const canStart = !!config && !!validation && errors.length === 0;
 
   /**
-   * What Start sends to the engine, and a short name for it. The start URL
-   * is shown as it will be crawled (example.com becomes https://example.com/).
+   * What Start sends to the engine, and a short name for it, or null when the
+   * input has errors (they show at the field). Validates what is in the field
+   * right now: the debounced result may be for an older value, such as "r"
+   * when Enter follows "ryware.dev" quickly. The start URL is shown as it will
+   * be crawled (example.com becomes https://example.com/).
    */
-  const crawlInput = (): { startUrl: string | null; target: string } => {
-    if (config?.mode === "list") return { startUrl: null, target: `${list?.urls.toLocaleString() ?? 0} URLs` };
-    const url = validation?.normalized_start_url ?? startUrl;
+  const crawlInput = async (): Promise<{ config: CrawlConfig; startUrl: string | null; target: string } | null> => {
+    const { config, startUrl } = latest.current;
+    if (!config) return null;
+    const spider = config.mode === "spider";
+    const n = ++seq.current;
+    const v = await transport.validate(config, spider ? startUrl : null);
+    if (n !== seq.current) return null;
+    setValidation(v);
+    if (v.issues.some((i) => i.severity === "error")) return null;
+    if (!spider) return { config, startUrl: null, target: `${list?.urls.toLocaleString() ?? 0} URLs` };
+    const url = v.normalized_start_url ?? startUrl;
     if (url !== startUrl) setStartUrlState(url);
     let target = url;
     try {
@@ -65,7 +85,7 @@ export function useCrawlSetup(transport: Transport) {
     } catch {
       // Not a URL the browser parses; the engine has validated it anyway.
     }
-    return { startUrl: url, target };
+    return { config, startUrl: url, target };
   };
 
   const applyProfile = (l: Loaded, url: string | null) => {
