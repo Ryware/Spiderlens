@@ -401,9 +401,15 @@ fn cause_text(err: &reqwest::Error) -> (String, Option<String>) {
 /// A body that stopped early. reqwest reports these as decode errors when
 /// its decompression layer is in the read path, so the cause text decides.
 fn is_cut_off(text: &str) -> bool {
-    ["end of file before message length", "incomplete", "connection closed", "connection reset", "unexpected eof"]
-        .iter()
-        .any(|k| text.contains(k))
+    [
+        "end of file before message length",
+        "incomplete",
+        "connection closed",
+        "connection reset",
+        "unexpected eof",
+    ]
+    .iter()
+    .any(|k| text.contains(k))
 }
 
 fn is_temporary_dns(err: &reqwest::Error, text: &str) -> bool {
@@ -456,14 +462,25 @@ pub(crate) fn classify(err: &reqwest::Error) -> CheckError {
                 format!("The address of {host} could not be looked up right now."),
             )
         } else {
-            (ErrorClass::Dns, None, format!("The host name {host} does not exist."))
+            (
+                ErrorClass::Dns,
+                None,
+                format!("The host name {host} does not exist."),
+            )
         }
     } else if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
         let reason = if text.contains("expired") {
             ErrorReason::Expired
-        } else if text.contains("notvalidforname") || text.contains("not valid for") || text.contains("hostname") {
+        } else if text.contains("notvalidforname")
+            || text.contains("not valid for")
+            || text.contains("hostname")
+        {
             ErrorReason::Hostname
-        } else if text.contains("unknownissuer") || text.contains("unknown issuer") || text.contains("self-signed") || text.contains("self signed") {
+        } else if text.contains("unknownissuer")
+            || text.contains("unknown issuer")
+            || text.contains("self-signed")
+            || text.contains("self signed")
+        {
             ErrorReason::Untrusted
         } else {
             return CheckError::new(
@@ -496,7 +513,11 @@ pub(crate) fn classify(err: &reqwest::Error) -> CheckError {
     } else {
         let reason = if text.contains("refused") {
             Some(ErrorReason::Refused)
-        } else if text.contains("reset") || text.contains("closed") || text.contains("broken pipe") || text.contains("aborted") {
+        } else if text.contains("reset")
+            || text.contains("closed")
+            || text.contains("broken pipe")
+            || text.contains("aborted")
+        {
             Some(ErrorReason::Reset)
         } else {
             None

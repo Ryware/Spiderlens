@@ -38,7 +38,9 @@ enum Reply {
     /// Headers never come.
     Hang,
     /// 200 with a body that stops part-way and the connection drops.
-    Truncated { sent: Vec<u8> },
+    Truncated {
+        sent: Vec<u8>,
+    },
 }
 
 /// One logged request.
@@ -139,7 +141,13 @@ impl SiteBuilder {
 
     /// A bare status code with a short HTML body.
     pub fn status(self, host: &str, path: &str, status: u16) -> Self {
-        self.raw(host, path, status, "text/html", format!("<title>{status}</title>").as_bytes())
+        self.raw(
+            host,
+            path,
+            status,
+            "text/html",
+            format!("<title>{status}</title>").as_bytes(),
+        )
     }
 
     /// Answers `fail_status` the first `times` requests, then an HTML page
@@ -148,11 +156,15 @@ impl SiteBuilder {
         let fail = Reply::Body {
             status: fail_status,
             content_type: "text/html".into(),
-            body: format!("<title>{fail_status}</title><a href=\"/should-not-be-followed\">x</a>").into_bytes(),
+            body: format!("<title>{fail_status}</title><a href=\"/should-not-be-followed\">x</a>")
+                .into_bytes(),
             headers: Vec::new(),
             gzip: false,
         };
-        let anchors: String = links.iter().map(|l| format!("<a href=\"{l}\">{l}</a>\n")).collect();
+        let anchors: String = links
+            .iter()
+            .map(|l| format!("<a href=\"{l}\">{l}</a>\n"))
+            .collect();
         let ok = Reply::Body {
             status: 200,
             content_type: "text/html; charset=utf-8".into(),
@@ -167,7 +179,8 @@ impl SiteBuilder {
 
     /// A status with a `Retry-After` header, every time.
     pub fn retry_after(self, host: &str, path: &str, status: u16, retry_after: &str) -> Self {
-        self.status(host, path, status).header(host, path, "retry-after", retry_after)
+        self.status(host, path, status)
+            .header(host, path, "retry-after", retry_after)
     }
 
     /// Never answers (for timeouts).
@@ -327,7 +340,12 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
     let headers = req
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
         .collect();
     state.log.lock().expect("log lock").push(Hit {
         host: host.clone(),
@@ -354,7 +372,10 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
     match reply {
         Some(Reply::Hang) => {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-            builder.status(StatusCode::OK).body(Body::empty()).expect("response")
+            builder
+                .status(StatusCode::OK)
+                .body(Body::empty())
+                .expect("response")
         }
         Some(Reply::Truncated { sent }) => {
             let first: Result<axum::body::Bytes, std::io::Error> = Ok(axum::body::Bytes::from(sent.clone()));
@@ -363,10 +384,11 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
             // Pause after the first chunk so the headers and the start of the
             // body reach the client before the connection drops.
             use futures_util::StreamExt;
-            let stream = futures_util::stream::iter(vec![first]).chain(futures_util::stream::once(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                cut
-            }));
+            let stream =
+                futures_util::stream::iter(vec![first]).chain(futures_util::stream::once(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    cut
+                }));
             builder
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/html")

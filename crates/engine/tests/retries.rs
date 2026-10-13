@@ -36,10 +36,24 @@ async fn us2_1_succeeds_on_the_third_attempt_with_growing_waits() {
     let g = gaps(&site, E, "/flaky");
     assert_eq!(g.len(), 2);
     // Base 0.1 s in tests: about 0.1 s then 0.2 s, within 20%.
-    assert!(g[0] >= Duration::from_millis(78) && g[0] < Duration::from_millis(600), "{g:?}");
-    assert!(g[1] >= Duration::from_millis(158) && g[1] < Duration::from_millis(800), "{g:?}");
-    assert_eq!(site.count(E, "/after"), 1, "links of the successful answer are followed");
-    assert_eq!(site.count(E, "/should-not-be-followed"), 0, "failed answers add no links");
+    assert!(
+        g[0] >= Duration::from_millis(78) && g[0] < Duration::from_millis(600),
+        "{g:?}"
+    );
+    assert!(
+        g[1] >= Duration::from_millis(158) && g[1] < Duration::from_millis(800),
+        "{g:?}"
+    );
+    assert_eq!(
+        site.count(E, "/after"),
+        1,
+        "links of the successful answer are followed"
+    );
+    assert_eq!(
+        site.count(E, "/should-not-be-followed"),
+        0,
+        "failed answers add no links"
+    );
     assert_eq!(d.summary.recovered, 1);
     assert!(d.summary.by_class.is_empty(), "SC-002: not an error");
 }
@@ -99,10 +113,14 @@ async fn us2_4_retry_after_is_capped_and_logged() {
     })
     .await;
     let g = gaps(&site, E, "/slowdown");
-    assert!(g[0] >= Duration::from_millis(990) && g[0] < Duration::from_secs(5), "{g:?}");
+    assert!(
+        g[0] >= Duration::from_millis(990) && g[0] < Duration::from_secs(5),
+        "{g:?}"
+    );
     let log = CrawlStore::open(&d.path).unwrap().log_entries(50).unwrap();
     assert!(
-        log.iter().any(|e| e.kind == "retry_after_capped" && e.message.contains("10 min")),
+        log.iter()
+            .any(|e| e.kind == "retry_after_capped" && e.message.contains("10 min")),
         "{log:?}"
     );
 }
@@ -173,8 +191,15 @@ async fn us6_headers_and_user_agent_on_retries() {
     assert_eq!(hits.len(), 3);
     for h in &hits {
         assert!(h.user_agent.starts_with("SpiderLens/"), "{}", h.user_agent);
-        assert!(h.headers.iter().any(|(k, v)| k == "x-stage" && v == "token-1"), "{:?}", h.headers);
+        assert!(
+            h.headers.iter().any(|(k, v)| k == "x-stage" && v == "token-1"),
+            "{:?}",
+            h.headers
+        );
     }
     let robots = site.hits().into_iter().find(|h| h.path == "/robots.txt").unwrap();
-    assert!(robots.headers.iter().any(|(k, _)| k == "x-stage"), "robots.txt too");
+    assert!(
+        robots.headers.iter().any(|(k, _)| k == "x-stage"),
+        "robots.txt too"
+    );
 }

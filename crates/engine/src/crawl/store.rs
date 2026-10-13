@@ -325,6 +325,9 @@ pub struct SitemapRow {
     pub error: Option<String>,
 }
 
+/// (status, error class, error reason, count): one group of final outcomes.
+pub type Outcome = (Option<u16>, Option<String>, Option<String>, u64);
+
 /// One crawl log entry (spec 004 FR-035).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct LogEntry {
@@ -1545,7 +1548,14 @@ impl CrawlStore {
 
     /// A failed attempt that will be retried: the URL leaves the queue until
     /// `retry_at` (epoch ms), keeping its attempt counts (spec 004 plan D4).
-    pub fn set_waiting(&self, id: i64, retry_at: i64, attempts: u32, round_attempts: u32, now_ms: i64) -> Result<()> {
+    pub fn set_waiting(
+        &self,
+        id: i64,
+        retry_at: i64,
+        attempts: u32,
+        round_attempts: u32,
+        now_ms: i64,
+    ) -> Result<()> {
         let n = self
             .conn
             .prepare_cached(
@@ -1610,9 +1620,9 @@ impl CrawlStore {
 
     /// Every waiting URL and when it is due (epoch ms), for resume.
     pub fn waiting(&self) -> Result<Vec<(i64, i64)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, COALESCE(retry_at, 0) FROM urls WHERE state = 'waiting' ORDER BY retry_at")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, COALESCE(retry_at, 0) FROM urls WHERE state = 'waiting' ORDER BY retry_at",
+        )?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
@@ -1638,9 +1648,18 @@ impl CrawlStore {
     }
 
     /// Appends one crawl log entry (spec 004 FR-035).
-    pub fn log(&self, at_ms: i64, kind: &str, host: Option<&str>, url_id: Option<i64>, message: &str) -> Result<()> {
+    pub fn log(
+        &self,
+        at_ms: i64,
+        kind: &str,
+        host: Option<&str>,
+        url_id: Option<i64>,
+        message: &str,
+    ) -> Result<()> {
         self.conn
-            .prepare_cached("INSERT INTO crawl_log (at, kind, host_key, url_id, message) VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .prepare_cached(
+                "INSERT INTO crawl_log (at, kind, host_key, url_id, message) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?
             .execute(params![at_ms, kind, host, url_id, message])?;
         Ok(())
     }
@@ -1707,7 +1726,8 @@ impl CrawlStore {
         let mut current = id;
         let mut hops = 0;
         while hops <= max {
-            let (source, from): (String, Option<i64>) = stmt.query_row([current], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let (source, from): (String, Option<i64>) =
+                stmt.query_row([current], |r| Ok((r.get(0)?, r.get(1)?)))?;
             match (source.as_str(), from) {
                 ("redirect", Some(f)) if f != current => {
                     hops += 1;
@@ -1721,7 +1741,7 @@ impl CrawlStore {
 
     /// Final outcomes for the summary: (status, error class, error reason,
     /// count) over every URL that was requested or failed.
-    pub fn outcomes(&self) -> Result<Vec<(Option<u16>, Option<String>, Option<String>, u64)>> {
+    pub fn outcomes(&self) -> Result<Vec<Outcome>> {
         let reason = if self.has_column("urls", "error_reason")? {
             "error_reason"
         } else {
@@ -1731,7 +1751,9 @@ impl CrawlStore {
             "SELECT status, error_class, {reason}, COUNT(*) FROM urls
              WHERE fetched_at IS NOT NULL AND state IN ('crawled', 'not_crawled') GROUP BY 1, 2, 3"
         ))?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64))
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
@@ -1770,9 +1792,9 @@ impl CrawlStore {
     /// Returns how many were re-queued. Runs in one transaction.
     pub fn requeue_transient(&mut self) -> Result<u64> {
         let ids: Vec<(i64, String)> = {
-            let mut stmt = self
-                .conn
-                .prepare(&format!("SELECT id, state FROM urls WHERE {TRANSIENT_FAILURE} ORDER BY depth, id"))?;
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT id, state FROM urls WHERE {TRANSIENT_FAILURE} ORDER BY depth, id"
+            ))?;
             let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<std::result::Result<_, _>>()?
         };
@@ -1790,9 +1812,15 @@ impl CrawlStore {
                      WHERE id = ?1",
                 )?
                 .execute(params![id, seq])?;
-            for table in ["links WHERE from_id", "page_text WHERE url_id", "directives WHERE url_id",
-                "structured_data WHERE url_id", "pages WHERE url_id", "bodies WHERE url_id", "headers WHERE url_id"]
-            {
+            for table in [
+                "links WHERE from_id",
+                "page_text WHERE url_id",
+                "directives WHERE url_id",
+                "structured_data WHERE url_id",
+                "pages WHERE url_id",
+                "bodies WHERE url_id",
+                "headers WHERE url_id",
+            ] {
                 self.conn
                     .prepare_cached(&format!("DELETE FROM {table} = ?1"))?
                     .execute([id])?;
@@ -1800,7 +1828,10 @@ impl CrawlStore {
             let from = UrlState::parse(state).unwrap_or(UrlState::Crawled);
             self.shift(Some(from), UrlState::Queued, 1);
         }
-        let runs: u64 = self.meta("manual_retries")?.and_then(|v| v.parse().ok()).unwrap_or(0);
+        let runs: u64 = self
+            .meta("manual_retries")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         self.set_meta("manual_retries", &(runs + 1).to_string())?;
         self.commit()?;
         Ok(ids.len() as u64)

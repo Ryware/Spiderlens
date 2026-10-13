@@ -15,7 +15,8 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings, StoredCrawlConfig, normalize_url,
+    Change, CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings, StoredCrawlConfig,
+    normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, watch};
 use url::Url;
@@ -304,7 +305,10 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         retries: store.log_count("retry", false)?,
         recovered: store.recovered()?,
         hosts_paused: store.log_count("host_paused", true)?,
-        manual_retries: store.meta("manual_retries")?.and_then(|v| v.parse().ok()).unwrap_or(0),
+        manual_retries: store
+            .meta("manual_retries")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
         pause_reason: store.meta("pause_reason")?.filter(|r| !r.is_empty()),
     })
 }
@@ -655,7 +659,8 @@ impl Crawler {
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
         let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, commands, events).map_err(CrawlError::localize)?;
+        let mut run =
+            Run::new(self, opts, client, control, commands, events).map_err(CrawlError::localize)?;
         run.main_loop().await.map_err(CrawlError::localize)?;
         summarize(&run.c.store)
     }
@@ -676,7 +681,10 @@ impl Crawler {
                 "manual_retry",
                 None,
                 None,
-                &format!("Retrying {n} URLs that failed for temporary reasons ({}).", detail.join(", ")),
+                &format!(
+                    "Retrying {n} URLs that failed for temporary reasons ({}).",
+                    detail.join(", ")
+                ),
             )?;
         }
         Ok((c, n))
@@ -788,7 +796,12 @@ impl Run {
             .store
             .waiting()?
             .into_iter()
-            .map(|(id, at)| Reverse((now + Duration::from_millis(at.saturating_sub(now_wall).max(0) as u64), id)))
+            .map(|(id, at)| {
+                Reverse((
+                    now + Duration::from_millis(at.saturating_sub(now_wall).max(0) as u64),
+                    id,
+                ))
+            })
             .collect();
         let warnings: Vec<String> = c
             .store
@@ -906,9 +919,10 @@ impl Run {
             let waiting_for_host = !paused_hosts.is_empty()
                 && self.in_flight == 0
                 && !self.window.is_empty()
-                && self.window.host_heads().all(|(h, _)| {
-                    self.hosts.get(h).is_some_and(|x| x.health.is_blocked())
-                });
+                && self
+                    .window
+                    .host_heads()
+                    .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -936,7 +950,11 @@ impl Run {
             .filter_map(|(key, h)| {
                 let (seconds_left, probing, given_up) = match h.health.state() {
                     HealthState::Active => return None,
-                    HealthState::Paused { until } => (until.saturating_duration_since(now).as_secs_f64().ceil() as u64, false, false),
+                    HealthState::Paused { until } => (
+                        until.saturating_duration_since(now).as_secs_f64().ceil() as u64,
+                        false,
+                        false,
+                    ),
                     HealthState::Probing { .. } => (0, true, false),
                     HealthState::GivenUp => (0, false, true),
                 };
@@ -961,7 +979,13 @@ impl Run {
     }
 
     /// Records a crawl log row and tells the user (spec 004 FR-035).
-    fn notice(&mut self, kind: &str, host: Option<&str>, url_id: Option<i64>, message: String) -> Result<(), CrawlError> {
+    fn notice(
+        &mut self,
+        kind: &str,
+        host: Option<&str>,
+        url_id: Option<i64>,
+        message: String,
+    ) -> Result<(), CrawlError> {
         self.c.store.log(now_ms(), kind, host, url_id, &message)?;
         self.emit(CrawlEvent::Notice(Notice {
             kind: kind.into(),
@@ -1048,7 +1072,9 @@ impl Run {
                 wake = Some(wake.map_or(*due, |w| w.min(*due)));
             }
             self.progress(false);
-            if self.in_flight == 0 && let Some(why) = self.local_pause.clone() {
+            if self.in_flight == 0
+                && let Some(why) = self.local_pause.clone()
+            {
                 self.c.store.set_meta("status", "paused")?;
                 self.c.store.set_meta("pause_reason", "network")?;
                 self.warn(why)?;
@@ -1264,7 +1290,9 @@ impl Run {
             let mut best: Option<QueueKey> = None;
             let mut held_back = false;
             for (key, head) in self.window.host_heads() {
-                let Some(host) = self.hosts.get_mut(key) else { continue };
+                let Some(host) = self.hosts.get_mut(key) else {
+                    continue;
+                };
                 if !matches!(host.robots, RobotsState::Known(..)) {
                     continue;
                 }
@@ -1440,8 +1468,12 @@ impl Run {
         let base = self.c.retry_base;
         let origin = Url::parse(&format!("{key}/")).expect("host keys are URLs");
         let internal = self.c.rules.is_internal(&origin);
-        let headers: Vec<RequestHeader> =
-            self.headers.iter().filter(|h| h.all_hosts || internal).cloned().collect();
+        let headers: Vec<RequestHeader> = self
+            .headers
+            .iter()
+            .filter(|h| h.all_hosts || internal)
+            .cloned()
+            .collect();
         tokio::spawn(async move {
             let mut attempt = 1;
             let fetch = loop {
@@ -1598,7 +1630,10 @@ impl Run {
                 if let Some(until) = h.speed.on_response(took, signal_of(&result), now) {
                     h.next_start = h.next_start.max(until.min(now + max_wait));
                 }
-                matches!(h.health.state(), HealthState::Paused { .. } | HealthState::GivenUp)
+                matches!(
+                    h.health.state(),
+                    HealthState::Paused { .. } | HealthState::GivenUp
+                )
             }
             None => false,
         };
@@ -1704,7 +1739,11 @@ impl Run {
                     attempt.round_attempts,
                     settings.attempts,
                     human_duration(wait),
-                    if retry_after_used { " as the server asked (Retry-After)" } else { "" }
+                    if retry_after_used {
+                        " as the server asked (Retry-After)"
+                    } else {
+                        ""
+                    }
                 ),
             )?;
             if let Some(asked) = capped_from {
@@ -2039,7 +2078,10 @@ impl Run {
                 let internal = seed || self.c.rules.is_internal(&url);
                 let host = host_key(&url);
                 let mut placement = placement_for(verdict, self.limit_reached);
-                if kind == LinkKind::Redirect && self.redirect_over_limit && matches!(placement, Placement::Queue { .. }) {
+                if kind == LinkKind::Redirect
+                    && self.redirect_over_limit
+                    && matches!(placement, Placement::Queue { .. })
+                {
                     placement = Placement::NotCrawled {
                         reason: NotCrawledReason::RedirectLimit,
                         detail: Some(format!(
@@ -2166,9 +2208,10 @@ fn attempt_of(result: &Result<PageOutcome, CheckError>, round_attempts: u32) -> 
         Ok(o) => Attempt {
             status: Some(o.status),
             error: o.body_problem.as_ref().map(|p| (p.class, p.reason)),
-            retry_after: (o.status == 429 || o.status == 503)
-                .then(|| o.retry_after.as_deref())
-                .flatten()
+            retry_after: o
+                .retry_after
+                .as_deref()
+                .filter(|_| o.status == 429 || o.status == 503)
                 .and_then(|v| parse_retry_after(v, jiff::Timestamp::now())),
             round_attempts,
         },

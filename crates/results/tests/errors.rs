@@ -64,7 +64,9 @@ async fn attempts_and_failure_filters() {
     let input = ModeInput::Spider {
         start_url: site.url(E, "/"),
     };
-    let crawler = Crawler::create(&path, c, &input).unwrap().with_resolve(site.resolve());
+    let crawler = Crawler::create(&path, c, &input)
+        .unwrap()
+        .with_resolve(site.resolve());
     let (_tx, rx) = watch::channel(Control::Run);
     tokio::time::timeout(Duration::from_secs(60), crawler.run(rx, None))
         .await
@@ -91,7 +93,9 @@ async fn attempts_and_failure_filters() {
     assert_eq!(counts.counts["permanent"], Some(2));
     assert!(counts.unavailable.is_empty(), "{:?}", counts.unavailable);
 
-    let id = all.iter().find(|(p, _)| p == "/down").unwrap().1[0].as_i64().unwrap();
+    let id = all.iter().find(|(p, _)| p == "/down").unwrap().1[0]
+        .as_i64()
+        .unwrap();
     let d = r.detail(id).unwrap();
     assert_eq!(d.attempts, Some(3));
     assert!(!d.manual_retry);

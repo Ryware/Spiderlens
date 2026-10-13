@@ -132,7 +132,10 @@ mod tests {
     fn us2_1_waits_about_one_then_two_seconds() {
         let s = RetrySettings::default();
         assert_eq!(wait(decide(&s, &http(503, 1), 0.0)), Duration::from_secs_f64(S));
-        assert_eq!(wait(decide(&s, &http(503, 2), 0.0)), Duration::from_secs_f64(2.0 * S));
+        assert_eq!(
+            wait(decide(&s, &http(503, 2), 0.0)),
+            Duration::from_secs_f64(2.0 * S)
+        );
         // Jitter stays within 20% either way.
         let lo = wait(decide(&s, &http(503, 2), -0.2));
         let hi = wait(decide(&s, &http(503, 2), 0.2));

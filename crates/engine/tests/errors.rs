@@ -28,7 +28,10 @@ async fn us1_1_http_answers_are_classed_by_status() {
     assert_eq!(site.count(E, "/gone"), 1, "SC-003");
     let broken = d.page(&site.url(E, "/broken"));
     assert_eq!(broken["attempts"], 3, "transient: three attempts");
-    assert!(broken["error_class"].is_null(), "HTTP answers keep their status only");
+    assert!(
+        broken["error_class"].is_null(),
+        "HTTP answers keep their status only"
+    );
 }
 
 #[tokio::test]
@@ -76,7 +79,10 @@ async fn us1_5_content_problems_name_the_problem() {
 async fn refused_connections_are_connection_errors() {
     let site = SiteBuilder::new().page(E, "/", "", &[]).start();
     // A port nothing listens on.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
     let url = format!("http://down.test:{}/x", closed.port());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.spiderlens");
@@ -89,9 +95,10 @@ async fn refused_connections_are_connection_errors() {
     c.robots.mode = spiderlens_config::RobotsMode::Ignore;
     let mut resolve = site.resolve();
     resolve.push(("down.test".into(), closed));
-    let crawler = spiderlens_engine::crawl::Crawler::create(&path, c, &list(vec![site.url(E, "/"), url.clone()]))
-        .unwrap()
-        .with_resolve(resolve);
+    let crawler =
+        spiderlens_engine::crawl::Crawler::create(&path, c, &list(vec![site.url(E, "/"), url.clone()]))
+            .unwrap()
+            .with_resolve(resolve);
     let d = run(dir, path, crawler, spiderlens_engine::crawl::Control::Run, None).await;
     d.assert_one_final_state();
     let p = d.page(&url);
@@ -108,7 +115,9 @@ async fn us1_6_malformed_links_are_recorded_without_a_request() {
     let d = crawl(&site, spider(&site, "/"), |_| {}).await;
     d.assert_one_final_state();
     assert_eq!(
-        d.summary.by_reason.get(&spiderlens_engine::crawl::NotCrawledReason::MalformedUrl),
+        d.summary
+            .by_reason
+            .get(&spiderlens_engine::crawl::NotCrawledReason::MalformedUrl),
         Some(&1)
     );
     assert_eq!(site.page_hits().len(), 1, "no request for the malformed link");

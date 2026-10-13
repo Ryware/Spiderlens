@@ -21,8 +21,8 @@ use spiderlens_config::{
     Change, CrawlConfig, Mode, ModeInput, RetrySettings, Severity, SpeedSettings, validate,
 };
 use spiderlens_engine::crawl::{
-    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LogEntry, NotCrawledReason, Notice,
-    Progress, RunCommand, default_file_name, retry_preview as engine_retry_preview,
+    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LogEntry, NotCrawledReason, Notice, Progress,
+    RunCommand, default_file_name, retry_preview as engine_retry_preview,
 };
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, watch};
@@ -303,9 +303,7 @@ pub fn retry_start(app: AppHandle, state: tauri::State<State>, path: PathBuf) ->
 #[tauri::command]
 pub fn crawl_log(path: PathBuf, limit: Option<usize>) -> Cmd<Vec<LogEntry>> {
     let store = CrawlStore::open(&path).map_err(|e| e.to_string())?;
-    store
-        .log_entries(limit.unwrap_or(500))
-        .map_err(|e| e.to_string())
+    store.log_entries(limit.unwrap_or(500)).map_err(|e| e.to_string())
 }
 
 fn send(state: &State, id: u64, c: Control) {
@@ -402,15 +400,11 @@ fn run(
                     CrawlEvent::Warning(message) => {
                         events.emit("crawl-warning", WarningEvent { id, message })
                     }
-                    CrawlEvent::Notice(notice) => {
-                        events.emit("crawl-notice", NoticeEvent { id, notice })
-                    }
+                    CrawlEvent::Notice(notice) => events.emit("crawl-notice", NoticeEvent { id, notice }),
                 };
             }
         });
-        crawler
-            .run_with(control, Some(commands), Some(event_tx))
-            .await
+        crawler.run_with(control, Some(commands), Some(event_tx)).await
     })
     .map_err(|e| e.to_string())
 }
@@ -442,9 +436,15 @@ mod tests {
         let p = preview(&path, false).unwrap();
         assert_eq!(p.total, 0);
         assert!(!p.available);
-        assert_eq!(p.reason.as_deref(), Some("No URL failed for a reason that could change."));
+        assert_eq!(
+            p.reason.as_deref(),
+            Some("No URL failed for a reason that could change.")
+        );
         let p = preview(&path, true).unwrap();
-        assert_eq!(p.reason.as_deref(), Some("Wait until the crawl is paused or finished."));
+        assert_eq!(
+            p.reason.as_deref(),
+            Some("Wait until the crawl is paused or finished.")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

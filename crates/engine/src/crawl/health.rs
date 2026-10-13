@@ -19,9 +19,13 @@ use spiderlens_config::RetrySettings;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthState {
     Active,
-    Paused { until: Instant },
+    Paused {
+        until: Instant,
+    },
     /// The pause is over; one test request may go out.
-    Probing { sent: bool },
+    Probing {
+        sent: bool,
+    },
     GivenUp,
 }
 

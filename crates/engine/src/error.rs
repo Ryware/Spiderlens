@@ -240,7 +240,14 @@ mod tests {
     #[test]
     fn classification_table_matches_the_spec() {
         // (status, class, reason, final class id, transient), FR-012.
-        let rows: &[(Option<u16>, Option<ErrorClass>, Option<ErrorReason>, &str, bool)] = &[
+        type Row = (
+            Option<u16>,
+            Option<ErrorClass>,
+            Option<ErrorReason>,
+            &'static str,
+            bool,
+        );
+        let rows: &[Row] = &[
             (Some(200), None, None, "ok", false),
             (Some(301), None, None, "ok", false),
             (Some(404), None, None, "http_4xx", false),
@@ -256,23 +263,87 @@ mod tests {
             (Some(0), None, None, "http_other", false),
             (None, Some(ErrorClass::Dns), None, "dns", false),
             (None, Some(ErrorClass::DnsTemporary), None, "dns_temporary", true),
-            (None, Some(ErrorClass::Connection), Some(ErrorReason::Reset), "connection", true),
-            (None, Some(ErrorClass::Timeout), Some(ErrorReason::Connect), "timeout", true),
-            (None, Some(ErrorClass::Timeout), Some(ErrorReason::Read), "timeout", true),
-            (None, Some(ErrorClass::TlsInvalid), Some(ErrorReason::Expired), "tls_invalid", false),
-            (None, Some(ErrorClass::RedirectProblem), Some(ErrorReason::Loop), "redirect_problem", false),
-            (None, Some(ErrorClass::ContentProblem), Some(ErrorReason::Truncated), "content_problem", true),
-            (None, Some(ErrorClass::ContentProblem), Some(ErrorReason::OverSize), "content_problem", false),
-            (None, Some(ErrorClass::ContentProblem), Some(ErrorReason::Decompression), "content_problem", false),
+            (
+                None,
+                Some(ErrorClass::Connection),
+                Some(ErrorReason::Reset),
+                "connection",
+                true,
+            ),
+            (
+                None,
+                Some(ErrorClass::Timeout),
+                Some(ErrorReason::Connect),
+                "timeout",
+                true,
+            ),
+            (
+                None,
+                Some(ErrorClass::Timeout),
+                Some(ErrorReason::Read),
+                "timeout",
+                true,
+            ),
+            (
+                None,
+                Some(ErrorClass::TlsInvalid),
+                Some(ErrorReason::Expired),
+                "tls_invalid",
+                false,
+            ),
+            (
+                None,
+                Some(ErrorClass::RedirectProblem),
+                Some(ErrorReason::Loop),
+                "redirect_problem",
+                false,
+            ),
+            (
+                None,
+                Some(ErrorClass::ContentProblem),
+                Some(ErrorReason::Truncated),
+                "content_problem",
+                true,
+            ),
+            (
+                None,
+                Some(ErrorClass::ContentProblem),
+                Some(ErrorReason::OverSize),
+                "content_problem",
+                false,
+            ),
+            (
+                None,
+                Some(ErrorClass::ContentProblem),
+                Some(ErrorReason::Decompression),
+                "content_problem",
+                false,
+            ),
             (None, Some(ErrorClass::MalformedUrl), None, "malformed_url", false),
-            (None, Some(ErrorClass::HostUnavailable), None, "host_unavailable", true),
+            (
+                None,
+                Some(ErrorClass::HostUnavailable),
+                None,
+                "host_unavailable",
+                true,
+            ),
             // A body problem on a 200 answer: the class wins.
-            (Some(200), Some(ErrorClass::ContentProblem), Some(ErrorReason::Truncated), "content_problem", true),
+            (
+                Some(200),
+                Some(ErrorClass::ContentProblem),
+                Some(ErrorReason::Truncated),
+                "content_problem",
+                true,
+            ),
         ];
         for &(status, class, reason, id, transient) in rows {
             let f = FinalClass::of(status, class);
             assert_eq!(f.as_str(), id, "{status:?} {class:?}");
-            assert_eq!(f.is_transient(status, reason), transient, "{status:?} {class:?} {reason:?}");
+            assert_eq!(
+                f.is_transient(status, reason),
+                transient,
+                "{status:?} {class:?} {reason:?}"
+            );
         }
     }
 
@@ -286,6 +357,9 @@ mod tests {
             assert_eq!(ErrorReason::parse(r.as_str()), Some(*r));
             assert_eq!(serde_json::to_value(r).unwrap(), r.as_str());
         }
-        assert_eq!(ErrorClass::parse("redirect_loop"), Some(ErrorClass::RedirectProblem));
+        assert_eq!(
+            ErrorClass::parse("redirect_loop"),
+            Some(ErrorClass::RedirectProblem)
+        );
     }
 }

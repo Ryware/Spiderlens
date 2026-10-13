@@ -645,4 +645,64 @@ mod tests {
         assert!(got.contains(&"retry.attempts".to_string()));
         assert!(got.contains(&"network.read_timeout_secs".to_string()));
     }
+
+    #[test]
+    fn retry_and_host_pause_ranges() {
+        let paths = |f: &dyn Fn(&mut CrawlConfig)| {
+            let mut c = CrawlConfig::default();
+            f(&mut c);
+            validate_config(&c)
+                .into_iter()
+                .map(|i| i.path)
+                .collect::<Vec<_>>()
+        };
+        assert!(paths(&|_| {}).is_empty());
+        assert_eq!(
+            paths(&|c| c.retry.base_wait_secs = 0.05),
+            ["retry.base_wait_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.base_wait_secs = f64::NAN),
+            ["retry.base_wait_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_after = 0),
+            ["retry.host_pause_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_after = 101),
+            ["retry.host_pause_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_secs = 0.5),
+            ["retry.host_pause_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_give_up_after = 0),
+            ["retry.host_give_up_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_give_up_after = 51),
+            ["retry.host_give_up_after"]
+        );
+        // The longest pause can't be shorter than the first one.
+        assert_eq!(
+            paths(&|c| {
+                c.retry.host_pause_secs = 120.0;
+                c.retry.host_pause_max_secs = 60.0;
+            }),
+            ["retry.host_pause_max_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_max_secs = 90_000.0),
+            ["retry.host_pause_max_secs"]
+        );
+        assert!(
+            paths(&|c| {
+                c.retry.host_pause_secs = 60.0;
+                c.retry.host_pause_max_secs = 60.0;
+            })
+            .is_empty()
+        );
+    }
 }

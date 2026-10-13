@@ -106,10 +106,13 @@ pub async fn run(
         }
         notices
     });
-    let summary = tokio::time::timeout(Duration::from_secs(120), crawler.run_with(rx, commands, Some(etx)))
-        .await
-        .expect("crawl finishes")
-        .unwrap();
+    let summary = tokio::time::timeout(
+        Duration::from_secs(120),
+        crawler.run_with(rx, commands, Some(etx)),
+    )
+    .await
+    .expect("crawl finishes")
+    .unwrap();
     let notices = collect.await.unwrap();
     Done {
         dir,

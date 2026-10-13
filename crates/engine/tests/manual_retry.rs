@@ -25,7 +25,14 @@ async fn us5_retries_only_transient_failures_in_place() {
     let (crawler, n) = Crawler::retry_failed(&d.path).unwrap();
     assert_eq!(n, 2);
     let path = d.path.clone();
-    let r = run(d.dir, path, crawler.with_resolve(site.resolve()), Control::Run, None).await;
+    let r = run(
+        d.dir,
+        path,
+        crawler.with_resolve(site.resolve()),
+        Control::Run,
+        None,
+    )
+    .await;
     r.assert_one_final_state();
     // SC-006: every transient failure again, no permanent one.
     assert_eq!(site.count(E, "/flaky1"), 2);
@@ -37,10 +44,20 @@ async fn us5_retries_only_transient_failures_in_place() {
     assert_eq!(p["attempts"], 2);
     assert_eq!(p["manual_retry"], 1);
     assert_eq!(site.count(E, "/found-later"), 1);
-    assert_eq!(r.summary.by_class.get("http_5xx"), None, "{:?}", r.summary.by_class);
+    assert_eq!(
+        r.summary.by_class.get("http_5xx"),
+        None,
+        "{:?}",
+        r.summary.by_class
+    );
     // The 404s stay as they were: /missing, and the link on the first
     // run's 503 error page (processed then, as for any final answer).
-    assert_eq!(r.summary.by_class.get("http_4xx"), Some(&2), "{:?}", r.summary.by_class);
+    assert_eq!(
+        r.summary.by_class.get("http_4xx"),
+        Some(&2),
+        "{:?}",
+        r.summary.by_class
+    );
     assert_eq!(r.summary.manual_retries, 1);
     assert_eq!(r.summary.recovered, 2);
     // US5.4: nothing left to retry.

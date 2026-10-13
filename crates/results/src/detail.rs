@@ -238,7 +238,13 @@ impl Reader {
             self.conn.query_row(
                 "SELECT attempts, error_reason, manual_retry FROM urls WHERE id = ?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<bool>>(2)?.unwrap_or(false))),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get::<_, Option<bool>>(2)?.unwrap_or(false),
+                    ))
+                },
             )?
         } else {
             (None, None, false)
