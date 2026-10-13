@@ -20,6 +20,10 @@ pub struct FilterCounts {
     /// Why each unavailable filter is unavailable.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
+    /// Labels of filters whose threshold is an issue setting, with the value
+    /// in force ("Over 70 characters"; spec 009 US4 scenario 1).
+    #[ts(type = "Record<string, string>")]
+    pub labels: BTreeMap<String, String>,
     pub version: u32,
 }
 
@@ -60,10 +64,18 @@ impl Reader {
                 unavailable.insert(f.id.to_string(), f.need.unavailable_reason().to_string());
             }
         }
+        let values = self.thresholds.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let labels = t
+            .filters
+            .iter()
+            .filter(|f| f.threshold.is_some())
+            .map(|f| (f.id.to_string(), f.label_with(&values)))
+            .collect();
         Ok(FilterCounts {
             tab: t.id.to_string(),
             counts,
             unavailable,
+            labels,
             version,
         })
     }

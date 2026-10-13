@@ -138,6 +138,11 @@ pub struct FilterDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// The issue rule whose threshold this filter uses, and its label with
+    /// `{n}` for the value (spec 009 FR-005, US4 scenario 1).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub threshold: Option<(&'static str, &'static str)>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -233,10 +238,25 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         cond,
         need: Need::Base,
         derived: None,
+        threshold: None,
     }
 }
 
 impl FilterDef {
+    /// The label with the threshold in force.
+    pub fn label_with(&self, values: &crate::sql::Thresholds) -> String {
+        match self.threshold {
+            Some((rule, template)) => values.get(rule).map_or_else(
+                || self.label.to_string(),
+                |v| template.replace("{n}", &crate::issues::fmt_num(*v)),
+            ),
+            None => self.label.to_string(),
+        }
+    }
+    const fn thr(mut self, rule: &'static str, template: &'static str) -> Self {
+        self.threshold = Some((rule, template));
+        self
+    }
     const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
@@ -449,7 +469,7 @@ macro_rules! image_use {
 
 /// Columns and filters of the H1 and H2 tabs, which differ only in level.
 macro_rules! heading_tab {
-    ($id:literal, $label:literal, $occ:expr) => {
+    ($id:literal, $label:literal, $occ:expr, $rule:literal, $missing:expr, $duplicate:expr, $over:expr, $multiple:expr) => {
         content_tab(
             $id,
             $label,
@@ -496,45 +516,10 @@ macro_rules! heading_tab {
                 .reads($occ),
             ],
             vec![
-                filter(
-                    "missing",
-                    "Missing",
-                    concat!(
-                        "COALESCE((SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id), '') = ''"
-                    ),
-                ),
-                filter(
-                    "duplicate",
-                    "Duplicate",
-                    concat!(
-                        "(SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_",
-                        $id,
-                        " o WHERE o.n > 1)"
-                    ),
-                )
-                .reads($occ),
-                filter(
-                    "over_70",
-                    "Over 70 characters",
-                    concat!(
-                        "length((SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id)) > 70"
-                    ),
-                ),
-                filter(
-                    "multiple",
-                    "Multiple",
-                    concat!(
-                        "(SELECT p.",
-                        $id,
-                        "_count FROM pages p WHERE p.url_id = u.id) > 1"
-                    ),
-                ),
+                filter("missing", "Missing", $missing),
+                filter("duplicate", "Duplicate", $duplicate).reads($occ),
+                filter("over_70", "Over 70 characters", $over).thr($rule, "Over {n} characters"),
+                filter("multiple", "Multiple", $multiple),
             ],
             $id,
         )
@@ -595,6 +580,11 @@ fn build_issue_tabs() -> Vec<TabDef> {
 
 fn build() -> Vec<TabDef> {
     use ValueKind::*;
+    // Filters that test what an issue rule tests share its condition
+    // (spec 009 FR-005).
+    use crate::issues::rules::{
+        canonicals as ca, headings as hd, images as im, meta as me, titles as ti, url as ur,
+    };
     vec![
         TabDef {
             id: "internal",
@@ -713,13 +703,13 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("non_ascii", "Non-ASCII characters", "url_check(u.url, 'non_ascii')"),
-                filter("underscores", "Underscores", "url_check(u.url, 'underscore')"),
-                filter("uppercase", "Uppercase", "url_check(u.url, 'uppercase')"),
-                filter("parameters", "Contains query parameters", "instr(u.url, '?') > 0"),
-                filter("multiple_slashes", "Multiple slashes", "url_check(u.url, 'multiple_slashes')"),
-                filter("spaces", "Contains spaces", "url_check(u.url, 'spaces')"),
-                filter("over_115", "Over 115 characters", "length(u.url) > 115"),
+                filter("non_ascii", "Non-ASCII characters", ur::NON_ASCII),
+                filter("underscores", "Underscores", ur::UNDERSCORES),
+                filter("uppercase", "Uppercase", ur::UPPERCASE),
+                filter("parameters", "Contains query parameters", ur::PARAMETERS),
+                filter("multiple_slashes", "Multiple slashes", ur::MULTIPLE_SLASHES),
+                filter("spaces", "Contains spaces", ur::SPACES),
+                filter("over_115", "Over 115 characters", ur::OVER).thr("url.over", "Over {n} characters"),
             ],
             search_column: None,
             scoped: false,
@@ -746,31 +736,12 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing", "Missing", "(u.title IS NULL OR norm_ws(u.title) = '')"),
-                filter(
-                    "duplicate",
-                    "Duplicate",
-                    "norm_ws(u.title) IN (SELECT o.v FROM temp.occ_title o WHERE o.n > 1)",
-                )
-                .reads(Derived::OccTitle),
-                filter("over_60", "Over 60 characters", "length(norm_ws(u.title)) > 60"),
-                filter(
-                    "below_30",
-                    "Below 30 characters",
-                    "norm_ws(u.title) <> '' AND length(norm_ws(u.title)) < 30",
-                ),
-                filter(
-                    "same_as_h1",
-                    "Same as H1",
-                    "norm_ws(u.title) <> '' AND lower(norm_ws(u.title)) = lower((SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id))",
-                )
-                .needs(Need::Extraction),
-                filter(
-                    "multiple",
-                    "Multiple",
-                    "(SELECT p.title_count FROM pages p WHERE p.url_id = u.id) > 1",
-                )
-                .needs(Need::Extraction),
+                filter("missing", "Missing", ti::MISSING),
+                filter("duplicate", "Duplicate", ti::DUPLICATE).reads(Derived::OccTitle),
+                filter("over_60", "Over 60 characters", ti::OVER).thr("title.over", "Over {n} characters"),
+                filter("below_30", "Below 30 characters", ti::BELOW).thr("title.below", "Below {n} characters"),
+                filter("same_as_h1", "Same as H1", ti::SAME_AS_H1).needs(Need::Extraction),
+                filter("multiple", "Multiple", ti::MULTIPLE).needs(Need::Extraction),
             ],
             search_column: Some("title"),
             scoped: false,
@@ -792,33 +763,16 @@ fn build() -> Vec<TabDef> {
                 .reads(Derived::OccMeta),
             ],
             vec![
-                filter("missing", "Missing", "COALESCE((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id), '') = ''"),
-                filter(
-                    "duplicate",
-                    "Duplicate",
-                    "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_md o WHERE o.n > 1)",
-                )
-                .reads(Derived::OccMeta),
-                filter(
-                    "over_155",
-                    "Over 155 characters",
-                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) > 155",
-                ),
-                filter(
-                    "below_70",
-                    "Below 70 characters",
-                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) BETWEEN 1 AND 69",
-                ),
-                filter(
-                    "multiple",
-                    "Multiple",
-                    "(SELECT p.meta_description_count FROM pages p WHERE p.url_id = u.id) > 1",
-                ),
+                filter("missing", "Missing", me::MISSING),
+                filter("duplicate", "Duplicate", me::DUPLICATE).reads(Derived::OccMeta),
+                filter("over_155", "Over 155 characters", me::OVER).thr("meta.over", "Over {n} characters"),
+                filter("below_70", "Below 70 characters", me::BELOW).thr("meta.below", "Below {n} characters"),
+                filter("multiple", "Multiple", me::MULTIPLE),
             ],
             "meta_description",
         ),
-        heading_tab!("h1", "H1", Derived::OccH1),
-        heading_tab!("h2", "H2", Derived::OccH2),
+        heading_tab!("h1", "H1", Derived::OccH1, "h1.over", hd::H1_MISSING, hd::H1_DUPLICATE, hd::H1_OVER, hd::H1_MULTIPLE),
+        heading_tab!("h2", "H2", Derived::OccH2, "h2.over", hd::H2_MISSING, hd::H2_DUPLICATE, hd::H2_OVER, hd::H2_MULTIPLE),
         TabDef {
             id: "images",
             title: "Images",
@@ -846,11 +800,12 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing_alt", "Missing alt attribute", image_use!("l.alt IS NULL")).needs(Need::Extraction),
+                filter("missing_alt", "Missing alt attribute", im::MISSING_ALT).needs(Need::Extraction),
                 filter("empty_alt", "Empty alt text", image_use!("l.alt = ''")).needs(Need::Extraction),
-                filter("alt_over_100", "Alt text over 100 characters", image_use!("length(l.alt) > 100"))
-                    .needs(Need::Extraction),
-                filter("over_100kb", "Over 100 KB", "u.size_bytes > 102400").needs(Need::Timing),
+                filter("alt_over_100", "Alt text over 100 characters", im::ALT_OVER)
+                    .needs(Need::Extraction)
+                    .thr("image.alt_over", "Alt text over {n} characters"),
+                filter("over_100kb", "Over 100 KB", im::LARGE).needs(Need::Timing).thr("image.large", "Over {n} bytes"),
             ],
             search_column: Some("alt"),
             scoped: false,
@@ -867,9 +822,9 @@ fn build() -> Vec<TabDef> {
             vec![
                 filter("contains", "Contains canonical", "u.canonical IS NOT NULL"),
                 filter("self", "Self-referencing", "u.canonical = u.url"),
-                filter("canonicalised", "Canonicalised", "u.canonical <> u.url"),
-                filter("missing", "Missing", "u.canonical IS NULL"),
-                filter("conflicting", "Multiple or conflicting", "u.canonical_count > 1"),
+                filter("canonicalised", "Canonicalised", ca::CANONICALISED),
+                filter("missing", "Missing", ca::MISSING),
+                filter("conflicting", "Multiple or conflicting", ca::CONFLICTING),
             ],
             "canonical_html",
         ),

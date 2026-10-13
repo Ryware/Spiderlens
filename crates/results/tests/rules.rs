@@ -306,6 +306,47 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sc007_filters_and_rules_list_the_same_urls() {
+    let c = crawl().await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let pairs = [
+        ("page-titles", "missing", "title.missing"),
+        ("page-titles", "duplicate", "title.duplicate"),
+        ("page-titles", "over_60", "title.over"),
+        ("meta-description", "missing", "meta.missing"),
+        ("h1", "multiple", "h1.multiple"),
+        ("url", "uppercase", "url.uppercase"),
+        ("canonicals", "missing", "canonical.missing"),
+        ("images", "missing_alt", "image.missing_alt"),
+    ];
+    for (tab, filter, rule) in pairs {
+        let q = ViewQuery {
+            tab: tab.into(),
+            filter: filter.into(),
+            scope: Default::default(),
+            search: String::new(),
+            sort: None,
+        };
+        let base = c.site.url(E, "");
+        let rows: BTreeSet<String> = r
+            .open_view(&q, 1000)
+            .unwrap()
+            .rows
+            .iter()
+            .map(|row| {
+                row[1]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix(base.trim_end_matches('/'))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(rows, flagged(&mut r, &c.site, rule), "{tab}/{filter} vs {rule}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn us2_a_page_lists_its_issues_with_evidence() {
     let c = crawl().await;
     let mut r = Reader::open(&c.path).unwrap();
@@ -369,6 +410,10 @@ async fn us4_settings_change_thresholds_priorities_and_switch_rules_off() {
         (Some(0), "Page title: over 70 characters")
     );
     assert_eq!(count(&mut r, "canonical.missing").count, None);
+    // FR-005: the Page titles filter follows the same threshold.
+    let fc = r.counts("page-titles", Default::default()).unwrap();
+    assert_eq!(fc.labels["over_60"], "Over 70 characters");
+    assert_eq!(fc.counts["over_60"], Some(0));
     assert_eq!(count(&mut r, "h1.multiple").priority, Priority::High);
 
     // US4 scenario 5: an invalid value is rejected and the previous one stays.
