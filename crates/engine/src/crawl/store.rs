@@ -4,6 +4,7 @@
 //! The unique index on `urls.url` is the seen-set; the partial index on
 //! queued rows is the queue. Nothing here grows with the crawl in memory.
 
+use std::cell::Cell;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -200,6 +201,29 @@ pub struct UrlRow {
 pub struct CrawlStore {
     conn: Connection,
     next_seq: i64,
+    /// URLs per state, kept in step with every write below so live progress
+    /// never has to count the table (spec 008 plan D3).
+    live: Cell<StateCounts>,
+}
+
+/// URLs per state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StateCounts {
+    pub queued: u64,
+    pub in_flight: u64,
+    pub crawled: u64,
+    pub not_crawled: u64,
+}
+
+impl StateCounts {
+    fn slot(&mut self, s: UrlState) -> &mut u64 {
+        match s {
+            UrlState::Queued => &mut self.queued,
+            UrlState::InFlight => &mut self.in_flight,
+            UrlState::Crawled => &mut self.crawled,
+            UrlState::NotCrawled => &mut self.not_crawled,
+        }
+    }
 }
 
 /// One link from a crawled page, for [`CrawlStore::add_link`].
@@ -238,7 +262,11 @@ impl CrawlStore {
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
         conn.execute_batch(SCHEMA)?;
-        let store = Self { conn, next_seq: 1 };
+        let store = Self {
+            conn,
+            next_seq: 1,
+            live: Cell::default(),
+        };
         store.set_meta("format", FORMAT)?;
         store.set_meta("format_version", &FORMAT_VERSION.to_string())?;
         store.set_meta("status", "running")?;
@@ -276,10 +304,33 @@ impl CrawlStore {
         }
         let max_seq: i64 =
             conn.query_row("SELECT COALESCE(MAX(queue_seq), 0) FROM urls", [], |r| r.get(0))?;
-        Ok(Self {
+        let store = Self {
             conn,
             next_seq: max_seq + 1,
-        })
+            live: Cell::default(),
+        };
+        let mut live = StateCounts::default();
+        for (state, n) in store.state_counts()? {
+            *live.slot(state) = n;
+        }
+        store.live.set(live);
+        Ok(store)
+    }
+
+    /// URLs per state right now, without touching the file.
+    pub fn live_counts(&self) -> StateCounts {
+        self.live.get()
+    }
+
+    /// `n` rows moved from `from` (None for new rows) to `to`.
+    fn shift(&self, from: Option<UrlState>, to: UrlState, n: usize) {
+        let mut live = self.live.get();
+        if let Some(f) = from {
+            let slot = live.slot(f);
+            *slot = slot.saturating_sub(n as u64);
+        }
+        *live.slot(to) += n as u64;
+        self.live.set(live);
     }
 
     fn configure(conn: &Connection) -> Result<()> {
@@ -378,6 +429,9 @@ impl CrawlStore {
                  queue_seq = ?3, via_nofollow = ?4 WHERE id = ?1",
             )?
             .execute(params![id, d.depth, new_seq, via_nofollow])?;
+        if upgradable {
+            self.shift(Some(UrlState::NotCrawled), UrlState::Queued, 1);
+        }
         let source = self.source_of(id)?;
         Ok(Recorded::Requeued {
             id,
@@ -450,6 +504,7 @@ impl CrawlStore {
                 via_nofollow,
             ])?;
         let id = self.conn.last_insert_rowid();
+        self.shift(None, state, 1);
         let queued = seq.map(|seq| QueueEntry {
             id,
             url: d.url.to_string(),
@@ -512,9 +567,11 @@ impl CrawlStore {
     }
 
     pub fn mark_in_flight(&self, id: i64) -> Result<()> {
-        self.conn
-            .prepare_cached("UPDATE urls SET state = 'in_flight' WHERE id = ?1")?
+        let n = self
+            .conn
+            .prepare_cached("UPDATE urls SET state = 'in_flight' WHERE id = ?1 AND state = 'queued'")?
             .execute([id])?;
+        self.shift(Some(UrlState::Queued), UrlState::InFlight, n);
         Ok(())
     }
 
@@ -526,11 +583,12 @@ impl CrawlStore {
         } else {
             UrlState::Crawled
         };
-        self.conn
+        let n = self
+            .conn
             .prepare_cached(
                 "UPDATE urls SET state = ?2, status = ?3, content_type = ?4, redirect_to = ?5, title = ?6,
                  error_class = ?7, error_message = ?8, robots_rule = COALESCE(?9, robots_rule), fetched_at = ?10
-                 WHERE id = ?1",
+                 WHERE id = ?1 AND state = 'in_flight'",
             )?
             .execute(params![
                 id,
@@ -544,24 +602,31 @@ impl CrawlStore {
                 r.robots_rule,
                 now_ms,
             ])?;
+        self.shift(Some(UrlState::InFlight), state, n);
         Ok(())
     }
 
+    /// Ends a queued URL without a request.
     pub fn set_not_crawled(&self, id: i64, reason: NotCrawledReason, detail: Option<&str>) -> Result<()> {
-        self.conn
+        let n = self
+            .conn
             .prepare_cached(
-                "UPDATE urls SET state = 'not_crawled', reason = ?2, reason_detail = ?3 WHERE id = ?1",
+                "UPDATE urls SET state = 'not_crawled', reason = ?2, reason_detail = ?3
+                 WHERE id = ?1 AND state = 'queued'",
             )?
             .execute(params![id, reason.as_str(), detail])?;
+        self.shift(Some(UrlState::Queued), UrlState::NotCrawled, n);
         Ok(())
     }
 
     /// Ends a queued external check without a request (stop, or robots.txt
     /// disallows it). The reason stays "external".
     pub fn drop_check(&self, id: i64) -> Result<()> {
-        self.conn
-            .prepare_cached("UPDATE urls SET state = 'not_crawled' WHERE id = ?1")?
+        let n = self
+            .conn
+            .prepare_cached("UPDATE urls SET state = 'not_crawled' WHERE id = ?1 AND state = 'queued'")?
             .execute([id])?;
+        self.shift(Some(UrlState::Queued), UrlState::NotCrawled, n);
         Ok(())
     }
 
@@ -589,15 +654,16 @@ impl CrawlStore {
     /// Stop: every queued page becomes "Crawl stopped"; queued external checks
     /// end unchecked (FR-022, US4-4).
     pub fn stop_queue(&self) -> Result<()> {
-        self.conn.execute(
+        let a = self.conn.execute(
             "UPDATE urls SET state = 'not_crawled', reason = 'crawl_stopped'
              WHERE state = 'queued' AND check_only = 0",
             [],
         )?;
-        self.conn.execute(
+        let b = self.conn.execute(
             "UPDATE urls SET state = 'not_crawled' WHERE state = 'queued' AND check_only = 1",
             [],
         )?;
+        self.shift(Some(UrlState::Queued), UrlState::NotCrawled, a + b);
         Ok(())
     }
 
@@ -612,6 +678,8 @@ impl CrawlStore {
              WHERE state = 'not_crawled' AND reason = 'crawl_stopped'",
             [],
         )?;
+        self.shift(Some(UrlState::InFlight), UrlState::Queued, a);
+        self.shift(Some(UrlState::NotCrawled), UrlState::Queued, b);
         Ok(a + b)
     }
 

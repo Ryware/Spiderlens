@@ -3,12 +3,14 @@
 //! - `scope` decides what is crawled (one function, FR-038 order).
 //! - `store` keeps the frontier on disk in the crawl file.
 //! - `runner` schedules requests breadth-first and politely.
+//! - `speed` adapts how many requests each site gets at once (spec 008).
 
 mod links;
 pub mod reason;
 mod runner;
 pub mod scope;
 mod sitemap;
+mod speed;
 pub mod store;
 mod window;
 

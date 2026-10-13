@@ -73,6 +73,11 @@ export interface CrawlProgress {
   queued: number;
   not_crawled: number;
   errors: number;
+  /** Requests finished per second over the last 5 seconds (spec 008). */
+  urls_per_sec: number;
+  avg_urls_per_sec: number;
+  /** Seconds left for the URLs queued now; rises while discovery outpaces crawling. */
+  eta_secs: number | null;
 }
 
 export type CrawlStatus = "running" | "paused" | "stopped" | "completed";

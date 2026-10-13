@@ -767,3 +767,50 @@ async fn progress_events_carry_status_bar_figures() {
     assert_eq!(p.in_flight, 0);
     assert_eq!(p.discovered, summary.discovered);
 }
+
+/// With robots.txt ignored, the first pass over a new host used to find
+/// nothing to start and wait forever (spec 008 T006).
+#[tokio::test]
+async fn robots_ignored_crawl_runs_to_the_end() {
+    let site = SiteBuilder::new()
+        .robots(E, "User-agent: *\nDisallow: /\n")
+        .page(E, "/", "", &["/a"])
+        .page(E, "/a", "", &[])
+        .start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.robots.mode = RobotsMode::Ignore;
+    })
+    .await;
+    assert_eq!(d.summary.crawled, 2);
+    assert_eq!(site.count(E, "/robots.txt"), 0, "not even fetched");
+}
+
+/// A 429 with Retry-After holds the whole site until the wait is over
+/// (spec 008 FR-014, FR-015, SC-005).
+#[tokio::test]
+async fn retry_after_holds_the_site() {
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &["/busy", "/b"])
+        .raw(E, "/busy", 429, "text/plain", b"slow down")
+        .header(E, "/busy", "Retry-After", "2")
+        .page(E, "/b", "", &[])
+        .start();
+    // One request at a time, so /b cannot already be in flight when the 429
+    // arrives and the gap is the hold alone.
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.speed.max_per_host = 1;
+        c.speed.adaptive = false;
+    })
+    .await;
+    assert_eq!(d.row(&site.url(E, "/busy")).status, Some(429));
+    assert_eq!(d.row(&site.url(E, "/b")).state, UrlState::Crawled);
+    let hits = site.page_hits();
+    let at = |path: &str| hits.iter().find(|h| h.path == path).unwrap().at;
+    let waited = at("/b").duration_since(at("/busy"));
+    assert!(
+        waited >= Duration::from_millis(1900),
+        "next request after {waited:?}, Retry-After asked for 2 s"
+    );
+}

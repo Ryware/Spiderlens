@@ -5,7 +5,7 @@
 //! actor pattern (one owner of mutable state, messages in), which keeps the
 //! store single-threaded without locks.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig, normalize_url,
+    CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings, StoredCrawlConfig, normalize_url,
 };
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -23,9 +23,10 @@ use super::links::{self, PageLinks};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
+use super::speed::{Signal, SiteSpeed, parse_retry_after};
 use super::store::{
-    Counts, CrawlStore, Discovery, HostRow, NewLink, Placement, QueueEntry, Recorded, Response, SitemapRow,
-    StoreError,
+    Counts, CrawlStore, Discovery, HostRow, NewLink, Placement, QueueEntry, QueueKey, Recorded, Response,
+    SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
 use crate::fetch::{build_client_with, fetch_once};
@@ -34,7 +35,13 @@ use crate::{CheckError, CheckOptions, RequestHeader, Title};
 
 const WINDOW: usize = 4096;
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+/// The "current" speed is averaged over this long (spec 008 assumption).
+const RATE_WINDOW: Duration = Duration::from_secs(5);
 const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
+/// Results are written in one transaction committed this often, so a crash
+/// loses at most this much work (spec 008 plan D2, FR-024).
+const COMMIT_EVERY: Duration = Duration::from_millis(200);
+const COMMIT_WRITES: u32 = 500;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlError {
@@ -56,7 +63,7 @@ pub enum Control {
     Stop,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Progress {
     pub discovered: u64,
     pub crawled: u64,
@@ -67,9 +74,19 @@ pub struct Progress {
     pub not_crawled: u64,
     /// Crawled pages that failed or answered 4xx/5xx.
     pub errors: u64,
+    /// Requests finished per second over the last few seconds (spec 008
+    /// FR-027), external checks included.
+    pub urls_per_sec: f64,
+    /// Requests finished per second since this run started.
+    pub avg_urls_per_sec: f64,
+    /// Seconds until the URLs queued now are done at the current speed. In
+    /// Spider mode more URLs are usually found on the way, so this is a
+    /// floor that rises while discovery outpaces crawling. None while the
+    /// speed is still unknown.
+    pub eta_secs: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CrawlEvent {
     Progress(Progress),
     Warning(String),
@@ -192,27 +209,43 @@ enum RobotsState {
 struct Host {
     robots: RobotsState,
     in_flight: u32,
+    /// No request before this: crawl-delay spacing or a Retry-After pause.
     next_start: Instant,
     delay: Option<Duration>,
+    speed: SiteSpeed,
 }
 
 impl Host {
-    fn new() -> Self {
+    fn new(speed: &SpeedSettings) -> Self {
         Self {
             robots: RobotsState::Unknown,
             in_flight: 0,
             next_start: Instant::now(),
             delay: None,
+            speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
+        }
+    }
+
+    /// Requests this host may have open now.
+    fn limit(&self) -> u32 {
+        if self.delay.is_some() {
+            1
+        } else {
+            self.speed.allowance()
         }
     }
 }
 
 /// What a fetch task reports.
+// Page is nearly every message, so boxing it would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 enum Msg {
     Page {
         entry: QueueEntry,
         internal: bool,
         robots_rule: Option<String>,
+        /// From sending the request to the end of the body.
+        took: Duration,
         result: Result<PageOutcome, CheckError>,
     },
     Robots {
@@ -231,6 +264,7 @@ struct PageOutcome {
     status: u16,
     content_type: Option<String>,
     location: Option<String>,
+    retry_after: Option<String>,
     page: Option<PageLinks>,
 }
 
@@ -434,11 +468,13 @@ struct Run {
     errors: u64,
     last_progress: Instant,
     warnings: Vec<String>,
-}
-
-enum Action {
-    Start(QueueEntry, Option<String>),
-    Block(QueueEntry, NotCrawledReason, String),
+    /// An open write transaction: when it began and how many results it holds.
+    write_tx: Option<(Instant, u32)>,
+    /// Requests finished in this run, pages and checks alike.
+    finished: u64,
+    started_at: Instant,
+    /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
+    rate_samples: VecDeque<(Instant, u64)>,
 }
 
 impl Run {
@@ -465,7 +501,7 @@ impl Run {
                 "unavailable" => RobotsPolicy::disallow_all(),
                 _ => RobotsPolicy::allow_all(),
             };
-            let mut host = Host::new();
+            let mut host = Host::new(&c.config.speed);
             host.delay = honoured_delay(&c.config, policy.crawl_delay);
             host.robots = RobotsState::Known(Arc::new(policy), h.robots_error);
             hosts.insert(h.host_key, host);
@@ -501,6 +537,10 @@ impl Run {
             errors,
             last_progress: Instant::now() - PROGRESS_EVERY,
             warnings,
+            write_tx: None,
+            finished: 0,
+            started_at: Instant::now(),
+            rate_samples: VecDeque::new(),
         })
     }
 
@@ -529,19 +569,19 @@ impl Run {
             if self.events.is_none() {
                 return;
             }
-            // One indexed GROUP BY, a few times a second: cheaper and less
-            // fragile than keeping a counter at every place a state changes.
-            // A failed read only costs this one update.
-            let (mut queued, mut not_crawled) = (0, 0);
-            if let Ok(counts) = self.c.store.state_counts() {
-                for (state, n) in counts {
-                    match state {
-                        UrlState::Queued => queued = n,
-                        UrlState::NotCrawled => not_crawled = n,
-                        UrlState::InFlight | UrlState::Crawled => {}
-                    }
-                }
-            }
+            // Kept by the store as rows change state: counting the table here
+            // grows with the crawl and stalls the loop on large crawls.
+            let StateCounts {
+                queued, not_crawled, ..
+            } = self.c.store.live_counts();
+            let (urls_per_sec, avg_urls_per_sec) = self.rates();
+            // Under a URL limit, only the pages it still allows are left.
+            let left = match self.c.config.limits.max_urls {
+                Some(max) if !self.limit_reached => queued.min(max.saturating_sub(self.pages_started)),
+                Some(_) => 0,
+                None => queued,
+            };
+            let eta_secs = (urls_per_sec > 0.0).then(|| (left as f64 / urls_per_sec).ceil() as u64);
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -549,18 +589,70 @@ impl Run {
                 queued,
                 not_crawled,
                 errors: self.errors,
+                urls_per_sec,
+                avg_urls_per_sec,
+                eta_secs,
             }));
         }
+    }
+
+    /// Current (last few seconds) and average requests finished per second.
+    fn rates(&mut self) -> (f64, f64) {
+        let now = Instant::now();
+        self.rate_samples.push_back((now, self.finished));
+        while self
+            .rate_samples
+            .get(1)
+            .is_some_and(|(t, _)| now.duration_since(*t) >= RATE_WINDOW)
+        {
+            self.rate_samples.pop_front();
+        }
+        let per_sec = |n: u64, d: Duration| {
+            let secs = d.as_secs_f64();
+            if secs >= 0.5 { n as f64 / secs } else { 0.0 }
+        };
+        let (t0, n0) = self.rate_samples[0];
+        (
+            per_sec(self.finished - n0, now.duration_since(t0)),
+            per_sec(self.finished, now.duration_since(self.started_at)),
+        )
     }
 
     fn state(&self) -> Control {
         *self.control.borrow()
     }
 
+    /// Every write in the loop goes into one transaction (plan D2).
+    fn open_tx(&mut self) -> Result<(), CrawlError> {
+        if self.write_tx.is_none() {
+            self.c.store.begin()?;
+            self.write_tx = Some((Instant::now(), 0));
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), CrawlError> {
+        if self.write_tx.take().is_some() {
+            self.c.store.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Commits when the transaction is old or large enough.
+    fn commit_if_due(&mut self) -> Result<(), CrawlError> {
+        if let Some((since, writes)) = self.write_tx
+            && (since.elapsed() >= COMMIT_EVERY || writes >= COMMIT_WRITES)
+        {
+            self.commit()?;
+        }
+        Ok(())
+    }
+
     async fn main_loop(&mut self) -> Result<(), CrawlError> {
         self.maybe_start_sitemaps()?;
         loop {
-            let wake = if self.state() == Control::Run {
+            self.open_tx()?;
+            let mut wake = if self.state() == Control::Run {
                 self.dispatch()?
             } else {
                 None
@@ -587,6 +679,10 @@ impl Run {
                     }
                 }
             }
+            if let Some((since, _)) = self.write_tx {
+                let due = since + COMMIT_EVERY;
+                wake = Some(wake.map_or(due, |w| w.min(due)));
+            }
             let sleep = async {
                 match wake {
                     Some(t) => tokio::time::sleep_until(t.into()).await,
@@ -594,7 +690,12 @@ impl Run {
                 }
             };
             tokio::select! {
-                Some(msg) = self.rx.recv() => self.handle(msg)?,
+                Some(msg) = self.rx.recv() => {
+                    self.handle(msg)?;
+                    if let Some((_, writes)) = &mut self.write_tx {
+                        *writes += 1;
+                    }
+                }
                 () = sleep => {}
                 r = self.control.changed(), if !self.control_closed => {
                     if r.is_err() {
@@ -602,6 +703,21 @@ impl Run {
                     }
                 }
             }
+            self.commit_if_due()?;
+        }
+        self.commit()?;
+        #[cfg(debug_assertions)]
+        {
+            let mut counted = StateCounts::default();
+            for (state, n) in self.c.store.state_counts()? {
+                match state {
+                    UrlState::Queued => counted.queued = n,
+                    UrlState::InFlight => counted.in_flight = n,
+                    UrlState::Crawled => counted.crawled = n,
+                    UrlState::NotCrawled => counted.not_crawled = n,
+                }
+            }
+            debug_assert_eq!(self.c.store.live_counts(), counted, "live counts match the file");
         }
         self.progress(true);
         Ok(())
@@ -609,74 +725,42 @@ impl Run {
 
     /// Starts every request that may start now, in queue order (FR-020,
     /// FR-021). Returns when to look again if something is waiting on time.
+    ///
+    /// Walks hosts, not URLs (spec 008 plan D1): a host at its limit, waiting
+    /// for robots.txt or inside a delay is skipped in one step, and among the
+    /// hosts that can start, the one whose next URL comes first in the queue
+    /// goes next. So breadth-first order holds and one busy host never hides
+    /// the others.
     fn dispatch(&mut self) -> Result<Option<Instant>, CrawlError> {
         let mut wake: Option<Instant> = None;
         let soonest = |t: Instant, wake: &mut Option<Instant>| {
             *wake = Some(wake.map_or(t, |w| w.min(t)));
         };
+        let speed = self.c.config.speed;
+        let max_concurrent = speed.max_concurrent;
+        let robots_mode = self.c.config.robots.mode;
         loop {
-            if self.in_flight >= self.c.config.speed.max_concurrent {
+            if self.in_flight >= max_concurrent {
                 break;
             }
             self.window.refill(&self.c.store)?;
             let now = Instant::now();
-            let per_host = self.c.config.speed.max_per_host;
-            let robots_mode = self.c.config.robots.mode;
+
+            // Hosts seen for the first time: fetch robots.txt (or skip it).
             let mut need_robots = Vec::new();
-            let mut action = None;
-            let mut rate_blocked = false;
-            for e in self.window.iter() {
-                let host = self.hosts.entry(e.host_key.clone()).or_insert_with(Host::new);
-                let (policy, robots_error) = match &host.robots {
-                    RobotsState::Unknown => {
-                        if robots_mode == RobotsMode::Ignore {
-                            host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
-                            need_robots.push((e.host_key.clone(), false));
-                        } else if self.in_flight + (need_robots.len() as u32)
-                            < self.c.config.speed.max_concurrent
-                        {
-                            host.robots = RobotsState::Fetching;
-                            need_robots.push((e.host_key.clone(), true));
-                        }
-                        continue;
-                    }
-                    RobotsState::Fetching => continue,
-                    RobotsState::Known(p, err) => (p.clone(), err.clone()),
-                };
-                let url = Url::parse(&e.url).expect("stored URLs parse");
-                let mut robots_rule = None;
-                if let RobotsVerdict::Disallowed(rule) = policy.check(&url) {
-                    if robots_mode == RobotsMode::Respect {
-                        let (reason, detail) = if policy.is_disallow_all() {
-                            (NotCrawledReason::RobotsUnavailable, robots_error.unwrap_or(rule))
-                        } else {
-                            (NotCrawledReason::BlockedByRobots, rule)
-                        };
-                        action = Some(Action::Block(e.clone(), reason, detail));
-                        break;
-                    }
-                    robots_rule = Some(rule);
+            for (key, _) in self.window.host_heads() {
+                let unknown = self
+                    .hosts
+                    .get(key)
+                    .is_none_or(|h| matches!(h.robots, RobotsState::Unknown));
+                if unknown {
+                    need_robots.push(key.to_string());
                 }
-                let limit = if host.delay.is_some() { 1 } else { per_host };
-                if host.in_flight >= limit {
-                    continue;
-                }
-                if host.next_start > now {
-                    soonest(host.next_start, &mut wake);
-                    continue;
-                }
-                if self.next_global > now {
-                    soonest(self.next_global, &mut wake);
-                    rate_blocked = true;
-                    break;
-                }
-                action = Some(Action::Start(e.clone(), robots_rule));
-                break;
             }
-            for (key, fetch) in need_robots {
-                if fetch {
-                    self.spawn_robots(key);
-                } else {
+            for key in need_robots {
+                if robots_mode == RobotsMode::Ignore {
+                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+                    host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
                     self.c.store.upsert_host(&HostRow {
                         host_key: key,
                         robots_status: "ignored".into(),
@@ -685,31 +769,76 @@ impl Run {
                         crawl_delay_ms: None,
                         robots_txt: None,
                     })?;
+                } else if self.in_flight < max_concurrent {
+                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+                    host.robots = RobotsState::Fetching;
+                    self.spawn_robots(key);
                 }
             }
-            match action {
-                Some(Action::Block(e, reason, detail)) => {
-                    self.window.remove(e.key());
-                    if e.check_only {
-                        self.c.store.drop_check(e.id)?;
+
+            // The earliest queued URL among hosts that may start now.
+            let mut best: Option<QueueKey> = None;
+            for (key, head) in self.window.host_heads() {
+                let Some(host) = self.hosts.get(key) else { continue };
+                if !matches!(host.robots, RobotsState::Known(..)) {
+                    continue;
+                }
+                if host.in_flight >= host.limit() {
+                    continue;
+                }
+                if host.next_start > now {
+                    soonest(host.next_start, &mut wake);
+                    continue;
+                }
+                if best.is_none_or(|b| head < b) {
+                    best = Some(head);
+                }
+            }
+            let Some(best) = best else { break };
+            let e = self.window.get(best).expect("head is in the window").clone();
+            let RobotsState::Known(policy, robots_error) = &self.hosts[&e.host_key].robots else {
+                unreachable!("only hosts with known robots.txt are picked");
+            };
+            let url = Url::parse(&e.url).expect("stored URLs parse");
+            let mut robots_rule = None;
+            if let RobotsVerdict::Disallowed(rule) = policy.check(&url) {
+                if robots_mode == RobotsMode::Respect {
+                    let (reason, detail) = if policy.is_disallow_all() {
+                        (
+                            NotCrawledReason::RobotsUnavailable,
+                            robots_error.clone().unwrap_or(rule),
+                        )
                     } else {
-                        self.c.store.set_not_crawled(e.id, reason, Some(&detail))?;
-                        if e.source == DiscoverySource::Start {
-                            self.warn(format!(
-                                "The start URL {} is blocked by robots.txt ({detail}), so nothing else can be found.",
-                                e.url
-                            ))?;
-                        }
-                    }
+                        (NotCrawledReason::BlockedByRobots, rule)
+                    };
+                    self.block(e, reason, detail)?;
+                    continue;
                 }
-                Some(Action::Start(e, rule)) => self.start(e, rule, now)?,
-                None => break,
+                robots_rule = Some(rule);
             }
-            if rate_blocked {
+            if self.next_global > now {
+                soonest(self.next_global, &mut wake);
                 break;
             }
+            self.start(e, robots_rule, now)?;
         }
         Ok(wake)
+    }
+
+    fn block(&mut self, e: QueueEntry, reason: NotCrawledReason, detail: String) -> Result<(), CrawlError> {
+        self.window.remove(e.key());
+        if e.check_only {
+            self.c.store.drop_check(e.id)?;
+        } else {
+            self.c.store.set_not_crawled(e.id, reason, Some(&detail))?;
+            if e.source == DiscoverySource::Start {
+                self.warn(format!(
+                    "The start URL {} is blocked by robots.txt ({detail}), so nothing else can be found.",
+                    e.url
+                ))?;
+            }
+        }
+        Ok(())
     }
 
     fn start(&mut self, e: QueueEntry, robots_rule: Option<String>, now: Instant) -> Result<(), CrawlError> {
@@ -734,6 +863,7 @@ impl Run {
         let tx = self.tx.clone();
         let check_only = e.check_only;
         tokio::spawn(async move {
+            let sent = Instant::now();
             let result = fetch_once(&client, &url, &headers, internal, !check_only, max_body)
                 .await
                 .map(|o| PageOutcome {
@@ -750,11 +880,14 @@ impl Run {
                     status: o.status,
                     content_type: o.content_type,
                     location: o.location,
+                    retry_after: o.retry_after,
                 });
+            let took = sent.elapsed();
             let _ = tx.send(Msg::Page {
                 entry: e,
                 internal,
                 robots_rule,
+                took,
                 result,
             });
         });
@@ -775,8 +908,8 @@ impl Run {
     /// unless robots.txt (earlier in the FR-038 order) already blocks it.
     fn apply_url_limit(&mut self) -> Result<(), CrawlError> {
         self.limit_reached = true;
+        // Runs inside the loop's open transaction.
         let store = &self.c.store;
-        store.begin()?;
         store.set_meta("url_limit_reached", "true")?;
         let mut after = 0;
         loop {
@@ -801,7 +934,6 @@ impl Run {
                 }
             }
         }
-        store.commit()?;
         self.window.retain(|e| e.check_only);
         Ok(())
     }
@@ -916,24 +1048,26 @@ impl Run {
                 entry,
                 internal,
                 robots_rule,
+                took,
                 result,
             } => {
                 self.in_flight -= 1;
+                self.finished += 1;
                 if let Some(h) = self.hosts.get_mut(&entry.host_key) {
                     h.in_flight -= 1;
+                    let signal = signal_of(&result);
+                    let now = Instant::now();
+                    if let Some(until) = h.speed.on_response(took, signal, now) {
+                        h.next_start = h.next_start.max(until);
+                    }
                 }
-                self.c.store.begin()?;
-                self.on_page(entry, internal, robots_rule, result)?;
-                self.c.store.commit()?;
-                Ok(())
+                self.on_page(entry, internal, robots_rule, result)
             }
             Msg::SitemapUrls { sitemap, urls } => {
-                self.c.store.begin()?;
                 for loc in urls {
                     let parsed = self.c.rules.normalize(&sitemap, &loc);
                     self.discover(None, &loc, LinkKind::Anchor, parsed, 1, None, false, true)?;
                 }
-                self.c.store.commit()?;
                 Ok(())
             }
             Msg::SitemapDone(row) => {
@@ -1004,7 +1138,8 @@ impl Run {
             crawl_delay_ms: policy.crawl_delay.map(|d| d.as_millis() as i64),
             robots_txt: text,
         })?;
-        let host = self.hosts.entry(key).or_insert_with(Host::new);
+        let speed = self.c.config.speed;
+        let host = self.hosts.entry(key).or_insert_with(|| Host::new(&speed));
         host.delay = delay;
         host.robots = RobotsState::Known(Arc::new(policy), error);
         self.maybe_start_sitemaps()
@@ -1202,6 +1337,22 @@ impl Run {
             })?;
         }
         Ok(Some(id))
+    }
+}
+
+/// What a finished request says about its site's load (spec 008 FR-013,
+/// FR-014).
+fn signal_of(result: &Result<PageOutcome, CheckError>) -> Signal {
+    match result {
+        Ok(o) if o.status == 429 || o.status == 503 => Signal::Overloaded {
+            retry_after: o
+                .retry_after
+                .as_deref()
+                .and_then(|v| parse_retry_after(v, jiff::Timestamp::now())),
+        },
+        Ok(_) => Signal::Answered,
+        Err(e) if e.class == crate::ErrorClass::Timeout => Signal::TimedOut,
+        Err(_) => Signal::Other,
     }
 }
 
