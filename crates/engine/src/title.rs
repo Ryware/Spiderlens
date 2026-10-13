@@ -1,7 +1,6 @@
 //! Character-set detection and title extraction (FR-014, research R5).
 
 use encoding_rs::{Encoding, UTF_8};
-use scraper::{Html, Selector};
 
 use crate::Title;
 
@@ -19,14 +18,9 @@ pub fn is_html(content_type: Option<&str>, body_start: &[u8]) -> bool {
     }
 }
 
-/// Picks the encoding: byte order mark, then the HTTP header charset, then a
-/// `<meta>` declaration in the first 1024 bytes, then UTF-8.
-pub fn detect_encoding(header_charset: Option<&str>, body: &[u8]) -> &'static Encoding {
-    declared_encoding(header_charset, body).unwrap_or(UTF_8)
-}
-
 /// The encoding the response declares (byte order mark, HTTP header charset
-/// or `<meta>` in the first 1024 bytes), if any.
+/// or `<meta>` in the first 1024 bytes), if any. Undeclared pages are read
+/// as UTF-8, or windows-1252 when they are not valid UTF-8 (extract).
 pub fn declared_encoding(header_charset: Option<&str>, body: &[u8]) -> Option<&'static Encoding> {
     if let Some((enc, _)) = Encoding::for_bom(body) {
         return Some(enc);
@@ -69,31 +63,20 @@ fn meta_charset(prefix: &[u8]) -> Option<&'static Encoding> {
     None
 }
 
-/// Decodes the body and extracts the first `<title>` in `<head>`.
-/// Whitespace is collapsed and trimmed; empty becomes `Title::Missing`.
+/// The page title, read by the same extraction the crawl uses (spec 005):
+/// the first HTML `<title>`, whitespace collapsed; empty counts as missing.
 pub fn extract_title(header_charset: Option<&str>, body: &[u8]) -> Title {
-    let encoding = detect_encoding(header_charset, body);
-    let (text, _, _) = encoding.decode(body);
-    title_of(&Html::parse_document(&text))
-}
-
-/// The title of an already parsed document.
-pub(crate) fn title_of(doc: &Html) -> Title {
-    let selector = Selector::parse("head > title").expect("static selector is valid");
-    let Some(node) = doc.select(&selector).next() else {
-        return Title::Missing;
-    };
-    let raw: String = node.text().collect();
-    // HTML collapses ASCII whitespace only; a non-breaking space is content.
-    let collapsed = raw
-        .split(|c: char| c.is_ascii_whitespace())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if collapsed.is_empty() {
-        Title::Missing
-    } else {
-        Title::Text(collapsed)
+    let url = url::Url::parse("about:blank").expect("valid");
+    let data = crate::extract::extract_page(&crate::extract::PageInput {
+        url: &url,
+        charset: header_charset,
+        body,
+        truncated: false,
+        robots_token: "",
+    });
+    match data.title() {
+        Some(t) if !t.is_empty() => Title::Text(t.to_string()),
+        _ => Title::Missing,
     }
 }
 

@@ -257,13 +257,14 @@ pub fn extract_page_caught(input: &PageInput<'_>) -> Result<PageData, String> {
     })
 }
 
-/// Empty, or NUL bytes near the start (and not UTF-16): not a document.
+/// Empty, or several NUL bytes near the start (and not UTF-16): not a
+/// document. A stray NUL or two is a broken page, which browsers still show.
 fn looks_binary(body: &[u8]) -> bool {
     if body.iter().all(u8::is_ascii_whitespace) {
         return true;
     }
     let utf16 = body.starts_with(&[0xFF, 0xFE]) || body.starts_with(&[0xFE, 0xFF]);
-    !utf16 && body[..body.len().min(1024)].contains(&0)
+    !utf16 && body[..body.len().min(1024)].iter().filter(|&&b| b == 0).count() > 2
 }
 
 /// Robots directives, canonicals and hreflang from `X-Robots-Tag` and

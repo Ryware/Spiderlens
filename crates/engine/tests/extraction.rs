@@ -264,3 +264,95 @@ async fn us6_raw_html_can_be_turned_off() {
     assert_eq!(r["page"]["html_stored"], 0);
     assert_eq!(r["title"], "Full page");
 }
+
+/// A page shaped like a real one: shared header, navigation and footer
+/// around some unique text, about 3 KB.
+fn realistic(n: usize, pages: usize) -> String {
+    let nav: String = (0..pages)
+        .map(|i| format!("<li><a href=\"/p/{i}\" class=\"nav-link\">Section {i}</a></li>\n"))
+        .collect();
+    let words = [
+        "crawl", "index", "page", "search", "engine", "link", "title", "content", "site", "rank",
+    ];
+    let text: String = (0..250)
+        .map(|i| words[(i * 7 + n * 3 + i / 5) % words.len()])
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Page {n} | Example</title>\n\
+         <meta name=\"description\" content=\"About page {n} of the example site\">\n\
+         <link rel=\"stylesheet\" href=\"/assets/site.css\">\n</head>\n<body>\n<header class=\"site-header\">\
+         <a href=\"/p/0\" class=\"logo\">Example</a></header>\n<nav><ul>\n{nav}</ul></nav>\n<main>\n\
+         <h1>Page {n}</h1>\n<p>{text}</p>\n</main>\n<footer class=\"site-footer\"><p>Copyright Example. \
+         All rights reserved.</p></footer>\n</body>\n</html>\n"
+    )
+}
+
+#[tokio::test]
+async fn sc_005_raw_html_is_identical_and_small() {
+    const PAGES: usize = 30;
+    let bodies: Vec<String> = (0..PAGES).map(|n| realistic(n, PAGES)).collect();
+    let mut b = SiteBuilder::new();
+    for (n, body) in bodies.iter().enumerate() {
+        b = b.html(E, &format!("/p/{n}"), body);
+    }
+    let site = b.start();
+    let done = crawl(&site, "/p/0", |_| {}).await;
+    let store = done.store();
+    let mut original = 0usize;
+    for (n, body) in bodies.iter().enumerate() {
+        let id = store.id_of(&site.url(E, &format!("/p/{n}"))).unwrap().unwrap();
+        assert_eq!(store.page_html(id).unwrap().unwrap(), body.as_bytes(), "page {n}");
+        original += body.len();
+    }
+    let conn = rusqlite::Connection::open(&done.path).unwrap();
+    let stored = conn
+        .query_row("SELECT sum(length(body)) FROM bodies", [], |r| r.get::<_, i64>(0))
+        .unwrap() as usize;
+    let ratio = stored as f64 / original as f64;
+    assert!(
+        ratio <= 0.30,
+        "stored HTML is {:.0}% of the original",
+        ratio * 100.0
+    );
+}
+
+/// SC-004: a 50 MB page with 100,000 links is extracted in under 10 s.
+/// Run in release: `cargo test --release -p spiderlens-engine --test
+/// extraction -- --ignored sc_004`.
+#[test]
+#[ignore = "benchmark; run in release"]
+fn sc_004_huge_page_is_extracted_in_time() {
+    use spiderlens_engine::extract::{PageInput, extract_page};
+    let mut html = String::from("<!doctype html><html><head><title>Huge</title></head><body>");
+    let filler = "lorem ipsum dolor sit amet ".repeat(16);
+    let mut n = 0;
+    while html.len() < 50 * 1024 * 1024 {
+        if n < 100_000 {
+            html.push_str(&format!("<p><a href=\"/l/{n}\">link {n}</a> {filler}</p>\n"));
+            n += 1;
+        } else {
+            html.push_str(&format!("<p>{filler}</p>\n"));
+        }
+    }
+    html.push_str("</body></html>");
+    assert_eq!(n, 100_000, "the page holds 100,000 links");
+    let url = url::Url::parse("https://example.test/").unwrap();
+    let started = std::time::Instant::now();
+    let d = extract_page(&PageInput {
+        url: &url,
+        charset: Some("utf-8"),
+        body: html.as_bytes(),
+        truncated: false,
+        robots_token: "SpiderLens",
+    });
+    let took = started.elapsed();
+    println!(
+        "{} MB, {} refs in {took:?}",
+        html.len() / 1024 / 1024,
+        d.refs.len()
+    );
+    assert_eq!(d.refs.len(), 100_000);
+    assert!(!d.partial);
+    assert!(took < Duration::from_secs(10), "took {took:?}");
+}
