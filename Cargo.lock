@@ -4247,6 +4247,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "spiderlens-results"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "spiderlens-test-fixtures",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "ts-rs",
+ "url",
+]
+
+[[package]]
 name = "spiderlens-test-fixtures"
 version = "0.1.0"
 dependencies = [

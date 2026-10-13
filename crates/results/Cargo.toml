@@ -1,0 +1,29 @@
+[package]
+name = "spiderlens-results"
+description = "SpiderLens results: tabs, filters, views, URL detail and CSV export over a crawl file (read side)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-engine.workspace = true
+rusqlite = { workspace = true, features = ["functions", "collation"] }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+spiderlens-config.workspace = true
+spiderlens-test-fixtures.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true
