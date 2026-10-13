@@ -3,7 +3,9 @@
 Specified for parity (FR-042). Each command calls the same engine function as
 the CLI. `crawl_start`, `crawl_pause`, `crawl_stop`, `crawl_resume` and
 `crawl_summary` are implemented in `app/src-tauri/src/crawl.rs` (tasks T020);
-`crawl_urls` and `scope_test` arrive with spec 007's results table.
+`scope_test` is in `app/src-tauri/src/settings.rs` (spec 007 T041).
+`crawl_urls` was superseded by spec 007's view commands (`view_open`,
+`view_rows` and the rest, specs/007-results-ui/contracts/desktop-commands.md).
 
 | Command | Arguments | Returns |
 | --- | --- | --- |
@@ -11,8 +13,8 @@ the CLI. `crawl_start`, `crawl_pause`, `crawl_stop`, `crawl_resume` and
 | `crawl_pause` / `crawl_stop` | crawl id | nothing; final state arrives as `crawl-finished` |
 | `crawl_resume` | `path` | crawl id |
 | `crawl_summary` | `path` | CrawlSummary with reason labels (same payload as `crawl-finished`) |
-| `crawl_urls` | `path`, `filter { state?, reasons? }`, `offset`, `limit` | rows for the results table |
-| `scope_test` | `config`, `start_url`, `urls[]`, `fetch_robots` | one verdict per URL |
+| `crawl_urls` | superseded by spec 007 `view_open` / `view_rows` | |
+| `scope_test` | `config`, `start_url`, `urls[]`, `fetch_robots` | one verdict per URL: `input`, `url`, `would_crawl`, `reason`, `label`, `detail`, `robots_checked` |
 
 ## Events
 
