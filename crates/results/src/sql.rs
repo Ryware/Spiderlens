@@ -57,7 +57,51 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
         let s: Option<String> = ctx.get(0)?;
         Ok(s.map(|s| readable_url(&s)))
     })?;
+    conn.create_scalar_function("indexability", 7, FLAGS, |ctx| {
+        Ok(indexability(&IndexabilityArgs {
+            state: ctx.get::<String>(0)?,
+            error_class: ctx.get::<Option<String>>(1)?,
+            status: ctx.get::<Option<i64>>(2)?,
+            content_type: ctx.get::<Option<String>>(3)?,
+            noindex: ctx.get::<Option<bool>>(4)?.unwrap_or(false),
+            canonical: ctx.get::<Option<String>>(5)?,
+            url: ctx.get::<String>(6)?,
+        }))
+    })?;
     Ok(())
+}
+
+pub struct IndexabilityArgs {
+    pub state: String,
+    pub error_class: Option<String>,
+    pub status: Option<i64>,
+    pub content_type: Option<String>,
+    pub noindex: bool,
+    pub canonical: Option<String>,
+    pub url: String,
+}
+
+/// "Indexable", or "Non-indexable: <reason>" (spec 007 Assumptions): not a
+/// successful HTML response, a noindex directive for this crawl's robots
+/// token, or a canonical pointing to another URL. The first reason wins.
+pub fn indexability(a: &IndexabilityArgs) -> String {
+    let reason = if a.state != "crawled" {
+        Some("not crawled")
+    } else if a.error_class.is_some() || a.status.is_none() {
+        Some("no response")
+    } else {
+        match a.status.unwrap_or(0) {
+            300..=399 => Some("redirected"),
+            400..=499 => Some("client error"),
+            500..=599 => Some("server error"),
+            200..=299 if content_kind(a.content_type.as_deref()) != "html" => Some("not HTML"),
+            200..=299 if a.noindex => Some("noindex"),
+            200..=299 if a.canonical.as_deref().is_some_and(|c| c != a.url) => Some("canonicalised"),
+            200..=299 => None,
+            _ => Some("no response"),
+        }
+    };
+    reason.map_or_else(|| "Indexable".to_string(), |r| format!("Non-indexable: {r}"))
 }
 
 /// Case-insensitive "contains" with Unicode lowercasing on both sides (FR-016).

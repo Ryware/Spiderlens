@@ -59,6 +59,13 @@ pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         move |_| Ok(limit),
     )?;
+    let token = features.robots_token.clone();
+    conn.create_scalar_function(
+        "robots_token",
+        0,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        move |_| Ok(token.clone()),
+    )?;
     Ok((conn, features))
 }
 

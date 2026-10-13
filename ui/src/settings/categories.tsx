@@ -12,7 +12,7 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction";
 
 export interface Category {
   id: CategoryId;
@@ -31,6 +31,7 @@ export const categories: Category[] = [
   { id: "speed", title: "Speed", description: "How hard SpiderLens works the site. Polite is right for sites you don't own.", prefixes: ["speed"] },
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
+  { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
 ];
 
 export const issuesFor = (setup: CrawlSetup, c: Category) => c.prefixes.flatMap((p) => issuesAt(setup.issues, p));
@@ -305,6 +306,18 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             </Row>
           </Group>
         </>
+      );
+
+    case "extraction":
+      return (
+        <Group>
+          <Row
+            label="Store page HTML"
+            help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
+          >
+            {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
+          </Row>
+        </Group>
       );
   }
 }

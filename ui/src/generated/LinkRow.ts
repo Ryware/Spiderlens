@@ -13,6 +13,7 @@ id: number, url: string,
  */
 raw: string, kind: string, nofollow: boolean, followed: boolean, internal: boolean, status: number | null, final_state: string, 
 /**
- * Anchor text, or alt text for images; null until extraction stores it.
+ * Anchor text, or alt text for images. For images, null means the alt
+ * attribute is missing.
  */
-text: string | null, };
+text: string | null, sponsored: boolean, ugc: boolean, };

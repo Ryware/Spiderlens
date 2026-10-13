@@ -157,6 +157,11 @@ impl Synth {
             }
         }
         tx.execute("UPDATE meta SET value = 'completed' WHERE key = 'status'", [])?;
+        // Base data only: no page content, timing or HTML.
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('data_features', '')",
+            [],
+        )?;
         tx.commit()?;
         conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
         Ok(self.urls)
