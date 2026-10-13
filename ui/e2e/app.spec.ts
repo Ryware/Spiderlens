@@ -15,6 +15,14 @@ declare global {
 
 const errors: string[] = [];
 
+/** Types into the open palette and runs the top match once the palette has
+ * caught up with the typing; Enter before that runs nothing. */
+async function runInPalette(page: Page, text: string, expected = text) {
+  await page.keyboard.type(text);
+  await expect(page.locator("[cmdk-item][data-selected=true]")).toContainText(expected);
+  await page.keyboard.press("Enter");
+}
+
 test.beforeEach(async ({ page }) => {
   errors.length = 0;
   page.on("pageerror", (e) => errors.push(e.message));
@@ -79,8 +87,7 @@ test("command_palette_runs_commands_by_keyboard", async ({ page }) => {
   await page.keyboard.press("Control+K");
   const input = page.getByPlaceholder("Type a command or a tab name");
   await expect(input).toBeFocused();
-  await page.keyboard.type("about");
-  await page.keyboard.press("Enter");
+  await runInPalette(page, "about", "About");
   await expect(page.getByTestId("build-id")).toHaveText("abc1234.7");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("build-id")).toBeHidden();
@@ -115,8 +122,7 @@ test("themes_change_the_real_colors", async ({ page }) => {
   const bg = () => page.evaluate(() => getComputedStyle(document.querySelector("main")!).backgroundColor);
   const palette = async (cmd: string) => {
     await page.keyboard.press("Control+K");
-    await page.keyboard.type(cmd);
-    await page.keyboard.press("Enter");
+    await runInPalette(page, cmd);
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   };
   await palette("Appearance: Light");
