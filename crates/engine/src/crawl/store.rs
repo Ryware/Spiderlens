@@ -248,6 +248,8 @@ pub struct Counts {
     pub by_reason: Vec<(NotCrawledReason, u64)>,
     /// External URLs that were checked (fetched without following links).
     pub external_checked: u64,
+    /// External checks robots.txt did not allow.
+    pub external_blocked: u64,
 }
 
 impl CrawlStore {
@@ -619,13 +621,17 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Ends a queued external check without a request (stop, or robots.txt
-    /// disallows it). The reason stays "external".
-    pub fn drop_check(&self, id: i64) -> Result<()> {
+    /// Ends a queued external check that robots.txt does not allow. The
+    /// reason stays "external"; `blocked` says why it was not checked and
+    /// `robots_rule` holds the rule, so the URL does not look unchecked.
+    pub fn drop_check(&self, id: i64, blocked: NotCrawledReason, rule: Option<&str>) -> Result<()> {
         let n = self
             .conn
-            .prepare_cached("UPDATE urls SET state = 'not_crawled' WHERE id = ?1 AND state = 'queued'")?
-            .execute([id])?;
+            .prepare_cached(
+                "UPDATE urls SET state = 'not_crawled', reason_detail = ?2, robots_rule = ?3
+                 WHERE id = ?1 AND state = 'queued'",
+            )?
+            .execute(params![id, blocked.label(), rule])?;
         self.shift(Some(UrlState::Queued), UrlState::NotCrawled, n);
         Ok(())
     }
@@ -822,10 +828,17 @@ impl CrawlStore {
             [],
             |r| r.get(0),
         )? as u64;
+        let blocked = self.conn.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM urls
+             WHERE check_only = 1 AND state = 'not_crawled' AND fetched_at IS NULL AND reason_detail IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )? as u64;
         Ok(Counts {
             by_state,
             by_reason,
             external_checked: checked,
+            external_blocked: blocked,
         })
     }
 

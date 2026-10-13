@@ -277,6 +277,9 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
         let _ = writeln!(out, "{:<16} {}", "Still queued", s.queued);
     }
     let _ = writeln!(out, "{:<16} {}", "External checks", s.external_checked);
+    if s.external_blocked > 0 {
+        let _ = writeln!(out, "  {:<32} {}", "Blocked by robots.txt", s.external_blocked);
+    }
     if s.url_limit_reached {
         let _ = writeln!(
             out,

@@ -61,6 +61,7 @@ export function fakeReport(status: CrawlStatus, crawled: number, path = "/crawls
       queued: 0,
       by_reason: { external: 2, blocked_by_robots: 1 },
       external_checked: 2,
+      external_blocked: 0,
       url_limit_reached: false,
       hosts: [{ host: "example.com", robots: "ok", crawl_delay_secs: null, error: null }],
       sitemaps: [],

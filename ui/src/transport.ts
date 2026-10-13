@@ -91,8 +91,9 @@ export interface CrawlSummary {
   queued: number;
   by_reason: Record<string, number>;
   external_checked: number;
+  external_blocked: number;
   url_limit_reached: boolean;
-  hosts: { host: string; robots: "ok" | "not_found" | "unavailable" | "ignored" | "pending"; crawl_delay_secs: number | null; error: string | null }[];
+  hosts: { host: string; robots: "ok" | "not_found" | "forbidden" | "unavailable" | "ignored" | "pending"; crawl_delay_secs: number | null; error: string | null }[];
   sitemaps: { url: string; urls: number; error: string | null }[];
   warnings: string[];
 }
