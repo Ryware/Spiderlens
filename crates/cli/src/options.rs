@@ -139,6 +139,10 @@ pub struct CrawlArgs {
     pub no_retry_5xx: bool,
     #[arg(long, help_heading = "Retry")]
     pub no_retry_429: bool,
+
+    /// Do not keep each page's raw HTML in the crawl file.
+    #[arg(long, help_heading = "Extraction")]
+    pub no_store_html: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -398,6 +402,9 @@ impl CrawlArgs {
         }
         if self.no_retry_429 {
             c.retry.retry_429 = false;
+        }
+        if self.no_store_html {
+            c.extraction.store_html = false;
         }
         Ok(Resolved { config: c, notices })
     }

@@ -61,7 +61,7 @@ page (3 KB), the npm `config` docs page (76 KB), the Go language spec
 ## R6. Encoding
 
 - **Decision**: keep `title::detect_encoding` (BOM, then HTTP charset, then
-  `<meta>` prescan of the first 1024 bytes, then windows-1252), decode with
+  `<meta>` prescan of the first 1024 bytes, then UTF-8; an undeclared body that is not valid UTF-8 is decoded as windows-1252, the browser fallback in Western locales), decode with
   `encoding_rs`, use its "had errors" flag for `encoding_errors`.
 - **Rationale**: same order as the WHATWG encoding sniffing algorithm
   (FR-007); already tested for windows-1255, Shift_JIS, BOM precedence.

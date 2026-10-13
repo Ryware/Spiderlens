@@ -1,0 +1,674 @@
+{
+ "01-unclosed-head.html": {
+  "title": "Unclosed head<body><h1>Hi</h1><a href=/a>a</a>",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "02-no-html-head-body.html": {
+  "title": "Bare",
+  "description": "Bare page",
+  "headings": [
+   [
+    1,
+    "Top"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/x"
+  ]
+ },
+ "03-title-in-body.html": {
+  "title": "Late title",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "H"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "04-two-titles.html": {
+  "title": "First",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "x"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "05-title-entities.html": {
+  "title": "Tom & Jerry <3 © AB  x",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "06-title-with-tags.html": {
+  "title": "Hello <b>bold</b> world",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "a"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "07-unclosed-title.html": {
+  "title": "Never closed<h1>Lost</h1><a href=/lost>l</a>",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "08-script-with-close-title.html": {
+  "title": "Real",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/real"
+  ]
+ },
+ "09-comment-hiding-tags.html": {
+  "title": "Shown",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/yes"
+  ]
+ },
+ "10-unterminated-comment.html": {
+  "title": "T",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/before"
+  ]
+ },
+ "11-nested-anchors.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/outer",
+   "/inner"
+  ]
+ },
+ "12-heading-in-anchor.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "Heading link"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/h"
+  ]
+ },
+ "13-anchor-in-heading.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "Go here now"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/go"
+  ]
+ },
+ "14-nested-headings.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "One"
+   ],
+   [
+    2,
+    "Two"
+   ],
+   [
+    3,
+    "Three"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "15-heading-unclosed.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "Open heading para"
+   ],
+   [
+    3,
+    "Next"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "16-p-in-heading.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "para inside heading"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "17-table-foster-parent.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "In table"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/fostered",
+   "/cell"
+  ]
+ },
+ "18-table-misnested.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    3,
+    "deep"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/after-table"
+  ]
+ },
+ "19-select-swallows.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "After"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/in-select"
+  ]
+ },
+ "20-textarea-raw.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "Yes"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "21-noscript-head.html": {
+  "title": "NS",
+  "description": "From noscript",
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "22-noscript-body.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "NS heading"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/ns-link"
+  ]
+ },
+ "23-meta-in-body.html": {
+  "title": "t",
+  "description": "Body meta",
+  "headings": [
+   [
+    1,
+    "x"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "24-two-descriptions.html": {
+  "title": null,
+  "description": "First desc",
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "25-description-case.html": {
+  "title": null,
+  "description": "Upper case attrs",
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "26-description-whitespace.html": {
+  "title": null,
+  "description": "spaced out",
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "27-canonical-in-body.html": {
+  "title": "c",
+  "description": null,
+  "headings": [],
+  "canonical": [
+   "/body-canonical"
+  ],
+  "links": [
+   "/x"
+  ]
+ },
+ "28-two-canonicals.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [
+   "/one",
+   "/two"
+  ],
+  "links": []
+ },
+ "29-canonical-rel-list.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [
+   "/multi"
+  ],
+  "links": []
+ },
+ "30-canonical-after-stray-text.html": {
+  "title": "t",
+  "description": null,
+  "headings": [],
+  "canonical": [
+   "/late"
+  ],
+  "links": []
+ },
+ "31-unquoted-attrs.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/path?a=1&b=2",
+   "page.html#frag",
+   "/spaced"
+  ]
+ },
+ "32-attr-no-value.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "",
+   ""
+  ]
+ },
+ "33-duplicate-attrs.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/first"
+  ]
+ },
+ "34-mixed-case-tags.html": {
+  "title": "Caps",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "Big"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/CAPS"
+  ]
+ },
+ "35-whitespace-in-href.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/trim",
+   "/newline"
+  ]
+ },
+ "36-svg-title.html": {
+  "title": "Html title",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "37-math.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "After math"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "38-template.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "Outside"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "39-iframe-srcdoc.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/outer"
+  ]
+ },
+ "40-plaintext.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/before"
+  ]
+ },
+ "41-xmp.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    3,
+    "Real"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "42-frameset.html": {
+  "title": "Frames",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": []
+ },
+ "43-cdata.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "After cdata"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "44-bogus-doctype.html": {
+  "title": "Doc",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "D"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "45-null-bytes.html": {
+  "title": "Nu�ll",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "AB"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "46-form-nesting.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "F"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/inner-form"
+  ]
+ },
+ "47-li-auto-close.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    4,
+    "List"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/1",
+   "/2",
+   "/2"
+  ]
+ },
+ "48-unclosed-anchor-across-block.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/open"
+  ]
+ },
+ "49-anchor-across-p.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/span",
+   "/span"
+  ]
+ },
+ "50-heading-inside-p.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "heading closes p"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "51-image-map.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/area1",
+   "/area2"
+  ]
+ },
+ "52-base-tag.html": {
+  "title": "b",
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "rel"
+  ]
+ },
+ "53-entities-in-href.html": {
+  "title": null,
+  "description": null,
+  "headings": [],
+  "canonical": [],
+  "links": [
+   "/a?x=1&y=2",
+   "/b?c=©"
+  ]
+ },
+ "54-heading-script-style.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "Visible text"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "55-heading-br-and-blocks.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    2,
+    "Line one line two block tail"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "56-deep-inline.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "deep inline"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "57-body-twice.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    1,
+    "first"
+   ],
+   [
+    2,
+    "second body"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/second"
+  ]
+ },
+ "58-html-after-end.html": {
+  "title": "t",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "Trailing"
+   ]
+  ],
+  "canonical": [],
+  "links": [
+   "/trailing"
+  ]
+ },
+ "59-head-after-body.html": {
+  "title": "Late head",
+  "description": null,
+  "headings": [
+   [
+    1,
+    "B"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ },
+ "60-misnested-formatting.html": {
+  "title": null,
+  "description": null,
+  "headings": [
+   [
+    3,
+    "After misnest"
+   ]
+  ],
+  "canonical": [],
+  "links": []
+ }
+}

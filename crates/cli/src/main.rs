@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
-use crawl_cmd::{CrawlCmd, ReportArgs, ScopeTestArgs};
+use crawl_cmd::{CrawlCmd, HtmlArgs, PageArgs, ReportArgs, ScopeTestArgs};
 use options::{CrawlArgs, IdentityArgs, NetworkArgs};
 use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
@@ -54,6 +54,10 @@ enum Command {
     Crawl(Box<CrawlCmd>),
     /// List the URLs in a crawl file, or its summary.
     Report(ReportArgs),
+    /// Show everything extracted for one URL of a crawl file.
+    Page(PageArgs),
+    /// Write the stored raw HTML of one page of a crawl file.
+    Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
     /// Explain crawl scope decisions.
@@ -144,6 +148,8 @@ fn main() -> ExitCode {
             crawl_cmd::run_crawl(*cmd, sub)
         }
         Command::Report(args) => crawl_cmd::run_report(args),
+        Command::Page(args) => crawl_cmd::run_page(args),
+        Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
