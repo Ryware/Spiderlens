@@ -251,7 +251,7 @@ Priorities: H = High, M = Medium, L = Low, O = Opportunity. "Pages" means intern
 | Pagination | rel next or prev target not 200 | pages with rel next or prev | M | |
 | Structured data | JSON-LD block that is not valid JSON | pages | M | |
 | Security | Internal page served over HTTP | internal HTML pages | H | |
-| Security | Mixed content (HTTPS page loads HTTP images, scripts or styles) | internal HTTPS pages | M | |
+| Security | Mixed content (HTTPS page loads HTTP images; scripts and styles once spec 005 extracts them) | internal HTTPS pages | M | |
 | Security | Missing HSTS header | internal HTTPS pages | L | |
 | Security | Missing X-Content-Type-Options header | internal HTML pages | L | |
 | URL | Uppercase characters | internal URLs | L | |
