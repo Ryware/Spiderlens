@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Forms, actions and agent links (spec 016).
+    Agents,
 }
 
 impl Need {
@@ -44,6 +46,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Agents => {
+                "Forms and actions were not collected in this crawl file; it was made before SpiderLens checked agent readiness."
+            }
         }
     }
 
@@ -55,6 +60,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Agents => "agents",
         }
     }
 }
@@ -155,7 +161,7 @@ impl TabDef {
 
 /// Internal pages that were fetched successfully as HTML: the rows of the
 /// content tabs (FR-010).
-const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
+pub(crate) const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND content_kind(u.content_type) = 'html'";
 
 const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
@@ -176,7 +182,7 @@ const H1_1: &str = "(SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id)";
 const IMG_ALT: &str =
     "(SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1)";
 
-const fn col(
+pub(crate) const fn col(
     id: &'static str,
     label: &'static str,
     expr: &'static str,
@@ -196,11 +202,11 @@ const fn col(
 }
 
 impl ColumnDef {
-    const fn hidden(mut self) -> Self {
+    pub(crate) const fn hidden(mut self) -> Self {
         self.default_visible = false;
         self
     }
-    const fn needs(mut self, need: Need) -> Self {
+    pub(crate) const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
     }
@@ -210,7 +216,7 @@ impl ColumnDef {
     }
 }
 
-const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+pub(crate) const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     FilterDef {
         id,
         label,
@@ -221,7 +227,7 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
 }
 
 impl FilterDef {
-    const fn needs(mut self, need: Need) -> Self {
+    pub(crate) const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
     }
@@ -232,7 +238,7 @@ impl FilterDef {
 }
 
 /// Columns many tabs share.
-mod c {
+pub(crate) mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
@@ -842,6 +848,7 @@ fn build() -> Vec<TabDef> {
             ],
             "meta_robots",
         ),
+        crate::agents::tab(),
     ]
 }
 
@@ -904,7 +911,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 11);
+        assert_eq!(tab_ids.len(), 12);
     }
 
     #[test]
