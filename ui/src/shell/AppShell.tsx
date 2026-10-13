@@ -11,7 +11,8 @@ import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
 import { matches, platform } from "./platform";
-import { useTheme, useUiState } from "./useUiState";
+import { useAppearance, useUiState } from "./useUiState";
+import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { useResults } from "../results/useResults";
@@ -73,7 +74,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const setup = useCrawlSetup(transport);
   const crawl = useCrawlRun(transport);
   const [ui, updateUi] = useUiState();
-  useTheme(ui.theme);
+  const { level, systemDark } = useAppearance(ui);
   const width = useWindowWidth();
   const [section, setSection] = useState("overview");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -153,12 +154,18 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
-      { id: "theme-system", title: "Appearance: System", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "system" }) },
-      { id: "theme-light", title: "Appearance: Light", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "light" }) },
-      { id: "theme-dark", title: "Appearance: Dark", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "dark" }) },
+      { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
+      ...LEVELS.map((l) => ({
+        id: `level-${l.id}`,
+        title: `Brightness: ${l.name}`,
+        group: "View" as const,
+        keywords: ["theme", "appearance", l.tone],
+        run: () => updateUi(chooseLevel(ui, l.id, systemDark)),
+      })),
+      ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
+    [setup, crawl, startCrawl, openCrawl, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -189,12 +196,25 @@ export function AppShell({ transport }: { transport: Transport }) {
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <Toolbar ref={urlRef} setup={setup} run={crawl} onStart={startCrawl} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} />
-      <div className="flex min-h-0 flex-1">
-        <div className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
+      <Toolbar
+        ref={urlRef}
+        setup={setup}
+        run={crawl}
+        onStart={startCrawl}
+        onOpenSettings={openSettings}
+        onOpenPalette={() => setPaletteOpen(true)}
+        appearance={ui}
+        level={level}
+        systemDark={systemDark}
+        onAppearance={updateUi}
+      />
+      <div className="flex min-h-0 flex-1 bg-frame">
+        <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
+        {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
+        <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {resultTab && crawl.path ? (
             <ResultsView
@@ -222,6 +242,7 @@ export function AppShell({ transport }: { transport: Transport }) {
             </div>
           </>
         )}
+        </div>
       </div>
       <StatusBar setup={setup} run={crawl} />
 
@@ -232,6 +253,10 @@ export function AppShell({ transport }: { transport: Transport }) {
         transport={transport}
         category={ui.settingsCategory as CategoryId}
         onCategory={(c) => updateUi({ settingsCategory: c })}
+        appearance={ui}
+        level={level}
+        systemDark={systemDark}
+        onAppearance={updateUi}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />

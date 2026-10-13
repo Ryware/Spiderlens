@@ -12,6 +12,6 @@ globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof Poi
 
 beforeEach(() => {
   localStorage.clear();
-  delete document.documentElement.dataset.theme;
+  for (const k of ["level", "tone", "accent"]) delete document.documentElement.dataset[k];
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
 });
