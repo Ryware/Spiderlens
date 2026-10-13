@@ -193,9 +193,7 @@ test("shift_click_and_copy_from_the_keyboard", async ({ page }) => {
   expect(copied).toBe(6);
 });
 
-// Known bug: closing the palette drops focus to the page instead of where it
-// was, so the next keystrokes go nowhere. Settings and About get this right.
-test.fail("closing_the_palette_returns_focus_to_where_it_was", async ({ page }) => {
+test("closing_the_palette_returns_focus_to_where_it_was", async ({ page }) => {
   await page.keyboard.press("Control+K");
   await expect(page.getByPlaceholder("Type a command or a tab name")).toBeFocused();
   await page.keyboard.press("Escape");
@@ -208,4 +206,23 @@ test("closing_settings_returns_focus_to_where_it_was", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "Settings categories" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Start URL")).toBeFocused();
+});
+
+test("a_command_that_opens_a_window_keeps_focus_there", async ({ page }) => {
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Settings: Scope");
+  await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
+  await expect(page.getByRole("tab", { name: /^Scope/ })).toBeFocused();
+});
+
+test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
+  for (const wait of [0, 50, 150, 400]) {
+    await page.keyboard.press("Control+K");
+    await runInPalette(page, "Appearance: Light");
+    await page.waitForTimeout(wait);
+    await page.keyboard.press("Control+K");
+    await expect(page.getByPlaceholder("Type a command or a tab name")).toHaveValue("");
+    await page.keyboard.press("Escape");
+    await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
+  }
 });

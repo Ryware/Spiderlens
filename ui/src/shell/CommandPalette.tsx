@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Command as Cmdk } from "cmdk";
 import { Dialog } from "@base-ui/react/dialog";
 import { Search } from "lucide-react";
@@ -18,6 +19,17 @@ export function CommandPalette({
   recent: string[];
   onRun: (c: Command) => void;
 }) {
+  const input = useRef<HTMLInputElement>(null);
+  // Every opening starts empty: cleared as the palette closes, and again as it
+  // opens in case it reopens during the closing animation.
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (open) setSearch("");
+  }, [open]);
+  const setOpen = (o: boolean) => {
+    if (!o) setSearch("");
+    onOpenChange(o);
+  };
   const available = commands.filter((c) => c.enabled !== false);
   const recentCommands = recent.map((id) => available.find((c) => c.id === id)).filter((c): c is Command => !!c);
   const groups = ["Crawl", "Go to", "View", "Help"] as const;
@@ -28,7 +40,7 @@ export function CommandPalette({
       value={prefix + c.id + " " + c.title}
       keywords={c.keywords}
       onSelect={() => {
-        onOpenChange(false);
+        setOpen(false);
         onRun(c);
       }}
       className="flex h-8 items-center gap-2 rounded-md px-2.5 text-base text-fg data-[selected=true]:bg-selection"
@@ -39,10 +51,13 @@ export function CommandPalette({
   );
 
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => onOpenChange(o)}>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--dur-fast) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        {/* Focus the input through the dialog, not autoFocus: the dialog then
+            knows what was focused before and returns focus there on close. */}
         <Dialog.Popup
+          initialFocus={input}
           aria-label="Command palette"
           className={cn(
             "fixed top-20 left-1/2 z-40 w-140 sheet-max-w -translate-x-1/2 overflow-hidden rounded-xl bg-surface text-fg shadow-sheet outline-none",
@@ -53,7 +68,7 @@ export function CommandPalette({
           <Cmdk label="Commands" loop>
             <div className="flex items-center gap-2 border-b border-line px-3">
               <Search aria-hidden className="size-4 text-fg-3" />
-              <Cmdk.Input autoFocus placeholder="Type a command or a tab name" className="h-11 flex-1 bg-transparent text-md text-fg outline-none placeholder:text-fg-3" />
+              <Cmdk.Input ref={input} value={search} onValueChange={setSearch} placeholder="Type a command or a tab name" className="h-11 flex-1 bg-transparent text-md text-fg outline-none placeholder:text-fg-3" />
             </div>
             <Cmdk.List className="max-h-90 overflow-y-auto p-1.5">
               <Cmdk.Empty className="px-3 py-6 text-center text-sm text-fg-3">No matching command</Cmdk.Empty>
