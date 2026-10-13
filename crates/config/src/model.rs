@@ -447,7 +447,15 @@ mod tests {
     fn serializes_every_field_including_untouched_defaults() {
         let v = serde_json::to_value(CrawlConfig::default()).unwrap();
         for group in [
-            "mode", "limits", "scope", "identity", "speed", "robots", "network", "retry", "extraction",
+            "mode",
+            "limits",
+            "scope",
+            "identity",
+            "speed",
+            "robots",
+            "network",
+            "retry",
+            "extraction",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");
         }

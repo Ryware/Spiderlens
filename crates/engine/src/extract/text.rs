@@ -4,7 +4,10 @@
 /// only ASCII whitespace as collapsible; a non-breaking space is content.
 pub fn collapse(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
-    for part in raw.split(|c: char| c.is_ascii_whitespace()).filter(|p| !p.is_empty()) {
+    for part in raw
+        .split(|c: char| c.is_ascii_whitespace())
+        .filter(|p| !p.is_empty())
+    {
         if !out.is_empty() {
             out.push(' ');
         }

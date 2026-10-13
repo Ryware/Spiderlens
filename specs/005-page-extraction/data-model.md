@@ -55,7 +55,11 @@ covers FR-002 without a separate hops table.
 | `html_stored` | INTEGER | Raw HTML kept in `bodies` (FR-031) |
 
 Indexes: `pages_title_hash ON pages(title_hash)`,
-`pages_md_hash ON pages(meta_description_hash)`.
+`pages_md_hash ON pages(meta_description_hash)`, both partial (`WHERE ... IS
+NOT NULL`). They are built when a run ends (completed, paused or stopped) and
+dropped when a run starts or resumes: their keys are random hashes, and
+keeping them current during a crawl cost about a fifth of crawl speed. A
+reader during a live crawl finds them missing and should not depend on them.
 
 ## `page_text` (every title, meta description and heading)
 

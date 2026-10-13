@@ -428,3 +428,171 @@ pub fn run_scope_test(args: ScopeTestArgs) -> ExitCode {
     }
     ExitCode::from(exit::FETCHED)
 }
+
+#[derive(Args)]
+pub struct PageArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// URL as crawled.
+    url: String,
+    /// Print one JSON object.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+pub struct HtmlArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// URL as crawled.
+    url: String,
+    /// Write to this file instead of standard output.
+    #[arg(long, value_name = "PATH")]
+    out: Option<PathBuf>,
+}
+
+/// Finds the URL as given, then in its normalized form.
+fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
+    let mut candidates = vec![url.trim().to_string()];
+    if let Ok(n) = normalize_url(url) {
+        candidates.push(n.to_string());
+    }
+    candidates
+        .into_iter()
+        .find(|c| matches!(store.id_of(c), Ok(Some(_))))
+}
+
+fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
+    let store = CrawlStore::open(file).map_err(|e| {
+        eprintln!("error: {e}");
+        ExitCode::from(exit::USAGE)
+    })?;
+    match find_url(&store, url) {
+        Some(u) => Ok((store, u)),
+        None => {
+            eprintln!("error: {url} is not in {}", file.display());
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+pub fn run_page(args: PageArgs) -> ExitCode {
+    let (store, url) = match open_for_page(&args.file, &args.url) {
+        Ok(x) => x,
+        Err(code) => return code,
+    };
+    let report = match store.page_report(&url) {
+        Ok(Some(r)) => r,
+        Ok(None) => return ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if args.json {
+        print_json(&report);
+    } else {
+        print_page(&report);
+    }
+    ExitCode::from(exit::FETCHED)
+}
+
+fn print_page(r: &serde_json::Value) {
+    use serde_json::Value;
+    let s = |v: &Value| match v {
+        Value::Null => "-".to_string(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", s(&r["url"]));
+    for (label, key) in [
+        ("Status", "status"),
+        ("Content type", "content_type"),
+        ("Response time (ms)", "response_ms"),
+        ("Size (bytes)", "size_bytes"),
+        ("Redirects to", "redirect_to"),
+        ("Error", "error_message"),
+        ("Title", "title"),
+        ("Canonical", "canonical"),
+        ("Noindex", "noindex"),
+    ] {
+        if !r[key].is_null() {
+            let _ = writeln!(out, "  {label}: {}", s(&r[key]));
+        }
+    }
+    let p = &r["page"];
+    if !p.is_null() {
+        let _ = writeln!(out, "  Meta description: {}", s(&p["meta_description"]));
+        let _ = writeln!(out, "  H1: {}  ({} total)", s(&p["h1_1"]), s(&p["h1_count"]));
+        let _ = writeln!(out, "  Word count: {}", s(&p["word_count"]));
+        for flag in ["partial", "encoding_errors", "no_content"] {
+            if p[flag] == 1 {
+                let _ = writeln!(out, "  Problem: {flag}");
+            }
+        }
+        if !p["extract_error"].is_null() {
+            let _ = writeln!(out, "  Problem: {}", s(&p["extract_error"]));
+        }
+    }
+    for h in r["headings"].as_array().into_iter().flatten() {
+        let _ = writeln!(out, "  H{}: {}", s(&h["level"]), s(&h["text"]));
+    }
+    for d in r["directives"].as_array().into_iter().flatten() {
+        let _ = writeln!(
+            out,
+            "  Robots ({}, {}): {}{}",
+            s(&d["source"]),
+            s(&d["crawler"]),
+            s(&d["directive"]),
+            d["value"].as_str().map(|v| format!(": {v}")).unwrap_or_default()
+        );
+    }
+    let links = r["links"].as_array().map_or(0, Vec::len);
+    let images = r["links"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|l| l["kind"] == "image")
+        .count();
+    let _ = writeln!(out, "  References: {links} ({images} images)");
+    let _ = writeln!(
+        out,
+        "  Structured data blocks: {}",
+        r["structured_data"].as_array().map_or(0, Vec::len)
+    );
+    let _ = writeln!(out, "  Raw HTML stored: {}", s(&r["html_stored"]));
+}
+
+pub fn run_html(args: HtmlArgs) -> ExitCode {
+    let (store, url) = match open_for_page(&args.file, &args.url) {
+        Ok(x) => x,
+        Err(code) => return code,
+    };
+    let id = match store.id_of(&url) {
+        Ok(Some(id)) => id,
+        _ => return ExitCode::FAILURE,
+    };
+    let html = match store.page_html(id) {
+        Ok(Some(h)) => h,
+        Ok(None) => {
+            eprintln!("error: this crawl did not store the HTML of {url}");
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let written = match &args.out {
+        Some(path) => std::fs::write(path, &html),
+        None => std::io::stdout().lock().write_all(&html),
+    };
+    match written {
+        Ok(()) => ExitCode::from(exit::FETCHED),
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}

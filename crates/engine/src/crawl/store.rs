@@ -6,11 +6,13 @@
 
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
-use crate::extract::{Directive, PageData, Ref, body, text};
+use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
 /// 2: page data extraction (spec 005, data-model.md).
@@ -133,8 +135,6 @@ CREATE TABLE pages (
     no_content INTEGER NOT NULL,
     html_stored INTEGER NOT NULL
 );
-CREATE INDEX pages_title_hash ON pages(title_hash) WHERE title_hash IS NOT NULL;
-CREATE INDEX pages_md_hash ON pages(meta_description_hash) WHERE meta_description_hash IS NOT NULL;
 CREATE TABLE page_text (
     url_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
@@ -311,6 +311,29 @@ pub struct CrawlStore {
     /// URLs per state, kept in step with every write below so live progress
     /// never has to count the table (spec 008 plan D3).
     live: Cell<StateCounts>,
+    checkpointer: Option<Checkpointer>,
+}
+
+/// Copies the write-ahead log into the database file on its own thread, so
+/// the crawl thread only appends to the log (spec 005 plan D9).
+struct Checkpointer {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+const CHECKPOINT_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
+
+impl Drop for CrawlStore {
+    fn drop(&mut self) {
+        // The checkpoint connection closes first, so the crawl's own
+        // connection is the last one and folds the log back on close.
+        if let Some(mut c) = self.checkpointer.take() {
+            c.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = c.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
 }
 
 /// URLs per state.
@@ -393,6 +416,7 @@ impl CrawlStore {
             conn,
             next_seq: 1,
             live: Cell::default(),
+            checkpointer: None,
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("format_version", &FORMAT_VERSION.to_string())?;
@@ -436,6 +460,7 @@ impl CrawlStore {
             conn,
             next_seq: max_seq + 1,
             live: Cell::default(),
+            checkpointer: None,
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -443,6 +468,42 @@ impl CrawlStore {
         }
         store.live.set(live);
         Ok(store)
+    }
+
+    /// Hands write-ahead-log checkpoints to a background thread with its own
+    /// connection. Used by a running crawl; with it, the crawl thread's
+    /// commits only append to the log. Passive checkpoints never block the
+    /// writer.
+    pub fn checkpoint_in_background(&mut self) -> Result<()> {
+        if self.checkpointer.is_some() {
+            return Ok(());
+        }
+        let Some(path) = self
+            .conn
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+        else {
+            return Ok(());
+        };
+        let other = Connection::open(&path)?;
+        self.conn.pragma_update(None, "wal_autocheckpoint", 0)?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = std::thread::Builder::new()
+            .name("spiderlens-checkpoint".into())
+            .spawn(move || {
+                while !flag.load(Ordering::Relaxed) {
+                    std::thread::sleep(CHECKPOINT_EVERY);
+                    let _ = other.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+                }
+            })
+            .map_err(|e| StoreError::Format(format!("could not start the checkpoint thread: {e}")))?;
+        self.checkpointer = Some(Checkpointer {
+            stop,
+            handle: Some(handle),
+        });
+        Ok(())
     }
 
     /// URLs per state right now, without touching the file.
@@ -466,6 +527,9 @@ impl CrawlStore {
         // WAL (a crash loses at most the last transactions, never consistency).
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        if let Ok(v) = std::env::var("SL_CACHE") {
+            conn.pragma_update(None, "cache_size", v.as_str())?;
+        }
         conn.pragma_update(None, "foreign_keys", "OFF")?;
         Ok(())
     }
@@ -479,6 +543,28 @@ impl CrawlStore {
 
     pub fn commit(&self) -> Result<()> {
         self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    /// Builds the indexes the Duplicate filters read (spec 005 data model).
+    /// Their keys are random hashes, so keeping them up to date during a
+    /// crawl dirties a page of each index per insert and costs a fifth of
+    /// the crawl's speed; one sort at the end is far cheaper. Called when a
+    /// run ends (completed, paused or stopped).
+    pub fn build_result_indexes(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS pages_title_hash ON pages(title_hash) WHERE title_hash IS NOT NULL;
+             CREATE INDEX IF NOT EXISTS pages_md_hash ON pages(meta_description_hash)
+                 WHERE meta_description_hash IS NOT NULL;",
+        )?;
+        Ok(())
+    }
+
+    /// Drops the indexes [`Self::build_result_indexes`] made, so a resumed
+    /// run writes as fast as a new one.
+    pub fn drop_result_indexes(&self) -> Result<()> {
+        self.conn
+            .execute_batch("DROP INDEX IF EXISTS pages_title_hash; DROP INDEX IF EXISTS pages_md_hash;")?;
         Ok(())
     }
 
@@ -646,6 +732,40 @@ impl CrawlStore {
     }
 
     pub fn add_link(&self, link: &NewLink) -> Result<()> {
+        // Most references carry only anchor text; they take a narrow insert,
+        // which costs the crawl thread far less per row (plan D9).
+        let plain = link.context.is_none_or(|c| {
+            c.alt.is_none()
+                && c.rel.is_none()
+                && c.source == RefSource::Html
+                && c.in_head.is_none()
+                && !c.noscript
+                && c.lang.is_none()
+                && c.width.is_none()
+                && c.height.is_none()
+                && !c.srcset
+                && !c.in_link
+        }) && link.target.is_none();
+        if plain {
+            self.conn
+                .prepare_cached(
+                    "INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed, pos, skip_reason,
+                     text) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )?
+                .execute(params![
+                    link.from,
+                    link.to,
+                    link.raw,
+                    link.kind.as_str(),
+                    link.nofollow,
+                    link.page_nofollow,
+                    link.followed,
+                    link.pos,
+                    link.skip_reason,
+                    link.context.and_then(|c| c.text.as_deref()),
+                ])?;
+            return Ok(());
+        }
         let c = link.context;
         self.conn
             .prepare_cached(
@@ -703,7 +823,10 @@ impl CrawlStore {
                 .map(|x| x.text.as_str())
         };
         let count = |level: u8| d.headings.iter().filter(|x| x.level == level).count() as i64;
-        let heading_counts = (1..=6).map(|l| count(l).to_string()).collect::<Vec<_>>().join(",");
+        let heading_counts = (1..=6)
+            .map(|l| count(l).to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         self.conn
             .prepare_cached(
                 "INSERT OR REPLACE INTO pages (url_id, title_count, meta_description, meta_description_count,
@@ -746,7 +869,14 @@ impl CrawlStore {
             text_row.execute(params![id, "title", None::<u8>, pos as i64, t.text, t.in_head])?;
         }
         for (pos, t) in d.meta_descriptions.iter().enumerate() {
-            text_row.execute(params![id, "meta_description", None::<u8>, pos as i64, t.text, t.in_head])?;
+            text_row.execute(params![
+                id,
+                "meta_description",
+                None::<u8>,
+                pos as i64,
+                t.text,
+                t.in_head
+            ])?;
         }
         for (pos, x) in d.headings.iter().enumerate() {
             text_row.execute(params![id, "heading", x.level, pos as i64, x.text, None::<bool>])?;
@@ -760,7 +890,9 @@ impl CrawlStore {
         }
         if let Some((packed, size)) = page.html {
             self.conn
-                .prepare_cached("INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)")?
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
+                )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
         Ok(())
@@ -791,7 +923,10 @@ impl CrawlStore {
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
         self.conn
             .prepare_cached("INSERT OR REPLACE INTO headers (url_id, headers) VALUES (?1, ?2)")?
-            .execute(params![id, serde_json::to_string(headers).expect("pairs serialize")])?;
+            .execute(params![
+                id,
+                serde_json::to_string(headers).expect("pairs serialize")
+            ])?;
         Ok(())
     }
 
@@ -812,6 +947,114 @@ impl CrawlStore {
         body::decompress(&packed, size as usize)
             .map(Some)
             .map_err(|e| StoreError::Format(format!("stored HTML is damaged: {e}")))
+    }
+
+    /// Everything stored for one URL, as JSON (`spiderlens page`, tests).
+    /// None when the URL is not in the file.
+    pub fn page_report(&self, url: &str) -> Result<Option<serde_json::Value>> {
+        use serde_json::{Value, json};
+        let Some(id) = self.id_of(url)? else {
+            return Ok(None);
+        };
+        let one = |sql: &str| -> Result<Value> {
+            Ok(self.rows_json(sql, id)?.into_iter().next().unwrap_or(Value::Null))
+        };
+        let mut response = one(
+            "SELECT u.url, u.state, u.status, u.content_type, u.resource_type, u.response_ms, u.size_bytes,
+             u.transfer_bytes, t.url AS redirect_to, u.redirect_kind, u.error_class, u.error_message, u.title,
+             u.noindex, u.nofollow, u.canonical, u.canonical_count, u.canonical_conflict, u.depth, u.internal
+             FROM urls u LEFT JOIN urls t ON t.id = u.redirect_to WHERE u.id = ?1",
+        )?;
+        let page = one("SELECT * FROM pages WHERE url_id = ?1")?;
+        let texts = self.rows_json(
+            "SELECT kind, level, text, in_head FROM page_text WHERE url_id = ?1 ORDER BY kind, pos",
+            id,
+        )?;
+        let pick = |kind: &str| -> Vec<Value> {
+            texts
+                .iter()
+                .filter(|t| t["kind"] == kind)
+                .map(|t| {
+                    let mut t = t.clone();
+                    let o = t.as_object_mut().expect("rows are objects");
+                    o.remove("kind");
+                    if kind != "heading" {
+                        o.remove("level");
+                    } else {
+                        o.remove("in_head");
+                    }
+                    t
+                })
+                .collect()
+        };
+        let headers: Value = self
+            .conn
+            .prepare_cached("SELECT headers FROM headers WHERE url_id = ?1")?
+            .query_row([id], |r| r.get::<_, String>(0))
+            .optional()?
+            .and_then(|h| serde_json::from_str(&h).ok())
+            .unwrap_or(Value::Null);
+        let obj = response.as_object_mut().expect("the URL row exists");
+        obj.insert("page".into(), page);
+        obj.insert("titles".into(), Value::Array(pick("title")));
+        obj.insert("meta_descriptions".into(), Value::Array(pick("meta_description")));
+        obj.insert("headings".into(), Value::Array(pick("heading")));
+        obj.insert(
+            "directives".into(),
+            Value::Array(self.rows_json(
+                "SELECT directive, value, known, source, crawler, in_head FROM directives
+                 WHERE url_id = ?1 ORDER BY pos",
+                id,
+            )?),
+        );
+        obj.insert(
+            "links".into(),
+            Value::Array(self.rows_json(
+                "SELECT l.kind, l.raw, t.url, l.target, l.skip_reason, l.text, l.alt, l.rel, l.nofollow,
+                 l.sponsored, l.ugc, l.page_nofollow, l.followed, l.source, l.in_head, l.noscript, l.lang,
+                 l.width, l.height, l.srcset, l.in_link, t.internal
+                 FROM links l LEFT JOIN urls t ON t.id = l.to_id WHERE l.from_id = ?1 ORDER BY l.rowid",
+                id,
+            )?),
+        );
+        obj.insert(
+            "structured_data".into(),
+            Value::Array(self.rows_json(
+                "SELECT kind, raw, parseable FROM structured_data WHERE url_id = ?1 ORDER BY pos",
+                id,
+            )?),
+        );
+        obj.insert("headers".into(), headers);
+        let stored: bool = self
+            .conn
+            .prepare_cached("SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)")?
+            .query_row([id], |r| r.get(0))?;
+        obj.insert("html_stored".into(), json!(stored));
+        Ok(Some(response))
+    }
+
+    /// Runs a query with one id parameter; each row becomes a JSON object
+    /// keyed by column name.
+    fn rows_json(&self, sql: &str, id: i64) -> Result<Vec<serde_json::Value>> {
+        use rusqlite::types::ValueRef;
+        use serde_json::{Map, Value, json};
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let names: Vec<String> = stmt.column_names().iter().map(|n| n.to_string()).collect();
+        let rows = stmt.query_map([id], |r| {
+            let mut m = Map::new();
+            for (i, n) in names.iter().enumerate() {
+                let v = match r.get_ref(i)? {
+                    ValueRef::Null => Value::Null,
+                    ValueRef::Integer(x) => json!(x),
+                    ValueRef::Real(x) => json!(x),
+                    ValueRef::Text(t) => json!(String::from_utf8_lossy(t)),
+                    ValueRef::Blob(b) => json!(format!("<{} bytes>", b.len())),
+                };
+                m.insert(n.clone(), v);
+            }
+            Ok(Value::Object(m))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// The row id of a URL.

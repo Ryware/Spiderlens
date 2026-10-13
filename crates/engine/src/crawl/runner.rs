@@ -24,15 +24,15 @@ use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
 use super::store::{
-    Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded, Response,
-    SitemapRow, StateCounts, StoreError,
+    Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
+    Response, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
-use crate::title::is_html;
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
+use crate::title::is_html;
 use crate::{CheckError, CheckOptions, RequestHeader};
 
 const WINDOW: usize = 4096;
@@ -301,7 +301,10 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
     let page = match o.body {
         Some(bytes) if is_html(o.content_type.as_deref(), &bytes) => {
             let kib = (bytes.len() / 1024 + 1).min(EXTRACT_BUDGET_KIB) as u32;
-            let _permit = budget.acquire_many(kib).await.expect("the budget is never closed");
+            let _permit = budget
+                .acquire_many(kib)
+                .await
+                .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
                 let data = extract::extract_page_caught(&PageInput {
@@ -577,6 +580,9 @@ impl Run {
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
     ) -> Result<Self, CrawlError> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let mut c = c;
+        c.store.checkpoint_in_background()?;
+        c.store.drop_result_indexes()?;
         c.store.requeue_for_resume()?;
         c.store.set_meta("status", "running")?;
         let warnings: Vec<String> = c
@@ -798,6 +804,7 @@ impl Run {
             self.commit_if_due()?;
         }
         self.commit()?;
+        self.c.store.build_result_indexes()?;
         #[cfg(debug_assertions)]
         {
             let mut counted = StateCounts::default();

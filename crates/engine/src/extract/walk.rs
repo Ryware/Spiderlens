@@ -247,8 +247,7 @@ impl Walker<'_> {
             local_name!("head") => ctx.in_head = true,
             local_name!("body") => ctx.in_body = true,
             local_name!("script") => {
-                if e
-                    .attr("type")
+                if e.attr("type")
                     .is_some_and(|t| t.trim().eq_ignore_ascii_case("application/ld+json"))
                 {
                     let raw = children_text(node);

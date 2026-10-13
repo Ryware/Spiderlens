@@ -77,7 +77,10 @@ mod tests {
         let got = parse(
             r#"<https://a.test/c>; rel="canonical", <https://a.test/de>; rel="alternate"; hreflang="de", <https://a.test/2>; rel=next, </s.css>; rel=preload"#,
         );
-        let kinds: Vec<_> = got.iter().map(|r| (r.kind, r.raw.as_str(), r.lang.as_deref())).collect();
+        let kinds: Vec<_> = got
+            .iter()
+            .map(|r| (r.kind, r.raw.as_str(), r.lang.as_deref()))
+            .collect();
         assert_eq!(
             kinds,
             [

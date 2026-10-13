@@ -209,7 +209,12 @@ pub(crate) async fn fetch_once(
     let all_headers: Vec<(String, String)> = response
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
         .collect();
     let content_length = response
         .headers()

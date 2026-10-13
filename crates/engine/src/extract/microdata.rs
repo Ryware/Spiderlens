@@ -36,7 +36,9 @@ fn item(node: NodeRef<'_, Node>) -> Value {
     let mut stack: Vec<NodeRef<'_, Node>> = node.children().collect();
     stack.reverse();
     while let Some(n) = stack.pop() {
-        let Some(el) = n.value().as_element() else { continue };
+        let Some(el) = n.value().as_element() else {
+            continue;
+        };
         let nested = el.attr("itemscope").is_some();
         if let Some(names) = el.attr("itemprop") {
             let value = if nested { item(n) } else { property_value(n) };

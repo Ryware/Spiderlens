@@ -218,7 +218,10 @@ mod tests {
     fn meta_list_us3_1() {
         let ds = parse_meta("noindex, follow", "all", true);
         assert_eq!(names(&ds), [("noindex", "all", None), ("follow", "all", None)]);
-        assert!(ds.iter().all(|d| d.source == DirectiveSource::Meta && d.in_head == Some(true)));
+        assert!(
+            ds.iter()
+                .all(|d| d.source == DirectiveSource::Meta && d.in_head == Some(true))
+        );
     }
 
     #[test]
@@ -250,7 +253,11 @@ mod tests {
         assert_eq!(
             names(&ds),
             [
-                ("unavailable_after", "all", Some("Wednesday, 03-Nov-2027 15:00:00 GMT")),
+                (
+                    "unavailable_after",
+                    "all",
+                    Some("Wednesday, 03-Nov-2027 15:00:00 GMT")
+                ),
                 ("noarchive", "all", None),
             ]
         );
@@ -284,7 +291,10 @@ mod tests {
     fn meta_names() {
         assert_eq!(meta_crawler("ROBOTS", "x").as_deref(), Some("all"));
         assert_eq!(meta_crawler("Googlebot", "x").as_deref(), Some("googlebot"));
-        assert_eq!(meta_crawler("spiderlens", "SpiderLens").as_deref(), Some("spiderlens"));
+        assert_eq!(
+            meta_crawler("spiderlens", "SpiderLens").as_deref(),
+            Some("spiderlens")
+        );
         assert_eq!(meta_crawler("description", "x"), None);
     }
 }
