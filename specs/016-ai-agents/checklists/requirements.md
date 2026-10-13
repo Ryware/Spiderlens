@@ -32,6 +32,6 @@
 ## Notes
 
 - The spec names conventions (MCP, AI Catalog, RFC 9727, WebMCP attributes) because checking them is the product requirement; it does not name a library or the MCP SDK. Those choices are in [research.md](../research.md) for `/speckit-plan`.
-- No [NEEDS CLARIFICATION] markers. Owner decisions D1 to D6 are in research.md, each with the default the spec assumes: no built-in LLM calls, assistants may start crawls only when allowed (off), agent user agent test opt-in, entry point probes on, transparent score, standard input and output only.
+- No [NEEDS CLARIFICATION] markers. Owner decisions D1 to D6 are in research.md, each with the default the spec assumes: no built-in LLM calls, assistants may start crawls only when allowed (off), agent user agent test reuses 015's opt-in probe, entry point probes on, transparent score, standard input and output only.
 - Ownership: 015 (AI bot registry, llms.txt, AI robots evaluation), 014 (JavaScript dependence), 009 (rule shape and Issues view). Dependent rules are "not checked" until those land.
-- Numeric targets to confirm in `/speckit-clarify` or planning: SC-002 (60 s for checks on 100k pages), SC-003 (300 ms p95 per query), 8 probe requests per host, sample sizes 10 and 20, score weights.
+- Numeric targets to confirm in `/speckit-clarify` or planning: SC-002 (60 s for checks on 100k pages), SC-003 (300 ms p95 per query), 8 probe requests per host, Markdown sample size 10, score weights.

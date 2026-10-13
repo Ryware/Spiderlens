@@ -100,9 +100,9 @@ The consultant needs one number per site and per page to put in a report, and th
 
 ### User Story 5 - Do agents get blocked at the door? (Priority: P3)
 
-A site owner suspects their firewall blocks AI agents that their customers use. They turn on "Test as AI agents" (off by default, labelled as intended for sites they control), choose agents from the registry kept by spec 015, and SpiderLens requests a small sample of pages (by default 20 per host) once more with each chosen agent's published user agent. The Agents summary shows, per agent, how many sample pages returned the same status and content as SpiderLens's own requests, and which were blocked, challenged or served different content.
+A site owner suspects their firewall blocks AI agents that their customers use. They turn on the user agent probe from spec 015 (off by default, labelled as intended for sites they control), choose agents from spec 015's registry, and SpiderLens requests a small sample of pages (spec 015's default sample) once more with each chosen agent's published user agent. This feature shows those results for the agents that act for a user. The Agents summary shows, per agent, how many sample pages returned the same status and content as SpiderLens's own requests, and which were blocked, challenged or served different content.
 
-**Why this priority**: It answers a real and common question, but it sends extra requests with someone else's user agent, so it must be a deliberate choice, on a small sample, never part of a normal crawl.
+**Why this priority**: It answers a real and common question, but it sends extra requests with someone else's user agent, so it must be a deliberate choice, on a small sample, never part of a normal crawl. The mechanism is spec 015's; this story only adds the agents and the agent view.
 
 **Independent Test**: Run a fixture host that blocks or challenges some agent user agents, turn the test on for three agents, and check the result per agent and the exact request count in the fixture log.
 
@@ -168,7 +168,7 @@ A developer working in Claude Code wants their assistant to re-crawl the staging
 **Agent readiness: access by agent user agents**
 
 - **FR-013**: The system MUST read spec 015's AI agent registry and robots.txt evaluation and show, per host, which registered agents (purpose "acts for a user") robots.txt allows, without keeping its own list.
-- **FR-014**: Users MUST be able to turn on "Test as AI agents" (off by default, labelled as intended for sites they control), choose agents from spec 015's registry, and set a sample size per host (default 20 pages). The system MUST fetch each sampled page once more per chosen agent with that agent's published user agent, after the page's main fetch, within the host's speed limits, and MUST store status, response size, redirect target and challenge detection side by side with the main result.
+- **FR-014**: "Test as AI agents" MUST be spec 015's optional user agent probe (FR-012 there), not a second mechanism: same switch, defaults, sample and politeness rules. This feature MUST add the registry's user-requested fetch agents to the probe's choices and MUST show the probe's results for those agents in the Agents summary and in the Access part of the score.
 
 **Score and views**
 
@@ -203,7 +203,7 @@ A developer working in Claude Code wants their assistant to re-crawl the staging
 - **Form field**: Per form: name, type, required, label or accessible name, description, declared parameter description.
 - **Action without a link**: Per page: element kind, visible text, position (bounded list plus count).
 - **Agent entry point**: Per host: kind (AI Catalog, MCP server card, A2A agent card, API catalog, service description, Markdown alternate, plus the `llms.txt` results read from 015), address, how found, status, content type, size, parse result, convention version, problems; for MCP endpoints, discovery result, protocol versions, sign-in required.
-- **Agent access sample**: Per sampled page and chosen agent: status, size, redirect target, challenge detected, compared with the main result.
+- **Agent access sample**: Spec 015's user agent probe results, read for the agents that act for a user (not stored twice).
 - **Agent readiness finding**: Per page or host: rule id, part, outcome (pass, fail, not checked with reason), detail.
 - **Agent readiness score**: Per page and per crawl: total and four part scores, rules not checked, the weight table version.
 - **Assistant settings**: Read access on or off, allowed folders, start crawls on or off, profiles allowed for assistants. Stored in app settings, not in crawl profiles.
