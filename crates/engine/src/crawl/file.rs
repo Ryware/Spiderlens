@@ -420,6 +420,11 @@ pub fn free_space(path: &Path) -> Option<u64> {
     fs4::available_space(dir).ok()
 }
 
+/// Now, as an RFC 3339 timestamp.
+pub fn now_string() -> String {
+    jiff::Timestamp::now().to_string()
+}
+
 pub fn format_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
     let mut v = n as f64;
