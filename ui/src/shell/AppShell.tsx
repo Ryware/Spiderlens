@@ -198,7 +198,9 @@ export function AppShell({ transport }: { transport: Transport }) {
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {resultTab && crawl.path ? (
             <ResultsView
-              key={crawl.path}
+              // One instance per tab: a tab switch must not carry the old
+              // tab's selection into the new tab's first render.
+              key={`${crawl.path}\n${resultTab.id}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
