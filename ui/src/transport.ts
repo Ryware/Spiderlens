@@ -67,6 +67,18 @@ export interface LoadedProfile {
   ignored: string[];
 }
 
+/** The scope tester's answer for one URL (spec 003 FR-016). */
+export interface ScopeVerdict {
+  input: string;
+  url: string | null;
+  would_crawl: boolean;
+  reason: string | null;
+  /** The reason as the app words it everywhere else. */
+  label: string | null;
+  detail: string | null;
+  robots_checked: boolean;
+}
+
 export type SaveResult = { result: "saved" } | { result: "name_taken" };
 
 /** A crawl the engine accepted. Its file is saved as the crawl runs. */
@@ -153,6 +165,7 @@ export interface Transport {
   presets(): Promise<Presets>;
   validate(config: CrawlConfig, startUrl: string | null): Promise<Validation>;
   testPatterns(include: string[], exclude: string[], samples: string[]): Promise<PatternTest[]>;
+  scopeTest(config: CrawlConfig, startUrl: string, urls: string[], fetchRobots: boolean): Promise<ScopeVerdict[]>;
   parseListText(text: string): Promise<ListSummary>;
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
@@ -205,6 +218,7 @@ export const tauriTransport: Transport = {
   presets: () => invoke("config_presets"),
   validate: (config, startUrl) => invoke("config_validate", { config, startUrl }),
   testPatterns: (include, exclude, samples) => invoke("patterns_test", { include, exclude, samples }),
+  scopeTest: (config, startUrl, urls, fetchRobots) => invoke("scope_test", { config, startUrl, urls, fetchRobots }),
   parseListText: (text) => invoke("list_parse_text", { text }),
   parseListFile: (path) => invoke("list_parse_file", { path }),
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),

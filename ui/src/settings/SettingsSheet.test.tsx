@@ -180,3 +180,22 @@ test("spec_003_scope_and_limit_settings_reach_the_crawl", async () => {
     query_params: { mode: "remove", names: ["utm_source", "utm_medium"], sort: true },
   });
 });
+
+test("scope_tester_explains_each_url_with_the_current_settings", async () => {
+  // Spec 003 FR-016 in the window (spec 007 T041).
+  await setup();
+  await openSettings("Scope");
+  expect(screen.getByText(/Enter a start URL first/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  await openSettings("Scope");
+  fireEvent.change(screen.getByLabelText("Exclude patterns"), { target: { value: "/skip/" } });
+  fireEvent.change(screen.getByLabelText("URLs to test"), { target: { value: "https://example.com/a\nhttps://example.com/skip/me" } });
+  fireEvent.click(screen.getByRole("button", { name: "Test URLs" }));
+  const rows = await screen.findAllByRole("row");
+  expect(rows.filter((r) => r.getAttribute("data-verdict") === "crawl")).toHaveLength(1);
+  const excluded = rows.find((r) => r.getAttribute("data-verdict") === "excluded")!;
+  expect(within(excluded).getByText("Excluded by rule")).toBeTruthy();
+  expect(within(excluded).getByText("/skip/")).toBeTruthy();
+});

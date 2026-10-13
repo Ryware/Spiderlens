@@ -21,6 +21,40 @@ pub use runner::{
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
 pub use store::{CrawlStore, UrlRow};
 
+/// The scope tester (spec 003 FR-016): what the crawler would do with each
+/// of `inputs` if the start page linked to it. With `check_robots`, each
+/// host's robots.txt is fetched once (one request per host, nothing else);
+/// a host whose robots.txt cannot be read counts as disallowing everything.
+/// Shared by the CLI (`scope test`) and the desktop app (`scope_test`).
+pub async fn scope_test(
+    config: &spiderlens_config::CrawlConfig,
+    start: &url::Url,
+    inputs: &[String],
+    check_robots: bool,
+) -> Result<Vec<ScopeTest>, String> {
+    let rules = ScopeRules::new(config, std::slice::from_ref(start))?;
+    let mut policies = std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let robots = config.robots.mode != spiderlens_config::RobotsMode::Ignore;
+        let policy = match rules.normalize(start, input) {
+            Ok(url) if check_robots && robots => {
+                let key = host_key(&url);
+                if !policies.contains_key(&key) {
+                    let p = fetch_robots(config, &url)
+                        .await
+                        .unwrap_or_else(|_| crate::robots::RobotsPolicy::disallow_all());
+                    policies.insert(key.clone(), p);
+                }
+                policies.get(&key)
+            }
+            _ => None,
+        };
+        out.push(test_url(&rules, start, input, policy, config.robots.mode));
+    }
+    Ok(out)
+}
+
 /// Fetches a host's robots.txt once, for the scope tester (FR-016).
 pub async fn fetch_robots(
     config: &spiderlens_config::CrawlConfig,

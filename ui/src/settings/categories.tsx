@@ -10,6 +10,7 @@ import { Group, issuesAt, Row } from "./fields";
 import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
+import { ScopeTester } from "./ScopeTester";
 
 export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network";
 
@@ -170,6 +171,11 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             </Row>
             <Row label="Max URL length" help="Longer URLs are reported as malformed and not crawled." issues={at("scope.max_url_length")}>
               {(i) => <NumberInput id={i} value={config.scope.max_url_length} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, max_url_length: v ?? NaN } }))} />}
+            </Row>
+          </Group>
+          <Group title="Test URLs">
+            <Row label="Try the whole scope" stacked help="Paste URLs to see whether the crawl would request them, and which setting decides.">
+              {() => <ScopeTester transport={transport} config={config} startUrl={setup.validation?.normalized_start_url ?? null} />}
             </Row>
           </Group>
         </>
