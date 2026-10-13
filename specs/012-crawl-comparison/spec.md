@@ -160,6 +160,7 @@ A user compares two crawls of a large e-commerce site with a million URLs each. 
 
 - **FR-001**: Users MUST be able to start a comparison from the start screen, the command palette and the File menu, by choosing a previous and a current crawl from the recent crawls list (spec 006) or from any crawl file on disk; with a crawl open, "Compare with…" MUST pre-select the open crawl as the current crawl.
 - **FR-002**: The system MUST suggest as the previous crawl the most recent other crawl of the same start host, and MUST let the user swap previous and current.
+- **FR-002a**: When the current crawl is a run of a schedule (spec 021, schedule id stored in the crawl's info), the system MUST also offer, and the command line MUST accept instead of a previous file, "previous run of the same schedule" as the baseline, resolved as 021 defines it (the most recent earlier Finished or Stopped-at-limit run of that schedule); when none exists the comparison MUST say so and not run.
 - **FR-003**: Before running, the setup MUST show both crawls' start URL, date, number of URLs, completeness and app version, and the configuration differences that change what is collected.
 - **FR-004**: The comparison MUST open both crawl files for reading only (spec 006) and MUST NOT write, lock for writing, migrate or upgrade either file, at any point.
 
@@ -209,7 +210,7 @@ A user compares two crawls of a large e-commerce site with a million URLs each. 
 
 - **FR-029**: The command line MUST compare two crawl files and print a summary as text, or the full summary as JSON, with the same numbers as the desktop app.
 - **FR-030**: The command line MUST export, to a chosen folder, one CSV file per non-empty group of the comparison (filter groups, changed elements, issue deltas, migration lists), with the same rows and columns as the desktop app's exports and the CSV rules of spec 007 FR-029.
-- **FR-031**: The command line MUST accept mapping rules directly and a comparison settings file.
+- **FR-031**: The command line MUST accept mapping rules directly, a comparison settings file, and the schedule baseline of FR-002a in place of a previous crawl file.
 - **FR-032**: The command line MUST accept failure conditions: newly affected URLs for issues at or above a chosen priority, missing internal HTML pages at or above a count, and pages that went from indexable to non-indexable at or above a count; when any condition is met it MUST end with one dedicated non-zero exit code, distinct from the codes of specs 001 to 009, and name the conditions met.
 
 **Report**
@@ -267,6 +268,6 @@ Each has a recommended default that this spec already assumes. Approving the spe
 - **Users**: SEO specialists, developers and site owners comparing their own crawls on their own desktop; no accounts or sharing beyond files.
 - **Reference machine**: a mid-range laptop no more than four years old, with 4 to 8 CPU cores, 16 GB of memory and a solid-state disk, on each supported operating system (the same reference machine as every SpiderLens spec).
 - **Dependencies**: crawl files and read-only access (006), final states and error classes (004), extracted page data and text fingerprints (005), the frontier record of URLs not reached (003), results tabs, filters, lists, detail pane and CSV export (007), the rule catalogue and evaluation (009). Filter and issue deltas for tabs and rules added by later specs (014, 015, 016) come for free because they reuse those definitions.
-- **Scope of this feature**: comparing two crawls. Comparing three or more crawls, trends over many crawls, charts of changes over time, comparing the stored HTML text line by line, comparing rendered screenshots, and automatic recurring comparison (scheduling, 021) are out of scope. Comparing segments (gap report row 30) waits for segmentation.
+- **Scope of this feature**: comparing two crawls. Comparing three or more crawls, trends over many crawls, charts of changes over time, comparing the stored HTML text line by line, comparing rendered screenshots, and running comparisons on a schedule (021, which calls this feature with the FR-002a baseline) are out of scope. Comparing segments (gap report row 30) waits for segmentation.
 - **Report**: this spec defines the content of the comparison section; layout and export formats of the report belong to 010.
 - **Exit codes**: the exact number of the dedicated exit code is chosen in the plan, after 009 takes its own.
