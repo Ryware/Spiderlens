@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use spiderlens_config::{RecentEntry, RecentStore};
-use spiderlens_engine::crawl::file::{self, CrawlInfo, DEFAULT_DISK_RESERVE};
+use spiderlens_config::{RecentEntry, RecentStore, StorageStore};
+use spiderlens_engine::crawl::file::{self, CrawlInfo};
 use spiderlens_engine::crawl::store::StoreError;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -20,7 +20,9 @@ pub struct State {
     /// Where crawls go until the user saves them somewhere (FR-007).
     pub unsaved_dir: PathBuf,
     recent: RecentStore,
-    pub disk_reserve: u64,
+    /// Storage settings and the cleanup history (spec 019).
+    pub storage: StorageStore,
+    pub config_dir: PathBuf,
     /// Files the OS asked us to open before the window listened (D10).
     pending: Mutex<Vec<PathBuf>>,
 }
@@ -31,7 +33,8 @@ impl State {
         Ok(Self {
             unsaved_dir,
             recent: RecentStore::open(config_dir)?,
-            disk_reserve: DEFAULT_DISK_RESERVE,
+            storage: StorageStore::open(config_dir)?,
+            config_dir: config_dir.to_path_buf(),
             pending: Mutex::new(Vec::new()),
         })
     }
@@ -58,6 +61,21 @@ impl State {
     pub fn moved(&self, from: &Path, to: &Path) {
         let _ = self.recent.relocate(from, to);
         self.touch(to, None);
+    }
+
+    /// Free space kept on the crawl file's drive (006 FR-027, set in
+    /// Settings › Storage, spec 019 FR-025).
+    pub fn disk_reserve(&self) -> u64 {
+        self.storage.prefs().reserve_bytes
+    }
+
+    pub fn recent_entries(&self) -> Vec<RecentEntry> {
+        self.recent.list()
+    }
+
+    /// A deleted crawl leaves the recent list.
+    pub fn forget(&self, path: &Path) {
+        let _ = self.recent.remove(path);
     }
 
     pub fn add_pending(&self, path: PathBuf) {
@@ -254,23 +272,24 @@ pub async fn unsaved_list(app: AppHandle) -> Cmd<Unsaved> {
 }
 
 /// Deletes an unsaved crawl after the UI asked for confirmation. Only files
-/// in the unsaved folder can be deleted this way.
+/// in the unsaved folder can be deleted this way. Goes to the trash like
+/// every delete (spec 019 FR-011).
 #[tauri::command]
-pub fn unsaved_delete(app: AppHandle, path: PathBuf) -> Cmd<()> {
-    let state = app.state::<State>();
-    if !state.is_unsaved(&path) {
+pub async fn unsaved_delete(app: AppHandle, path: PathBuf) -> Cmd<()> {
+    if !app.state::<State>().is_unsaved(&path) {
         return Err("Only unsaved crawls can be deleted here.".into());
     }
-    if app.state::<crate::crawl::State>().active_path().as_deref() == Some(path.as_path()) {
-        return Err("Stop the crawl before deleting it.".into());
-    }
-    if let Some(by) = file::WriterLock::held_by_other(&path) {
-        return Err(format!("This crawl is in use by {}.", by.describe()));
-    }
-    app.state::<crate::results::State>().close(&path);
-    file::remove_crawl_file(&path).map_err(|e| e.to_string())?;
-    let _ = state.recent.remove(&path);
-    Ok(())
+    blocking(move || {
+        let report = crate::manage::delete(&app, std::slice::from_ref(&path), false);
+        if let Some(s) = report.first_skipped() {
+            return Err(s.to_string());
+        }
+        if report.trash_unavailable_any() {
+            return Err("The trash is not available for this file. Delete it from Manage crawls.".into());
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// Copies what can be read from a damaged file into a new unsaved crawl and
@@ -304,8 +323,8 @@ pub fn storage_status(state: tauri::State<'_, State>) -> StorageStatus {
     StorageStatus {
         unsaved_dir: state.unsaved_dir.clone(),
         free_bytes: free,
-        reserve_bytes: state.disk_reserve,
-        low: free.is_some_and(|f| f < state.disk_reserve),
+        reserve_bytes: state.disk_reserve(),
+        low: free.is_some_and(|f| f < state.disk_reserve()),
     }
 }
 
@@ -354,5 +373,7 @@ pub fn recover_at_launch(app: &AppHandle) {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let _ = app.emit("crawls-recovered", recovered);
         }
+        // Recovered crawls count as used now, so cleanup comes after.
+        crate::manage::after_recovery(&app);
     });
 }

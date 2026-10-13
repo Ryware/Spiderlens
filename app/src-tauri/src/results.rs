@@ -102,6 +102,15 @@ impl State {
             .map_err(|_| "The results reader stopped.".to_string())?
     }
 
+    /// The crawl the results window reads, if any.
+    pub fn open_path(&self) -> Option<PathBuf> {
+        self.actor
+            .lock()
+            .expect("results lock")
+            .as_ref()
+            .map(|a| a.path.clone())
+    }
+
     /// Lets go of `path` (before it is deleted or moved by Save As).
     pub fn close(&self, path: &Path) {
         let mut actor = self.actor.lock().expect("results lock");
