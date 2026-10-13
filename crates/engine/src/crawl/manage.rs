@@ -131,6 +131,73 @@ fn to_timestamp(t: SystemTime) -> Option<Timestamp> {
 }
 
 // ---------------------------------------------------------------------------
+// One row of the crawl manager (US1)
+
+/// What the manager and `spiderlens files` show for one crawl, read from
+/// file metadata and `meta` only (FR-004). The stored-HTML size is
+/// [`html_size`], asked for separately.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CrawlRow {
+    pub path: PathBuf,
+    pub name: String,
+    pub start_url: Option<String>,
+    pub status: Option<String>,
+    pub urls: Option<u64>,
+    /// The crawl file and its helper files.
+    pub size_bytes: u64,
+    pub created: Option<String>,
+    pub last_used: Option<String>,
+    pub available: bool,
+    /// Written by a newer SpiderLens: viewable, not changeable (006).
+    pub view_only: bool,
+    pub backups: Vec<Backup>,
+}
+
+/// Describes the crawl at `path`. `urls` is the count the app already
+/// knows; without it the file's state index is counted.
+pub fn describe(path: &Path, recent_last_used: Option<&str>, urls: Option<u64>, now: Timestamp) -> CrawlRow {
+    let available = path.is_file();
+    let meta = |k: &str| available.then(|| file::read_meta(path, k)).flatten();
+    let format: Option<i64> = meta("format_version").and_then(|v| v.parse().ok());
+    let created = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.created().or_else(|_| m.modified()).ok())
+        .and_then(to_timestamp);
+    CrawlRow {
+        name: meta("name")
+            .unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().to_string()),
+        start_url: meta("start_url"),
+        status: meta("status"),
+        urls: urls.or_else(|| {
+            available
+                .then(|| file::info(path).ok().map(|i| i.counts.discovered))
+                .flatten()
+        }),
+        size_bytes: crawl_files_size(path),
+        created: created.map(|t| t.to_string()),
+        last_used: last_used(path, recent_last_used, now).map(|t| t.to_string()),
+        view_only: format.is_some_and(|v| v > super::store::FORMAT_VERSION),
+        backups: backups_of(path),
+        available,
+        path: path.to_path_buf(),
+    }
+}
+
+/// Crawl files directly in `dir` (not backups, not hidden copies).
+pub fn crawls_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && classify(p) == Kind::Crawl)
+        .collect();
+    out.sort();
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Stored HTML (plan D1 to D3)
 
 /// How much stored page HTML a crawl holds.
