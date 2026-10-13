@@ -106,11 +106,20 @@ export function AppShell({ transport }: { transport: Transport }) {
     [updateUi],
   );
 
-  const startCrawl = useCallback(() => {
-    if (!setup.config || !setup.canStart || crawl.active) return;
-    const { startUrl, target } = setup.crawlInput();
-    setSection("overview");
-    crawl.start(setup.config, startUrl, target);
+  // Not gated on setup.canStart: that reflects the last validated value, which
+  // can lag behind the field. crawlInput validates what is there now.
+  const starting = useRef(false);
+  const startCrawl = useCallback(async () => {
+    if (starting.current || crawl.active) return;
+    starting.current = true;
+    try {
+      const input = await setup.crawlInput();
+      if (!input) return;
+      setSection("overview");
+      crawl.start(input.config, input.startUrl, input.target);
+    } finally {
+      starting.current = false;
+    }
   }, [setup, crawl]);
 
   const openCrawl = useCallback(async () => {

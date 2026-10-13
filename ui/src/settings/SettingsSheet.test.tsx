@@ -28,7 +28,7 @@ test("start_adds_https_and_shows_completed_address", async () => {
   fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
   await waitFor(() => expect(start().disabled).toBe(false));
   fireEvent.click(start());
-  expect((screen.getByLabelText("Start URL") as HTMLInputElement).value).toBe("https://example.com/");
+  await waitFor(() => expect((screen.getByLabelText("Start URL") as HTMLInputElement).value).toBe("https://example.com/"));
   await waitFor(() => expect(t.crawls.started.map((s) => s.startUrl)).toEqual(["https://example.com/"]));
 });
 
