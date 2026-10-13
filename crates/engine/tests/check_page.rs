@@ -49,7 +49,7 @@ async fn ten_hops_is_allowed_eleven_is_not() {
 
     let over = check_page(&f.url("/chain/11"), &opts()).await;
     assert_eq!(over.state, FinalState::Failed);
-    assert_eq!(over.error.unwrap().class, ErrorClass::RedirectLoop);
+    assert_eq!(over.error.unwrap().class, ErrorClass::RedirectProblem);
 }
 
 #[tokio::test]
@@ -59,7 +59,7 @@ async fn redirect_loop_is_detected() {
     assert_eq!(r.state, FinalState::Failed);
     assert_eq!(r.redirects.len(), 2);
     let e = r.error.unwrap();
-    assert_eq!(e.class, ErrorClass::RedirectLoop);
+    assert_eq!(e.class, ErrorClass::RedirectProblem);
     assert_eq!(e.attempts, 1);
 }
 

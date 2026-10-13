@@ -299,7 +299,8 @@ pub fn final_state(a: &FinalStateArgs) -> String {
     }
 }
 
-/// Labels for the engine's error classes (spec 001 FR-017).
+/// Labels for the engine's error classes (spec 001 FR-017, spec 004
+/// FR-012).
 pub fn error_class_label(class: &str) -> &str {
     match class {
         "dns" => "DNS lookup failed",
@@ -308,8 +309,15 @@ pub fn error_class_label(class: &str) -> &str {
         "timeout" => "Timed out",
         "tls_invalid" => "Invalid TLS certificate",
         "redirect_loop" => "Redirect loop",
+        "redirect_problem" => "Redirect problem",
         "content_problem" => "Content problem",
         "malformed_url" => "Malformed URL",
+        "host_unavailable" => "Host unavailable",
+        // Derived from the status code (spec 004 data-model.md).
+        "http_429" => "Too many requests (429)",
+        "http_4xx" => "Client error (4xx)",
+        "http_5xx" => "Server error (5xx)",
+        "http_other" => "Unusual status code",
         other => other,
     }
 }

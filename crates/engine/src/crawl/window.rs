@@ -83,6 +83,39 @@ impl QueueWindow {
         Ok(())
     }
 
+    /// Raises the capacity to `capacity` and loads more rows from disk at
+    /// once (spec 004 plan D11). Returns whether anything was loaded.
+    pub fn grow(&mut self, store: &CrawlStore, capacity: usize) -> Result<bool> {
+        self.capacity = self.capacity.max(capacity);
+        if self.hi == Hi::All {
+            return Ok(false);
+        }
+        let after = match self.hi {
+            Hi::Upto(k) => Some(k),
+            _ => None,
+        };
+        let want = self.capacity.saturating_sub(self.entries.len()).max(1);
+        let rows = store.queued_after(after, want)?;
+        let complete = rows.len() < want;
+        let loaded = !rows.is_empty();
+        for e in rows {
+            self.hi = Hi::Upto(e.key());
+            self.insert(e);
+        }
+        if complete {
+            self.hi = Hi::All;
+        }
+        Ok(loaded)
+    }
+
+    /// Removes and returns every entry of one host.
+    pub fn take_host(&mut self, host: &str) -> Vec<QueueEntry> {
+        let Some(keys) = self.by_host.remove(host) else {
+            return Vec::new();
+        };
+        keys.into_iter().filter_map(|k| self.entries.remove(&k)).collect()
+    }
+
     /// A row was queued on disk; keep it here too if it falls in range.
     pub fn on_queued(&mut self, entry: QueueEntry) {
         if !self.covers(entry.key()) {

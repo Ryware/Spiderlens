@@ -32,6 +32,13 @@ enum Reply {
         status: u16,
         location: String,
     },
+    /// The n-th request gets the n-th reply; the last one repeats (spec 004
+    /// scripted failures).
+    Sequence(Vec<Reply>),
+    /// Headers never come.
+    Hang,
+    /// 200 with a body that stops part-way and the connection drops.
+    Truncated { sent: Vec<u8> },
 }
 
 /// One logged request.
@@ -42,6 +49,8 @@ pub struct Hit {
     pub path: String,
     pub at: Instant,
     pub user_agent: String,
+    /// Every request header, names lowercase.
+    pub headers: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -128,6 +137,55 @@ impl SiteBuilder {
         )
     }
 
+    /// A bare status code with a short HTML body.
+    pub fn status(self, host: &str, path: &str, status: u16) -> Self {
+        self.raw(host, path, status, "text/html", format!("<title>{status}</title>").as_bytes())
+    }
+
+    /// Answers `fail_status` the first `times` requests, then an HTML page
+    /// linking to `links` (spec 004 US2.1).
+    pub fn flaky(self, host: &str, path: &str, fail_status: u16, times: usize, links: &[&str]) -> Self {
+        let fail = Reply::Body {
+            status: fail_status,
+            content_type: "text/html".into(),
+            body: format!("<title>{fail_status}</title><a href=\"/should-not-be-followed\">x</a>").into_bytes(),
+            headers: Vec::new(),
+            gzip: false,
+        };
+        let anchors: String = links.iter().map(|l| format!("<a href=\"{l}\">{l}</a>\n")).collect();
+        let ok = Reply::Body {
+            status: 200,
+            content_type: "text/html; charset=utf-8".into(),
+            body: format!("<!doctype html><title>{path}</title><body>{anchors}</body>").into_bytes(),
+            headers: Vec::new(),
+            gzip: false,
+        };
+        let mut steps = vec![fail; times];
+        steps.push(ok);
+        self.put(host, path, Reply::Sequence(steps))
+    }
+
+    /// A status with a `Retry-After` header, every time.
+    pub fn retry_after(self, host: &str, path: &str, status: u16, retry_after: &str) -> Self {
+        self.status(host, path, status).header(host, path, "retry-after", retry_after)
+    }
+
+    /// Never answers (for timeouts).
+    pub fn hang(self, host: &str, path: &str) -> Self {
+        self.put(host, path, Reply::Hang)
+    }
+
+    /// Sends part of a page, then drops the connection.
+    pub fn truncated(self, host: &str, path: &str) -> Self {
+        self.put(
+            host,
+            path,
+            Reply::Truncated {
+                sent: b"<!doctype html><title>cut</title><p>Only the first part".to_vec(),
+            },
+        )
+    }
+
     pub fn robots(self, host: &str, text: &str) -> Self {
         self.raw(host, "/robots.txt", 200, "text/plain", text.as_bytes())
     }
@@ -154,9 +212,12 @@ impl SiteBuilder {
             .into_iter()
             .map(|(k, v)| (k, substitute(v, addr.port())))
             .collect();
+        let down = Arc::new(Mutex::new(std::collections::HashSet::new()));
         let state = Arc::new(Shared {
             replies,
             log: log.clone(),
+            served: Mutex::new(HashMap::new()),
+            down: down.clone(),
         });
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::spawn(move || {
@@ -177,6 +238,7 @@ impl SiteBuilder {
             addr,
             hosts: self.hosts,
             log,
+            down,
         }
     }
 }
@@ -227,12 +289,18 @@ fn substitute(reply: Reply, port: u16) -> Reply {
             status,
             location: fix(&location),
         },
+        Reply::Sequence(steps) => Reply::Sequence(steps.into_iter().map(|r| substitute(r, port)).collect()),
+        other @ (Reply::Hang | Reply::Truncated { .. }) => other,
     }
 }
 
 struct Shared {
     replies: HashMap<(String, String), Reply>,
     log: Arc<Mutex<Vec<Hit>>>,
+    /// Requests served per (host, path), for sequences.
+    served: Mutex<HashMap<(String, String), usize>>,
+    /// Hosts that answer 503 to everything (an outage).
+    down: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
@@ -256,14 +324,57 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let headers = req
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .collect();
     state.log.lock().expect("log lock").push(Hit {
         host: host.clone(),
         path: path.clone(),
         at: Instant::now(),
         user_agent,
+        headers,
     });
+    if state.down.lock().expect("down lock").contains(&host) {
+        return Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(Body::from("down"))
+            .expect("response");
+    }
+    let key = (host, path);
+    let mut reply = state.replies.get(&key);
+    if let Some(Reply::Sequence(steps)) = reply {
+        let mut served = state.served.lock().expect("served lock");
+        let n = served.entry(key.clone()).or_insert(0);
+        reply = steps.get(*n).or(steps.last());
+        *n += 1;
+    }
     let mut builder = Response::builder();
-    match state.replies.get(&(host, path)) {
+    match reply {
+        Some(Reply::Hang) => {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            builder.status(StatusCode::OK).body(Body::empty()).expect("response")
+        }
+        Some(Reply::Truncated { sent }) => {
+            let first: Result<axum::body::Bytes, std::io::Error> = Ok(axum::body::Bytes::from(sent.clone()));
+            let cut: Result<axum::body::Bytes, std::io::Error> =
+                Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "cut"));
+            // Pause after the first chunk so the headers and the start of the
+            // body reach the client before the connection drops.
+            use futures_util::StreamExt;
+            let stream = futures_util::stream::iter(vec![first]).chain(futures_util::stream::once(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                cut
+            }));
+            builder
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html")
+                .header(header::CONTENT_LENGTH, (sent.len() * 10).to_string())
+                .body(Body::from_stream(stream))
+                .expect("response")
+        }
+        Some(Reply::Sequence(_)) => unreachable!("sequences are resolved above"),
         Some(Reply::Body {
             status,
             content_type,
@@ -299,6 +410,7 @@ pub struct Site {
     addr: SocketAddr,
     hosts: Vec<String>,
     log: Arc<Mutex<Vec<Hit>>>,
+    down: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Site {
@@ -314,6 +426,17 @@ impl Site {
     /// DNS overrides pointing every registered host at this server.
     pub fn resolve(&self) -> Vec<(String, SocketAddr)> {
         self.hosts.iter().map(|h| (h.clone(), self.addr)).collect()
+    }
+
+    /// Starts or ends an outage: while down, the host answers 503 to every
+    /// request (spec 004 US4).
+    pub fn set_down(&self, host: &str, down: bool) {
+        let mut d = self.down.lock().expect("down lock");
+        if down {
+            d.insert(host.to_string());
+        } else {
+            d.remove(host);
+        }
     }
 
     pub fn hits(&self) -> Vec<Hit> {
