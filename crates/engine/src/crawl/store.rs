@@ -1575,7 +1575,7 @@ pub fn os_name() -> String {
 /// A read-only connection. On read-only media SQLite cannot create the
 /// shared-memory file a WAL database needs, so it retries with
 /// `immutable=1` (the file cannot change under us there anyway).
-pub(crate) fn connect_read_only(path: &Path) -> Result<Connection> {
+pub fn connect_read_only(path: &Path) -> Result<Connection> {
     use rusqlite::OpenFlags;
     if !path.exists() {
         return Err(StoreError::Format(format!("{} does not exist", path.display())));

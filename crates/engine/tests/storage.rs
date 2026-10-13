@@ -35,10 +35,13 @@ fn tree_site() -> Site {
 }
 
 fn config(rate: Option<f64>) -> CrawlConfig {
-    let mut c = CrawlConfig::default();
-    c.speed = SpeedSettings::FAST;
-    c.speed.max_urls_per_sec = rate;
-    c
+    CrawlConfig {
+        speed: SpeedSettings {
+            max_urls_per_sec: rate,
+            ..SpeedSettings::FAST
+        },
+        ..CrawlConfig::default()
+    }
 }
 
 fn input(site: &Site) -> ModeInput {
