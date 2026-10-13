@@ -332,6 +332,7 @@ pub fn final_state(a: &FinalStateArgs) -> String {
     match a.state.as_str() {
         "crawled" => "Crawled".into(),
         "queued" | "in_flight" => "Queued".into(),
+        "waiting" => "Waiting to retry".into(),
         _ if a.check_only && a.fetched => "Checked".into(),
         _ if a.check_only => a.reason_detail.clone().unwrap_or_else(|| "Not checked".into()),
         _ if a.reason.as_deref() == Some("external") => "Not checked".into(),

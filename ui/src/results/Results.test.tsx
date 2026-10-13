@@ -91,6 +91,20 @@ test("content_columns_and_filters_work_when_the_crawl_collected_them", async () 
   await waitFor(() => expect(rowCount()).toContain("9 URLs"));
 });
 
+test("detail_pane_shows_attempts_and_a_manual_retry", async () => {
+  const urls = fakeUrls(30).map((u, i) => (i === 1 ? { ...u, attempts: 3, manual_retry: true } : i === 2 ? { ...u, attempts: 1 } : u));
+  const t = fakeTransport(urls);
+  t.results.features = ["base", "attempts"];
+  await openInternal(t);
+  const details = screen.getByRole("complementary", { name: "Details" });
+  fireEvent.click(rows()[1]);
+  expect(await within(details).findByText("3, last by Retry failed URLs")).toBeTruthy();
+  fireEvent.click(rows()[2]);
+  await waitFor(() => expect(within(details).getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-2"));
+  // One attempt is the normal case: no line for it.
+  expect(within(details).queryByText("Attempts")).toBeNull();
+});
+
 test("selection_copies_rows_with_a_header", async () => {
   const t = await openInternal();
   fireEvent.click(rows()[0]);
