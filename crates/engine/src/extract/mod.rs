@@ -221,15 +221,7 @@ pub struct PageInput<'a> {
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
-    let declared = crate::title::declared_encoding(input.charset, input.body);
-    let encoding = match declared {
-        Some(enc) => enc,
-        // Undeclared and not valid UTF-8: legacy pages of this kind are
-        // almost always windows-1252, which is what browsers in Western
-        // locales fall back to. A sequence cut by truncation does not count.
-        None if !utf8_or_cut(input.body, input.truncated) => encoding_rs::WINDOWS_1252,
-        None => encoding_rs::UTF_8,
-    };
+    let encoding = page_encoding(input.charset, input.body, input.truncated);
     if looks_binary(input.body) {
         return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
     }
@@ -245,6 +237,29 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
     data
+}
+
+/// The encoding extraction decodes a body with.
+fn page_encoding(charset: Option<&str>, body: &[u8], truncated: bool) -> &'static encoding_rs::Encoding {
+    match crate::title::declared_encoding(charset, body) {
+        Some(enc) => enc,
+        // Undeclared and not valid UTF-8: legacy pages of this kind are
+        // almost always windows-1252, which is what browsers in Western
+        // locales fall back to. A sequence cut by truncation does not count.
+        None if !utf8_or_cut(body, truncated) => encoding_rs::WINDOWS_1252,
+        None => encoding_rs::UTF_8,
+    }
+}
+
+/// Decodes and parses a stored body exactly as [`extract_page`] does
+/// (same encoding rules, scripting off, same time budget), for analyses
+/// that need the DOM after the crawl (spec 015). `None` for binary bodies.
+pub fn parse_body(charset: Option<&str>, body: &[u8], truncated: bool) -> Option<scraper::Html> {
+    if looks_binary(body) {
+        return None;
+    }
+    let (text, _, _) = page_encoding(charset, body, truncated).decode(body);
+    Some(walk::parse(&text, walk::PARSE_BUDGET).0)
 }
 
 /// Whether `body` is valid UTF-8, allowing a sequence cut off at the end

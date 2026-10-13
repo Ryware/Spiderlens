@@ -16,6 +16,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
 url.workspace = true
+scraper.workspace = true
+ego-tree.workspace = true
+regex.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

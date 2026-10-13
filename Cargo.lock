@@ -4396,7 +4396,11 @@ dependencies = [
 name = "spiderlens-aeo"
 version = "0.1.0"
 dependencies = [
+ "ego-tree",
+ "jiff",
  "proptest",
+ "regex",
+ "scraper",
  "serde",
  "serde_json",
  "spiderlens-config",
