@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved (2026-10-13)
 
 **Input**: Product backlog entry 009, "Issue rules engine: rule format, priorities, explanations, the first rule set" (milestone M2), started on the owner's go-ahead of 2026-10-13 ("go for everything, in parallel, and do not forget UI tests"). The engine turns a crawl into an audit: every problem SpiderLens can detect from stored crawl data becomes a named issue with a priority, a plain explanation, how to fix it and the list of affected URLs, shown per page and site-wide, in the desktop app and the command line.
 
@@ -293,7 +293,7 @@ Timings are measured on the reference machine defined in spec 007, Assumptions.
 - **Data**: the rules use only data that specs 003 to 006 already store (response facts, error classes, redirects, links, titles, descriptions, headings, directives, canonicals, hreflang, images, structured data blocks, headers, text fingerprints). This feature adds no extraction and no fetching.
 - **Health score, report and exports beyond CSV** belong to spec 010; this spec provides the issues, priorities and texts they present.
 - **Sitemap rules** (orphan pages, non-indexable URLs in sitemaps, URLs missing from sitemaps) belong to spec 011, which adds them to this catalogue.
-- **Near-duplicate content, readability, spelling and grammar, pixel-width title and description checks, custom user-written rules, and structured data validation against vocabularies** are out of scope (M3, M5 or later). Structured data here only checks that JSON-LD parses.
+- **Near-duplicate content (spec 020), Link Score (spec 023), readability, spelling and grammar, pixel-width title and description checks, custom user-written rules, and structured data validation against vocabularies** are out of scope (M3, M5 or later). Structured data here only checks that JSON-LD parses.
 - **JavaScript rendering rules** (content only present after rendering, rendering errors) belong to spec 014; **AEO, GEO and AI bot rules** belong to spec 015; both add rules to the same catalogue.
 - **Ignoring an issue for a specific URL** ("this one is fine") is out of scope for this spec; turning a rule off or changing its priority covers the common cases.
 - **Language**: rule names, explanations and fixes are written in English, like the rest of the UI. Translation is a later concern.
