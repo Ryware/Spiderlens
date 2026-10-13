@@ -14,9 +14,11 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   setup: CrawlSetup;
   run: CrawlRun;
   onStart: () => void;
+  /** Resume goes through the crawl file checks (upgrade, secrets, read-only). */
+  onResume: () => void;
   onOpenSettings: (category?: "list" | "speed") => void;
   onOpenPalette: () => void;
-}>(function Toolbar({ setup, run, onStart, onOpenSettings, onOpenPalette }, urlRef) {
+}>(function Toolbar({ setup, run, onStart, onResume, onOpenSettings, onOpenPalette }, urlRef) {
   const { config, list } = setup;
   const locked = run.active;
   const mode = config?.mode ?? "spider";
@@ -76,7 +78,7 @@ export const Toolbar = forwardRef<HTMLInputElement, {
           </Button>
         </Tooltip>
       )}
-      <CrawlControls setup={setup} run={run} onStart={onStart} firstError={firstError} />
+      <CrawlControls setup={setup} run={run} onStart={onStart} onResume={onResume} firstError={firstError} />
       <Button onClick={() => onOpenSettings()} aria-label="Configure">
         <SlidersHorizontal aria-hidden className="size-3.5" /> Configure <Kbd keys="Mod+," />
       </Button>
@@ -89,7 +91,7 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   );
 });
 
-function CrawlControls({ setup, run, onStart, firstError }: { setup: CrawlSetup; run: CrawlRun; onStart: () => void; firstError?: string }) {
+function CrawlControls({ setup, run, onStart, onResume, firstError }: { setup: CrawlSetup; run: CrawlRun; onStart: () => void; onResume: () => void; firstError?: string }) {
   const { phase } = run;
   if (phase === "running" || phase === "starting" || phase === "pausing" || phase === "stopping") {
     const settling = phase !== "running";
@@ -107,7 +109,7 @@ function CrawlControls({ setup, run, onStart, firstError }: { setup: CrawlSetup;
   if (phase === "paused") {
     return (
       <>
-        <Button variant="primary" onClick={run.resume}>
+        <Button variant="primary" onClick={onResume}>
           <Play aria-hidden className="size-3.5 fill-current" /> Resume
         </Button>
         <Button onClick={run.stop}>
