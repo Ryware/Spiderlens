@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { QueryMode } from "../generated/QueryMode";
 import type { RobotsMode } from "../generated/RobotsMode";
 import type { SubdomainMode } from "../generated/SubdomainMode";
 import type { UaPreset } from "../generated/UaPreset";
@@ -75,6 +76,20 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
               />
             )}
           </Row>
+          <Row
+            label="List depth"
+            help={config.mode === "list" ? "Clicks to follow from the listed URLs. 0 crawls only the list." : "Used in List mode only."}
+            issues={at("limits.list_depth")}
+          >
+            {(i) => (
+              <NumberInput
+                id={i}
+                disabled={config.mode !== "list"}
+                value={config.limits.list_depth}
+                onChange={(v) => set((c) => ({ ...c, limits: { ...c.limits, list_depth: v ?? NaN } }))}
+              />
+            )}
+          </Row>
         </Group>
       );
 
@@ -109,6 +124,52 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             </Row>
             <Row label="Follow external nofollow links">
               {(_, l) => <Switch labelledBy={l} checked={config.scope.follow_external_nofollow} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, follow_external_nofollow: v } }))} />}
+            </Row>
+            <Row label="Stay in the start folder" help="Internal URLs outside the start URL's folder are not crawled.">
+              {(_, l) => <Switch labelledBy={l} checked={config.scope.stay_in_folder} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, stay_in_folder: v } }))} />}
+            </Row>
+            <Row label="Use sitemaps from robots.txt" help="Also crawl the URLs listed in the sitemaps the site declares.">
+              {(_, l) => <Switch labelledBy={l} checked={config.scope.use_sitemaps} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, use_sitemaps: v } }))} />}
+            </Row>
+          </Group>
+          <Group title="URLs">
+            <Row label="Query parameters" help="Removing parameters makes URLs that differ only by them count once." issues={at("scope.query_params.mode")}>
+              {(i) => (
+                <Select
+                  id={i}
+                  className="w-48"
+                  value={config.scope.query_params.mode}
+                  onChange={(e) => set((c) => ({ ...c, scope: { ...c.scope, query_params: { ...c.scope.query_params, mode: e.target.value as QueryMode } } }))}
+                >
+                  <option value="keep">Keep all</option>
+                  <option value="remove">Remove some</option>
+                  <option value="remove_all">Remove all</option>
+                </Select>
+              )}
+            </Row>
+            {config.scope.query_params.mode === "remove" && (
+              <Row label="Parameters to remove" stacked help="One name per line, for example utm_source. Names are case-sensitive." issues={at("scope.query_params.names")}>
+                {(i) => (
+                  <Lines
+                    id={i}
+                    placeholder="utm_source"
+                    value={config.scope.query_params.names}
+                    onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, query_params: { ...c.scope.query_params, names: v } } }))}
+                  />
+                )}
+              </Row>
+            )}
+            <Row label="Sort parameters" help="?b=2&a=1 and ?a=1&b=2 count as one URL.">
+              {(_, l) => (
+                <Switch
+                  labelledBy={l}
+                  checked={config.scope.query_params.sort}
+                  onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, query_params: { ...c.scope.query_params, sort: v } } }))}
+                />
+              )}
+            </Row>
+            <Row label="Max URL length" help="Longer URLs are reported as malformed and not crawled." issues={at("scope.max_url_length")}>
+              {(i) => <NumberInput id={i} value={config.scope.max_url_length} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, max_url_length: v ?? NaN } }))} />}
             </Row>
           </Group>
         </>

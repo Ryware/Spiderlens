@@ -24,12 +24,12 @@ async function openSettings(category?: string) {
 }
 
 test("start_adds_https_and_shows_completed_address", async () => {
-  await setup();
+  const t = await setup();
   fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
   await waitFor(() => expect(start().disabled).toBe(false));
   fireEvent.click(start());
   expect((screen.getByLabelText("Start URL") as HTMLInputElement).value).toBe("https://example.com/");
-  expect(screen.getByText(/Ready to crawl https:\/\/example.com\//)).toBeTruthy();
+  await waitFor(() => expect(t.crawls.started.map((s) => s.startUrl)).toEqual(["https://example.com/"]));
 });
 
 test("invalid_start_url_blocks_start_with_message", async () => {
@@ -153,4 +153,30 @@ test("settings_shortcut_opens_and_escape_closes", async () => {
   expect(await screen.findByRole("navigation", { name: "Settings categories" })).toBeTruthy();
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("navigation", { name: "Settings categories" })).toBeNull());
+});
+
+test("spec_003_scope_and_limit_settings_reach_the_crawl", async () => {
+  const t = await setup();
+  await openSettings("Limits");
+  expect((screen.getByLabelText("List depth") as HTMLInputElement).disabled).toBe(true);
+  await openSettings("Scope");
+  fireEvent.click(screen.getByRole("switch", { name: "Stay in the start folder" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Use sitemaps from robots.txt" }));
+  expect(screen.queryByLabelText("Parameters to remove")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Query parameters"), { target: { value: "remove" } });
+  fireEvent.change(screen.getByLabelText("Parameters to remove"), { target: { value: "utm_source\nutm_medium" } });
+  fireEvent.click(screen.getByRole("switch", { name: "Sort parameters" }));
+  fireEvent.change(screen.getByLabelText("Max URL length"), { target: { value: "1024" } });
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.scope).toMatchObject({
+    stay_in_folder: true,
+    use_sitemaps: true,
+    max_url_length: 1024,
+    query_params: { mode: "remove", names: ["utm_source", "utm_medium"], sort: true },
+  });
 });

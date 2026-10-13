@@ -23,7 +23,6 @@ export function useCrawlSetup(transport: Transport) {
   const [list, setList] = useState<ListSummary | null>(null);
   const [validation, setValidation] = useState<Validation | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [ready, setReady] = useState<string | null>(null);
 
   useEffect(() => {
     transport.defaults(false).then(setConfig);
@@ -43,40 +42,39 @@ export function useCrawlSetup(transport: Transport) {
   const warnings = issues.filter((i) => i.severity === "warning");
 
   const set = useCallback((patch: (c: CrawlConfig) => CrawlConfig) => {
-    setReady(null);
     setConfig((c) => (c ? patch(c) : c));
   }, []);
 
   const setStartUrl = useCallback((url: string) => {
-    setReady(null);
     setStartUrlState(url);
   }, []);
 
   const canStart = !!config && !!validation && errors.length === 0;
 
-  const start = () => {
-    if (!config || !canStart) return;
-    if (config.mode === "spider" && validation?.normalized_start_url) {
-      setStartUrlState(validation.normalized_start_url);
+  /**
+   * What Start sends to the engine, and a short name for it. The start URL
+   * is shown as it will be crawled (example.com becomes https://example.com/).
+   */
+  const crawlInput = (): { startUrl: string | null; target: string } => {
+    if (config?.mode === "list") return { startUrl: null, target: `${list?.urls.toLocaleString() ?? 0} URLs` };
+    const url = validation?.normalized_start_url ?? startUrl;
+    if (url !== startUrl) setStartUrlState(url);
+    let target = url;
+    try {
+      target = new URL(url).host;
+    } catch {
+      // Not a URL the browser parses; the engine has validated it anyway.
     }
-    // Crawling itself arrives with spec 003; until then Start confirms the
-    // configuration that would be used.
-    setReady(
-      config.mode === "spider"
-        ? `Ready to crawl ${validation?.normalized_start_url ?? startUrl}.`
-        : `Ready to crawl ${list?.urls.toLocaleString() ?? 0} URLs.`,
-    );
+    return { startUrl: url, target };
   };
 
   const applyProfile = (l: Loaded, url: string | null) => {
-    setReady(null);
     setLoaded(l);
     setConfig(l.config);
     if (url) setStartUrlState(url);
   };
 
   const resetToDefaults = async () => {
-    setReady(null);
     setLoaded(null);
     setConfig(await transport.defaults(true));
   };
@@ -95,8 +93,7 @@ export function useCrawlSetup(transport: Transport) {
     speedPreset: validation?.speed_preset ?? "polite",
     set,
     canStart,
-    start,
-    ready,
+    crawlInput,
     loaded,
     setLoaded,
     applyProfile,

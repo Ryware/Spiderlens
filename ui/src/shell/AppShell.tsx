@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
+import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import type { CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
 import { resultTabs, Sidebar } from "./Sidebar";
-import { AboutDialog, DetailPanel, StartState, StatusBar } from "./panels";
+import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
 import { matches, platform } from "./platform";
@@ -67,6 +68,7 @@ function Splitter({ label, value, min, max, onChange, invert }: { label: string;
  */
 export function AppShell({ transport }: { transport: Transport }) {
   const setup = useCrawlSetup(transport);
+  const crawl = useCrawlRun(transport);
   const [ui, updateUi] = useUiState();
   useTheme(ui.theme);
   const width = useWindowWidth();
@@ -97,13 +99,23 @@ export function AppShell({ transport }: { transport: Transport }) {
     [updateUi],
   );
 
+  const startCrawl = useCallback(() => {
+    if (!setup.config || !setup.canStart || crawl.active) return;
+    const { startUrl, target } = setup.crawlInput();
+    setSection("overview");
+    crawl.start(setup.config, startUrl, target);
+  }, [setup, crawl]);
+
   const commands: Command[] = useMemo(
     () => [
-      { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: setup.canStart, run: setup.start },
+      { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: setup.canStart && !crawl.active, run: startCrawl },
+      { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
+      { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
+      { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
-      { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
-      { id: "mode-list", title: "Switch to List mode", group: "Crawl", run: () => setup.set((c) => ({ ...c, mode: "list" })) },
+      { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
+      { id: "mode-list", title: "Switch to List mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "list" })) },
       { id: "speed-polite", title: "Speed: Polite", group: "Crawl", run: () => setup.presets && setup.set((c) => ({ ...c, speed: setup.presets!.polite })) },
       { id: "speed-fast", title: "Speed: Fast (sites you control)", group: "Crawl", run: () => setup.presets && setup.set((c) => ({ ...c, speed: setup.presets!.fast })) },
       ...["limits", "scope", "identity", "speed", "robots", "network"].map((id) => ({
@@ -121,7 +133,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "theme-dark", title: "Appearance: Dark", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "dark" }) },
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
+    [setup, crawl, startCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
   );
 
   const run = useCallback(
@@ -152,14 +164,18 @@ export function AppShell({ transport }: { transport: Transport }) {
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <Toolbar ref={urlRef} setup={setup} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} />
+      <Toolbar ref={urlRef} setup={setup} run={crawl} onStart={startCrawl} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <div className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
-          <StartState setup={setup} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+          {crawl.phase === "idle" ? (
+            <StartState setup={setup} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+          ) : (
+            <CrawlOverview run={crawl} />
+          )}
         </main>
         {!detailHidden && (
           <>
@@ -170,7 +186,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           </>
         )}
       </div>
-      <StatusBar setup={setup} />
+      <StatusBar setup={setup} run={crawl} />
 
       <SettingsSheet
         open={settingsOpen}

@@ -711,18 +711,32 @@ impl CrawlStore {
     }
 
     /// Counts by state, and not-crawled counts by reason.
-    pub fn counts(&self) -> Result<Counts> {
-        let mut by_state = Vec::new();
+    /// URLs per state, for live progress.
+    pub fn state_counts(&self) -> Result<Vec<(UrlState, u64)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT state, COUNT(*) FROM urls GROUP BY state")?;
+            .prepare_cached("SELECT state, COUNT(*) FROM urls GROUP BY state")?;
+        let mut out = Vec::new();
         for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
             let (s, n) = row?;
-            let n = n as u64;
             if let Some(s) = UrlState::parse(&s) {
-                by_state.push((s, n));
+                out.push((s, n as u64));
             }
         }
+        Ok(out)
+    }
+
+    /// Crawled pages that failed or answered 4xx/5xx (read once on resume).
+    pub fn page_errors(&self) -> Result<u64> {
+        Ok(self.conn.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM urls WHERE state = 'crawled' AND (error_class IS NOT NULL OR status >= 400)",
+            [],
+            |r| r.get(0),
+        )? as u64)
+    }
+
+    pub fn counts(&self) -> Result<Counts> {
+        let by_state = self.state_counts()?;
         let mut by_reason = Vec::new();
         let mut stmt = self.conn.prepare(
             "SELECT reason, COUNT(*) FROM urls WHERE state = 'not_crawled' GROUP BY reason ORDER BY reason",

@@ -10,7 +10,7 @@ use clap::{ArgMatches, Args, parser::ValueSource};
 use spiderlens_config::{ModeInput, RobotsMode, normalize_url, validate};
 use spiderlens_engine::crawl::{
     Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ScopeRules, UrlState,
-    fetch_robots, host_key, test_url,
+    default_file_name, fetch_robots, host_key, test_url,
 };
 use spiderlens_engine::robots::RobotsPolicy;
 use tokio::sync::{mpsc, watch};
@@ -88,15 +88,7 @@ fn runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
 }
 
 fn default_out(input: &ModeInput) -> PathBuf {
-    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
-    let name = match input {
-        ModeInput::Spider { start_url } => normalize_url(start_url)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-            .unwrap_or_else(|| "crawl".into()),
-        ModeInput::List(_) => "list".into(),
-    };
-    PathBuf::from(format!("{name}-{stamp}.spiderlens"))
+    PathBuf::from(default_file_name(input))
 }
 
 pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
