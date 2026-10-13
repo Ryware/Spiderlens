@@ -44,6 +44,8 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 /// loses at most this much work (spec 008 plan D2, FR-024).
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
+/// How often the crawl lets the write-ahead log start over.
+const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
@@ -589,6 +591,7 @@ struct Run {
     extract_budget: Arc<Semaphore>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
+    last_catch_up: Instant,
 }
 
 impl Run {
@@ -665,6 +668,7 @@ impl Run {
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
             active_before_ms,
+            last_catch_up: Instant::now(),
         })
     }
 
@@ -769,6 +773,10 @@ impl Run {
         }
         if self.write_tx.take().is_some() {
             self.c.store.commit()?;
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
+                self.c.store.catch_up_checkpoint();
+                self.last_catch_up = Instant::now();
+            }
         }
         Ok(())
     }
