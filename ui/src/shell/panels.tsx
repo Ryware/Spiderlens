@@ -226,12 +226,14 @@ function Table({ title, head, children }: { title: string; head: [string, string
 /** Main area before any crawl (FR-008): what to do next, and anything to be careful about. */
 export function StartState({
   setup,
+  error,
   onFocusUrl,
   onOpenSettings,
   library,
   onOpenRecent,
 }: {
   setup: CrawlSetup;
+  error?: string | null;
   onFocusUrl: () => void;
   onOpenSettings: () => void;
   /** Recent and unsaved crawls (spec 006 US4). */
@@ -252,6 +254,13 @@ export function StartState({
               : "Add your URLs, then press Start. Only the URLs in the list are crawled."}
           </p>
         </div>
+
+        {/* A crawl file that could not be opened (Open crawl…). */}
+        {error && (
+          <Notice kind="bad" role="alert" className="w-full max-w-md">
+            {error}
+          </Notice>
+        )}
 
         {mode === "spider" && setup.startUrl !== "" && <IssueList issues={urlIssues} />}
 
