@@ -133,7 +133,7 @@ A team runs SpiderLens in a build pipeline against a staging site and wants the 
 - **Pages not rendered** (outside rendering rules, render failed, render timed out, spec 014 FR-039): get static checks only, and the Accessibility tab shows why full checks did not run.
 - **Check time budget reached**: the page is marked "Check timed out" with the time spent; no partial violation list is stored for it, so counts are never silently incomplete; static results are kept.
 - **Very large pages** (tens of thousands of elements): the time budget applies; the number of elements stored per check and per page is capped; totals are always stored.
-- **Images, media and fonts blocked during rendering** (spec 014 FR-014 default): contrast over a background image cannot be decided and becomes "needs review"; layout measures depend on fonts, see FR-012.
+- **Images and fonts during rendering**: loaded when checks are on (FR-012); an image that fails to load leaves contrast over it undecided, stored as "needs review".
 - **Frames**: same-origin frames are checked as part of the page; cross-origin frames are recorded as "not checked" and the frame itself is still checked for a title.
 - **Shadow DOM**: open shadow roots are checked; closed ones cannot be reached and are not reported as clean.
 - **Bot challenge pages** (spec 014 FR-044): checks are not run on a page flagged as a possible bot challenge, so a challenge page's violations are not reported as the site's.
@@ -152,7 +152,7 @@ A team runs SpiderLens in a build pipeline against a staging site and wants the 
 - **FR-002**: "Full checks" MUST require the JavaScript rendering mode (spec 014). When rendering is off, the system MUST run static checks only, MUST say so before the crawl starts, and MUST NOT start a browser engine for accessibility.
 - **FR-003**: Users MUST be able to choose the WCAG target used to count violations: WCAG 2.0, 2.1 or 2.2, at level A, AA or AAA (default 2.2 AA), and whether "best practice" checks that are not tied to a WCAG success criterion are included (default included, shown separately).
 - **FR-004**: Users MUST be able to turn mobile usability checks on or off independently (default on whenever accessibility checks are on).
-- **FR-005**: Users MUST be able to set the time budget for full checks on one page, from 1 to 30 seconds (default 5 seconds), separate from the maximum render time of spec 014.
+- **FR-005**: Users MUST be able to set the time budget for all in-page checks of one page (accessibility and mobile together), from 1 to 30 seconds (default 5 seconds), separate from the maximum render time of spec 014. This budget is the page's total check allowance that the rendering stage enforces for every in-page check, including those of other features.
 
 #### Static checks
 
@@ -165,7 +165,7 @@ A team runs SpiderLens in a build pipeline against a staging site and wants the 
 - **FR-009**: Full checks MUST NOT be able to change what spec 014 stores for the page (rendered HTML, extracted values, links, screenshot): the rendered HTML and screenshot MUST be captured before the checks run or be unaffected by them.
 - **FR-010**: For each page and each check that fails, the system MUST store: the check's identifier, the user impact (critical, serious, moderate or minor), the WCAG success criteria and level it maps to, or "best practice", the number of failing elements, and for up to 20 elements per check (and up to 500 per page) a selector, an HTML excerpt of at most 300 characters, the check-specific data (for example measured and required contrast ratio), and the element's position and size on the page when known.
 - **FR-011**: Results the engine cannot decide MUST be stored as "needs review", separately from violations, with the same details, and MUST NOT count as violations or issues by default.
-- **FR-012**: When full checks or mobile checks are on, the rendering MUST load web fonts, because sizes and contrast depend on them, even when spec 014's default blocks fonts; images and media follow the spec 014 settings, and the resulting "needs review" results are expected.
+- **FR-012**: When full checks or mobile checks are on, the rendering MUST load web fonts and images, because sizes, layout and contrast depend on them, even when spec 014's default blocks them; media (video, audio) follow the spec 014 settings. Images and fonts still go through spec 014's host limits, robots.txt rules and resource cache.
 - **FR-013**: When the time budget (FR-005) is reached, the system MUST stop the checks for that page, record "Check timed out" with the time spent, store no partial list of violations, and continue with the next page.
 - **FR-014**: Pages flagged by spec 014 as a possible bot challenge MUST NOT be checked and MUST be recorded "Not checked: possible bot challenge".
 
