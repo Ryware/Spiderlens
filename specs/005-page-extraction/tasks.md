@@ -35,7 +35,7 @@
 
 ## Phase 5: Fixtures and end-to-end tests
 
-- [ ] T018 [US1-US6] `test-fixtures`: extraction site serving one page per acceptance scenario (headers included, a PDF with X-Robots-Tag and Link canonical, a meta refresh, a truncated body, windows-1252 without charset); `tests/extraction.rs` crawls it and checks stored values through `page_data()`
+- [x] T018 [US1-US6] `test-fixtures`: extraction site serving one page per acceptance scenario (headers included, a PDF with X-Robots-Tag and Link canonical, a meta refresh, a truncated body, windows-1252 without charset); `tests/extraction.rs` crawls it and checks stored values through `page_data()`
 - [ ] T019 [US4] Malformed corpus of at least 50 pages + `scripts/browser-golden.mjs` (Chromium via Playwright) + committed `golden.json`; test asserts at least 98% agreement (SC-002, plan D8)
 - [ ] T020 [US6] Raw HTML byte-identical for sampled pages and average stored size at most 30% (SC-005)
 

@@ -215,7 +215,15 @@ pub struct PageInput<'a> {
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
-    let encoding = crate::title::detect_encoding(input.charset, input.body);
+    let declared = crate::title::declared_encoding(input.charset, input.body);
+    let encoding = match declared {
+        Some(enc) => enc,
+        // Undeclared and not valid UTF-8: legacy pages of this kind are
+        // almost always windows-1252, which is what browsers in Western
+        // locales fall back to. A sequence cut by truncation does not count.
+        None if !utf8_or_cut(input.body, input.truncated) => encoding_rs::WINDOWS_1252,
+        None => encoding_rs::UTF_8,
+    };
     if looks_binary(input.body) {
         return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
     }
@@ -225,6 +233,15 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
     data
+}
+
+/// Whether `body` is valid UTF-8, allowing a sequence cut off at the end
+/// when the body was truncated.
+fn utf8_or_cut(body: &[u8], truncated: bool) -> bool {
+    match std::str::from_utf8(body) {
+        Ok(_) => true,
+        Err(e) => truncated && e.error_len().is_none(),
+    }
 }
 
 /// Like [`extract_page`], but a panic inside the parser becomes an error

@@ -22,20 +22,24 @@ pub fn is_html(content_type: Option<&str>, body_start: &[u8]) -> bool {
 /// Picks the encoding: byte order mark, then the HTTP header charset, then a
 /// `<meta>` declaration in the first 1024 bytes, then UTF-8.
 pub fn detect_encoding(header_charset: Option<&str>, body: &[u8]) -> &'static Encoding {
+    declared_encoding(header_charset, body).unwrap_or(UTF_8)
+}
+
+/// The encoding the response declares (byte order mark, HTTP header charset
+/// or `<meta>` in the first 1024 bytes), if any.
+pub fn declared_encoding(header_charset: Option<&str>, body: &[u8]) -> Option<&'static Encoding> {
     if let Some((enc, _)) = Encoding::for_bom(body) {
-        return enc;
+        return Some(enc);
     }
     if let Some(enc) = header_charset.and_then(|l| Encoding::for_label(l.trim().as_bytes())) {
-        return enc;
+        return Some(enc);
     }
-    if let Some(enc) = meta_charset(&body[..body.len().min(1024)]) {
-        // A page cannot declare UTF-16 in a meta tag it parsed as ASCII.
-        if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
-            return UTF_8;
-        }
-        return enc;
+    let enc = meta_charset(&body[..body.len().min(1024)])?;
+    // A page cannot declare UTF-16 in a meta tag it parsed as ASCII.
+    if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+        return Some(UTF_8);
     }
-    UTF_8
+    Some(enc)
 }
 
 /// Finds `charset=` inside a `<meta ...>` tag. Covers both

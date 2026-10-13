@@ -245,6 +245,22 @@ fn us4_3_windows_1252_from_meta() {
 }
 
 #[test]
+fn undeclared_legacy_bytes_fall_back_to_windows_1252() {
+    let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode("<title>Café crème</title>");
+    let d = page_bytes("https://e.test/", None, &bytes, false);
+    assert_eq!(d.title(), Some("Café crème"));
+    assert_eq!(d.encoding, "windows-1252");
+    assert!(!d.encoding_errors);
+}
+
+#[test]
+fn utf8_cut_by_truncation_stays_utf8() {
+    let body = "<title>Shalom שלום</title>".as_bytes();
+    let d = page_bytes("https://e.test/", None, &body[..body.len() - 9], true);
+    assert_eq!(d.encoding, "UTF-8");
+}
+
+#[test]
 fn us4_4_invalid_bytes_are_replaced_and_flagged() {
     let d = page_bytes(
         "https://e.test/",
