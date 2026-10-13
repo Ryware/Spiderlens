@@ -2,3 +2,6 @@
 node_modules/
 ui/dist/
 app/src-tauri/gen/
+ui/test-results/
+ui/playwright-report/
+ui/coverage/
