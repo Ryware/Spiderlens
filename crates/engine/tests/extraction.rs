@@ -56,8 +56,10 @@ impl Done {
 }
 
 async fn crawl(site: &Site, start: &str, edit: impl FnOnce(&mut CrawlConfig)) -> Done {
-    let mut c = CrawlConfig::default();
-    c.speed = SpeedSettings::FAST;
+    let mut c = CrawlConfig {
+        speed: SpeedSettings::FAST,
+        ..CrawlConfig::default()
+    };
     edit(&mut c);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.spiderlens");
