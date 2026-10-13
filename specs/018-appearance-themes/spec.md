@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft, waiting for the owner's approval of the spec and of the palette set
+**Status**: Approved (2026-10-13, all six palettes kept)
 
 **Input**: User description: "I want the same UI changes + Select multiple ui color palette selection (this palette can sit in settings) investigate what's needed in order to implement it and what are the color lead in 2026/7". A screen recording of the Decim admin was attached. It shows a theme control in the header: a button with a sun or moon icon opens a popover holding a vertical slider. The slider track runs from white at the top to black at the bottom, with six named stops (Light, Soft, Island, Dark, Deep, Midnight), each with its own icon. Dragging the thumb snaps to a stop and re-themes the whole app live, and the header icon follows the chosen stop. Island keeps a dark frame and sidebar around light content.
 
@@ -61,7 +61,7 @@ Today Appearance can follow the system light or dark mode. With six steps, a use
 **Acceptance Scenarios**:
 
 1. **Given** a new installation, **When** the app opens, **Then** Follow system is on, mapped to Light and Dark, which looks exactly as the app does today.
-2. **Given** Follow system is on, **When** the user moves the toolbar slider to a step, **Then** that step becomes the system's light or dark choice for the matching side, and Follow system stays on.
+2. **Given** Follow system is on, **When** the user picks a step of the tone the system shows now, **Then** that step becomes the system's choice for that side and Follow system stays on; **When** they pick a step of the other tone, **Then** Follow system turns off and that step is used, because it would not show otherwise.
 3. **Given** Follow system is on with Soft and Deep, **When** the operating system switches between light and dark, **Then** the window switches between Soft and Deep without a restart.
 
 ---
@@ -111,7 +111,7 @@ Some users like dark chrome but read tables better on a light background. In the
 
 - **FR-008**: The app MUST offer these accent palettes: Teal (default), Cobalt, Lavender, Orchid, Celery and Cloud, with the values in research.md R4 unless changed at approval.
 - **FR-009**: Each palette MUST define the accent tokens of spec 017 (accent, hover, label on accent, accent text, soft fill, selection) once for the light steps and once for the dark steps, and MAY tint the neutral tokens towards its hue, by no more than the chroma the current neutrals use.
-- **FR-010**: The four meaning colours MUST NOT change with the palette. Every palette with visible hue MUST sit at least 25 degrees of OKLCH hue away from every meaning colour's hue, so an accent is never mistaken for a status.
+- **FR-010**: The four meaning colours MUST NOT change with the palette. Every palette with visible hue MUST sit at least 20 degrees of OKLCH hue away from every meaning colour's hue (the approved dark teal is 23 degrees from the 2xx green), so an accent is never mistaken for a status.
 - **FR-011**: Palettes MUST be listed in data in one place, so adding one is a token block plus one list entry, with no component changes.
 
 **Settings and persistence**
