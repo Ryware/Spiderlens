@@ -11,8 +11,9 @@ import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "storage";
 
 export interface Category {
   id: CategoryId;
@@ -21,6 +22,8 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
+  /** A setting of this computer, not part of the crawl profile (spec 019 FR-025). */
+  app?: boolean;
 }
 
 export const categories: Category[] = [
@@ -32,6 +35,13 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "storage",
+    title: "Storage",
+    description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
 ];
 
 export const issuesFor = (setup: CrawlSetup, c: Category) => c.prefixes.flatMap((p) => issuesAt(setup.issues, p));
@@ -42,6 +52,7 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 }
 
 export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: CrawlSetup; transport: Transport }): ReactNode {
+  if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
