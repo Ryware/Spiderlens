@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/config", "crates/engine", "crates/results", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
+members = ["crates/config", "crates/engine", "crates/results", "crates/render", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
 # `cargo test` without --workspace skips the desktop app, which needs
 # webview system libraries. CI always uses --workspace.
-default-members = ["crates/config", "crates/engine", "crates/results", "crates/cli", "crates/test-fixtures"]
+default-members = ["crates/config", "crates/engine", "crates/results", "crates/render", "crates/cli", "crates/test-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,6 +17,7 @@ authors = ["Ryware"]
 spiderlens-config = { path = "crates/config" }
 spiderlens-engine = { path = "crates/engine" }
 spiderlens-results = { path = "crates/results" }
+spiderlens-render = { path = "crates/render" }
 spiderlens-test-fixtures = { path = "crates/test-fixtures" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli"] }
@@ -52,6 +53,7 @@ rcgen = "0.13"
 assert_cmd = "2"
 predicates = "3"
 jsonschema = { version = "0.33", default-features = false }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

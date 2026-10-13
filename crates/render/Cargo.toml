@@ -1,0 +1,43 @@
+[package]
+name = "spiderlens-render"
+description = "Headless Chromium rendering for SpiderLens (spec 014). Knows nothing about crawls or the UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Builds the T001 spike (examples/spike.rs), which compares two CDP clients.
+# Never enabled by the app, the CLI or CI.
+spike = [
+    "dep:cdp_oxide",
+    "dep:cdp_chromey",
+    "dep:reqwest",
+    "dep:sysinfo",
+    "dep:base64",
+    "dep:tokio",
+]
+
+[dependencies]
+url.workspace = true
+futures-util.workspace = true
+
+# Spike only. Both crates name their library `chromiumoxide`, so they are
+# renamed here.
+cdp_oxide = { package = "chromiumoxide", version = "0.9.1", default-features = false, optional = true }
+cdp_chromey = { package = "chromey", version = "2.58", default-features = false, optional = true }
+reqwest = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+spiderlens-test-fixtures.workspace = true
+
+[[example]]
+name = "spike"
+required-features = ["spike"]
+
+[lints]
+workspace = true
