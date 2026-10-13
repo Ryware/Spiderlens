@@ -20,6 +20,7 @@ zstd.workspace = true
 xxhash-rust.workspace = true
 encoding_rs.workspace = true
 rusqlite.workspace = true
+fs4.workspace = true
 quick-xml.workspace = true
 flate2.workspace = true
 thiserror.workspace = true
