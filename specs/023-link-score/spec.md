@@ -112,7 +112,7 @@ A developer runs crawls from a script and wants the scores too. The command-line
 - **Start URL and List mode**: the start URL gets no special treatment beyond its links. In List mode, the score is computed over the links between the listed URLs; with no links between them, every URL has the same score and the result says so.
 - **Tiny crawls**: a crawl with one internal URL gives it the top score; a crawl with no internal HTML pages shows no scores and explains why.
 - **Very large crawls**: a crawl of 1,000,000 URLs with 50,000,000 links is analysed within the memory and time limits in the success criteria, without loading the whole crawl into memory.
-- **Older crawl files**: files made before this feature open with the Link Score column shown as "not calculated" and offer Run Crawl Analysis; running it on a file that opens read-only (newer format, spec 006) is not offered.
+- **Older crawl files**: files made before this feature open with the Link Score column shown as "not calculated" and offer Run Crawl Analysis. On a file that opens read-only (newer format, spec 006), the analysis can still run for viewing, but its results are not saved to the file and the user is told so.
 - **Saved crawl opened elsewhere**: scores are stored in the crawl file, so a shared file shows the same scores without recalculation.
 - **Crawl depth meaning**: crawl depth is the fewest link steps from the start URL (or 0 for each URL in List mode and for seeds from sitemaps, as defined in spec 003), as already stored by the crawl. This feature shows it; it does not recompute it.
 
@@ -140,13 +140,13 @@ A developer runs crawls from a script and wants the scores too. The command-line
 - **FR-010**: The system MUST add a Links tab listing internal HTML pages with the default columns Address, Link Score, Crawl depth, Unique inlinks, Unique followed inlinks, Unique outlinks and Indexability, and the filters All, Crawl depth 4 or more, One followed inlink, No followed inlinks, No internal outlinks, Nofollow internal outlinks; each filter shows its count, and the tab supports sort, search, columns, copy and export as defined in spec 007.
 - **FR-011**: The Links tab MUST appear in the sidebar with the other result tabs and its count, and the start URL MUST be excluded from the No followed inlinks filter.
 
-**Crawl Analysis step**
+**Crawl Analysis step** (shared with spec 009, which owns it)
 
 - **FR-012**: Crawl Analysis MUST run only when no crawl is fetching in the same file, MUST start automatically when a crawl finishes unless turned off in Settings (on by default), and MUST be available as a manual action (toolbar or command palette, and the "not calculated" state of the column).
 - **FR-013**: Crawl Analysis MUST show its progress and current phase in the status bar, MUST be cancellable within 1 second, and MUST store its results only when it completes, so a cancelled or failed run leaves the previous results (if any) untouched.
 - **FR-014**: Crawl Analysis MUST record with its results the time it ran, the app version, whether the crawl was complete at that time, whether position weighting was on and its weights, the position rules used, and the number of URLs and links analysed; the detail of an out-of-date or incomplete-crawl result MUST be visible to the user.
-- **FR-015**: Crawl Analysis results MUST be stored in the crawl file, so a reopened or shared file shows them without recalculation; adding them to the file MUST follow the storage rules of spec 006 (additive change, older files keep opening).
-- **FR-016**: Crawl Analysis MUST be the one place for post-crawl calculations over the whole crawl, so later features that need such a pass (for example orphan pages in spec 011 or near duplicates in spec 020) can add a phase to it instead of a step of their own.
+- **FR-015**: Crawl Analysis results MUST be stored in the crawl file, so a reopened or shared file shows them without recalculation; adding them to the file MUST follow the storage rules of spec 006 (additive change, older files keep opening). On a read-only file, results are computed for viewing only and not saved.
+- **FR-016**: Link Score, the counts in FR-006 and link positions MUST be delivered as passes of the shared Crawl Analysis step defined by the issue rules engine (spec 009 plan, decision D12), not as a step of their own; the Link Score pass runs after the orphan pages pass of spec 011 when that pass exists. FR-012 to FR-015 describe what the user sees of that shared step for this feature.
 
 **Rules and other features**
 

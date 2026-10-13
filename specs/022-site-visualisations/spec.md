@@ -206,6 +206,7 @@ Timings are measured on the reference machine shared by every SpiderLens spec (s
 ## Assumptions
 
 - **Where the data comes from**: crawl depth, discovery source and links are already stored by specs 003 and 005; Link Score and inlink counts come from spec 023. Without spec 023, views fall back to stored inlink counts and uniform sizes, so this feature can ship on its own.
+- **Precomputation**: any whole-crawl precomputation a view needs (for example tree parents and folder counts) runs as a pass of the shared Crawl Analysis step owned by spec 009, never as a step of its own.
 - **Rendering locally**: all drawing happens inside the app with no network access; nothing is sent anywhere (constitution II).
 - **Budgets**: default node budgets (5,000 and 20,000) reflect what stays readable and smooth on the reference machine; they are a setting, with upper limits so the app cannot be made unusable.
 - **Determinism**: force-directed layouts start from a fixed seed derived from the crawl, so the same crawl gives the same picture and desktop and CLI exports match.
