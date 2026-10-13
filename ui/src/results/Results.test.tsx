@@ -168,3 +168,25 @@ test("open_crawl_file_browses_its_results", async () => {
   await waitFor(() => expect(screen.getByRole("region", { name: "Internal" })).toBeTruthy());
   await waitFor(() => expect(rows().length).toBeGreaterThan(0));
 });
+
+test("live_refresh_never_blanks_the_rows_on_screen", async () => {
+  const t = fakeTransport();
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect((screen.getByRole("button", { name: /Start$/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: /Start$/ }));
+  await screen.findByRole("button", { name: /Pause/ });
+  fireEvent.click(screen.getByRole("button", { name: "Internal" }));
+  act(() => t.results.ready());
+  await waitFor(() => expect(rows().length).toBeGreaterThan(2));
+  const filled = () => rows().every((r) => r.getAttribute("data-id") !== null && within(r).getAllByRole("gridcell")[0].textContent !== "");
+  expect(filled()).toBe(true);
+  // Every refresh while the crawl runs rebuilds the view; the rows on screen
+  // must stay filled through it, not drop to empty placeholders.
+  act(() => t.results.add(fakeUrls(2).map((u, i) => ({ ...u, id: 100 + i, url: `https://example.com/zz-${i}` }))));
+  await waitFor(() => expect(rowCount()).toContain("32 URLs"), { timeout: 3000 });
+  expect(filled()).toBe(true);
+  act(() => t.results.add(fakeUrls(1).map((u) => ({ ...u, id: 200, url: "https://example.com/zz-late" }))));
+  await waitFor(() => expect(rowCount()).toContain("33 URLs"), { timeout: 3000 });
+  expect(filled()).toBe(true);
+});
