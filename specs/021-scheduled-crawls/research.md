@@ -39,6 +39,10 @@ Weaknesses and how the plan covers them:
 
 One file per user, `schedules.json` in the app config directory next to the profiles store (spec 002), written atomically; run history in a small SQLite file in the same directory, since it grows and is queried by schedule. The OS registration only carries `spiderlens schedule run <id>`; the schedule itself is never duplicated in the OS entry, so app and CLI see one source of truth (FR-029).
 
+## Credentials
+
+The run is a process of the logged-in user, so it can read the same OS keychain entries the app wrote for integrations (spec 024): macOS Keychain, Windows Credential Manager, Linux Secret Service, through one keyring crate shared with 024. Environment variables override for CLI and CI use. On Linux without a Secret Service (headless), the keychain is unavailable and only environment variables work; the run records the integration step as failed with that reason.
+
 ## Notifications
 
 The run is a command-line process. On macOS and Linux it posts through the desktop notification service; on Windows through a toast with the app's id. Clicking opens `spiderlens://schedule/<id>/run/<n>` in the app. Exact crates go in the plan.

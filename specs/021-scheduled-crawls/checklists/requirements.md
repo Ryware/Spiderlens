@@ -32,5 +32,5 @@
 ## Notes
 
 - Validation pass 1 (2026-10-13): all items pass. The OS scheduler choice (launchd, Task Scheduler, systemd timers) is in research.md for the plan, not in the spec.
-- Constitution check: Principle II holds (OS facilities only, no server); Principle III holds (FR-028, FR-029: the run is the command line); Principle IV: scheduled runs use the same respectful defaults (FR-010); Principle V: every run ends with a status and reason (FR-018, SC-007); secrets never stored (FR-006).
+- Constitution check: Principle II holds (OS facilities only, no server); Principle III holds (FR-028, FR-029: the run is the command line); Principle IV: scheduled runs use the same respectful defaults (FR-010); Principle V: every run ends with a status and reason (FR-018, SC-007); values that are never stored refused (FR-006), integration credentials only from the OS keychain or env vars (FR-006a).
 - Depends on 002 (profiles, validation), 006 (crawl files, recent list, disk reserve), 007 (CSV export); optional steps on 010 and 012; retention handed to 019.

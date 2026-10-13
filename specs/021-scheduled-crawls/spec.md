@@ -6,7 +6,7 @@
 
 **Status**: Draft (waiting for the owner's approval)
 
-**Input**: Owner approval of the feature-gap report (row 10, "Scheduling: recurring crawls with automatic exports", 2026-10-13), with the brief: define recurring crawls (profile, start URL, interval or cron-like schedule), run them without the app window open where the operating system allows, save each run as its own crawl file named by date, optionally run exports or the end-of-crawl report and the comparison against the previous run afterwards, with a schedule list and run history in the app and the command line. Desktop only, no servers, secrets never stored.
+**Input**: Owner approval of the feature-gap report (row 10, "Scheduling: recurring crawls with automatic exports", 2026-10-13), with the brief: define recurring crawls (profile, start URL, interval or cron-like schedule), run them without the app window open where the operating system allows, save each run as its own crawl file named by date, optionally run exports or the end-of-crawl report and the comparison against the previous run afterwards, with a schedule list and run history in the app and the command line. Desktop only, no servers, secrets never stored in SpiderLens files.
 
 **Research**: [research.md](research.md) compares the ways to run a crawl while the app is closed and recommends using each operating system's own scheduler.
 
@@ -98,7 +98,8 @@ The user updates SpiderLens, or moves the app to another folder, and expects exi
 
 ### Edge Cases
 
-- The schedule's configuration includes a secret value (for example a marked-secret header): the schedule cannot be created; the app explains that secrets are never stored, so an unattended run could not supply it (spec 002 FR-038).
+- The schedule's configuration includes a value that is never stored (a marked-secret header, spec 002 FR-038, or a site password or login cookie, spec 025): the schedule cannot be created; the app explains that an unattended run could not supply it.
+- The schedule uses an integration (spec 024) whose key or token is not in the operating system keychain, or was removed with Forget: the run still crawls, the integration step is recorded as Failed: credentials missing, and with "Problems only" the user is told.
 - The computer is asleep at the scheduled time: the run happens on wake as a missed run (User Story 2, scenario 3). Waking the computer to run is out of scope.
 - The user is logged out: no run happens; on next login the missed-run rule applies.
 - Daylight saving time: a time that does not exist that day runs at the first valid minute after it; a time that occurs twice runs once.
@@ -122,7 +123,8 @@ The user updates SpiderLens, or moves the app to another folder, and expects exi
 - **FR-003**: A schedule MUST keep its own copy of the configuration at the time it is created or updated. Later changes to the source profile MUST NOT change the schedule; the editor MUST show when the source profile differs and offer Update from profile.
 - **FR-004**: Frequencies MUST include: every N hours (1 to 24), daily at a time, weekly on chosen days at a time, monthly on a day of the month (1 to 28, or last day) at a time, and an advanced expression in the standard five-field cron format. Times MUST be in the computer's local time zone.
 - **FR-005**: The editor MUST show the next five run times for the chosen frequency, and MUST refuse a frequency that would never run or runs more often than once per hour.
-- **FR-006**: The system MUST refuse to save a schedule whose configuration is invalid (spec 002 FR-007) or needs a secret value, explaining which setting is the cause.
+- **FR-006**: The system MUST refuse to save a schedule whose configuration is invalid (spec 002 FR-007) or needs a value that is never stored (marked-secret headers, site passwords, login cookies), explaining which setting is the cause.
+- **FR-006a**: Integration API keys and OAuth tokens (spec 024) MUST be read at run time from the operating system keychain of the logged-in user, never from the schedule, the crawl file, the run history or logs. On the command line, an environment variable named by spec 024 MUST override the keychain value for that run. A missing credential MUST fail only the steps that need it (FR-023).
 - **FR-007**: Users MUST be able to edit, duplicate, enable, disable, delete and Run now any schedule. Deleting a schedule MUST NOT delete its crawl files; it MUST remove its operating system registration.
 - **FR-008**: Users MUST be able to choose per schedule whether a missed run is caught up (default on) and the notification level: Always, Problems only (default), Never.
 
@@ -186,7 +188,7 @@ The user updates SpiderLens, or moves the app to another folder, and expects exi
 
 - Runs happen only while the user is logged in. Running while logged out would need the user's password stored in the operating system and is out of scope.
 - The computer is not woken to run; missed runs are caught up instead.
-- Secrets are never stored (constitution, spec 002 FR-038, spec 006 FR-034), so schedules needing secrets are refused. If a later spec (025 authentication) introduces storage in the operating system keychain, this spec is revised to allow it.
+- Integration keys and OAuth tokens live in the operating system keychain (owner's decision 2026-10-13, spec 024); scheduled runs read them from there. Site passwords, login cookies (025) and marked-secret headers stay unstored (spec 002 FR-038, spec 006 FR-034), so schedules needing them are refused.
 - Retention of scheduled run files (for example keep the last N runs) belongs to spec 019. Until it lands, scheduled runs are kept like any saved crawl. Spec 019 is asked to add a per-schedule "keep the last N runs" rule.
 - Comparison (012) and the report (010) are defined by their own specs; this spec only says when they run and where their output goes.
 - Desktop only. No server, no remote triggering, no sharing schedules between computers.
