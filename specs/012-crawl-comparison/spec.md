@@ -195,6 +195,7 @@ A user compares two crawls of a large e-commerce site with a million URLs each. 
 - **FR-022**: The Issues view MUST list every rule of the catalogue (009) with previous and current affected counts, change, newly affected, fixed and gone counts, grouped by priority as in 009, and each count MUST open exactly those URLs with their evidence on each side.
 - **FR-023**: Both crawls MUST be evaluated with the same rule set version (the app's current one) and the same issue settings; by default the current crawl's issue settings, with the option to choose the previous crawl's settings or the app's current settings. The view MUST state the rule set version and settings used.
 - **FR-024**: Evaluating issues for a comparison MUST NOT write issue results into either crawl file; results that are already stored in a file with the same rule set version and settings MAY be reused.
+- **FR-024a**: Every figure that comes from the post-crawl analysis of a crawl (issues from 009, and later the health score from 010, Link Score and similar computed figures) MUST be compared only when both sides were computed with the same analysis versions (each analysis step's version and, for the health score, its formula version). The comparison MUST use a file's stored analysis results when they are current, and when they are missing or stale for either file it MUST compute them into temporary storage first, never into the file (spec 006 read-only access). The comparison MUST state the versions it used.
 - **FR-025**: A rule that cannot run on either crawl (009 FR-010) MUST be shown as "not comparable" with the reason.
 - **FR-026**: The view MUST offer "only regressions" (issues with newly affected URLs) and "only improvements" (issues with fixed URLs) filters.
 
@@ -233,6 +234,7 @@ A user compares two crawls of a large e-commerce site with a million URLs each. 
 - **Mapping rule**: an ordered find-and-replace rule (plain text or regular expression) applied to previous URLs before matching.
 - **Filter delta**: for one tab filter, the previous and current counts and the New, Added, Removed and Missing URL sets.
 - **Element change**: for one tracked element and one matched page, the previous and current values and, for numbers, the difference.
+- **Analysis results**: figures computed after a crawl from its stored data (issues, scores), each with the version of the analysis step that produced it; compared only at equal versions.
 - **Issue delta**: for one rule, the previous and current affected counts and the newly affected, fixed and gone URL sets, with the rule set version and settings used.
 - **Comparison settings**: mapping rules, tracked elements and thresholds, and the issue settings choice; savable as a file shared by the app and the command line.
 
