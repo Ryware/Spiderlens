@@ -198,14 +198,25 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         inlinks: 1,
         outlinks: 0,
         images: 0,
-        unavailable: { headings: "Not collected yet: arrives with page extraction." },
+        size: 2048,
+        response_ms: 120,
+        indexability: "Indexable",
+        headers: [
+          ["content-type", "text/html"],
+          ["x-robots-tag", "noarchive"],
+        ],
+        headings: 2,
+        html_stored: true,
+        unavailable: { attempts: "Request attempts are not recorded in this crawl yet." },
       };
       return d;
     },
     urlList: async (_p, id, kind, from) =>
       kind === "inlinks"
-        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: null }].filter(() => id !== -1), unavailable: null }
-        : { total: 0, from, rows: [], unavailable: kind === "headings" ? "Not collected yet." : null },
+        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false }].filter(() => id !== -1), headings: [], unavailable: null }
+        : kind === "headings"
+          ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
+          : { total: 0, from, rows: [], headings: [], unavailable: null },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;
       const cols = columns.map((c) => v.tab.columns.findIndex((x) => x.id === c));

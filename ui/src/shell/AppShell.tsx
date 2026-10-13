@@ -3,7 +3,7 @@ import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { SettingsSheet } from "../settings/SettingsSheet";
-import type { CategoryId } from "../settings/categories";
+import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
 import { resultTabs, Sidebar } from "./Sidebar";
@@ -141,12 +141,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "mode-list", title: "Switch to List mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "list" })) },
       { id: "speed-polite", title: "Speed: Polite", group: "Crawl", run: () => setup.presets && setup.set((c) => ({ ...c, speed: setup.presets!.polite })) },
       { id: "speed-fast", title: "Speed: Fast (sites you control)", group: "Crawl", run: () => setup.presets && setup.set((c) => ({ ...c, speed: setup.presets!.fast })) },
-      ...["limits", "scope", "identity", "speed", "robots", "network"].map((id) => ({
-        id: `settings-${id}`,
-        title: `Settings: ${id === "robots" ? "robots.txt" : id === "network" ? "Network and retries" : id[0].toUpperCase() + id.slice(1)}`,
-        group: "Go to" as const,
-        run: () => openSettings(id as CategoryId),
-      })),
+      ...categories
+        .filter((c) => !c.listOnly)
+        .map((c) => ({
+          id: `settings-${c.id}`,
+          title: `Settings: ${c.title}`,
+          group: "Go to" as const,
+          run: () => openSettings(c.id),
+        })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
       ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },

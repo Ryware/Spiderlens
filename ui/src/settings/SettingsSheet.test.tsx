@@ -199,3 +199,17 @@ test("scope_tester_explains_each_url_with_the_current_settings", async () => {
   expect(within(excluded).getByText("Excluded by rule")).toBeTruthy();
   expect(within(excluded).getByText("/skip/")).toBeTruthy();
 });
+
+test("store_html_setting_reaches_the_crawl", async () => {
+  const t = await setup();
+  await openSettings("Page data");
+  const toggle = screen.getByRole("switch", { name: "Store page HTML" });
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.extraction).toEqual({ store_html: false });
+});

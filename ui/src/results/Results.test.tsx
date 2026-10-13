@@ -95,8 +95,14 @@ test("keyboard_moves_the_selection_and_feeds_the_detail_pane", async () => {
   expect(rows()[1].getAttribute("aria-selected")).toBe("true");
   const details = screen.getByRole("complementary", { name: "Details" });
   await waitFor(() => expect(within(details).getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-1"));
-  expect(within(details).getByText("Headings.")).toBeTruthy();
+  expect(within(details).getByText("Indexable")).toBeTruthy();
+  expect(within(details).getByText("2.0 KB")).toBeTruthy();
+  expect(within(details).getByText("x-robots-tag")).toBeTruthy();
   await waitFor(() => expect(within(details).getByText("https://example.com/")).toBeTruthy());
+  expect(within(details).getByText("Home")).toBeTruthy();
+  fireEvent.click(within(details).getByRole("radio", { name: "Headings 2" }));
+  expect(await within(details).findByText("Section one")).toBeTruthy();
+  expect(within(details).getByText("H2")).toBeTruthy();
 });
 
 test("export_shows_progress_then_where_the_file_went", async () => {

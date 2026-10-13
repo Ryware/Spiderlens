@@ -48,6 +48,7 @@ export function cellTone(kind: ValueKind, v: JsonValue): CellTone {
     if (v.startsWith("Failed")) return "bad";
     if (v.startsWith("Blocked")) return "warn";
   }
+  if (kind === "text" && typeof v === "string" && v.startsWith("Non-indexable")) return "warn";
   return null;
 }
 
@@ -58,8 +59,8 @@ export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" |
 /** Why a column or filter has no data in this file. */
 export const needReason: Record<Need, string> = {
   base: "",
-  extraction: "Not collected yet: page content extraction arrives with spec 005.",
+  extraction: "Not collected: this crawl file was made before SpiderLens read page content.",
   attempts: "Not collected yet: retry attempts are recorded from spec 004.",
-  timing: "Not collected yet: response size and time are recorded from spec 005.",
+  timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
 };

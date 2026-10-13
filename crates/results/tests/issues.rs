@@ -319,9 +319,12 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     assert_eq!(d.status, Some(404));
     assert_eq!(d.status_text.as_deref(), Some("Not Found"));
     assert!(
-        d.unavailable.contains_key("headings"),
-        "headings wait for extraction"
+        d.unavailable.keys().all(|k| k == "attempts"),
+        "{:?}",
+        d.unavailable
     );
+    assert_eq!(d.indexability.as_deref(), Some("Non-indexable: client error"));
+    assert!(d.headers.iter().any(|(k, _)| k == "content-type"));
 
     // US3-3: outlinks of the home page, with targets' states.
     let home = id_of(&mut r, "/");
@@ -330,6 +333,8 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     assert!(out.rows.iter().any(|l| l.final_state == "Blocked by robots.txt"));
     let imgs = r.list(home, ListKind::Images, 0, 100).unwrap();
     assert_eq!(imgs.total, 1);
+    // Anchor text comes with each link.
+    assert!(out.rows.iter().any(|l| l.text.as_deref() == Some("x")));
 }
 
 #[tokio::test]
@@ -396,6 +401,14 @@ async fn us4_export_matches_view_and_cancel_leaves_nothing() {
 #[tokio::test]
 async fn unavailable_filters_are_refused_with_a_reason() {
     let c = crawl().await;
+    // A crawl file from before page extraction lists no data features.
+    let conn = rusqlite::Connection::open(&c.path).unwrap();
+    conn.execute(
+        "DELETE FROM meta WHERE key IN ('data_features', 'extraction_version')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
     let mut r = Reader::open(&c.path).unwrap();
     let err = r
         .open_view(&q("meta-description", "missing"), 10)
