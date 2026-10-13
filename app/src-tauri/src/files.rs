@@ -37,7 +37,10 @@ impl State {
     }
 
     pub fn is_unsaved(&self, path: &Path) -> bool {
-        match (path.parent().map(Path::canonicalize), self.unsaved_dir.canonicalize()) {
+        match (
+            path.parent().map(Path::canonicalize),
+            self.unsaved_dir.canonicalize(),
+        ) {
             (Some(Ok(p)), Ok(d)) => p == d,
             _ => path.parent() == Some(self.unsaved_dir.as_path()),
         }
@@ -169,7 +172,9 @@ pub async fn crawl_info(app: AppHandle, path: PathBuf) -> Cmd<serde_json::Value>
 pub async fn crawl_save_as(app: AppHandle, path: PathBuf, dest: PathBuf) -> Cmd<PathBuf> {
     let running = app.state::<crate::crawl::State>().save_as_running(&path, &dest);
     let saved = match running {
-        Some(wait) => wait.await.map_err(|_| "The crawl stopped before it could be saved.".to_string())??,
+        Some(wait) => wait
+            .await
+            .map_err(|_| "The crawl stopped before it could be saved.".to_string())??,
         None => {
             let (p, d) = (path.clone(), dest.clone());
             blocking(move || file::save_as(&p, &d).map(|()| d).map_err(|e| e.to_string())).await?
@@ -232,7 +237,9 @@ pub async fn unsaved_list(app: AppHandle) -> Cmd<Unsaved> {
                 continue;
             }
             let urls = recent.iter().find(|e| e.path == path).map(|e| e.urls);
-            let Some(e) = entry_from_file(&path, urls) else { continue };
+            let Some(e) = entry_from_file(&path, urls) else {
+                continue;
+            };
             size_bytes.insert(path.clone(), file::file_size(&path));
             entries.push(row(&state, e));
         }
@@ -310,6 +317,7 @@ pub fn pending_open(state: tauri::State<'_, State>) -> Vec<PathBuf> {
 
 /// A file to open from the OS (double-click, file association): sent to the
 /// window, and kept for `pending_open` in case it is not listening yet.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn open_from_os(app: &AppHandle, path: PathBuf) {
     if app.emit("open-file", path.clone()).is_err() {
         app.state::<State>().add_pending(path);

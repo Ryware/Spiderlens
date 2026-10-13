@@ -137,7 +137,12 @@ mod tests {
         assert_eq!(list.len(), RECENT_LIMIT);
         assert_eq!(list[0].path, PathBuf::from("/c/20.spiderlens"));
         assert_eq!(list[1].path, PathBuf::from("/c/24.spiderlens"));
-        assert_eq!(list.iter().filter(|e| e.path == Path::new("/c/20.spiderlens")).count(), 1);
+        assert_eq!(
+            list.iter()
+                .filter(|e| e.path == Path::new("/c/20.spiderlens"))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -151,7 +156,9 @@ mod tests {
         s.remove(&file).unwrap();
         assert!(file.exists(), "removing an entry never deletes the crawl");
         assert_eq!(s.list().len(), 1);
-        let moved = s.relocate(Path::new("/c/a.spiderlens"), Path::new("/d/a.spiderlens")).unwrap();
+        let moved = s
+            .relocate(Path::new("/c/a.spiderlens"), Path::new("/d/a.spiderlens"))
+            .unwrap();
         assert_eq!(moved.unwrap().path, PathBuf::from("/d/a.spiderlens"));
         assert_eq!(s.list()[0].path, PathBuf::from("/d/a.spiderlens"));
     }
