@@ -10,6 +10,9 @@ declare global {
   }
 }
 
+// The Desktop Chrome device reports a Windows user agent, so the app listens
+// for Ctrl shortcuts on every OS, the macOS runner included.
+
 const errors: string[] = [];
 
 test.beforeEach(async ({ page }) => {
@@ -73,7 +76,7 @@ test("crawl_from_the_keyboard_and_watch_it_finish", async ({ page }) => {
 });
 
 test("command_palette_runs_commands_by_keyboard", async ({ page }) => {
-  await page.keyboard.press("ControlOrMeta+K");
+  await page.keyboard.press("Control+K");
   const input = page.getByPlaceholder("Type a command or a tab name");
   await expect(input).toBeFocused();
   await page.keyboard.type("about");
@@ -84,7 +87,7 @@ test("command_palette_runs_commands_by_keyboard", async ({ page }) => {
 });
 
 test("settings_sheet_fits_the_window_and_closes_with_escape", async ({ page }) => {
-  await page.keyboard.press("ControlOrMeta+Comma");
+  await page.keyboard.press("Control+Comma");
   const nav = page.getByRole("navigation", { name: "Settings categories" });
   await expect(nav).toBeVisible();
   const dialog = page.getByRole("dialog");
@@ -111,7 +114,7 @@ test("narrow_window_collapses_details_then_sidebar", async ({ page }) => {
 test("themes_change_the_real_colors", async ({ page }) => {
   const bg = () => page.evaluate(() => getComputedStyle(document.querySelector("main")!).backgroundColor);
   const palette = async (cmd: string) => {
-    await page.keyboard.press("ControlOrMeta+K");
+    await page.keyboard.press("Control+K");
     await page.keyboard.type(cmd);
     await page.keyboard.press("Enter");
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
@@ -178,7 +181,7 @@ test("shift_click_and_copy_from_the_keyboard", async ({ page }) => {
   await grid.getByRole("row").nth(1).click();
   await grid.getByRole("row").nth(5).click({ modifiers: ["Shift"] });
   await expect(page.getByTestId("row-count")).toHaveText("5,000 URLs · 5 selected");
-  await page.keyboard.press("ControlOrMeta+C");
+  await page.keyboard.press("Control+C");
   await expect(page.getByText("Copied 5 rows.")).toBeVisible();
   const copied = await page.evaluate(() => window.spiderlens.results.copied[0].split("\n").length);
   expect(copied).toBe(6);
@@ -187,7 +190,7 @@ test("shift_click_and_copy_from_the_keyboard", async ({ page }) => {
 // Known bug: closing the palette drops focus to the page instead of where it
 // was, so the next keystrokes go nowhere. Settings and About get this right.
 test.fail("closing_the_palette_returns_focus_to_where_it_was", async ({ page }) => {
-  await page.keyboard.press("ControlOrMeta+K");
+  await page.keyboard.press("Control+K");
   await expect(page.getByPlaceholder("Type a command or a tab name")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
@@ -195,7 +198,7 @@ test.fail("closing_the_palette_returns_focus_to_where_it_was", async ({ page }) 
 });
 
 test("closing_settings_returns_focus_to_where_it_was", async ({ page }) => {
-  await page.keyboard.press("ControlOrMeta+Comma");
+  await page.keyboard.press("Control+Comma");
   await expect(page.getByRole("navigation", { name: "Settings categories" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Start URL")).toBeFocused();
