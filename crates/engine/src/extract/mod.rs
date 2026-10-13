@@ -2,6 +2,7 @@
 //! (plan D1). Everything here is a pure function of the response: bytes and
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
+pub mod agents;
 pub mod body;
 pub mod directives;
 mod link_header;
@@ -13,6 +14,7 @@ use serde::Serialize;
 use url::Url;
 
 use crate::crawl::LinkKind;
+pub use agents::AgentData;
 pub use directives::{Directive, DirectiveSource};
 
 /// Where a reference was declared.
@@ -133,6 +135,8 @@ pub struct StructuredBlock {
 pub struct HeaderFacts {
     pub directives: Vec<Directive>,
     pub refs: Vec<Ref>,
+    /// Markdown alternates and service links (spec 016).
+    pub agent_links: Vec<agents::AgentLink>,
 }
 
 /// Everything extracted from one HTML page.
@@ -160,6 +164,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// Forms, actions and agent links (spec 016).
+    pub agents: AgentData,
 }
 
 impl PageData {
@@ -195,6 +201,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            agents: AgentData::default(),
         }
     }
 }
@@ -276,6 +283,7 @@ pub fn header_facts(x_robots_tag: &[String], link: &[String]) -> HeaderFacts {
             .flat_map(|v| directives::parse_header(v))
             .collect(),
         refs: link.iter().flat_map(|v| link_header::parse(v)).collect(),
+        agent_links: link.iter().flat_map(|v| link_header::parse_agent(v)).collect(),
     }
 }
 

@@ -14,6 +14,7 @@ use scraper::node::Element;
 use scraper::{Html, HtmlTreeSink, Node};
 use url::Url;
 
+use super::agents::{AgentCtx, Collector};
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
 use super::text::{collapse, hash, word_count};
@@ -65,6 +66,7 @@ struct Ctx {
     in_body: bool,
     noscript: bool,
     in_item: bool,
+    agent: AgentCtx,
 }
 
 /// Text being collected for an element that is still open.
@@ -89,6 +91,7 @@ struct Walker<'p> {
     visible: String,
     anchor: Option<Open>,
     heading: Option<Open>,
+    agents: Collector,
 }
 
 pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> PageData {
@@ -101,6 +104,7 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> Pag
         visible: String::new(),
         anchor: None,
         heading: None,
+        agents: Collector::default(),
     };
     w.data.no_content = false;
     w.data.partial = cut;
@@ -131,6 +135,7 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> Pag
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
+    w.data.agents = w.agents.finish(&doc);
     w.data
 }
 
@@ -238,6 +243,9 @@ impl Walker<'_> {
             return;
         }
         let name = e.name.local.clone();
+        if name != local_name!("template") {
+            ctx.agent = self.agents.enter(node, e, ctx.agent);
+        }
         let inline = is_inline(&name);
         if !inline {
             self.separate();

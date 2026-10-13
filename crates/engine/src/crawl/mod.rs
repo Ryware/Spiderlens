@@ -22,7 +22,7 @@ pub use runner::{
     RunCommand, SitemapSummary, Upgrade, default_file_name, host_key,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
-pub use store::{CrawlStore, UrlRow};
+pub use store::{AgentSource, CrawlStore, UrlRow};
 
 /// The scope tester (spec 003 FR-016): what the crawler would do with each
 /// of `inputs` if the start page linked to it. With `check_robots`, each

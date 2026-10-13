@@ -485,9 +485,9 @@ impl Crawler {
         store.set_meta(
             "data_features",
             if config.extraction.store_html {
-                "extraction,timing,raw_html"
+                "extraction,timing,raw_html,agents"
             } else {
-                "extraction,timing"
+                "extraction,timing,agents"
             },
         )?;
 
@@ -1747,6 +1747,7 @@ impl Run {
                             data: p.data.as_ref().ok(),
                             extract_error: p.data.as_ref().err().map(String::as_str),
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+                            header_agent_links: &o.header_facts.agent_links,
                         },
                     )?;
                     p.data.as_ref().map_or(0, |d| d.directives.len())
