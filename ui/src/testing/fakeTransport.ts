@@ -154,6 +154,21 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
     },
     testPatterns: async (_i, _e, samples) =>
       samples.filter(Boolean).map((input) => ({ input, url: input, decision: { decision: "crawl", include: null }, pattern: null, error: null })),
+    scopeTest: async (config, _start, urls) =>
+      urls
+        .filter((u) => u.trim())
+        .map((input) => {
+          const excluded = config.scope.exclude.find((p) => input.includes(p));
+          return {
+            input,
+            url: input,
+            would_crawl: !excluded,
+            reason: excluded ? "excluded" : null,
+            label: excluded ? "Excluded by rule" : null,
+            detail: excluded ?? null,
+            robots_checked: false,
+          };
+        }),
     parseListText: async (text) => {
       const lines = text.split("\n").filter((l) => l.trim());
       const unique = new Set(lines.filter((l) => !l.includes("!")));

@@ -126,7 +126,7 @@ A user crawling a large site with over one million URLs expects the results inte
 
 - **FR-001**: The system MUST show, for the open crawl, its state (running, paused, stopping, finished, stopped) and, when paused because of a problem, the reason.
 - **FR-002**: The system MUST show the number of URLs crawled (reached a final state), queued (discovered and waiting, including those waiting to retry), and errors (final state is an error class), refreshed at least once per second while a crawl runs.
-- **FR-003**: The system MUST show the current crawl speed in URLs per second as a rolling average over the last 10 seconds, and the average speed for the whole crawl once it ends.
+- **FR-003**: The system MUST show the current crawl speed in URLs per second as a rolling average over the last 5 seconds (the same window as spec 008; amended 2026-10-13 with plan D13), and the average speed for the whole crawl once it ends.
 - **FR-004**: The system MUST show elapsed crawl time that counts only active crawling, excludes paused time, and accumulates across pause, quit, reopen and resume of the same crawl.
 - **FR-005**: When a crawl ends or is stopped, the system MUST show a completeness summary: URLs crawled, URLs failed broken down by error class, URLs blocked by robots.txt or by configuration, and URLs not crawled because a limit (such as max URLs or max depth) was reached.
 - **FR-006**: Progress counts at the end of a crawl MUST equal the number of URLs stored in each corresponding final state.

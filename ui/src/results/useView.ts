@@ -13,6 +13,8 @@ import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 
 export const PAGE = 100;
+/** Pages kept in memory per view; the farthest from the newest are dropped. */
+export const MAX_PAGES = 30;
 
 export type Row = JsonValue[];
 
@@ -116,6 +118,10 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
             if (now.view !== view || now.version !== version || r.version !== version) return;
             pending.current.delete(p);
             pages.current.set(p, r.rows);
+            if (pages.current.size > MAX_PAGES) {
+              const far = [...pages.current.keys()].sort((a, b) => Math.abs(b - p) - Math.abs(a - p));
+              for (const k of far.slice(0, pages.current.size - MAX_PAGES)) pages.current.delete(k);
+            }
             setTick((t) => t + 1);
           },
           () => pending.current.delete(p),

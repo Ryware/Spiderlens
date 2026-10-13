@@ -45,7 +45,7 @@ without UI work. See D3 and the delivery table at the end.
 
 | Principle | How this plan complies |
 |---|---|
-| I Spec before code | Spec approved 2026-10-11. One spec wording change is proposed (D13, FR-003 window 10 s → 5 s) and needs approval before code. |
+| I Spec before code | Spec approved 2026-10-11. One spec wording change (D13, FR-003 window 10 s → 5 s) was approved with the plan on 2026-10-13 and applied to spec.md. |
 | II Local-first | Everything reads the local crawl file. |
 | III Engine independent of shell | Tabs, filters, queries, detail and CSV export live in a new library crate `spiderlens-results`. The desktop app and the CLI (`spiderlens export`, FR-031) call the same functions. |
 | IV Respectful crawling | Not affected. |

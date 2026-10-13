@@ -41,6 +41,7 @@ fn main() {
             settings::config_presets,
             settings::config_validate,
             settings::patterns_test,
+            settings::scope_test,
             settings::list_parse_text,
             settings::list_parse_file,
             settings::profiles_list,
