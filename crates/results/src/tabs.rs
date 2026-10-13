@@ -641,7 +641,7 @@ fn build() -> Vec<TabDef> {
                 filter(
                     "redirect_chain",
                     "Redirect loop or chain over limit",
-                    "(u.error_class = 'redirect_loop' OR u.id IN (SELECT r.id FROM temp.redirects r WHERE r.is_loop OR r.hops > redirect_limit()))",
+                    "(u.error_class IN ('redirect_loop', 'redirect_problem') OR u.id IN (SELECT r.id FROM temp.redirects r WHERE r.is_loop OR r.hops > redirect_limit()))",
                 )
                 .reads(Derived::Redirects),
                 filter("client_error", "Client error (4xx)", "u.error_class IS NULL AND u.status BETWEEN 400 AND 499"),
