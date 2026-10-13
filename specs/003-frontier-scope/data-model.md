@@ -44,7 +44,10 @@ The spec 002 form `"keep"` is still read.
 **UrlState**: `queued`, `in_flight`, `crawled`, `not_crawled`.
 
 An external URL is `not_crawled` with reason `external`; when it was
-status-checked, its response fields are filled in too.
+status-checked, its response fields are filled in too. A check that redirects
+stores `redirect_to`, and the target is queued as another check. A check
+robots.txt does not allow is never fetched: `reason_detail` says why
+("Blocked by robots.txt") and `robots_rule` holds the matching rule.
 
 ## Crawl file (SQLite, `*.spiderlens`)
 
@@ -109,7 +112,7 @@ Index `urls_queue(depth, queue_seq) WHERE state = 'queued'`.
 | Column | Type | Notes |
 | --- | --- | --- |
 | host_key | text PK | |
-| robots_status | text | `ok`, `not_found`, `unavailable`, `ignored` |
+| robots_status | text | `ok`, `not_found`, `forbidden` (401/403; rules treated as none, like `not_found`), `unavailable`, `ignored` |
 | robots_http_status | integer | |
 | robots_error | text | |
 | crawl_delay_ms | integer | from the matching group |
@@ -128,7 +131,7 @@ Index `urls_queue(depth, queue_seq) WHERE state = 'queued'`.
 
 **CrawlSummary** (CLI `--json`, see contracts/crawl-summary.schema.json):
 `status`, `discovered`, `crawled`, `not_crawled` (total), `by_reason` (map of
-reason to count), `external_checked`, `url_limit_reached`, `robots` (per host
+reason to count), `external_checked`, `external_blocked`, `url_limit_reached`, `robots` (per host
 outcome), `sitemaps` (with errors), `warnings`.
 
 Invariant (SC-004): `crawled + not_crawled == discovered` when status is

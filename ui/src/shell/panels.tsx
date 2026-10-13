@@ -74,7 +74,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
   );
 }
 
-const robotsOutcome = { ok: "Read", not_found: "None found", unavailable: "Unavailable", ignored: "Ignored", pending: "Not read yet" } as const;
+const robotsOutcome = { ok: "Read", not_found: "None found", forbidden: "Forbidden (treated as none)", unavailable: "Unavailable", ignored: "Ignored", pending: "Not read yet" } as const;
 
 /** One large figure in the overview. */
 function Figure({ label, value, tone }: { label: string; value: string; tone?: "bad" }) {

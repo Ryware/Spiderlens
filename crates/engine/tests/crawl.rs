@@ -814,3 +814,58 @@ async fn retry_after_holds_the_site() {
         "next request after {waited:?}, Retry-After asked for 2 s"
     );
 }
+
+#[tokio::test]
+async fn external_checks_record_robots_blocks_redirects_and_forbidden_robots() {
+    let site = SiteBuilder::new()
+        .page(
+            E,
+            "/",
+            "",
+            &[
+                "{base:blocked.test}/profile",
+                "{base:moved.test}/",
+                "{base:closed.test}/",
+            ],
+        )
+        .robots("blocked.test", "User-agent: *\nDisallow: /\n")
+        .page("blocked.test", "/profile", "", &[])
+        .redirect("moved.test", "/", 308, "/us/en")
+        .page("moved.test", "/us/en", "", &[])
+        .robots_status("closed.test", 403)
+        .page("closed.test", "/", "", &[])
+        .start();
+    let d = crawl(&site, "/", fast).await;
+
+    // A check robots.txt disallows is not fetched, but says why.
+    let blocked = d.row(&site.url("blocked.test", "/profile"));
+    assert_eq!(blocked.reason, Some(NotCrawledReason::External));
+    assert_eq!(blocked.status, None);
+    assert_eq!(blocked.reason_detail.as_deref(), Some("Blocked by robots.txt"));
+    assert_eq!(blocked.robots_rule.as_deref(), Some("Disallow: /"));
+    assert_eq!(site.count("blocked.test", "/profile"), 0);
+    assert_eq!(d.summary.external_blocked, 1);
+
+    // An external redirect records its target, which is checked in turn.
+    let moved = d.row(&site.url("moved.test", "/"));
+    assert_eq!(moved.status, Some(308));
+    let target = d.row(&site.url("moved.test", "/us/en"));
+    assert_eq!(target.source, DiscoverySource::Redirect);
+    assert_eq!(
+        target.found_on.as_deref(),
+        Some(site.url("moved.test", "/").as_str())
+    );
+    assert_eq!(target.status, Some(200));
+    assert_eq!(site.count("moved.test", "/us/en"), 1);
+
+    // robots.txt answering 403 is labelled as such and allows everything.
+    let host = d
+        .summary
+        .hosts
+        .iter()
+        .find(|h| h.host.contains("//closed.test"))
+        .unwrap();
+    assert_eq!(host.robots, "forbidden");
+    assert_eq!(d.row(&site.url("closed.test", "/")).status, Some(200));
+    assert_eq!(d.summary.external_checked, 3);
+}

@@ -117,6 +117,8 @@ pub struct CrawlSummary {
     pub queued: u64,
     pub by_reason: BTreeMap<NotCrawledReason, u64>,
     pub external_checked: u64,
+    /// External checks skipped because robots.txt does not allow them.
+    pub external_blocked: u64,
     pub url_limit_reached: bool,
     pub hosts: Vec<HostSummary>,
     pub sitemaps: Vec<SitemapSummary>,
@@ -134,6 +136,7 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         by_state,
         by_reason,
         external_checked,
+        external_blocked,
     } = store.counts()?;
     let count = |s: UrlState| by_state.iter().find(|(x, _)| *x == s).map_or(0, |(_, n)| *n);
     let hosts = store
@@ -167,6 +170,7 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         queued: count(UrlState::Queued) + count(UrlState::InFlight),
         by_reason: by_reason.into_iter().collect(),
         external_checked,
+        external_blocked,
         url_limit_reached: store.meta("url_limit_reached")?.as_deref() == Some("true"),
         hosts,
         sitemaps,
@@ -828,7 +832,8 @@ impl Run {
     fn block(&mut self, e: QueueEntry, reason: NotCrawledReason, detail: String) -> Result<(), CrawlError> {
         self.window.remove(e.key());
         if e.check_only {
-            self.c.store.drop_check(e.id)?;
+            let rule = (reason == NotCrawledReason::BlockedByRobots).then_some(detail.as_str());
+            self.c.store.drop_check(e.id, reason, rule)?;
         } else {
             self.c.store.set_not_crawled(e.id, reason, Some(&detail))?;
             if e.source == DiscoverySource::Start {
@@ -1098,6 +1103,9 @@ impl Run {
                 let s = if warning.is_some() { "not_found" } else { "ok" };
                 (s, Some(*status), None, Some(text.clone()))
             }
+            RobotsFetch::NotFound {
+                status: s @ (401 | 403),
+            } => ("forbidden", Some(*s), None, None),
             RobotsFetch::NotFound { status } => ("not_found", Some(*status), None, None),
             RobotsFetch::ServerError { status } => (
                 "unavailable",
@@ -1168,9 +1176,9 @@ impl Run {
                 response.status = Some(o.status);
                 response.content_type = o.content_type;
                 let url = Url::parse(&entry.url).expect("stored URLs parse");
-                if let Some(loc) = o.location.as_deref()
-                    && !entry.check_only
-                {
+                // External checks record their redirect target too; it is
+                // queued as another check, so the chain ends where it lands.
+                if let Some(loc) = o.location.as_deref() {
                     let target = self.c.rules.normalize(&url, loc);
                     let mut seed = false;
                     if entry.source == DiscoverySource::Start
