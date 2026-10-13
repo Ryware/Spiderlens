@@ -84,6 +84,9 @@ pub struct Progress {
     /// floor that rises while discovery outpaces crawling. None while the
     /// speed is still unknown.
     pub eta_secs: Option<u64>,
+    /// Time spent crawling, pauses excluded, across every run of this crawl
+    /// file (spec 007 FR-004).
+    pub active_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +126,10 @@ pub struct CrawlSummary {
     pub hosts: Vec<HostSummary>,
     pub sitemaps: Vec<SitemapSummary>,
     pub warnings: Vec<String>,
+    /// Crawled URLs that failed, by error class (spec 007 FR-005).
+    pub failed_by_class: BTreeMap<String, u64>,
+    /// Time spent crawling, pauses excluded (spec 007 FR-004).
+    pub active_ms: u64,
 }
 
 impl CrawlSummary {
@@ -175,6 +182,8 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         hosts,
         sitemaps,
         warnings,
+        failed_by_class: store.error_classes()?.into_iter().collect(),
+        active_ms: store.meta("active_ms")?.and_then(|v| v.parse().ok()).unwrap_or(0),
     })
 }
 
@@ -479,6 +488,8 @@ struct Run {
     started_at: Instant,
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
+    /// Active crawl time of earlier runs of this file.
+    active_before_ms: u64,
 }
 
 impl Run {
@@ -519,6 +530,11 @@ impl Run {
             .find(|(s, _)| *s == UrlState::Crawled)
             .map_or(0, |(_, n)| *n);
         let errors = c.store.page_errors()?;
+        let active_before_ms = c
+            .store
+            .meta("active_ms")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
@@ -545,6 +561,7 @@ impl Run {
             finished: 0,
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
+            active_before_ms,
         })
     }
 
@@ -596,6 +613,7 @@ impl Run {
                 urls_per_sec,
                 avg_urls_per_sec,
                 eta_secs,
+                active_ms: self.active_ms(),
             }));
         }
     }
@@ -635,7 +653,17 @@ impl Run {
         Ok(())
     }
 
+    fn active_ms(&self) -> u64 {
+        self.active_before_ms + self.started_at.elapsed().as_millis() as u64
+    }
+
     fn commit(&mut self) -> Result<(), CrawlError> {
+        if self.write_tx.is_some() {
+            // Saved with every batch, so it survives a quit or a crash.
+            self.c
+                .store
+                .set_meta("active_ms", &self.active_ms().to_string())?;
+        }
         if self.write_tx.take().is_some() {
             self.c.store.commit()?;
         }

@@ -800,6 +800,15 @@ impl CrawlStore {
         Ok(out)
     }
 
+    /// Crawled URLs that failed, per error class.
+    pub fn error_classes(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT error_class, COUNT(*) FROM urls WHERE error_class IS NOT NULL GROUP BY error_class ORDER BY error_class",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// Crawled pages that failed or answered 4xx/5xx (read once on resume).
     pub fn page_errors(&self) -> Result<u64> {
         Ok(self.conn.query_row::<i64, _, _>(
