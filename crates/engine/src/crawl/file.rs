@@ -261,7 +261,11 @@ pub fn write_atomically(
     let partial = partial_path(dest);
     let _ = std::fs::remove_file(&partial);
     let result = write(&partial).and_then(|()| {
-        File::open(&partial)?.sync_all()?;
+        // Windows flushes only through a handle opened for writing.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&partial)?
+            .sync_all()?;
         std::fs::rename(&partial, dest)?;
         Ok(())
     });
