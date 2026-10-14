@@ -11,6 +11,7 @@ import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
+import type { PageHtml } from "./generated/PageHtml";
 import type { Refresh } from "./generated/Refresh";
 import type { RowPage } from "./generated/RowPage";
 import type { TabCounts } from "./generated/TabCounts";
@@ -305,6 +306,99 @@ export interface StorageStatus {
   low: boolean;
 }
 
+// Crawl data management (spec 019, contracts/desktop-commands.md).
+
+export interface CrawlBackup {
+  path: string;
+  format_version: number;
+  modified: string | null;
+  size_bytes: number;
+}
+
+/** One crawl in Manage crawls: file metadata only; the stored-HTML size comes from htmlSize. */
+export interface ManagedCrawl {
+  path: string;
+  name: string;
+  start_url: string | null;
+  status: string | null;
+  urls: number | null;
+  /** The crawl file and its helper files. */
+  size_bytes: number;
+  created: string | null;
+  last_used: string | null;
+  available: boolean;
+  /** Written by a newer SpiderLens. */
+  view_only: boolean;
+  backups: CrawlBackup[];
+  unsaved: boolean;
+  running: boolean;
+  in_recent: boolean;
+}
+
+export interface ManageList {
+  crawls: ManagedCrawl[];
+  /** Files in the unsaved-crawls folder that are not crawls; never removed automatically. */
+  other_files: { path: string; size_bytes: number }[];
+  totals: { all: number; unsaved: number; leftovers: number };
+  free_bytes: number | null;
+  unsaved_dir: string;
+}
+
+export interface HtmlSize {
+  bytes: number;
+  pages: number;
+}
+
+export interface DeleteReport {
+  deleted: string[];
+  skipped: { path: string; reason: string }[];
+  /** Not deleted: no trash there. Ask again before deleting permanently. */
+  trash_unavailable: string[];
+  freed_bytes: number;
+}
+
+export interface PurgeCheck {
+  html_bytes: number;
+  html_pages: number;
+  file_bytes: number;
+  new_size: number;
+  free_bytes: number | null;
+  can_compact: boolean;
+}
+
+export interface PurgeReport {
+  html_pages: number;
+  html_bytes: number;
+  freed_bytes: number;
+  compacted: boolean;
+}
+
+export interface StoragePrefs {
+  version: number;
+  /** null: unsaved crawls are never removed automatically. */
+  cleanup_days: number | null;
+  reserve_bytes: number;
+  first_cleanup_announced: string | null;
+  last_cleanup: string | null;
+}
+
+export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge";
+
+export interface CleanupRecord {
+  at: string;
+  path: string;
+  bytes: number;
+  reason: CleanupReason;
+}
+
+export interface CleanupReport {
+  removed: string[];
+  leftovers: number;
+  freed_bytes: number;
+  /** Named by the one-time notice: removed at a later start. */
+  announced: string[];
+}
+
 /** Speed and URL-limit changes allowed on resume (FR-011). */
 export interface ResumeChanges {
   speed?: SpeedSettings;
@@ -410,6 +504,22 @@ export interface Transport {
   onCrawlMoved(cb: (m: CrawlMoved) => void): Promise<() => void>;
   onAppQuitting(cb: (q: { pausing: boolean }) => void): Promise<() => void>;
   onCrawlsRecovered(cb: (entries: RecentEntry[]) => void): Promise<() => void>;
+  // Crawl data management (spec 019).
+  manageList(): Promise<ManageList>;
+  htmlSize(path: string): Promise<HtmlSize>;
+  revealPath(path: string): Promise<void>;
+  /** Moves crawls and their helper files to the trash. Never deletes permanently. */
+  crawlsDelete(paths: string[]): Promise<DeleteReport>;
+  /** Only after a second confirmation, for paths the trash refused. */
+  crawlsDeletePermanently(paths: string[]): Promise<DeleteReport>;
+  purgeHtmlCheck(path: string): Promise<PurgeCheck>;
+  purgeHtml(path: string, compact: boolean): Promise<PurgeReport>;
+  storagePrefs(): Promise<StoragePrefs>;
+  /** Rejects with a JSON array of Issue when a value is out of range. */
+  setStoragePrefs(prefs: StoragePrefs): Promise<StoragePrefs>;
+  cleanupHistory(): Promise<CleanupRecord[]>;
+  onCleanupDone(cb: (r: CleanupReport) => void): Promise<() => void>;
+  onCrawlsChanged(cb: () => void): Promise<() => void>;
   // Results (spec 007, contracts/desktop-commands.md).
   resultsTabs(): Promise<TabDef[]>;
   resultsOpen(path: string): Promise<{ features: Features }>;
@@ -424,6 +534,12 @@ export interface Transport {
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   /** `position` keeps only links at that position (spec 023 FR-024). */
   urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  /** The page's stored HTML, or why there is none. */
+  urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The tabs that list the URL unfiltered, in display order; empty when none does. */
+  urlTabs(path: string, id: number): Promise<string[]>;
+  /** Puts one value on the clipboard. */
+  copyText(text: string): Promise<void>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
@@ -514,6 +630,18 @@ export const tauriTransport: Transport = {
   onCrawlMoved: (cb) => listen<CrawlMoved>("crawl-moved", (e) => cb(e.payload)),
   onAppQuitting: (cb) => listen<{ pausing: boolean }>("app-quitting", (e) => cb(e.payload)),
   onCrawlsRecovered: (cb) => listen<RecentEntry[]>("crawls-recovered", (e) => cb(e.payload)),
+  manageList: () => invoke("crawls_manage_list"),
+  htmlSize: (path) => invoke("crawls_html_size", { path }),
+  revealPath: (path) => invoke("reveal_path", { path }),
+  crawlsDelete: (paths) => invoke("crawls_delete", { paths }),
+  crawlsDeletePermanently: (paths) => invoke("crawls_delete_permanently", { paths }),
+  purgeHtmlCheck: (path) => invoke("crawls_purge_html_check", { path }),
+  purgeHtml: (path, compact) => invoke("crawls_purge_html", { path, compact }),
+  storagePrefs: () => invoke("storage_prefs_get"),
+  setStoragePrefs: (prefs) => invoke("storage_prefs_set", { prefs }),
+  cleanupHistory: () => invoke("cleanup_history"),
+  onCleanupDone: (cb) => listen<CleanupReport>("cleanup-done", (e) => cb(e.payload)),
+  onCrawlsChanged: (cb) => listen("crawls-changed", () => cb()),
   resultsTabs: () => invoke("results_tabs"),
   resultsOpen: (path) => invoke("results_open", { path }),
   viewOpen: (path, query, count) => invoke("view_open", { path, query, count }),
@@ -525,6 +653,9 @@ export const tauriTransport: Transport = {
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlTabs: (path, id) => invoke("url_tabs", { path, id }),
+  copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
