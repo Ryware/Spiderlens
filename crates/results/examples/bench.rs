@@ -99,6 +99,7 @@ fn main() {
             &q("internal", "all", "", Some(("title", false))),
             &[],
             None,
+            None,
             &out,
             &cancel,
             &mut |_, _| {},

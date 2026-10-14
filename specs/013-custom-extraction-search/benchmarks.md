@@ -29,6 +29,12 @@ Three runs each, interleaved.
   `custom_values` (zstd JSON of the other values and up to 10 search
   matches in context per search).
 
+## Rerun from stored HTML, 100,000 pages (T020, SC-003)
+
+`spiderlens rules run CRAWL --rules bench-rules.json` on a crawl made with
+no rules: 14.6 s wall (target under 2 minutes), 28 s CPU, peak 60 MB, no
+requests sent.
+
 ## Cost per rule kind, one 3 KB bench page (T003, T032)
 
 `custom::tests::cost_by_kind` (ignored test, see its comment), µs per page

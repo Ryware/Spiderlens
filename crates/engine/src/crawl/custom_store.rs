@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value};
 use spiderlens_config::{CustomRules, Extractor, Search};
 
@@ -18,7 +18,8 @@ use crate::extract::body;
 const SLOT_BYTES: usize = 8;
 
 /// Created on first use: files without rules never get these tables.
-/// Moves into a `migrate.rs` step once spec 006 storage lands.
+/// Moves into a `migrate.rs` step when this feature merges (the step number
+/// is taken then).
 const CUSTOM_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS custom_rules (
     id INTEGER PRIMARY KEY,
@@ -92,6 +93,9 @@ pub struct StoredBody {
     pub packed: Vec<u8>,
 }
 
+/// By slot: stored values after the first, and an error message.
+pub type SlotValues = HashMap<u32, (Vec<String>, Option<String>)>;
+
 /// One page's results, unpacked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageCustom {
@@ -99,7 +103,7 @@ pub struct PageCustom {
     pub slots: Vec<(u32, u16, Option<String>)>,
     /// By slot: extractor values after the first (which is in `slots`),
     /// or every search match in context; and an error message.
-    pub values: HashMap<u32, (Vec<String>, Option<String>)>,
+    pub values: SlotValues,
 }
 
 impl PageCustom {
@@ -124,11 +128,7 @@ impl PageCustom {
 
 impl CrawlStore {
     pub fn has_custom_tables(&self) -> Result<bool> {
-        Ok(self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'custom_rules')",
-            [],
-            |r| r.get(0),
-        )?)
+        has_tables(&self.conn)
     }
 
     pub fn ensure_custom_schema(&self) -> Result<()> {
@@ -147,31 +147,7 @@ impl CrawlStore {
 
     /// The rules stored with this crawl, in display order.
     pub fn custom_rules(&self) -> Result<Vec<StoredRule>> {
-        if !self.has_custom_tables()? {
-            return Ok(Vec::new());
-        }
-        let mut stmt = self.conn.prepare(
-            "SELECT id, slot, kind, name, def_json, pos, last_run_at, run_pages, run_state
-             FROM custom_rules ORDER BY kind = 'search', pos, id",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(StoredRule {
-                id: r.get(0)?,
-                slot: r.get(1)?,
-                kind: if r.get::<_, String>(2)? == "search" {
-                    RuleKind::Search
-                } else {
-                    RuleKind::Extractor
-                },
-                name: r.get(3)?,
-                def_json: r.get(4)?,
-                pos: r.get(5)?,
-                last_run_at: r.get(6)?,
-                run_pages: r.get(7)?,
-                run_state: r.get(8)?,
-            })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        read_rules(&self.conn)
     }
 
     /// Stores the configured rules with the crawl and returns their slots.
@@ -323,7 +299,6 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Stores one page's rule outcomes during a crawl.
     /// Writes one page's results, encoded off the writer thread by
     /// [`encode_custom`].
     pub fn record_custom(&self, url_id: i64, encoded: &EncodedCustom) -> Result<()> {
@@ -363,46 +338,7 @@ impl CrawlStore {
 
     /// One page's stored rule results. None when the page has none.
     pub fn page_custom(&self, url_id: i64) -> Result<Option<PageCustom>> {
-        if !self.has_custom_tables()? {
-            return Ok(None);
-        }
-        let row: Option<(Vec<u8>, String)> = self
-            .conn
-            .prepare_cached("SELECT slots, firsts FROM custom_results WHERE url_id = ?1")?
-            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .optional()?;
-        let Some((packed, firsts)) = row else {
-            return Ok(None);
-        };
-        let firsts: Vec<Value> = serde_json::from_str(&firsts).unwrap_or_default();
-        let mut page = PageCustom::default();
-        for (i, chunk) in packed.chunks_exact(SLOT_BYTES).enumerate() {
-            let count = u32::from_le_bytes(chunk[0..4].try_into().expect("4 bytes"));
-            let f = u16::from_le_bytes(chunk[4..6].try_into().expect("2 bytes"));
-            let first = firsts.get(i).and_then(Value::as_str).map(str::to_string);
-            page.slots.push((count, f, first));
-        }
-        let data: Option<Vec<u8>> = self
-            .conn
-            .prepare_cached("SELECT data FROM custom_values WHERE url_id = ?1")?
-            .query_row([url_id], |r| r.get(0))
-            .optional()?;
-        if let Some(data) = data {
-            let json = zstd::stream::decode_all(data.as_slice())
-                .map_err(|e| StoreError::Format(format!("stored rule values are damaged: {e}")))?;
-            let map: Map<String, Value> = serde_json::from_slice(&json).unwrap_or_default();
-            for (k, v) in map {
-                if let Some(slot) = k.strip_prefix('e').and_then(|s| s.parse::<u32>().ok()) {
-                    page.values.entry(slot).or_default().1 = v.as_str().map(str::to_string);
-                } else if let Ok(slot) = k.parse::<u32>() {
-                    page.values.entry(slot).or_default().0 = v
-                        .as_array()
-                        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-                        .unwrap_or_default();
-                }
-            }
-        }
-        Ok(Some(page))
+        read_page_custom(&self.conn, url_id)
     }
 
     /// Pages that have stored HTML, in id order, after `after`.
@@ -458,6 +394,105 @@ impl CrawlStore {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?)
     }
+}
+
+/// Whether the file has the rule tables (a crawl that ever had rules).
+pub fn has_tables(conn: &Connection) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'custom_rules')",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+/// The values row of one page: by slot, extractor values after the first
+/// or search matches in context, and an error message.
+pub fn unpack_values(data: &[u8]) -> Result<SlotValues> {
+    let json = zstd::stream::decode_all(data)
+        .map_err(|e| StoreError::Format(format!("stored rule values are damaged: {e}")))?;
+    let map: Map<String, Value> = serde_json::from_slice(&json).unwrap_or_default();
+    let mut values = SlotValues::new();
+    for (k, v) in map {
+        if let Some(slot) = k.strip_prefix('e').and_then(|s| s.parse::<u32>().ok()) {
+            values.entry(slot).or_default().1 = v.as_str().map(str::to_string);
+        } else if let Ok(slot) = k.parse::<u32>() {
+            values.entry(slot).or_default().0 = v
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+        }
+    }
+    Ok(values)
+}
+
+/// Count and flags of one slot in a packed `custom_results.slots` value.
+pub fn unpack_slot(packed: &[u8], slot: usize) -> Option<(u32, u16)> {
+    let chunk = packed.get(slot * SLOT_BYTES..(slot + 1) * SLOT_BYTES)?;
+    Some((
+        u32::from_le_bytes(chunk[0..4].try_into().expect("4 bytes")),
+        u16::from_le_bytes(chunk[4..6].try_into().expect("2 bytes")),
+    ))
+}
+
+/// The rules stored with a crawl, in display order, through any
+/// connection (the results reader has its own).
+pub fn read_rules(conn: &Connection) -> Result<Vec<StoredRule>> {
+    if !has_tables(conn)? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, slot, kind, name, def_json, pos, last_run_at, run_pages, run_state
+             FROM custom_rules ORDER BY kind = 'search', pos, id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(StoredRule {
+            id: r.get(0)?,
+            slot: r.get(1)?,
+            kind: if r.get::<_, String>(2)? == "search" {
+                RuleKind::Search
+            } else {
+                RuleKind::Extractor
+            },
+            name: r.get(3)?,
+            def_json: r.get(4)?,
+            pos: r.get(5)?,
+            last_run_at: r.get(6)?,
+            run_pages: r.get(7)?,
+            run_state: r.get(8)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// One page's stored rule results through any connection. None when the
+/// page has none.
+pub fn read_page_custom(conn: &Connection, url_id: i64) -> Result<Option<PageCustom>> {
+    if !has_tables(conn)? {
+        return Ok(None);
+    }
+    let row: Option<(Vec<u8>, String)> = conn
+        .prepare_cached("SELECT slots, firsts FROM custom_results WHERE url_id = ?1")?
+        .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    let Some((packed, firsts)) = row else {
+        return Ok(None);
+    };
+    let firsts: Vec<Value> = serde_json::from_str(&firsts).unwrap_or_default();
+    let mut page = PageCustom::default();
+    for (i, chunk) in packed.chunks_exact(SLOT_BYTES).enumerate() {
+        let count = u32::from_le_bytes(chunk[0..4].try_into().expect("4 bytes"));
+        let f = u16::from_le_bytes(chunk[4..6].try_into().expect("2 bytes"));
+        let first = firsts.get(i).and_then(Value::as_str).map(str::to_string);
+        page.slots.push((count, f, first));
+    }
+    let data: Option<Vec<u8>> = conn
+        .prepare_cached("SELECT data FROM custom_values WHERE url_id = ?1")?
+        .query_row([url_id], |r| r.get(0))
+        .optional()?;
+    if let Some(data) = data {
+        page.values = unpack_values(&data)?;
+    }
+    Ok(Some(page))
 }
 
 /// One page's results as stored: the packed slots, the first values and

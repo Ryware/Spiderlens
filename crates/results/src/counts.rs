@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use ts_rs::TS;
 
+use crate::Result;
 use crate::reader::Reader;
-use crate::tabs::{self, Derived};
+use crate::tabs::Derived;
 use crate::view::UrlScope;
-use crate::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -25,7 +25,7 @@ pub struct FilterCounts {
 
 impl Reader {
     pub fn counts(&mut self, tab: &str, scope: UrlScope) -> Result<FilterCounts> {
-        let t = tabs::tab(tab).ok_or_else(|| Error::invalid(format!("unknown tab {tab:?}")))?;
+        let t = self.find_tab(tab)?;
         let available: Vec<_> = t.filters.iter().filter(|f| self.features.has(f.need)).collect();
         let derived: Vec<Derived> = available.iter().filter_map(|f| f.derived).collect();
         self.ensure_derived(derived)?;

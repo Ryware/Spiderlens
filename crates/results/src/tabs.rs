@@ -11,6 +11,8 @@
 //! `directives`, extended `links`), read through primary-key lookups so a
 //! column costs one index probe per row on screen.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -99,11 +101,13 @@ pub enum Derived {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct ColumnDef {
-    pub id: &'static str,
-    pub label: &'static str,
+    #[ts(type = "string")]
+    pub id: Cow<'static, str>,
+    #[ts(type = "string")]
+    pub label: Cow<'static, str>,
     #[serde(skip)]
     #[ts(skip)]
-    pub expr: &'static str,
+    pub expr: Cow<'static, str>,
     pub kind: ValueKind,
     pub width: u16,
     pub default_visible: bool,
@@ -111,16 +115,23 @@ pub struct ColumnDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// Sorted by this before the value (custom columns: numbers first,
+    /// numerically).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub sort_key: Option<Cow<'static, str>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct FilterDef {
-    pub id: &'static str,
-    pub label: &'static str,
+    #[ts(type = "string")]
+    pub id: Cow<'static, str>,
+    #[ts(type = "string")]
+    pub label: Cow<'static, str>,
     #[serde(skip)]
     #[ts(skip)]
-    pub cond: &'static str,
+    pub cond: Cow<'static, str>,
     pub need: Need,
     #[serde(skip)]
     #[ts(skip)]
@@ -130,15 +141,18 @@ pub struct FilterDef {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct TabDef {
-    pub id: &'static str,
-    pub title: &'static str,
+    #[ts(type = "string")]
+    pub id: Cow<'static, str>,
+    #[ts(type = "string")]
+    pub title: Cow<'static, str>,
     #[serde(skip)]
     #[ts(skip)]
-    pub eligible: &'static str,
+    pub eligible: Cow<'static, str>,
     pub columns: Vec<ColumnDef>,
     pub filters: Vec<FilterDef>,
     /// Searched besides Address (FR-016).
-    pub search_column: Option<&'static str>,
+    #[ts(type = "string | null")]
+    pub search_column: Option<Cow<'static, str>>,
     /// Offers the internal / external switch (Response codes).
     pub scoped: bool,
 }
@@ -184,14 +198,15 @@ const fn col(
     width: u16,
 ) -> ColumnDef {
     ColumnDef {
-        id,
-        label,
-        expr,
+        id: Cow::Borrowed(id),
+        label: Cow::Borrowed(label),
+        expr: Cow::Borrowed(expr),
         kind,
         width,
         default_visible: true,
         need: Need::Base,
         derived: None,
+        sort_key: None,
     }
 }
 
@@ -212,9 +227,9 @@ impl ColumnDef {
 
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     FilterDef {
-        id,
-        label,
-        cond,
+        id: Cow::Borrowed(id),
+        label: Cow::Borrowed(label),
+        cond: Cow::Borrowed(cond),
         need: Need::Base,
         derived: None,
     }
@@ -367,12 +382,12 @@ fn content_tab(
     let mut fs = vec![filter("all", "All", "1")];
     fs.extend(filters.into_iter().map(|f| f.needs(Need::Extraction)));
     TabDef {
-        id,
-        title,
-        eligible: HTML_OK,
+        id: Cow::Borrowed(id),
+        title: Cow::Borrowed(title),
+        eligible: Cow::Borrowed(HTML_OK),
         columns,
         filters: fs,
-        search_column: Some(search_column),
+        search_column: Some(Cow::Borrowed(search_column)),
         scoped: false,
     }
 }
@@ -535,13 +550,20 @@ pub fn tab(id: &str) -> Option<&'static TabDef> {
     tabs().iter().find(|t| t.id == id)
 }
 
+/// A fixed tab, or one of a file's custom tabs (spec 013).
+pub(crate) fn find(id: &str, custom: &[TabDef]) -> Option<Cow<'static, TabDef>> {
+    tab(id)
+        .map(Cow::Borrowed)
+        .or_else(|| custom.iter().find(|t| t.id == id).cloned().map(Cow::Owned))
+}
+
 fn build() -> Vec<TabDef> {
     use ValueKind::*;
     vec![
         TabDef {
-            id: "internal",
-            title: "Internal",
-            eligible: INTERNAL,
+            id: Cow::Borrowed("internal"),
+            title: Cow::Borrowed("Internal"),
+            eligible: Cow::Borrowed(INTERNAL),
             columns: vec![
                 c::ADDRESS,
                 c::CONTENT_TYPE,
@@ -565,13 +587,13 @@ fn build() -> Vec<TabDef> {
                 c::IN_SITEMAP,
             ],
             filters: TYPE_FILTERS.to_vec(),
-            search_column: Some("title"),
+            search_column: Some(Cow::Borrowed("title")),
             scoped: false,
         },
         TabDef {
-            id: "external",
-            title: "External",
-            eligible: EXTERNAL,
+            id: Cow::Borrowed("external"),
+            title: Cow::Borrowed("External"),
+            eligible: Cow::Borrowed(EXTERNAL),
             columns: vec![
                 c::ADDRESS,
                 c::CONTENT_TYPE,
@@ -592,9 +614,9 @@ fn build() -> Vec<TabDef> {
             scoped: false,
         },
         TabDef {
-            id: "response-codes",
-            title: "Response codes",
-            eligible: RESPONSES,
+            id: Cow::Borrowed("response-codes"),
+            title: Cow::Borrowed("Response codes"),
+            eligible: Cow::Borrowed(RESPONSES),
             columns: vec![
                 c::ADDRESS,
                 c::STATUS_CODE,
@@ -637,9 +659,9 @@ fn build() -> Vec<TabDef> {
             scoped: true,
         },
         TabDef {
-            id: "url",
-            title: "URL",
-            eligible: INTERNAL,
+            id: Cow::Borrowed("url"),
+            title: Cow::Borrowed("URL"),
+            eligible: Cow::Borrowed(INTERNAL),
             columns: vec![
                 c::ADDRESS,
                 col("length", "Length", "length(u.url)", Int, 80),
@@ -667,9 +689,9 @@ fn build() -> Vec<TabDef> {
             scoped: false,
         },
         TabDef {
-            id: "page-titles",
-            title: "Page titles",
-            eligible: HTML_OK,
+            id: Cow::Borrowed("page-titles"),
+            title: Cow::Borrowed("Page titles"),
+            eligible: Cow::Borrowed(HTML_OK),
             columns: vec![
                 c::ADDRESS,
                 c::TITLE,
@@ -714,7 +736,7 @@ fn build() -> Vec<TabDef> {
                 )
                 .needs(Need::Extraction),
             ],
-            search_column: Some("title"),
+            search_column: Some(Cow::Borrowed("title")),
             scoped: false,
         },
         content_tab(
@@ -762,10 +784,10 @@ fn build() -> Vec<TabDef> {
         heading_tab!("h1", "H1", Derived::OccH1),
         heading_tab!("h2", "H2", Derived::OccH2),
         TabDef {
-            id: "images",
-            title: "Images",
+            id: Cow::Borrowed("images"),
+            title: Cow::Borrowed("Images"),
             // Image URLs: found in img elements first, or answering with an image type.
-            eligible: "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')",
+            eligible: Cow::Borrowed("(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')"),
             columns: vec![
                 c::ADDRESS,
                 ext("alt", "Alt text", IMG_ALT, Text, 280),
@@ -795,7 +817,7 @@ fn build() -> Vec<TabDef> {
                     .needs(Need::Extraction),
                 filter("over_100kb", "Over 100 KB", "u.size_bytes > 102400").needs(Need::Timing),
             ],
-            search_column: Some("alt"),
+            search_column: Some(Cow::Borrowed("alt")),
             scoped: false,
         },
         content_tab(
@@ -893,15 +915,19 @@ mod tests {
     fn ids_are_unique_and_all_first() {
         let mut tab_ids = HashSet::new();
         for t in tabs() {
-            assert!(tab_ids.insert(t.id), "duplicate tab {}", t.id);
-            let cols: HashSet<_> = t.columns.iter().map(|c| c.id).collect();
+            assert!(tab_ids.insert(&t.id), "duplicate tab {}", t.id);
+            let cols: HashSet<_> = t.columns.iter().map(|c| &c.id).collect();
             assert_eq!(cols.len(), t.columns.len(), "duplicate column in {}", t.id);
-            let fs: HashSet<_> = t.filters.iter().map(|f| f.id).collect();
+            let fs: HashSet<_> = t.filters.iter().map(|f| &f.id).collect();
             assert_eq!(fs.len(), t.filters.len(), "duplicate filter in {}", t.id);
             assert_eq!(t.filters[0].id, "all");
             assert_eq!(t.columns[0].id, "address");
-            if let Some(s) = t.search_column {
-                assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
+            if let Some(s) = &t.search_column {
+                assert!(
+                    t.column(s.as_ref()).is_some(),
+                    "{} searches unknown column {s}",
+                    t.id
+                );
             }
         }
         assert_eq!(tab_ids.len(), 11);

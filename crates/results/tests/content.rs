@@ -397,12 +397,12 @@ async fn content_filters_list_exactly_the_seeded_pages() {
 
     // Every filter is available, and its count equals the rows it lists.
     for tab in tabs() {
-        let counts = r.counts(tab.id, UrlScope::All).unwrap();
+        let counts = r.counts(&tab.id, UrlScope::All).unwrap();
         for f in &tab.filters {
-            let n = counts.counts[f.id].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
+            let n = counts.counts[f.id.as_ref()].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
             assert_eq!(
                 n,
-                paths(&mut r, &c, &q(tab.id, f.id)).len() as u64,
+                paths(&mut r, &c, &q(&tab.id, &f.id)).len() as u64,
                 "{}/{}",
                 tab.id,
                 f.id
