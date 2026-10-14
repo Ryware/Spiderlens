@@ -99,6 +99,12 @@ pub(crate) fn is_blocked(job: &RenderJob, kind: ResourceKind, third_party: bool)
     }
 }
 
+/// The browser's own favicon request (resource type `Other`, never
+/// initiated by the page's scripts or markup loads we track).
+pub(crate) fn is_browser_favicon(url: &Url, kind: ResourceKind) -> bool {
+    kind == ResourceKind::Other && url.path().eq_ignore_ascii_case("/favicon.ico")
+}
+
 /// A fire-and-forget request (analytics hits): it never holds a page open
 /// when it goes to a third party (FR-010).
 pub(crate) fn is_beacon(method: &str, kind: ResourceKind) -> bool {
@@ -370,6 +376,16 @@ async fn render_in(
                         continue;
                     }
                 };
+                // The browser fetches the favicon on its own, at a time of its
+                // choosing; a search renderer never does, so it is neither
+                // fetched nor recorded (keeps the resource list deterministic).
+                if is_browser_favicon(&url, kind) {
+                    let page = page.clone();
+                    tasks.spawn(async move {
+                        let _ = page.execute(FailRequestParams::new(ev.request_id.clone(), ErrorReason::BlockedByClient)).await;
+                    });
+                    continue;
+                }
                 let third_party = !(job.internal_hosts)(&url);
                 let method = ev.request.method.clone();
                 let beacon = is_beacon(&method, kind);
@@ -671,6 +687,27 @@ mod tests {
             mobile: false,
         };
         RenderJob::new(Url::parse("http://js.test/").unwrap(), main, "UA".into(), w)
+    }
+
+    #[test]
+    fn only_the_browser_favicon_request_is_skipped() {
+        let u = |s: &str| Url::parse(s).unwrap();
+        assert!(is_browser_favicon(
+            &u("http://js.test/favicon.ico"),
+            ResourceKind::Other
+        ));
+        assert!(!is_browser_favicon(
+            &u("http://js.test/favicon.ico"),
+            ResourceKind::Image
+        ));
+        assert!(!is_browser_favicon(
+            &u("http://js.test/img/favicon.ico"),
+            ResourceKind::Other
+        ));
+        assert!(!is_browser_favicon(
+            &u("http://js.test/data.json"),
+            ResourceKind::Other
+        ));
     }
 
     #[test]
