@@ -356,3 +356,44 @@ fn sc_004_huge_page_is_extracted_in_time() {
     assert!(!d.partial);
     assert!(took < Duration::from_secs(10), "took {took:?}");
 }
+
+/// Constitution and spec 025 FR-026: cookie values set by the site never
+/// reach the crawl file; names and attributes stay.
+#[tokio::test]
+async fn set_cookie_values_are_not_stored() {
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &[])
+        .header(E, "/", "Set-Cookie", "sid=TOKEN-4f7a91; Path=/; Secure; HttpOnly")
+        .header(E, "/", "Set-Cookie", "theme=dark")
+        .start();
+    let done = crawl(&site, "/", |_| {}).await;
+    let r = done.report(&site, "/");
+    let cookies: Vec<&str> = r["headers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|h| h[0].as_str().unwrap().eq_ignore_ascii_case("set-cookie"))
+        .map(|h| h[1].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        cookies,
+        ["sid=[removed]; Path=/; Secure; HttpOnly", "theme=[removed]"]
+    );
+
+    drop(r);
+    let bytes = std::fs::read(&done.path).unwrap();
+    let found = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    assert!(!found(b"TOKEN-4f7a91"), "a cookie value reached the crawl file");
+    assert!(!found(b"theme=dark"));
+
+    // A file written before the rule, viewed only, shows no value either.
+    let conn = rusqlite::Connection::open(&done.path).unwrap();
+    conn.execute(
+        "UPDATE headers SET headers = ?1",
+        [r#"[["Set-Cookie","old=OLD-VALUE; Path=/"]]"#],
+    )
+    .unwrap();
+    drop(conn);
+    let r = done.report(&site, "/");
+    assert_eq!(r["headers"][0][1], "old=[removed]; Path=/");
+}

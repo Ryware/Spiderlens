@@ -92,6 +92,13 @@ pub struct UrlDetail {
     /// Link Score and link counts (spec 023); None for external URLs and
     /// while the crawl runs.
     pub link_metrics: Option<LinkMetrics>,
+    /// Requests made for this URL across the crawl, retries included
+    /// (spec 004 FR-020).
+    pub attempts: Option<u32>,
+    /// The error's sub-reason, such as "refused" or "expired" (FR-013).
+    pub error_reason: Option<String>,
+    /// The result came from "Retry failed URLs" (US5.3).
+    pub manual_retry: bool,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
@@ -231,9 +238,12 @@ impl Reader {
                     r.get(0)
                 })
                 .optional()?;
-            let headers = raw
+            let mut headers = raw
                 .and_then(|h| serde_json::from_str::<Vec<(String, String)>>(&h).ok())
                 .unwrap_or_default();
+            // Older files that are only viewed still hold cookie values
+            // (spec 025 FR-026).
+            spiderlens_engine::crawl::redact::scrub_pairs(&mut headers);
             (ix, headers)
         } else {
             (None, vec![])
@@ -246,6 +256,21 @@ impl Reader {
             )?
         } else {
             (None, None)
+        };
+        let (attempts, error_reason, manual_retry) = if self.features.has(Need::Attempts) {
+            self.conn.query_row(
+                "SELECT attempts, error_reason, manual_retry FROM urls WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get::<_, Option<bool>>(2)?.unwrap_or(false),
+                    ))
+                },
+            )?
+        } else {
+            (None, None, false)
         };
         let html_stored = self.features.has(Need::RawHtml)
             && self.conn.query_row(
@@ -335,6 +360,9 @@ impl Reader {
             headings,
             html_stored,
             link_metrics,
+            attempts,
+            error_reason,
+            manual_retry,
             unavailable,
         })
     }

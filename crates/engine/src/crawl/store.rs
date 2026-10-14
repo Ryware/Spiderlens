@@ -15,8 +15,9 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
-/// 2: page data extraction (spec 005, data-model.md).
-pub const FORMAT_VERSION: i64 = 2;
+/// 2: page data extraction (spec 005). 3 and later: the steps in
+/// [`super::migrate::STEPS`] (spec 006).
+pub const FORMAT_VERSION: i64 = super::migrate::LATEST;
 /// Written to `meta.extraction_version` when a crawl collects page data.
 pub const EXTRACTION_VERSION: &str = "1";
 
@@ -26,6 +27,11 @@ pub enum StoreError {
     Sql(#[from] rusqlite::Error),
     #[error("{0}")]
     Format(String),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    /// The file is damaged; part of it may be recoverable (FR-038).
+    #[error("{0}")]
+    Damaged(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -175,6 +181,13 @@ CREATE TABLE headers (
 );
 "#;
 
+/// URLs whose final state is a transient failure (spec 004 FR-030): what
+/// "Retry failed URLs" re-queues. Mirrors `FinalClass::is_transient`.
+const TRANSIENT_FAILURE: &str = "fetched_at IS NOT NULL AND state IN ('crawled', 'not_crawled') AND (
+    error_class IN ('dns_temporary', 'connection', 'timeout', 'host_unavailable')
+    OR (error_class = 'content_problem' AND error_reason = 'truncated')
+    OR (error_class IS NULL AND (status = 429 OR (status BETWEEN 500 AND 599 AND status NOT IN (501, 505)))))";
+
 /// The queue order key: depth first, then discovery order (FR-020).
 pub type QueueKey = (u32, i64);
 
@@ -187,6 +200,10 @@ pub struct QueueEntry {
     pub seq: i64,
     pub check_only: bool,
     pub source: DiscoverySource,
+    /// Requests made for this URL so far in the crawl (spec 004 FR-013).
+    pub attempts: u32,
+    /// Requests made in the current round (data-model.md).
+    pub round_attempts: u32,
 }
 
 impl QueueEntry {
@@ -266,6 +283,10 @@ pub struct Response {
     pub canonical: Option<String>,
     pub canonical_count: Option<u32>,
     pub canonical_conflict: Option<bool>,
+    /// Spec 004: total and current-round attempts, and the error sub-reason.
+    pub attempts: u32,
+    pub round_attempts: u32,
+    pub error_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +305,19 @@ pub struct SitemapRow {
     pub parent: Option<String>,
     pub url_count: i64,
     pub error: Option<String>,
+}
+
+/// (status, error class, error reason, count): one group of final outcomes.
+pub type Outcome = (Option<u16>, Option<String>, Option<String>, u64);
+
+/// One crawl log entry (spec 004 FR-035).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LogEntry {
+    pub at_ms: i64,
+    pub kind: String,
+    pub host: Option<String>,
+    pub url: Option<String>,
+    pub message: String,
 }
 
 /// One row of `spiderlens report`.
@@ -343,6 +377,8 @@ pub struct StateCounts {
     pub in_flight: u64,
     pub crawled: u64,
     pub not_crawled: u64,
+    /// Waiting to be retried (spec 004).
+    pub waiting: u64,
 }
 
 impl StateCounts {
@@ -350,6 +386,7 @@ impl StateCounts {
         match s {
             UrlState::Queued => &mut self.queued,
             UrlState::InFlight => &mut self.in_flight,
+            UrlState::Waiting => &mut self.waiting,
             UrlState::Crawled => &mut self.crawled,
             UrlState::NotCrawled => &mut self.not_crawled,
         }
@@ -412,6 +449,7 @@ impl CrawlStore {
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
         conn.execute_batch(SCHEMA)?;
+        super::migrate::apply_all(&conn)?;
         let store = Self {
             conn,
             next_seq: 1,
@@ -419,7 +457,6 @@ impl CrawlStore {
             checkpointer: None,
         };
         store.set_meta("format", FORMAT)?;
-        store.set_meta("format_version", &FORMAT_VERSION.to_string())?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
         store.set_meta("status", "running")?;
         Ok(store)
@@ -442,15 +479,10 @@ impl CrawlStore {
                 path.display()
             )));
         }
-        let version: i64 = conn
-            .query_row("SELECT value FROM meta WHERE key = 'format_version'", [], |r| {
-                r.get::<_, String>(0)
-            })?
-            .parse()
-            .unwrap_or(0);
+        let version = super::migrate::version(&conn)?;
         if version > FORMAT_VERSION {
             return Err(StoreError::Format(format!(
-                "{} was written by a newer SpiderLens (crawl format {version}); update SpiderLens to open it",
+                "{} was written by a newer SpiderLens (crawl format {version}); update SpiderLens to change it",
                 path.display()
             )));
         }
@@ -468,6 +500,127 @@ impl CrawlStore {
         }
         store.live.set(live);
         Ok(store)
+    }
+
+    /// Lets the write-ahead log start over (spec 008 T018). The background
+    /// checkpointer copies the log into the file but never quite reaches its
+    /// end while commits keep arriving, and SQLite only rewinds the log once
+    /// a checkpoint has caught up. Until then the log grows by every result
+    /// saved (3.6 GB at 250,000 pages) and so does its index, which is mapped
+    /// into memory. Run between transactions, this passive checkpoint copies
+    /// only the little the background thread has not, so the next commit
+    /// writes from the start of the log again. Never waits: when the
+    /// background thread is busy checkpointing, it is skipped.
+    pub fn catch_up_checkpoint(&self) {
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    }
+
+    /// Opens a crawl file for reading only: nothing is written, not even the
+    /// journal mode, so viewing never changes a file (spec 006 FR-036) and
+    /// read-only files and newer formats can be shown (FR-021, FR-037).
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = connect_read_only(path)?;
+        let format: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
+            .optional()
+            .map_err(|e| damaged(path, e))?;
+        if format.as_deref() != Some(FORMAT) {
+            return Err(StoreError::Format(format!(
+                "{} is not a SpiderLens crawl file",
+                path.display()
+            )));
+        }
+        let compat = super::migrate::read_compat(&conn)?;
+        if compat > FORMAT_VERSION {
+            return Err(StoreError::Format(format!(
+                "{} was written by a newer SpiderLens (crawl format {}); update SpiderLens to open it",
+                path.display(),
+                super::migrate::version(&conn)?
+            )));
+        }
+        let store = Self {
+            conn,
+            next_seq: 0,
+            live: Cell::default(),
+            checkpointer: None,
+        };
+        let mut live = StateCounts::default();
+        for (state, n) in store.state_counts()? {
+            *live.slot(state) = n;
+        }
+        store.live.set(live);
+        Ok(store)
+    }
+
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// The connection, for tests that need to set up unusual files.
+    #[doc(hidden)]
+    pub fn conn_for_tests(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// Where the file is, when it is a file.
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        self.conn
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+    }
+
+    /// Records an event in the file's history (spec 006 data-model.md).
+    /// Files without the `events` table (format 2, viewed only) skip it.
+    pub fn record_event(&self, kind: &str, detail: Option<&str>) -> Result<()> {
+        if super::migrate::version(&self.conn)? < 3 {
+            return Ok(());
+        }
+        self.conn
+            .prepare_cached(
+                "INSERT INTO events (at, kind, app_version, os, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?
+            .execute(params![
+                jiff::Timestamp::now().as_millisecond(),
+                kind,
+                APP_VERSION,
+                os_name(),
+                detail
+            ])?;
+        Ok(())
+    }
+
+    /// Writes the crawl's last committed state into the database file alone
+    /// (empties the write-ahead log), so the file can be copied. False when
+    /// a reader still holds part of the log.
+    pub(crate) fn checkpoint_truncate(&self) -> Result<bool> {
+        let (busy, log, done): (i64, i64, i64) =
+            self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+        Ok(busy == 0 && log == done)
+    }
+
+    /// Moves the write connection to another file holding the same data
+    /// (Save As while crawling, plan D5): the old connection closes, the new
+    /// one is configured the same way and keeps its own checkpointer.
+    pub(crate) fn reopen_at(&mut self, path: &Path) -> Result<()> {
+        let background = self.checkpointer.is_some();
+        if let Some(mut c) = self.checkpointer.take() {
+            c.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = c.handle.take() {
+                let _ = h.join();
+            }
+        }
+        let conn = Connection::open(path)?;
+        Self::configure(&conn)?;
+        drop(std::mem::replace(&mut self.conn, conn));
+        if background {
+            self.checkpoint_in_background()?;
+        }
+        Ok(())
     }
 
     /// Hands write-ahead-log checkpoints to a background thread with its own
@@ -657,6 +810,8 @@ impl CrawlStore {
                 seq: new_seq,
                 check_only: false,
                 source,
+                attempts: 0,
+                round_attempts: 0,
             },
             old_key: shorter.then(|| (depth, seq.unwrap_or(0))),
         })
@@ -727,6 +882,8 @@ impl CrawlStore {
             seq,
             check_only,
             source: d.source,
+            attempts: 0,
+            round_attempts: 0,
         });
         Ok(Recorded::New { id, queued })
     }
@@ -919,13 +1076,14 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Response headers of one fetched URL, as a JSON array of pairs.
+    /// Response headers of one fetched URL, as a JSON array of pairs, with
+    /// cookie values removed (`redact`).
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
         self.conn
             .prepare_cached("INSERT OR REPLACE INTO headers (url_id, headers) VALUES (?1, ?2)")?
             .execute(params![
                 id,
-                serde_json::to_string(headers).expect("pairs serialize")
+                serde_json::to_string(&super::redact::response_headers(headers)).expect("pairs serialize")
             ])?;
         Ok(())
     }
@@ -962,7 +1120,8 @@ impl CrawlStore {
         let mut response = one(
             "SELECT u.url, u.state, u.status, u.content_type, u.resource_type, u.response_ms, u.size_bytes,
              u.transfer_bytes, t.url AS redirect_to, u.redirect_kind, u.error_class, u.error_message, u.title,
-             u.noindex, u.nofollow, u.canonical, u.canonical_count, u.canonical_conflict, u.depth, u.internal
+             u.noindex, u.nofollow, u.canonical, u.canonical_count, u.canonical_conflict, u.depth, u.internal,
+             u.attempts, u.error_reason, u.manual_retry, u.reason, u.reason_detail, u.fetched_at
              FROM urls u LEFT JOIN urls t ON t.id = u.redirect_to WHERE u.id = ?1",
         )?;
         let page = one("SELECT * FROM pages WHERE url_id = ?1")?;
@@ -987,13 +1146,15 @@ impl CrawlStore {
                 })
                 .collect()
         };
-        let headers: Value = self
+        let mut headers: Value = self
             .conn
             .prepare_cached("SELECT headers FROM headers WHERE url_id = ?1")?
             .query_row([id], |r| r.get::<_, String>(0))
             .optional()?
             .and_then(|h| serde_json::from_str(&h).ok())
             .unwrap_or(Value::Null);
+        // Files from before migration step 5 that are only viewed.
+        super::redact::header_pairs(&mut headers);
         let obj = response.as_object_mut().expect("the URL row exists");
         obj.insert("page".into(), page);
         obj.insert("titles".into(), Value::Array(pick("title")));
@@ -1078,7 +1239,7 @@ impl CrawlStore {
     pub fn queued_after(&self, after: Option<QueueKey>, limit: usize) -> Result<Vec<QueueEntry>> {
         let (d, s) = after.unwrap_or((0, i64::MIN));
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, url, host_key, depth, queue_seq, check_only, source FROM urls
+            "SELECT id, url, host_key, depth, queue_seq, check_only, source, COALESCE(attempts, 0), round_attempts FROM urls
              WHERE state = 'queued' AND (depth > ?1 OR (depth = ?1 AND queue_seq > ?2))
              ORDER BY depth, queue_seq LIMIT ?3",
         )?;
@@ -1091,6 +1252,8 @@ impl CrawlStore {
                 seq: r.get(4)?,
                 check_only: r.get(5)?,
                 source: DiscoverySource::parse(&r.get::<_, String>(6)?).unwrap_or(DiscoverySource::Link),
+                attempts: r.get(7)?,
+                round_attempts: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -1120,7 +1283,8 @@ impl CrawlStore {
                  error_class = ?7, error_message = ?8, robots_rule = COALESCE(?9, robots_rule), fetched_at = ?10,
                  response_ms = ?11, size_bytes = ?12, transfer_bytes = ?13, resource_type = ?14,
                  redirect_kind = ?15, noindex = ?16, nofollow = ?17, canonical = ?18, canonical_count = ?19,
-                 canonical_conflict = ?20
+                 canonical_conflict = ?20, attempts = ?21, round_attempts = ?22, error_reason = ?23,
+                 retry_at = NULL
                  WHERE id = ?1 AND state = 'in_flight'",
             )?
             .execute(params![
@@ -1144,6 +1308,9 @@ impl CrawlStore {
                 r.canonical,
                 r.canonical_count,
                 r.canonical_conflict,
+                r.attempts,
+                r.round_attempts,
+                r.error_reason,
             ])?;
         self.shift(Some(UrlState::InFlight), state, n);
         Ok(())
@@ -1181,7 +1348,7 @@ impl CrawlStore {
     /// URL limit and stop passes.
     pub fn queued_pages_after(&self, after_id: i64, limit: usize) -> Result<Vec<QueueEntry>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, url, host_key, depth, queue_seq, check_only, source FROM urls
+            "SELECT id, url, host_key, depth, queue_seq, check_only, source, COALESCE(attempts, 0), round_attempts FROM urls
              WHERE state = 'queued' AND check_only = 0 AND id > ?1 ORDER BY id LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![after_id, limit as i64], |r| {
@@ -1193,6 +1360,8 @@ impl CrawlStore {
                 seq: r.get(4)?,
                 check_only: r.get(5)?,
                 source: DiscoverySource::parse(&r.get::<_, String>(6)?).unwrap_or(DiscoverySource::Link),
+                attempts: r.get(7)?,
+                round_attempts: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -1211,6 +1380,18 @@ impl CrawlStore {
             [],
         )?;
         self.shift(Some(UrlState::Queued), UrlState::NotCrawled, a + b);
+        // URLs waiting to be retried stop too; resume brings them back with
+        // their attempts (spec 004 FR-023).
+        let c = self.conn.execute(
+            "UPDATE urls SET state = 'not_crawled', reason = 'crawl_stopped', retry_at = NULL
+             WHERE state = 'waiting' AND check_only = 0",
+            [],
+        )?;
+        let d = self.conn.execute(
+            "UPDATE urls SET state = 'not_crawled', retry_at = NULL WHERE state = 'waiting' AND check_only = 1",
+            [],
+        )?;
+        self.shift(Some(UrlState::Waiting), UrlState::NotCrawled, c + d);
         Ok(())
     }
 
@@ -1230,10 +1411,19 @@ impl CrawlStore {
         Ok(a + b)
     }
 
+    /// Recovery: rows left in flight by a crash go back to the queue.
+    pub fn requeue_in_flight(&self) -> Result<usize> {
+        let a = self
+            .conn
+            .execute("UPDATE urls SET state = 'queued' WHERE state = 'in_flight'", [])?;
+        self.shift(Some(UrlState::InFlight), UrlState::Queued, a);
+        Ok(a)
+    }
+
     /// Requests started for crawling, which count toward the URL limit.
     pub fn pages_started(&self) -> Result<u64> {
         Ok(self.conn.query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM urls WHERE state IN ('crawled', 'in_flight') AND check_only = 0",
+            "SELECT COUNT(*) FROM urls WHERE state IN ('crawled', 'in_flight', 'waiting') AND check_only = 0",
             [],
             |r| r.get(0),
         )? as u64)
@@ -1437,6 +1627,321 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// Lists attempt counts among the file's data features once spec 004's
+    /// columns exist (migration step 4), so a resumed older crawl shows them.
+    pub fn note_attempts_feature(&self) -> Result<()> {
+        if super::migrate::version(&self.conn)? < 4 {
+            return Ok(());
+        }
+        // A comma-separated list read by spec 007's results crate.
+        let listed = self.meta("data_features")?.unwrap_or_default();
+        if !listed.split(',').any(|f| f.trim() == "attempts") {
+            let joined = if listed.trim().is_empty() {
+                "attempts".to_string()
+            } else {
+                format!("{listed},attempts")
+            };
+            self.set_meta("data_features", &joined)?;
+        }
+        Ok(())
+    }
+
+    /// A failed attempt that will be retried: the URL leaves the queue until
+    /// `retry_at` (epoch ms), keeping its attempt counts (spec 004 plan D4).
+    pub fn set_waiting(
+        &self,
+        id: i64,
+        retry_at: i64,
+        attempts: u32,
+        round_attempts: u32,
+        now_ms: i64,
+    ) -> Result<()> {
+        let n = self
+            .conn
+            .prepare_cached(
+                "UPDATE urls SET state = 'waiting', retry_at = ?2, attempts = ?3, round_attempts = ?4, fetched_at = ?5
+                 WHERE id = ?1 AND state = 'in_flight'",
+            )?
+            .execute(params![id, retry_at, attempts, round_attempts, now_ms])?;
+        self.shift(Some(UrlState::InFlight), UrlState::Waiting, n);
+        Ok(())
+    }
+
+    /// A waiting URL is due: it goes to the back of its depth level in the
+    /// queue (research R9). None when it is no longer waiting.
+    pub fn requeue_waiting(&mut self, id: i64) -> Result<Option<QueueEntry>> {
+        let seq = self.take_seq();
+        let n = self
+            .conn
+            .prepare_cached(
+                "UPDATE urls SET state = 'queued', queue_seq = ?2, retry_at = NULL WHERE id = ?1 AND state = 'waiting'",
+            )?
+            .execute(params![id, seq])?;
+        if n == 0 {
+            return Ok(None);
+        }
+        self.shift(Some(UrlState::Waiting), UrlState::Queued, n);
+        self.entry(id).map(Some)
+    }
+
+    /// An in-flight request whose result does not count (its host was paused
+    /// or the network is down): back to its old place in the queue, no
+    /// attempt used (spec 004 FR-027).
+    pub fn return_in_flight(&self, id: i64) -> Result<()> {
+        let n = self
+            .conn
+            .prepare_cached("UPDATE urls SET state = 'queued' WHERE id = ?1 AND state = 'in_flight'")?
+            .execute([id])?;
+        self.shift(Some(UrlState::InFlight), UrlState::Queued, n);
+        Ok(())
+    }
+
+    fn entry(&self, id: i64) -> Result<QueueEntry> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT id, url, host_key, depth, queue_seq, check_only, source, COALESCE(attempts, 0), round_attempts
+                 FROM urls WHERE id = ?1",
+            )?
+            .query_row([id], |r| {
+                Ok(QueueEntry {
+                    id: r.get(0)?,
+                    url: r.get(1)?,
+                    host_key: r.get(2)?,
+                    depth: r.get(3)?,
+                    seq: r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                    check_only: r.get(5)?,
+                    source: DiscoverySource::parse(&r.get::<_, String>(6)?).unwrap_or(DiscoverySource::Link),
+                    attempts: r.get(7)?,
+                    round_attempts: r.get(8)?,
+                })
+            })?)
+    }
+
+    /// Every waiting URL and when it is due (epoch ms), for resume.
+    pub fn waiting(&self) -> Result<Vec<(i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, COALESCE(retry_at, 0) FROM urls WHERE state = 'waiting' ORDER BY retry_at",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// A queued URL of a host that was given up: recorded as "Host
+    /// unavailable" without a request (spec 004 FR-026).
+    pub fn set_host_unavailable(&self, id: i64, check_only: bool, message: &str, now_ms: i64) -> Result<()> {
+        let state = if check_only {
+            UrlState::NotCrawled
+        } else {
+            UrlState::Crawled
+        };
+        let n = self
+            .conn
+            .prepare_cached(
+                "UPDATE urls SET state = ?2, error_class = 'host_unavailable', error_reason = NULL, error_message = ?3,
+                 fetched_at = ?4, attempts = COALESCE(attempts, 0), retry_at = NULL
+                 WHERE id = ?1 AND state = 'queued'",
+            )?
+            .execute(params![id, state.as_str(), message, now_ms])?;
+        self.shift(Some(UrlState::Queued), state, n);
+        Ok(())
+    }
+
+    /// Appends one crawl log entry (spec 004 FR-035).
+    pub fn log(
+        &self,
+        at_ms: i64,
+        kind: &str,
+        host: Option<&str>,
+        url_id: Option<i64>,
+        message: &str,
+    ) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO crawl_log (at, kind, host_key, url_id, message) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?
+            .execute(params![at_ms, kind, host, url_id, message])?;
+        Ok(())
+    }
+
+    /// The newest `limit` log entries, oldest first. Empty for files without
+    /// a log.
+    pub fn log_entries(&self, limit: usize) -> Result<Vec<LogEntry>> {
+        if !self.has_table("crawl_log")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT l.at, l.kind, l.host_key, u.url, l.message FROM crawl_log l LEFT JOIN urls u ON u.id = l.url_id
+             ORDER BY l.id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| {
+            Ok(LogEntry {
+                at_ms: r.get(0)?,
+                kind: r.get(1)?,
+                host: r.get(2)?,
+                url: r.get(3)?,
+                message: r.get(4)?,
+            })
+        })?;
+        let mut out: Vec<LogEntry> = rows.collect::<std::result::Result<_, _>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
+    fn has_table(&self, name: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn has_column(&self, table: &str, column: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+            [table, column],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Log entries of one kind.
+    pub fn log_count(&self, kind: &str, distinct_hosts: bool) -> Result<u64> {
+        if !self.has_table("crawl_log")? {
+            return Ok(0);
+        }
+        let sql = if distinct_hosts {
+            "SELECT COUNT(DISTINCT host_key) FROM crawl_log WHERE kind = ?1"
+        } else {
+            "SELECT COUNT(*) FROM crawl_log WHERE kind = ?1"
+        };
+        Ok(self.conn.query_row::<i64, _, _>(sql, [kind], |r| r.get(0))? as u64)
+    }
+
+    /// How many redirect hops led to this URL: walks back through rows that
+    /// were discovered by a redirect (spec 004 plan D8). Stops after `max`.
+    pub fn redirect_depth(&self, id: i64, max: u32) -> Result<u32> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT source, source_id FROM urls WHERE id = ?1")?;
+        let mut current = id;
+        let mut hops = 0;
+        while hops <= max {
+            let (source, from): (String, Option<i64>) =
+                stmt.query_row([current], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            match (source.as_str(), from) {
+                ("redirect", Some(f)) if f != current => {
+                    hops += 1;
+                    current = f;
+                }
+                _ => break,
+            }
+        }
+        Ok(hops)
+    }
+
+    /// Final outcomes for the summary: (status, error class, error reason,
+    /// count) over every URL that was requested or failed.
+    pub fn outcomes(&self) -> Result<Vec<Outcome>> {
+        let reason = if self.has_column("urls", "error_reason")? {
+            "error_reason"
+        } else {
+            "NULL"
+        };
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT status, error_class, {reason}, COUNT(*) FROM urls
+             WHERE fetched_at IS NOT NULL AND state IN ('crawled', 'not_crawled') GROUP BY 1, 2, 3"
+        ))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// URLs that took more than one attempt and ended without an error.
+    pub fn recovered(&self) -> Result<u64> {
+        if !self.has_column("urls", "attempts")? {
+            return Ok(0);
+        }
+        Ok(self.conn.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM urls WHERE attempts > 1 AND state IN ('crawled', 'not_crawled')
+             AND error_class IS NULL AND status < 400",
+            [],
+            |r| r.get(0),
+        )? as u64)
+    }
+
+    /// Transient failures by error class (HTTP classes derived), for the
+    /// "Retry failed URLs" confirmation (spec 004 FR-031).
+    pub fn transient_failures(&self) -> Result<Vec<(String, u64)>> {
+        // Files from before spec 004 are upgraded when resumed; until then
+        // there is nothing "Retry failed URLs" can do with them.
+        if super::migrate::version(&self.conn)? < 4 {
+            return Ok(Vec::new());
+        }
+        if !self.has_column("urls", "error_reason")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT CASE WHEN error_class IS NOT NULL THEN error_class
+                         WHEN status = 429 THEN 'http_429' ELSE 'http_5xx' END, COUNT(*)
+             FROM urls WHERE {TRANSIENT_FAILURE} GROUP BY 1 ORDER BY 2 DESC, 1"
+        ))?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// "Retry failed URLs" (spec 004 FR-030 to FR-033, plan D12): every
+    /// transient failure goes back to the queue with a fresh round of
+    /// attempts, marked as manually retried, and what was stored from its
+    /// failed answer is removed so the new answer replaces it in place.
+    /// Returns how many were re-queued. Runs in one transaction.
+    pub fn requeue_transient(&mut self) -> Result<u64> {
+        let ids: Vec<(i64, String)> = {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT id, state FROM urls WHERE {TRANSIENT_FAILURE} ORDER BY depth, id"
+            ))?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        self.begin()?;
+        for (id, state) in &ids {
+            let seq = self.take_seq();
+            self.conn
+                .prepare_cached(
+                    "UPDATE urls SET state = 'queued', queue_seq = ?2, round_attempts = 0, manual_retry = 1,
+                     status = NULL, error_class = NULL, error_reason = NULL, error_message = NULL, redirect_to = NULL,
+                     title = NULL, retry_at = NULL
+                     WHERE id = ?1",
+                )?
+                .execute(params![id, seq])?;
+            for table in [
+                "links WHERE from_id",
+                "page_text WHERE url_id",
+                "directives WHERE url_id",
+                "structured_data WHERE url_id",
+                "pages WHERE url_id",
+                "bodies WHERE url_id",
+                "headers WHERE url_id",
+            ] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} = ?1"))?
+                    .execute([id])?;
+            }
+            let from = UrlState::parse(state).unwrap_or(UrlState::Crawled);
+            self.shift(Some(from), UrlState::Queued, 1);
+        }
+        let runs: u64 = self
+            .meta("manual_retries")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        self.set_meta("manual_retries", &(runs + 1).to_string())?;
+        self.commit()?;
+        Ok(ids.len() as u64)
+    }
+
     /// Links whose target is `url`, for tests and the detail view.
     pub fn links_to(&self, url: &str) -> Result<Vec<(String, String, bool, bool)>> {
         let mut stmt = self.conn.prepare(
@@ -1445,6 +1950,67 @@ impl CrawlStore {
         )?;
         let rows = stmt.query_map([url], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+}
+
+/// The engine's version, recorded with every event.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `macos-aarch64`, `windows-x86_64`, `linux-x86_64`.
+pub fn os_name() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// A read-only connection. On read-only media SQLite cannot create the
+/// shared-memory file a WAL database needs, so it retries with
+/// `immutable=1` (the file cannot change under us there anyway).
+pub fn connect_read_only(path: &Path) -> Result<Connection> {
+    use rusqlite::OpenFlags;
+    if !path.exists() {
+        return Err(StoreError::Format(format!("{} does not exist", path.display())));
+    }
+    let flags =
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
+    let probe =
+        |c: &Connection| c.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0));
+    let first = Connection::open_with_flags(path, flags).and_then(|c| probe(&c).map(|_| c));
+    match first {
+        Ok(c) => {
+            c.busy_timeout(std::time::Duration::from_secs(5))?;
+            Ok(c)
+        }
+        Err(e) if is_corrupt(&e) => Err(damaged(path, e)),
+        Err(_) => {
+            let c = Connection::open_with_flags(immutable_uri(path), flags)?;
+            probe(&c).map_err(|e| damaged(path, e))?;
+            Ok(c)
+        }
+    }
+}
+
+/// A `file:` URI for `path` with `immutable=1`.
+pub(crate) fn immutable_uri(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let p = p.replace('%', "%25").replace('?', "%3f").replace('#', "%23");
+    let p = if p.starts_with('/') { p } else { format!("/{p}") };
+    format!("file:{p}?immutable=1")
+}
+
+pub(crate) fn is_corrupt(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
+}
+
+fn damaged(path: &Path, e: rusqlite::Error) -> StoreError {
+    if is_corrupt(&e) {
+        StoreError::Damaged(format!(
+            "{} is damaged or is not a SpiderLens crawl file ({e})",
+            path.display()
+        ))
+    } else {
+        StoreError::Sql(e)
     }
 }
 
