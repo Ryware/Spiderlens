@@ -27,6 +27,7 @@ proptest.workspace = true
 tempfile.workspace = true
 spiderlens-test-fixtures.workspace = true
 tokio.workspace = true
+spiderlens-results.workspace = true
 
 [lints]
 workspace = true

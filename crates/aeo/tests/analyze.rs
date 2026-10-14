@@ -132,6 +132,13 @@ fn bit(token: &str) -> i64 {
 #[tokio::test(flavor = "multi_thread")]
 async fn analysis_of_a_crawled_site() {
     let c = crawl().await;
+    // Before the run, the AI search tab says why it is empty.
+    {
+        let mut r = spiderlens_results::Reader::open(&c.path).unwrap();
+        let counts = r.counts("ai-search", spiderlens_results::UrlScope::All).unwrap();
+        assert_eq!(counts.counts["search_blocked"], None);
+        assert!(counts.unavailable["search_blocked"].contains("AI checks have not run"));
+    }
     let seen = std::sync::Mutex::new(Vec::new());
     let opts = AnalyzeOptions {
         workers: Some(2),
@@ -210,6 +217,29 @@ async fn analysis_of_a_crawled_site() {
     // The stored summary reads back equal.
     assert_eq!(analyze::summary(&conn).unwrap().as_ref(), Some(&s));
     drop(conn);
+
+    // The AI search tab's filters count the stored flags (FR-041).
+    {
+        let mut r = spiderlens_results::Reader::open(&c.path).unwrap();
+        let counts = r.counts("ai-search", spiderlens_results::UrlScope::All).unwrap();
+        assert_eq!(counts.counts["all"], Some(6));
+        assert_eq!(counts.counts["search_blocked"], Some(1));
+        assert_eq!(counts.counts["training_only_blocked"], Some(5));
+        assert_eq!(counts.counts["js_suspected"], Some(1));
+        let q = spiderlens_results::ViewQuery {
+            tab: "ai-search".into(),
+            filter: "search_blocked".into(),
+            scope: spiderlens_results::UrlScope::All,
+            search: String::new(),
+            sort: None,
+        };
+        let page = r.open_view(&q, 10).unwrap();
+        r.materialize(page.view).unwrap();
+        let rows = r.rows(page.view, 0, 10).unwrap().rows;
+        assert_eq!(rows.len(), 1);
+        let row = serde_json::to_value(&rows[0]).unwrap().to_string();
+        assert!(row.contains("PerplexityBot"), "{row}");
+    }
 
     // SC-006: a second run gives the same rows.
     let dump = |p: &PathBuf| -> Vec<String> {

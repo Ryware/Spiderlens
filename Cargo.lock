@@ -4408,6 +4408,7 @@ dependencies = [
  "serde_json",
  "spiderlens-config",
  "spiderlens-engine",
+ "spiderlens-results",
  "spiderlens-test-fixtures",
  "tempfile",
  "thiserror 2.0.21",
