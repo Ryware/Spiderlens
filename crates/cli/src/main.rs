@@ -9,6 +9,7 @@ mod export_cmd;
 mod files_cmd;
 mod options;
 mod schedule_cmd;
+mod serp_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -85,6 +86,8 @@ enum Command {
     /// Recurring crawls that run without the app (spec 021).
     #[command(subcommand)]
     Schedule(Box<schedule_cmd::ScheduleCommand>),
+    /// Title and description pixel widths for a CSV of drafts (no network).
+    Serp(serp_cmd::SerpArgs),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -180,6 +183,7 @@ fn main() -> ExitCode {
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
+        Command::Serp(args) => serp_cmd::run_serp(args),
     }
 }
 

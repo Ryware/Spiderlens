@@ -25,6 +25,7 @@ spiderlens-test-fixtures.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 proptest.workspace = true
+csv.workspace = true
 
 [lints]
 workspace = true

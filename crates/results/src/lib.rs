@@ -13,6 +13,7 @@ mod detail;
 mod export;
 mod features;
 mod reader;
+pub mod serp;
 mod sql;
 #[doc(hidden)]
 pub mod synth;
@@ -20,7 +21,9 @@ mod tabs;
 mod view;
 
 pub use counts::{FilterCounts, TabCounts};
-pub use detail::{HeadingRow, HtmlMissing, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail};
+pub use detail::{
+    HeadingRow, HtmlMissing, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, Snippet, UrlDetail,
+};
 pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
 pub use features::Features;
 pub use reader::Reader;

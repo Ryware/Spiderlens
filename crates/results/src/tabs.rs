@@ -254,7 +254,23 @@ const RESPONSES: &str = "u.state = 'crawled' \
 const NORM_TITLE: &str = "norm_ws(u.title)";
 
 /// Page content, one primary-key lookup each (spec 005 data model).
-const MD: &str = "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)";
+macro_rules! md_expr {
+    () => {
+        "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)"
+    };
+}
+const MD: &str = md_expr!();
+
+/// Width of a title or description as a search result draws it (spec 027
+/// part A). Limits are the spec's defaults (FR-A03): title 600 desktop,
+/// 580 mobile, short under 200; description 990 desktop, 680 mobile.
+macro_rules! px {
+    ($expr:expr, $style:literal) => {
+        concat!("px_width(", $expr, ", '", $style, "')")
+    };
+}
+const TITLE_PX: &str = px!("u.title", "title");
+const DESC_PX: &str = px!(md_expr!(), "desc");
 const H1_1: &str = "(SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id)";
 /// The alt text of the first place an image is used. NULL when the
 /// attribute is missing, `''` when it is empty.
@@ -890,6 +906,9 @@ fn build() -> Vec<TabDef> {
                 c::TITLE.sorted_by("x.k"),
                 col("title_length", "Title length", "x.len", Int, 100),
                 col("occurrences", "Occurrences", "x.n", Int, 110),
+                col("title_px", "Title pixels", TITLE_PX, Int, 100),
+                col("title_cut_desktop", "Cut on desktop", concat!("(", px!("u.title", "title"), " > 600)"), Bool, 120),
+                col("title_cut_mobile", "Cut on mobile", concat!("(", px!("u.title", "title"), " > 580)"), Bool, 120),
                 ext(
                     "title_2",
                     "Title (second)",
@@ -906,7 +925,10 @@ fn build() -> Vec<TabDef> {
                 filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
                 filter("duplicate", "Duplicate", "x.n > 1"),
                 filter("over_60", "Over 60 characters", "x.len > 60"),
+                filter("px_over_desktop", "Over 600 pixels (desktop)", concat!(px!("u.title", "title"), " > 600")),
+                filter("px_over_mobile", "Over 580 pixels (mobile)", concat!(px!("u.title", "title"), " > 580")),
                 filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < 30"),
+                filter("px_below", "Below 200 pixels", concat!("x.t <> '' AND ", px!("u.title", "title"), " < 200")),
                 filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
                 filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
@@ -921,6 +943,9 @@ fn build() -> Vec<TabDef> {
                 c::ADDRESS,
                 ext("meta_description", "Meta description", MD, Text, 360),
                 ext("length", "Length", "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))", Int, 80),
+                ext("desc_px", "Pixels", DESC_PX, Int, 90),
+                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > 990)"), Bool, 120),
+                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > 680)"), Bool, 120),
                 ext(
                     "occurrences",
                     "Occurrences",
@@ -943,6 +968,8 @@ fn build() -> Vec<TabDef> {
                     "Over 155 characters",
                     "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) > 155",
                 ),
+                filter("px_over_desktop", "Over 990 pixels (desktop)", concat!(px!(md_expr!(), "desc"), " > 990")),
+                filter("px_over_mobile", "Over 680 pixels (mobile)", concat!(px!(md_expr!(), "desc"), " > 680")),
                 filter(
                     "below_70",
                     "Below 70 characters",

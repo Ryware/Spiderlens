@@ -3,6 +3,7 @@ resolver = "3"
 members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
 # `cargo test` without --workspace skips the desktop app, which needs
 # webview system libraries. CI always uses --workspace.
+exclude = ["tools/serp-widths"]
 default-members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures"]
 
 [workspace.package]

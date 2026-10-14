@@ -21,6 +21,8 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** Meta description, for the search preview. */
+  description?: string | null;
 }
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
@@ -233,6 +235,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: results.features.includes("raw_html") && u.title !== null,
+        snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
