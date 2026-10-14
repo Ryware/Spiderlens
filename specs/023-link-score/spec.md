@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved (2026-10-13)
 
 **Input**: User description: "Feature gap row 12 (plus custom link positions, folded in from the backlog review) against Screaming Frog: Link Score (an internal PageRank-like score per URL), crawl depth and inlink analysis, and a Crawl Analysis step. Compute the score after the crawl from the stored link graph, show it with crawl depth and inlink counts as columns, make it an input for the issue rules engine (spec 009), and keep within a time budget on 100,000 pages."
 

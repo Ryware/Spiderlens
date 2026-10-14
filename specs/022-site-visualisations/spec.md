@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved (2026-10-13)
 
 **Input**: User description: "Feature gap row 11 against Screaming Frog: site visualisations. Crawl tree and directory tree, a force-directed link graph, and inlink anchor text word clouds, rendered locally in the app with a budget for 100,000 nodes (for example sampling or level of detail), and export as an image."
 
