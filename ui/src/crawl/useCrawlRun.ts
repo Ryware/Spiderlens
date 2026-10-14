@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
-import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, ResumeOptions, Transport } from "../transport";
+import type { RetrySettings } from "../generated/RetrySettings";
+import type { SpeedSettings } from "../generated/SpeedSettings";
+import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, Transport } from "../transport";
 
 /**
  * Where the crawl is in its life. "pausing" and "stopping" last while the
@@ -11,6 +13,9 @@ export type Phase = "idle" | "starting" | "running" | "pausing" | "stopping" | "
 
 /** The crawl owns the window in these phases: settings are locked. */
 export const activePhases: Phase[] = ["starting", "running", "pausing", "stopping", "paused"];
+
+/** "Retry failed URLs" works on a crawl file that is not running (spec 004 FR-030). */
+export const retryPhases: Phase[] = ["paused", "stopped", "completed", "failed"];
 
 /** A run is in progress in these phases: opening another crawl must pause it first. */
 export const busyPhases: Phase[] = ["starting", "running", "pausing", "stopping"];
@@ -34,13 +39,37 @@ export interface CrawlRunState {
   report: CrawlReport | null;
   error: string | null;
   warnings: string[];
-  /** The disk or write problem that paused the crawl (spec 006 US5). */
+  /** Sites paused, resumed or given up, network trouble (spec 004), oldest first. */
+  notices: string[];
+  /**
+   * The speed and retry settings the running crawl uses, as far as this
+   * window knows: set on Start and on "Apply to running crawl". Null for a
+   * crawl reopened from its file.
+   */
+  applied: { speed: SpeedSettings; retry: RetrySettings } | null;
+  /** The disk, write or network problem that paused the crawl (spec 006 US5, spec 004 FR-015). */
   local: LocalError | null;
   /** The Crawl Analysis pass running after the crawl (spec 009 plan D12). */
   analysis: AnalysisProgress | null;
 }
 
-const initial: CrawlRunState = { phase: "idle", id: null, path: null, target: "", progress: null, report: null, error: null, warnings: [], local: null, analysis: null };
+const initial: CrawlRunState = {
+  phase: "idle",
+  id: null,
+  path: null,
+  target: "",
+  progress: null,
+  report: null,
+  error: null,
+  warnings: [],
+  notices: [],
+  applied: null,
+  local: null,
+  analysis: null,
+};
+
+/** Only the newest notices stay on screen; the crawl log keeps them all. */
+const MAX_NOTICES = 5;
 
 const phaseFor = (f: CrawlFinished): Phase => (f.error ? "failed" : (f.report?.summary.status as Phase | undefined) ?? "completed");
 
@@ -93,6 +122,10 @@ export function useCrawlRun(transport: Transport) {
         const done = p.total > 0 && p.done >= p.total;
         setState((s) => ({ ...s, analysis: done && s.id === null ? null : p }));
       }),
+      transport.onCrawlNotice((n) => {
+        if (n.id !== idRef.current) return;
+        setState((s) => (s.notices.includes(n.message) ? s : { ...s, notices: [...s.notices, n.message].slice(-MAX_NOTICES) }));
+      }),
       transport.onCrawlFinished((f) => {
         if (f.id === idRef.current) finish(f);
         else if (idRef.current === null) early.current.set(f.id, f);
@@ -137,7 +170,7 @@ export function useCrawlRun(transport: Transport) {
   const start = useCallback(
     (config: CrawlConfig, startUrl: string | null, target: string) => {
       elapsedBefore.current = 0;
-      return begin(() => transport.crawlStart(config, startUrl), { ...initial, target });
+      return begin(() => transport.crawlStart(config, startUrl), { ...initial, target, applied: { speed: config.speed, retry: config.retry } });
     },
     [transport, begin],
   );
@@ -167,6 +200,40 @@ export function useCrawlRun(transport: Transport) {
     setState(initial);
     return true;
   }, [state.phase]);
+
+  /** Queues the crawl's temporary failures again and runs them, like a resume (spec 004 US5). */
+  const retryFailed = useCallback(() => {
+    if (!state.path || !retryPhases.includes(state.phase)) return Promise.resolve(null);
+    const path = state.path;
+    return begin(() => transport.retryStart(path), { report: null, notices: [] });
+  }, [transport, begin, state.path, state.phase]);
+
+  /** Ends a site's pause now; the engine sends it one test request (US4.5). */
+  const resumeHost = useCallback(
+    (host: string) => {
+      if (state.id === null) return;
+      transport.crawlResumeHost(state.id, host);
+      // Shown as testing until the next progress event says otherwise.
+      setState((s) =>
+        s.progress
+          ? { ...s, progress: { ...s.progress, paused_hosts: s.progress.paused_hosts.map((h) => (h.host === host ? { ...h, probing: true, seconds_left: 0 } : h)) } }
+          : s,
+      );
+    },
+    [transport, state.id],
+  );
+
+  /** Sends changed speed or retry settings to the running crawl (spec 004 D13). */
+  const applySettings = useCallback(
+    async (speed: SpeedSettings, retry: RetrySettings) => {
+      if (state.id === null || state.phase !== "running") return;
+      const before = state.applied;
+      const changed = <T,>(a: T, b: T | undefined) => (b !== undefined && JSON.stringify(a) === JSON.stringify(b) ? null : a);
+      await transport.crawlApplySettings(state.id, changed(speed, before?.speed), changed(retry, before?.retry));
+      setState((s) => ({ ...s, applied: { speed, retry } }));
+    },
+    [transport, state.id, state.phase, state.applied],
+  );
 
   /** Opens a saved crawl file to browse its results (spec 007 D14). */
   const open = useCallback(
@@ -231,17 +298,35 @@ export function useCrawlRun(transport: Transport) {
       ? ((w[w.length - 1].crawled - w[0].crawled) * 1000) / (w[w.length - 1].t - w[0].t)
       : null;
 
+  // Pauses count down here between progress events, which arrive only while
+  // something changes.
+  const ticked = running ? Math.max(0, Math.floor((now - progressAt.current) / 1000)) : 0;
+  const pausedHosts: PausedHost[] = running
+    ? (p?.paused_hosts ?? []).map((h) => (h.probing || h.given_up ? h : { ...h, seconds_left: Math.max(0, h.seconds_left - ticked) }))
+    : [];
+  const waiting = pausedHosts.filter((h) => !h.given_up);
+  // While every remaining URL's site is paused: the soonest test request.
+  const waitingForHost =
+    running && p?.waiting_for_host
+      ? { probing: waiting.some((h) => h.probing || h.seconds_left === 0), secondsLeft: waiting.length ? Math.min(...waiting.map((h) => h.seconds_left)) : null }
+      : null;
+
   return {
     ...state,
     active: activePhases.includes(state.phase),
     running,
     elapsedMs,
     rate,
+    pausedHosts,
+    waitingForHost,
     start,
     open,
     pause,
     resume,
     stop,
+    retryFailed,
+    resumeHost,
+    applySettings,
     moved,
     dismissLocal,
     close,
