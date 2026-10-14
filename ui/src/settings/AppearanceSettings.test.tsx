@@ -2,6 +2,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { fakeTransport } from "../testing/fakeTransport";
+import type { Appearance } from "../shell/appearance";
+import { AppearanceSettings } from "./AppearanceSettings";
 
 const root = () => document.documentElement.dataset;
 
@@ -73,4 +75,26 @@ test("profile_actions_leave_appearance_alone", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Profile actions" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Reset to defaults" }));
   expect(root()).toMatchObject({ level: "midnight", accent: "celery" });
+});
+
+test("translucent_sidebar_switch_shows_only_where_the_material_exists", async () => {
+  // Spec 017 FR-027: macOS desktop app only; this test window is neither.
+  const { panel } = await openAppearance();
+  expect(within(panel).queryByText("Translucent sidebar")).toBeNull();
+  expect(root().material).toBeUndefined();
+});
+
+test("translucent_sidebar_switch_turns_the_material_off_and_on", () => {
+  const changes: Partial<Appearance>[] = [];
+  const appearance: Appearance = { followSystem: false, level: "dark", systemLight: "light", systemDark: "dark", accent: "teal" };
+  const { rerender } = render(
+    <AppearanceSettings appearance={appearance} level="dark" systemDark={false} onChange={(p) => changes.push(p)} material />,
+  );
+  const toggle = screen.getByRole("switch", { name: "Translucent sidebar" });
+  // Missing from older saved state means on.
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(toggle);
+  expect(changes).toEqual([{ translucent: false }]);
+  rerender(<AppearanceSettings appearance={{ ...appearance, translucent: false }} level="dark" systemDark={false} onChange={(p) => changes.push(p)} material />);
+  expect(screen.getByRole("switch", { name: "Translucent sidebar" }).getAttribute("aria-checked")).toBe("false");
 });

@@ -93,7 +93,10 @@
   --control-lg: 32px;
   --toolbar: 52px;
   --statusbar: 26px;
-  --mac-inset: 78px;
+  /* Room for the macOS window buttons, which tauri.conf.json centres on the
+     toolbar at x 20 (trafficLightPosition): 20 + 2 × 20 spacing + 14 wide,
+     plus a 16 px gap. */
+  --mac-inset: 90px;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
