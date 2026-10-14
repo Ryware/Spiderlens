@@ -1133,10 +1133,11 @@ impl Run {
                     url_count: 0,
                     error: None,
                 };
-                match sitemap::fetch(&client, &url)
-                    .await
-                    .and_then(|b| sitemap::parse(&b))
-                {
+                let parsed = match sitemap::fetch(&client, &url).await {
+                    Ok(f) => sitemap::parse(&f.bytes),
+                    Err(e) => Err(format!("{}: {}", e.class, e.message)),
+                };
+                match parsed {
                     Ok(Sitemap::Urls(urls)) => {
                         row.url_count = urls.len() as i64;
                         let _ = tx.send(Msg::SitemapUrls {

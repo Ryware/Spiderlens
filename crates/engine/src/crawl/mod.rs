@@ -8,7 +8,7 @@
 pub mod reason;
 mod runner;
 pub mod scope;
-mod sitemap;
+pub mod sitemap;
 mod speed;
 pub mod store;
 mod window;

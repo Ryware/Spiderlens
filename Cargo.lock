@@ -4427,6 +4427,7 @@ dependencies = [
  "flate2",
  "html5ever 0.35.0",
  "jiff",
+ "proptest",
  "quick-xml 0.42.0",
  "reqwest 0.12.28",
  "rusqlite",
