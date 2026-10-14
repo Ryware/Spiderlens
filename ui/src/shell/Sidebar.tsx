@@ -1,5 +1,6 @@
 import { Activity, CircleHelp, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
+import { formatCompact } from "../results/format";
 
 export interface NavItem {
   id: string;
@@ -36,16 +37,34 @@ const later: NavItem[] = [
 ];
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
-export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean }) {
+export function Sidebar({
+  active,
+  onSelect,
+  collapsed,
+  onAbout,
+  results,
+  counts,
+}: {
+  active: string;
+  onSelect: (id: string) => void;
+  collapsed: boolean;
+  onAbout: () => void;
+  results: boolean;
+  /** URLs per result tab; absent while unknown (T014). */
+  counts?: Record<string, number> | null;
+}) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
     const Icon = it.icon;
+    const count = available && !collapsed ? counts?.[it.id] : undefined;
+    const countId = `sidebar-count-${it.id}`;
     const btn = (
       <button
         type="button"
         aria-current={on ? "page" : undefined}
         aria-disabled={!available || undefined}
         aria-label={collapsed ? it.title : undefined}
+        aria-describedby={count !== undefined ? countId : undefined}
         onClick={() => available && run()}
         className={cn(
           "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-base",
@@ -55,10 +74,25 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
       >
         <Icon aria-hidden className={cn("size-4 shrink-0", on ? "text-accent-text" : "opacity-80")} />
         {!collapsed && <span className="min-w-0 flex-1 truncate">{it.title}</span>}
+        {count !== undefined && (
+          <span aria-hidden title={count.toLocaleString()} className="shrink-0 text-xs text-fg-3 tabular">
+            {formatCompact(count)}
+          </span>
+        )}
         {!collapsed && it.later && <span className="rounded-sm border border-line px-1 text-2xs text-fg-3">{it.later}</span>}
       </button>
     );
-    return <li key={it.id}>{collapsed ? <Tooltip content={it.title}>{btn}</Tooltip> : btn}</li>;
+    return (
+      <li key={it.id}>
+        {collapsed ? <Tooltip content={it.title}>{btn}</Tooltip> : btn}
+        {/* Outside the button so the count describes it without renaming it. */}
+        {count !== undefined && (
+          <span id={countId} className="sr-only">
+            {count === 1 ? "1 URL" : `${count.toLocaleString()} URLs`}
+          </span>
+        )}
+      </li>
+    );
   };
   const heading = (t: string) => (collapsed ? <div className="mx-2 my-2 h-px bg-line" /> : <div className="px-2 pt-3 pb-1 text-xs font-semibold text-fg-3">{t}</div>);
 
