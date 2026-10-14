@@ -4,6 +4,7 @@
 
 pub mod body;
 pub mod challenge;
+pub mod compare;
 pub mod directives;
 mod link_header;
 mod microdata;
@@ -105,7 +106,7 @@ pub struct MetaRefresh {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredKind {
     JsonLd,
