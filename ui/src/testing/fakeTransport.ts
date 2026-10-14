@@ -24,7 +24,7 @@ export function defaultConfig(): CrawlConfig {
       follow_external_nofollow: false,
       query_params: { mode: "keep", names: [], sort: false },
       max_url_length: 2000,
-      use_sitemaps: false,
+      sitemaps: { read: true, crawl_sitemap_only: true, urls: [], files: [] },
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
@@ -88,7 +88,13 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
-export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults } {
+/** What the fake file pickers return; tests set these before clicking. */
+export interface FakePicks {
+  sitemapFile: string | null;
+}
+
+export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; picks: FakePicks } {
+  const picks: FakePicks = { sitemapFile: null };
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -113,6 +119,7 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
     ...resultsApi,
     saved,
     crawls,
+    picks,
     pickCrawlFile: async () => null,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
     buildInfo: async () => ({
@@ -193,6 +200,7 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
     },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
+    pickSitemapFile: async () => picks.sitemapFile,
     pickProfileFile: async () => null,
     pickExportPath: async () => null,
     profiles: async () => [...saved.keys()].map((name) => ({ name, is_default: false, error: null })),

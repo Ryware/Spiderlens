@@ -47,6 +47,7 @@ string_enum! {
         BlockedByRobots = "blocked_by_robots",
         RobotsUnavailable = "robots_unavailable",
         OverUrlLimit = "over_url_limit",
+        SitemapOnly = "sitemap_only",
         CrawlStopped = "crawl_stopped",
     }
 }
@@ -66,15 +67,17 @@ impl NotCrawledReason {
             Self::BlockedByRobots => "Blocked by robots.txt",
             Self::RobotsUnavailable => "Blocked: robots.txt unavailable",
             Self::OverUrlLimit => "Over URL limit",
+            Self::SitemapOnly => "Found only in sitemap",
             Self::CrawlStopped => "Crawl stopped",
         }
     }
 
     /// Reasons that depend on how a URL was reached, not on the URL itself.
     /// A URL holding one of these is crawled if a better path turns up
-    /// (FR-039, research R3).
+    /// (FR-039, research R3). "Found only in sitemap" ends as soon as a
+    /// link to the URL is found (spec 011 plan D5).
     pub fn can_upgrade(self) -> bool {
-        matches!(self, Self::OverDepthLimit | Self::Nofollow)
+        matches!(self, Self::OverDepthLimit | Self::Nofollow | Self::SitemapOnly)
     }
 }
 
@@ -151,6 +154,7 @@ mod tests {
                 "blocked_by_robots",
                 "robots_unavailable",
                 "over_url_limit",
+                "sitemap_only",
                 "crawl_stopped",
             ]
         );

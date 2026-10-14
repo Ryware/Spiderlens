@@ -161,7 +161,7 @@ test("spec_003_scope_and_limit_settings_reach_the_crawl", async () => {
   expect((screen.getByLabelText("List depth") as HTMLInputElement).disabled).toBe(true);
   await openSettings("Scope");
   fireEvent.click(screen.getByRole("switch", { name: "Stay in the start folder" }));
-  fireEvent.click(screen.getByRole("switch", { name: "Use sitemaps from robots.txt" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Crawl URLs found only in sitemaps" }));
   expect(screen.queryByLabelText("Parameters to remove")).toBeNull();
   fireEvent.change(screen.getByLabelText("Query parameters"), { target: { value: "remove" } });
   fireEvent.change(screen.getByLabelText("Parameters to remove"), { target: { value: "utm_source\nutm_medium" } });
@@ -175,7 +175,7 @@ test("spec_003_scope_and_limit_settings_reach_the_crawl", async () => {
   await waitFor(() => expect(t.crawls.started).toHaveLength(1));
   expect(t.crawls.started[0].config.scope).toMatchObject({
     stay_in_folder: true,
-    use_sitemaps: true,
+    sitemaps: { read: true, crawl_sitemap_only: false, urls: [], files: [] },
     max_url_length: 1024,
     query_params: { mode: "remove", names: ["utm_source", "utm_medium"], sort: true },
   });

@@ -11,6 +11,7 @@ import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { SitemapSources } from "./SitemapSources";
 
 export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
 
@@ -139,9 +140,14 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             <Row label="Stay in the start folder" help="Internal URLs outside the start URL's folder are not crawled.">
               {(_, l) => <Switch labelledBy={l} checked={config.scope.stay_in_folder} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, stay_in_folder: v } }))} />}
             </Row>
-            <Row label="Use sitemaps from robots.txt" help="Also crawl the URLs listed in the sitemaps the site declares.">
-              {(_, l) => <Switch labelledBy={l} checked={config.scope.use_sitemaps} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, use_sitemaps: v } }))} />}
-            </Row>
+          </Group>
+          <Group title="Sitemaps">
+            <SitemapSources
+              value={config.scope.sitemaps}
+              onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, sitemaps: v } }))}
+              issues={issues}
+              transport={transport}
+            />
           </Group>
           <Group title="URLs">
             <Row label="Query parameters" help="Removing parameters makes URLs that differ only by them count once." issues={at("scope.query_params.mode")}>

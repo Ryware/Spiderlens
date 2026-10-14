@@ -260,7 +260,9 @@ pub fn read(bytes: &[u8], mut on_entry: impl FnMut(Entry)) -> Result<FileFacts, 
                                 _ => {}
                             }
                         }
-                        if rel.as_deref().is_some_and(|r| r.eq_ignore_ascii_case("alternate"))
+                        if rel
+                            .as_deref()
+                            .is_some_and(|r| r.eq_ignore_ascii_case("alternate"))
                             && let (Some(lang), Some(href)) = (lang, href)
                         {
                             en.alternates.push(Alternate { lang, href });
@@ -315,9 +317,7 @@ pub fn read(bytes: &[u8], mut on_entry: impl FnMut(Entry)) -> Result<FileFacts, 
                             Field::Lastmod => en.lastmod = Some(value),
                             Field::Changefreq => en.changefreq = Some(value),
                             Field::Priority => en.priority = Some(value),
-                            Field::ImageLoc if en.images.len() < MAX_IMAGES_PER_URL => {
-                                en.images.push(value)
-                            }
+                            Field::ImageLoc if en.images.len() < MAX_IMAGES_PER_URL => en.images.push(value),
                             Field::ImageLoc | Field::None => {}
                         }
                         field = Field::None;
@@ -580,11 +580,24 @@ mod tests {
         assert_eq!(
             e[0].alternates,
             vec![
-                Alternate { lang: "de".into(), href: "https://a.test/de/".into() },
-                Alternate { lang: "en".into(), href: "https://a.test/en/".into() },
+                Alternate {
+                    lang: "de".into(),
+                    href: "https://a.test/de/".into()
+                },
+                Alternate {
+                    lang: "en".into(),
+                    href: "https://a.test/en/".into()
+                },
             ]
         );
-        assert_eq!(e[1], Entry { pos: 1, loc: "https://a.test/plain".into(), ..Entry::default() });
+        assert_eq!(
+            e[1],
+            Entry {
+                pos: 1,
+                loc: "https://a.test/plain".into(),
+                ..Entry::default()
+            }
+        );
     }
 
     #[test]
@@ -599,7 +612,8 @@ mod tests {
 
     #[test]
     fn errors_name_the_class_and_line() {
-        let (r, e) = entries(b"<urlset>\n<url><loc>https://a.test/a</loc></url>\n<url><loc>x</url>\n</urlset>");
+        let (r, e) =
+            entries(b"<urlset>\n<url><loc>https://a.test/a</loc></url>\n<url><loc>x</url>\n</urlset>");
         let err = r.unwrap_err();
         assert_eq!(err.class, FileErrorClass::InvalidXml);
         assert_eq!(err.line, Some(3));
@@ -635,9 +649,20 @@ mod tests {
         assert_eq!(parse_lastmod("1970-01-01T00:00:00.123-00:30"), Some(1800));
         assert_eq!(parse_lastmod(" 2024-02-29 "), Some(1_709_164_800));
         for bad in [
-            "", "26", "2026-13-01", "2026-02-30", "2025-02-29", "2026-1-01", "2026-10-01T25:00Z",
-            "2026-10-01T10:00", "2026-10-01T10:00+15:00", "2026-10-01 10:00Z", "2026/10/01",
-            "2026T10:00Z", "2026-10-01T10:00:00.Z", "yesterday",
+            "",
+            "26",
+            "2026-13-01",
+            "2026-02-30",
+            "2025-02-29",
+            "2026-1-01",
+            "2026-10-01T25:00Z",
+            "2026-10-01T10:00",
+            "2026-10-01T10:00+15:00",
+            "2026-10-01 10:00Z",
+            "2026/10/01",
+            "2026T10:00Z",
+            "2026-10-01T10:00:00.Z",
+            "yesterday",
         ] {
             assert_eq!(parse_lastmod(bad), None, "{bad}");
         }

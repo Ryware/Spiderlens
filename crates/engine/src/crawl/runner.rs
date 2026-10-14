@@ -1094,7 +1094,8 @@ impl Run {
     }
 
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
-        if !self.c.config.scope.use_sitemaps || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
+        if !self.c.config.scope.sitemaps.read
+            || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
         {
             return Ok(());
         }
@@ -1482,7 +1483,25 @@ impl Run {
                 );
                 let internal = seed || self.c.rules.is_internal(&url);
                 let host = host_key(&url);
-                let placement = placement_for(verdict, self.limit_reached);
+                let mut placement = placement_for(verdict, self.limit_reached);
+                // Spec 011 FR-009: with "Crawl URLs found only in sitemaps"
+                // off, a sitemap URL waits for a link before it is queued.
+                if in_sitemap
+                    && internal
+                    && !self.c.config.scope.sitemaps.crawl_sitemap_only
+                    && matches!(
+                        placement,
+                        Placement::Queue {
+                            check_only: false,
+                            ..
+                        }
+                    )
+                {
+                    placement = Placement::NotCrawled {
+                        reason: NotCrawledReason::SitemapOnly,
+                        detail: None,
+                    };
+                }
                 (url.to_string(), host, internal, placement)
             }
             Err(problem) => {

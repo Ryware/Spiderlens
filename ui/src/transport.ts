@@ -170,6 +170,7 @@ export interface Transport {
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
+  pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
@@ -224,6 +225,8 @@ export const tauriTransport: Transport = {
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
+  pickSitemapFile: async () =>
+    asPath(await open({ filters: [{ name: "XML sitemaps", extensions: ["xml", "gz"] }] })),
   pickProfileFile: async () =>
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>

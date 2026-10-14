@@ -187,6 +187,45 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Sitemaps (spec 011)
+    let http_url = |s: &str| {
+        url::Url::parse(s.trim())
+            .ok()
+            .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+    };
+    for (index, u) in c.scope.sitemaps.urls.iter().enumerate() {
+        if http_url(u).is_none() {
+            i.error(
+                format!("scope.sitemaps.urls[{index}]"),
+                "sitemap_url_invalid",
+                "Enter the full sitemap address, starting with http:// or https://.",
+            );
+        }
+    }
+    for (index, f) in c.scope.sitemaps.files.iter().enumerate() {
+        if f.path.trim().is_empty() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].path"),
+                "sitemap_file_missing",
+                "Choose the sitemap file.",
+            );
+        }
+        if http_url(&f.base_url).is_none() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].base_url"),
+                "sitemap_base_invalid",
+                "Enter the address this file will be published at, starting with http:// or https://.",
+            );
+        }
+    }
+    if !c.scope.sitemaps.read && (!c.scope.sitemaps.urls.is_empty() || !c.scope.sitemaps.files.is_empty()) {
+        i.warn(
+            "scope.sitemaps.read",
+            "sitemaps_off",
+            "Sitemaps you added are not read while \"Read sitemaps\" is off.",
+        );
+    }
+
     // Identity
     let ua = &c.identity.user_agent;
     if ua.preset == UaPreset::Custom {
@@ -409,6 +448,39 @@ mod tests {
             .iter()
             .map(|i| (i.path.as_str(), i.code.as_str(), i.severity))
             .collect()
+    }
+
+    #[test]
+    fn sitemap_sources_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.scope.sitemaps.urls = vec!["https://a.test/s.xml".into(), "/sitemap.xml".into()];
+        c.scope.sitemaps.files = vec![crate::LocalSitemap {
+            path: String::new(),
+            base_url: "ftp://a.test/".into(),
+        }];
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("scope.sitemaps.urls[1]", "sitemap_url_invalid", Severity::Error),
+                (
+                    "scope.sitemaps.files[0].path",
+                    "sitemap_file_missing",
+                    Severity::Error
+                ),
+                (
+                    "scope.sitemaps.files[0].base_url",
+                    "sitemap_base_invalid",
+                    Severity::Error
+                ),
+            ]
+        );
+        c.scope.sitemaps.urls.pop();
+        c.scope.sitemaps.files.clear();
+        c.scope.sitemaps.read = false;
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![("scope.sitemaps.read", "sitemaps_off", Severity::Warning)]
+        );
     }
 
     #[test]

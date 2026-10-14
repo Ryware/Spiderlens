@@ -605,7 +605,7 @@ async fn us6_sitemaps_from_robots() {
         .start();
     let d = crawl(&site, "/", |c| {
         fast(c);
-        c.scope.use_sitemaps = true;
+        c.scope.sitemaps = spiderlens_config::SitemapSettings::all(true);
         c.scope.exclude = vec!["skip-me".into()];
     })
     .await;
@@ -628,9 +628,42 @@ async fn us6_sitemaps_from_robots() {
     );
     assert_eq!(d.summary.status, "completed");
 
-    let d = crawl(&site, "/", fast).await;
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.scope.sitemaps = spiderlens_config::SitemapSettings::all(false);
+    })
+    .await;
     assert!(!d.rows.contains_key(&site.url(E, "/orphan")));
     assert_eq!(site.count(E, "/index.xml"), 1, "US6-4: not requested when off");
+}
+
+/// Spec 011 FR-009, US6 scenario 3: sitemap-only URLs wait for a link.
+#[tokio::test]
+async fn sitemap_only_urls_are_not_crawled_when_asked() {
+    let s1 = "<urlset><url><loc>{base:example.test}/linked</loc></url>\
+              <url><loc>{base:example.test}/orphan</loc></url></urlset>";
+    let site = SiteBuilder::new()
+        .robots(E, "User-agent: *\nAllow: /\nSitemap: {base:example.test}/s1.xml\n")
+        .page(E, "/", "", &["/later"])
+        .page(E, "/later", "", &["/linked"])
+        .page(E, "/linked", "", &[])
+        .page(E, "/orphan", "", &[])
+        .raw(E, "/s1.xml", 200, "application/xml", s1.as_bytes())
+        .start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.scope.sitemaps.crawl_sitemap_only = false;
+    })
+    .await;
+    assert_eq!(
+        d.reason(&site.url(E, "/orphan")),
+        Some(NotCrawledReason::SitemapOnly)
+    );
+    assert_eq!(site.count(E, "/orphan"), 0);
+    let linked = d.row(&site.url(E, "/linked"));
+    assert_eq!(linked.state, UrlState::Crawled, "upgraded once a link is found");
+    assert!(linked.in_sitemap);
+    assert_eq!(site.count(E, "/linked"), 1);
 }
 
 #[tokio::test]

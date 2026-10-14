@@ -49,8 +49,7 @@ pub struct Limits {
     pub list_depth: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub struct Scope {
     pub include: Vec<String>,
@@ -66,8 +65,123 @@ pub struct Scope {
     pub query_params: QueryParams,
     /// Longer URLs are recorded as malformed and not crawled.
     pub max_url_length: u32,
-    /// Seed the crawl with the sitemaps listed in the start host's robots.txt.
-    pub use_sitemaps: bool,
+    /// Where sitemaps come from and what is done with their URLs (spec 011).
+    pub sitemaps: SitemapSettings,
+}
+
+/// Spec 011 FR-001, FR-002, FR-009.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SitemapSettings {
+    /// Read sitemaps (robots.txt, the default locations, the ones below) and
+    /// keep every entry for the sitemap audit.
+    pub read: bool,
+    /// Queue internal URLs that only a sitemap lists; when off they are
+    /// recorded as "Found only in sitemap" and not requested.
+    pub crawl_sitemap_only: bool,
+    /// Sitemaps the user added by hand.
+    pub urls: Vec<String>,
+    /// Sitemap files on this computer, each with the URL it will live at.
+    pub files: Vec<LocalSitemap>,
+}
+
+impl Default for SitemapSettings {
+    fn default() -> Self {
+        Self {
+            read: true,
+            crawl_sitemap_only: true,
+            urls: Vec::new(),
+            files: Vec::new(),
+        }
+    }
+}
+
+impl SitemapSettings {
+    /// Both switches on or both off: the meaning of spec 003's single
+    /// "Use sitemaps from robots.txt" setting.
+    pub fn all(on: bool) -> Self {
+        Self {
+            read: on,
+            crawl_sitemap_only: on,
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LocalSitemap {
+    pub path: String,
+    /// Where the file will be published; the location rule is checked
+    /// against it (spec 011 US6 scenario 2).
+    pub base_url: String,
+}
+
+/// What a stored `scope` may look like: the current shape, or the spec 003
+/// one with `use_sitemaps`, which maps to both sitemap switches (spec 011
+/// FR-001, research R10). Only the current shape is ever written.
+#[derive(Deserialize)]
+#[serde(default)]
+struct ScopeWire {
+    include: Vec<String>,
+    exclude: Vec<String>,
+    subdomains: SubdomainMode,
+    stay_in_folder: bool,
+    check_external: bool,
+    follow_internal_nofollow: bool,
+    follow_external_nofollow: bool,
+    query_params: QueryParams,
+    max_url_length: u32,
+    sitemaps: Option<SitemapSettings>,
+    use_sitemaps: Option<bool>,
+}
+
+impl Default for ScopeWire {
+    fn default() -> Self {
+        let d = Scope::default();
+        Self {
+            include: d.include,
+            exclude: d.exclude,
+            subdomains: d.subdomains,
+            stay_in_folder: d.stay_in_folder,
+            check_external: d.check_external,
+            follow_internal_nofollow: d.follow_internal_nofollow,
+            follow_external_nofollow: d.follow_external_nofollow,
+            query_params: d.query_params,
+            max_url_length: d.max_url_length,
+            sitemaps: None,
+            use_sitemaps: None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Scope {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        ScopeWire::deserialize(d).map(Into::into)
+    }
+}
+
+impl From<ScopeWire> for Scope {
+    fn from(f: ScopeWire) -> Self {
+        let sitemaps = match (f.sitemaps, f.use_sitemaps) {
+            (Some(s), _) => s,
+            (None, Some(on)) => SitemapSettings::all(on),
+            (None, None) => SitemapSettings::default(),
+        };
+        Self {
+            include: f.include,
+            exclude: f.exclude,
+            subdomains: f.subdomains,
+            stay_in_folder: f.stay_in_folder,
+            check_external: f.check_external,
+            follow_internal_nofollow: f.follow_internal_nofollow,
+            follow_external_nofollow: f.follow_external_nofollow,
+            query_params: f.query_params,
+            max_url_length: f.max_url_length,
+            sitemaps,
+        }
+    }
 }
 
 impl Default for Scope {
@@ -82,7 +196,7 @@ impl Default for Scope {
             follow_external_nofollow: false,
             query_params: QueryParams::default(),
             max_url_length: 2000,
-            use_sitemaps: false,
+            sitemaps: SitemapSettings::default(),
         }
     }
 }
@@ -406,6 +520,35 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn spec_003_sitemap_setting_maps_to_both_switches() {
+        for on in [true, false] {
+            let s: Scope =
+                serde_json::from_value(json!({ "use_sitemaps": on, "max_url_length": 500 })).unwrap();
+            assert_eq!(s.sitemaps, SitemapSettings::all(on));
+            assert_eq!(s.max_url_length, 500);
+            let written = serde_json::to_value(&s).unwrap();
+            assert!(
+                written.get("use_sitemaps").is_none(),
+                "only the new shape is written"
+            );
+            let back: Scope = serde_json::from_value(written).unwrap();
+            assert_eq!(back, s);
+        }
+        let s: Scope = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(s, Scope::default());
+        let s: Scope = serde_json::from_value(json!({
+            "use_sitemaps": true,
+            "sitemaps": { "read": false, "urls": ["https://a.test/s.xml"] }
+        }))
+        .unwrap();
+        assert!(
+            !s.sitemaps.read && s.sitemaps.crawl_sitemap_only,
+            "the new key wins"
+        );
+        assert_eq!(s.sitemaps.urls, vec!["https://a.test/s.xml"]);
+    }
+
+    #[test]
     fn all_defaults_match_spec() {
         let c = CrawlConfig::default();
         assert_eq!(c.mode, Mode::Spider);
@@ -421,7 +564,8 @@ mod tests {
         assert_eq!(c.scope.subdomains, SubdomainMode::ThisHost);
         assert!(c.scope.check_external);
         assert!(!c.scope.follow_internal_nofollow && !c.scope.follow_external_nofollow);
-        assert!(!c.scope.stay_in_folder && !c.scope.use_sitemaps);
+        assert!(!c.scope.stay_in_folder);
+        assert!(c.scope.sitemaps.read && c.scope.sitemaps.crawl_sitemap_only);
         assert_eq!(c.scope.max_url_length, 2000);
         assert_eq!(c.scope.query_params.mode, QueryMode::Keep);
         assert_eq!(c.limits.list_depth, 0);
