@@ -19,7 +19,7 @@ pub mod synth;
 mod tabs;
 mod view;
 
-pub use counts::FilterCounts;
+pub use counts::{FilterCounts, TabCounts};
 pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
 pub use export::{COPY_LIMIT, ExportError, csv_field, export_file, write_csv, write_tsv_row};
 pub use features::Features;
