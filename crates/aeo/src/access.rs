@@ -105,7 +105,9 @@ pub struct BotAccess {
     pub bot: String,
     pub home_verdict: Verdict,
     pub matched_group: Option<String>,
+    #[ts(type = "number")]
     pub urls_total: u64,
+    #[ts(type = "number")]
     pub urls_blocked: u64,
     /// Deciding rules, most URLs first, then by line.
     pub rules: Vec<RuleCount>,
@@ -116,6 +118,7 @@ pub struct BotAccess {
 pub struct RuleCount {
     pub line_no: u32,
     pub rule: String,
+    #[ts(type = "number")]
     pub urls: u64,
 }
 

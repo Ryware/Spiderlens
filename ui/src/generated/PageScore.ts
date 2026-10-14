@@ -9,4 +9,4 @@ capped: boolean,
 /**
  * (rule id, points lost in hundredths), largest first.
  */
-lost: Array<[string, bigint]>, };
+lost: Array<[string, number]>, };

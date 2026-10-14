@@ -88,6 +88,7 @@ pub struct PageScore {
     /// Capped because no AI search crawler may fetch the page (FR-035).
     pub capped: bool,
     /// (rule id, points lost in hundredths), largest first.
+    #[ts(type = "Array<[string, number]>")]
     pub lost: Vec<(&'static str, u64)>,
 }
 
@@ -194,8 +195,10 @@ pub fn site_score(page_scores: &[u32], site_outcomes: &[(&'static AeoRule, Outco
 #[ts(export)]
 pub struct Fix {
     pub rule_id: String,
+    #[ts(type = "number")]
     pub pages: u64,
     /// Site score points gained if fixed everywhere, in hundredths.
+    #[ts(type = "number")]
     pub gain: u64,
 }
 

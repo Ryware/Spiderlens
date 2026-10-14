@@ -84,6 +84,7 @@ fn main() {
             aeo::aeo_page,
             aeo::aeo_llms_txt_draft,
             aeo::ai_bots_list,
+            aeo::aeo_rules,
             files::crawl_open,
             files::crawl_info,
             files::crawl_save_as,

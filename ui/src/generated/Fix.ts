@@ -3,8 +3,8 @@
 /**
  * One entry of the top fixes list (FR-039).
  */
-export type Fix = { rule_id: string, pages: bigint, 
+export type Fix = { rule_id: string, pages: number, 
 /**
  * Site score points gained if fixed everywhere, in hundredths.
  */
-gain: bigint, };
+gain: number, };

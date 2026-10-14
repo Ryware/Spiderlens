@@ -11,4 +11,4 @@ outcome: string,
 /**
  * Points lost, in hundredths.
  */
-points_lost: bigint, evidence: string | null, };
+points_lost: number, evidence: string | null, };

@@ -63,8 +63,16 @@ pub struct AnalyzeOptions {
 #[serde(tag = "pass", rename_all = "snake_case")]
 #[ts(export, rename = "AiProgress")]
 pub enum Progress {
-    Hosts { done: u32, total: u32 },
-    Pages { done: u64, total: u64 },
+    Hosts {
+        done: u32,
+        total: u32,
+    },
+    Pages {
+        #[ts(type = "number")]
+        done: u64,
+        #[ts(type = "number")]
+        total: u64,
+    },
     Site,
 }
 
@@ -115,6 +123,7 @@ pub struct Summary {
     pub site_checks: u32,
     pub parts: Vec<PartAverage>,
     /// Pages scoring 0-19, 20-49, 50-79, 80-100.
+    #[ts(type = "[number, number, number, number]")]
     pub distribution: [u64; 4],
     pub top_fixes: Vec<Fix>,
     pub site_outcomes: Vec<SiteOutcome>,
@@ -122,7 +131,9 @@ pub struct Summary {
     pub entity: Option<Entity>,
     pub about_url: Option<String>,
     pub contact_url: Option<String>,
+    #[ts(type = "number")]
     pub pages_analyzed: u64,
+    #[ts(type = "number")]
     pub provisional_pages: u64,
     pub versions: Versions,
 }
@@ -1112,6 +1123,7 @@ pub struct PageCheck {
     /// `fail` or `not_available`; checks that passed are not stored row by row.
     pub outcome: String,
     /// Points lost, in hundredths.
+    #[ts(type = "number")]
     pub points_lost: i64,
     pub evidence: Option<String>,
 }
@@ -1122,6 +1134,7 @@ pub struct PageResult {
     pub url: String,
     pub page_type: String,
     pub page_type_reason: Option<String>,
+    #[ts(type = "number | null")]
     pub score: Option<i64>,
     pub provisional: bool,
     pub version_used: String,

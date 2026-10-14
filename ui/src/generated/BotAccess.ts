@@ -5,7 +5,7 @@ import type { Verdict } from "./Verdict";
 /**
  * Per-host, per-crawler totals for the access table (`aeo_bot_access`).
  */
-export type BotAccess = { bot: string, home_verdict: Verdict, matched_group: string | null, urls_total: bigint, urls_blocked: bigint, 
+export type BotAccess = { bot: string, home_verdict: Verdict, matched_group: string | null, urls_total: number, urls_blocked: number, 
 /**
  * Deciding rules, most URLs first, then by line.
  */

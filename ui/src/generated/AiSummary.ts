@@ -18,4 +18,4 @@ site_checks: number, parts: Array<AiPartAverage>,
 /**
  * Pages scoring 0-19, 20-49, 50-79, 80-100.
  */
-distribution: [bigint, bigint, bigint, bigint], top_fixes: Array<Fix>, site_outcomes: Array<AiSiteOutcome>, hosts: Array<AiHostSummary>, entity: Entity | null, about_url: string | null, contact_url: string | null, pages_analyzed: bigint, provisional_pages: bigint, versions: AiVersions, };
+distribution: [number, number, number, number], top_fixes: Array<Fix>, site_outcomes: Array<AiSiteOutcome>, hosts: Array<AiHostSummary>, entity: Entity | null, about_url: string | null, contact_url: string | null, pages_analyzed: number, provisional_pages: number, versions: AiVersions, };

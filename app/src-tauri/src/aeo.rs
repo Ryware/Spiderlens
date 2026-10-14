@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use spiderlens_aeo::analyze::{self, AnalyzeOptions, PageKey, PageResult, Progress, Summary};
+use spiderlens_aeo::rules::{AeoRule, RULES};
 use spiderlens_config::ai_bots::{self, AiBot};
 use tauri::{AppHandle, Emitter};
 
@@ -103,6 +104,12 @@ pub fn ai_bots_list() -> BotList {
         date: ai_bots::date(),
         bots: ai_bots::all(),
     }
+}
+
+/// The checks with their names, explanations and fixes (FR-038).
+#[tauri::command]
+pub fn aeo_rules() -> &'static [AeoRule] {
+    RULES
 }
 
 /// Starts a run; the crawl's finish step uses this too.
