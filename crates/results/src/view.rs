@@ -351,6 +351,23 @@ impl Reader {
             .collect()
     }
 
+    /// The tabs that list URL `id` with no filter, scope or search, in
+    /// display order: where "show in table" can take it. Empty when no tab
+    /// lists it (a URL still queued, say) or it is not in the crawl.
+    pub fn tabs_of(&self, id: i64) -> Result<Vec<&'static str>> {
+        let mut out = Vec::new();
+        for t in tabs::tabs() {
+            let sql = format!(
+                "SELECT EXISTS (SELECT 1 FROM urls u WHERE u.id = ?1 AND ({}))",
+                t.eligible
+            );
+            if self.conn.query_row(&sql, [id], |r| r.get::<_, bool>(0))? {
+                out.push(t.id);
+            }
+        }
+        Ok(out)
+    }
+
     /// Rebuilds the view if the crawl wrote since it was built; returns the
     /// new positions of `anchors` (plan D5). None when nothing changed.
     pub fn refresh(&mut self, view: u32, anchors: &[i64]) -> Result<Option<Refresh>> {

@@ -50,8 +50,8 @@ ignored tests now and enabled when spec 005 lands.
 ## Phase 5: US3 inspector (P2)
 
 - [x] T026 [US3] `detail.rs`: response details, redirect chain with loop and over-limit flags, counts; inlinks and outlinks paged (anchor text and rel **after 005**)
-- [ ] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (open: copy and "show in table" on list rows)
-- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component)
+- [x] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (link, image and redirect rows: Copy URL and Show in table on hover, focus and right-click; show in table picks a tab from `url_tabs` and clears a filter or search that hides the URL)
+- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component; the lists live inside the scrolling inspector with rows of varying height, so windowing them needs their own fixed-height scroller first)
 - [x] T029 [US3] Headers, images, headings, raw HTML sections: UI and queries behind `needs` (**after 005** for data). Raw HTML: `Reader::page_html` (decoded through the engine's one `bodies` reader, `extract::body::unpack`, in the encoding extraction used) and `url_html`; the detail pane's Page HTML section opens a windowed, line-numbered, searchable source viewer with Copy, and explains the Store page HTML setting when the crawl did not keep it
 
 ## Phase 6: US4 copy and export (P2)

@@ -307,3 +307,30 @@ test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) =
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
+
+test("inspector_rows_copy_and_show_in_table", async ({ page }) => {
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(1).click();
+  await page.keyboard.press("End");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-4999");
+  // The actions show on hover and on keyboard focus.
+  const show = details.getByRole("button", { name: "Show https://example.com/ in table" });
+  const shown = show.locator("..");
+  await expect(shown).toHaveCSS("opacity", "0");
+  await show.locator("xpath=ancestor::li").hover();
+  await expect(shown).toHaveCSS("opacity", "1");
+  const copy = details.getByRole("button", { name: "Copy https://example.com/" });
+  await copy.focus();
+  await page.keyboard.press("Enter");
+  await expect(details.getByRole("status")).toHaveText("Copied.");
+  expect(await page.evaluate(() => window.spiderlens.results.copied)).toEqual(["https://example.com/"]);
+  // Right-click offers the same; Show in table scrolls back to the top row.
+  await copy.locator("xpath=ancestor::li").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Show in table" }).click();
+  const selected = grid.locator('[role="row"][aria-selected="true"]');
+  await expect(selected).toHaveAttribute("data-id", "1");
+  await expect(selected).toBeInViewport();
+  await expect(grid).toBeFocused();
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/");
+});
