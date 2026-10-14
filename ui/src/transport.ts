@@ -36,6 +36,7 @@ import type { MappingTest } from "./generated/MappingTest";
 import type { PairDetail } from "./generated/PairDetail";
 import type { Setup } from "./generated/Setup";
 import type { Summary } from "./generated/Summary";
+import type { RetrySettings } from "./generated/RetrySettings";
 
 export interface BuildInfo {
   product: string;
@@ -115,6 +116,52 @@ export interface CrawlProgress {
   eta_secs: number | null;
   /** Time spent crawling, pauses excluded, across every run of this file (spec 007). */
   active_ms: number;
+  /** URLs waiting to be retried (spec 004). */
+  waiting: number;
+  /** Sites paused because they kept failing (spec 004 FR-028). */
+  paused_hosts: PausedHost[];
+  /** Every remaining URL's site is paused: nothing can be requested (US4.4). */
+  waiting_for_host: boolean;
+}
+
+/** A site the crawl has paused (spec 004 FR-028). `host` is the engine's host key. */
+export interface PausedHost {
+  host: string;
+  /** Why, in words. */
+  reason: string;
+  /** Seconds until the test request; 0 while it is out. */
+  seconds_left: number;
+  /** The test request is out. */
+  probing: boolean;
+  /** Failed too often: its remaining URLs were recorded as "Host unavailable". */
+  given_up: boolean;
+}
+
+/** Something worth telling the user while the crawl runs: a site paused, resumed or given up, or the network went down (spec 004). */
+export interface CrawlNotice {
+  id: number;
+  kind: string;
+  host: string | null;
+  message: string;
+}
+
+/** What "Retry failed URLs" would do, before anything changes (spec 004 US5.1, FR-034). */
+export interface RetryPreview {
+  total: number;
+  /** Counts per error class, with the engine's labels. */
+  by_class: { class: string; label: string; count: number }[];
+  available: boolean;
+  /** Why it is unavailable, in words. */
+  reason: string | null;
+}
+
+/** One crawl log entry, newest first (spec 004 FR-035). */
+export interface CrawlLogEntry {
+  at_ms: number;
+  kind: string;
+  host: string | null;
+  url: string | null;
+  message: string;
 }
 
 export type CrawlStatus = "running" | "paused" | "stopped" | "completed";
@@ -136,6 +183,20 @@ export interface CrawlSummary {
   /** Crawled URLs that failed without a response, per error class (spec 007). */
   failed_by_class?: Record<string, number>;
   active_ms?: number;
+  /** Requested URLs by final error class, HTTP classes included (spec 004 FR-036). */
+  by_class: Record<string, number>;
+  transient_errors: number;
+  permanent_errors: number;
+  /** Automatic retries made. */
+  retries: number;
+  /** URLs that needed more than one attempt and ended without an error. */
+  recovered: number;
+  /** Sites paused at least once. */
+  hosts_paused: number;
+  /** "Retry failed URLs" runs. */
+  manual_retries: number;
+  /** Why the crawl paused itself, if it did: "network" or "local". */
+  pause_reason: string | null;
 }
 
 export interface CrawlReport {
@@ -158,7 +219,7 @@ export interface CrawlFinished {
 
 // Crawl files (spec 006, specs/006-crawl-storage/contracts/desktop-commands.md).
 
-export type LocalErrorKind = "disk_low" | "disk_full" | "drive_gone" | "permission" | "other";
+export type LocalErrorKind = "disk_low" | "disk_full" | "drive_gone" | "permission" | "network" | "other";
 
 /** A disk or write problem that paused the crawl; never a website error. */
 export interface LocalError {
@@ -331,6 +392,13 @@ export interface Transport {
   onCrawlProgress(cb: (p: CrawlProgress) => void): Promise<() => void>;
   onCrawlWarning(cb: (w: { id: number; message: string }) => void): Promise<() => void>;
   onCrawlFinished(cb: (f: CrawlFinished) => void): Promise<() => void>;
+  onCrawlNotice(cb: (n: CrawlNotice) => void): Promise<() => void>;
+  // Fetch errors and retries (spec 004, contracts/desktop-commands.md).
+  crawlResumeHost(id: number, host: string): Promise<void>;
+  crawlApplySettings(id: number, speed: SpeedSettings | null, retry: RetrySettings | null): Promise<void>;
+  retryPreview(path: string): Promise<RetryPreview>;
+  retryStart(path: string): Promise<CrawlStarted>;
+  crawlLog(path: string, limit?: number): Promise<CrawlLogEntry[]>;
   pickCrawlFile(): Promise<string | null>;
   pickCsvPath(name: string): Promise<string | null>;
   // Crawl files (spec 006).
@@ -426,6 +494,12 @@ export const tauriTransport: Transport = {
   onCrawlProgress: (cb) => listen<CrawlProgress>("crawl-progress", (e) => cb(e.payload)),
   onCrawlWarning: (cb) => listen<{ id: number; message: string }>("crawl-warning", (e) => cb(e.payload)),
   onCrawlFinished: (cb) => listen<CrawlFinished>("crawl-finished", (e) => cb(e.payload)),
+  onCrawlNotice: (cb) => listen<CrawlNotice>("crawl-notice", (e) => cb(e.payload)),
+  crawlResumeHost: (id, host) => invoke("crawl_resume_host", { id, host }),
+  crawlApplySettings: (id, speed, retry) => invoke("crawl_apply_settings", { id, speed, retry }),
+  retryPreview: (path) => invoke("retry_preview", { path }),
+  retryStart: (path) => invoke("retry_start", { path }),
+  crawlLog: (path, limit) => invoke("crawl_log", { path, limit }),
   pickCrawlFile: async () => asPath(await open({ filters: [{ name: "SpiderLens crawl", extensions: ["spiderlens"] }] })),
   pickCsvPath: (name) => save({ defaultPath: `${name}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] }),
   crawlOpen: (path) => invoke("crawl_open", { path }),
