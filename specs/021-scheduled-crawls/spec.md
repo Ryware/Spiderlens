@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (waiting for the owner's approval)
+**Status**: Approved (2026-10-13, owner: "מאושר בכל")
 
 **Input**: Owner approval of the feature-gap report (row 10, "Scheduling: recurring crawls with automatic exports", 2026-10-13), with the brief: define recurring crawls (profile, start URL, interval or cron-like schedule), run them without the app window open where the operating system allows, save each run as its own crawl file named by date, optionally run exports or the end-of-crawl report and the comparison against the previous run afterwards, with a schedule list and run history in the app and the command line. Desktop only, no servers, secrets never stored in SpiderLens files.
 
