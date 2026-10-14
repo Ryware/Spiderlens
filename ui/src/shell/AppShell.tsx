@@ -3,6 +3,8 @@ import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
+import { SpellingBar } from "../spelling/SpellingBar";
+import { useSpelling } from "../spelling/useSpelling";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
@@ -93,6 +95,20 @@ export function AppShell({ transport }: { transport: Transport }) {
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const onFocusId = results.setFocusId;
+  // Spelling runs after a crawl ends, never during it (spec 027 part D).
+  const finished = useRef(crawl.phase);
+  const [crawlDone, setCrawlDone] = useState(false);
+  useEffect(() => {
+    const was = finished.current;
+    finished.current = crawl.phase;
+    setCrawlDone(crawl.phase === "completed" && (was === "running" || was === "stopping"));
+  }, [crawl.phase]);
+  const spelling = useSpelling(transport, crawl.path, setup.config?.spelling ?? null, crawlDone, results.reload);
+  const ignoreWord = useCallback(
+    (word: string) =>
+      setup.set((c) => (c.spelling.ignore.some((w) => w.toLowerCase() === word.toLowerCase()) ? c : { ...c, spelling: { ...c.spelling, ignore: [...c.spelling.ignore, word] } })),
+    [setup.set],
+  );
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   useEffect(() => {
@@ -256,8 +272,9 @@ export function AppShell({ transport }: { transport: Transport }) {
           {resultTab && crawl.path ? (
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
-              // tab's selection into the new tab's first render.
-              key={`${crawl.path}\n${resultTab.id}`}
+              // tab's selection into the new tab's first render. A pass that
+              // adds data (spelling) remounts it, so counts and columns follow.
+              key={`${crawl.path}\n${resultTab.id}\n${results.features?.available.join() ?? ""}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -266,6 +283,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              toolbar={resultTab.id === "spelling" ? <SpellingBar spelling={spelling} live={crawl.running} /> : undefined}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
@@ -277,7 +295,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} onIgnoreWord={ignoreWord} ignored={setup.config?.spelling.ignore} /> : <DetailPanel />}
             </div>
           </>
         )}

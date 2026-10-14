@@ -63,4 +63,5 @@ export const needReason: Record<Need, string> = {
   attempts: "Not collected yet: retry attempts are recorded from spec 004.",
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
+  spelling: "Spelling has not been checked for this crawl. Use Check spelling on the Spelling tab.",
 };

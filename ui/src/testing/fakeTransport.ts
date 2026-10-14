@@ -6,6 +6,7 @@ import type { Issue } from "../generated/Issue";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeSpellingTransport, type FakeSpelling } from "./fakeSpelling";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -60,6 +61,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
   };
 }
 
@@ -135,7 +137,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; spelling: FakeSpelling } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -184,6 +186,7 @@ export function fakeTransport(
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   return {
     ...resultsApi,
+    ...fakeSpellingTransport(),
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,

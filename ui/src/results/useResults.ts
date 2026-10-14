@@ -56,7 +56,10 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
-  return { tabs, features, session, update, focusId, setFocusId };
+  /** Reads which data the file has again, after a pass wrote more. */
+  const reload = useCallback(() => setRetry((n) => n + 1), []);
+
+  return { tabs, features, session, update, focusId, setFocusId, reload };
 }
 
 export type Results = ReturnType<typeof useResults>;

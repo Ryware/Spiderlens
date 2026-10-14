@@ -66,6 +66,25 @@ impl Available {
     }
 }
 
+/// A dictionary that can be downloaded, with what to show before download.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct Downloadable {
+    pub lang: String,
+    pub name: String,
+    pub licence: String,
+    #[ts(type = "number")]
+    pub size: u64,
+}
+
+/// Installed dictionaries, and those that can be downloaded.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct Dictionaries {
+    pub installed: Vec<Installed>,
+    pub available: Vec<Downloadable>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
     pub source: String,
@@ -180,6 +199,23 @@ impl Store {
         found.sort_by(|a, b| a.lang.cmp(&b.lang));
         out.extend(found);
         out
+    }
+
+    pub fn dictionaries(&self) -> Dictionaries {
+        Dictionaries {
+            installed: self.list(),
+            available: manifest()
+                .dictionaries
+                .iter()
+                .filter(|d| !self.is_installed(&d.lang))
+                .map(|d| Downloadable {
+                    lang: d.lang.clone(),
+                    name: d.name.clone(),
+                    licence: d.licence.clone(),
+                    size: d.size(),
+                })
+                .collect(),
+        }
     }
 
     pub fn is_installed(&self, lang: &str) -> bool {

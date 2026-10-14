@@ -25,6 +25,19 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { RetrySettings } from "./generated/RetrySettings";
+import type { Dictionaries } from "./generated/Dictionaries";
+import type { Installed } from "./generated/Installed";
+import type { SpellingSettings } from "./generated/SpellingSettings";
+import type { SpellSummary } from "./generated/SpellSummary";
+
+/** A spelling check's progress, then its end (spec 027 part D). */
+export interface SpellProgress {
+  checked: number;
+  total: number;
+  state: "running" | "done" | "cancelled" | "failed";
+  summary: SpellSummary | null;
+  error: string | null;
+}
 
 export interface BuildInfo {
   product: string;
@@ -419,6 +432,20 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+
+  // Spelling (spec 027 part D)
+  spellDictionaries(): Promise<Dictionaries>;
+  /** Downloads a listed dictionary, checked against its published checksum. */
+  spellDownload(lang: string): Promise<Installed>;
+  /** Asks for a .aff and then a .dic file; null when either is cancelled. */
+  pickDictionaryFiles(): Promise<{ aff: string; dic: string } | null>;
+  spellAdd(lang: string, aff: string, dic: string): Promise<Installed>;
+  spellRemove(lang: string): Promise<void>;
+  /** Starts checking a crawl file; progress comes through onSpellProgress. */
+  spellStart(path: string, settings: SpellingSettings): Promise<void>;
+  spellCancel(): Promise<void>;
+  spellSummary(path: string): Promise<SpellSummary | null>;
+  onSpellProgress(cb: (p: SpellProgress) => void): Promise<() => void>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -499,4 +526,18 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  spellDictionaries: () => invoke("spell_dictionaries"),
+  spellDownload: (lang) => invoke("spell_download", { lang }),
+  pickDictionaryFiles: async () => {
+    const aff = asPath(await open({ title: "Affix file (.aff)", filters: [{ name: "Hunspell affix file", extensions: ["aff"] }] }));
+    if (!aff) return null;
+    const dic = asPath(await open({ title: "Word list (.dic)", filters: [{ name: "Hunspell word list", extensions: ["dic"] }] }));
+    return dic ? { aff, dic } : null;
+  },
+  spellAdd: (lang, aff, dic) => invoke("spell_add", { lang, aff, dic }),
+  spellRemove: (lang) => invoke("spell_remove", { lang }),
+  spellStart: (path, settings) => invoke("spell_start", { path, settings }),
+  spellCancel: () => invoke("spell_cancel"),
+  spellSummary: (path) => invoke("spell_summary", { path }),
+  onSpellProgress: (cb) => listen<SpellProgress>("spell-progress", (e) => cb(e.payload)),
 };

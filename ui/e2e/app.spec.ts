@@ -231,3 +231,24 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+// Spec 027 part D: spelling is checked after the crawl, from the Spelling tab.
+test("check_spelling_from_the_spelling_tab", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Spelling" }).click();
+  const tab = page.getByRole("region", { name: "Spelling" });
+  await tab.getByRole("button", { name: "Check spelling" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.spelling.started.length)).toBe(1);
+  await page.evaluate(() => window.spiderlens.spelling.progress({ checked: 1200, total: 5000 }));
+  await expect(tab.getByText("Checking spelling: 1,200 of 5,000 pages")).toBeVisible();
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features.push("spelling");
+    s.results.urls[3].spellErrors = 2;
+    s.spelling.finish({ pages: 5000, errors: 2, distinct_words: 2 });
+  });
+  await expect(tab.getByTestId("spell-summary")).toContainText("2 errors (2 different words) in 5,000 pages");
+  await tab.getByRole("button", { name: /^Spelling errors/ }).first().click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1 URL");
+});

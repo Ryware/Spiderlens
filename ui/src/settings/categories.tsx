@@ -11,8 +11,9 @@ import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { DictionaryManager } from "../spelling/DictionaryManager";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "spelling" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +35,12 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "spelling",
+    title: "Spelling",
+    description: "Spelling is checked after the crawl, from the stored pages, so it never slows crawling. Dictionaries stay on this computer.",
+    prefixes: ["spelling"],
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -372,5 +379,37 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
           </Row>
         </Group>
       );
+
+    case "spelling": {
+      const sp = config.spelling;
+      const setSp = (p: Partial<typeof sp>) => set((c) => ({ ...c, spelling: { ...c.spelling, ...p } }));
+      return (
+        <>
+          <Group>
+            <Row label="Check spelling after the crawl" help="Or check any time with Check spelling on the Spelling tab.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.check} onChange={(v) => setSp({ check: v })} />}
+            </Row>
+            <Row label="Language of pages without a lang attribute" issues={at("spelling.default_lang")}>
+              {(i) => <Input id={i} className="w-32" value={sp.default_lang} onChange={(e) => setSp({ default_lang: e.target.value })} />}
+            </Row>
+            <Row label="Skip words in capitals" help="Words like NASA or SKU are usually names, not mistakes.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.skip_all_caps} onChange={(v) => setSp({ skip_all_caps: v })} />}
+            </Row>
+            <Row label="Words to ignore" help="One per line: brand names, product names, jargon. Case is ignored." stacked>
+              {(i) => <Lines id={i} value={sp.ignore} onChange={(ignore) => setSp({ ignore })} placeholder="SpiderLens" />}
+            </Row>
+          </Group>
+          <Group title="Dictionaries">
+            <Row
+              label="Pages are checked with the dictionary for their language"
+              help="Words in another script, such as Hebrew on an English page, use that script's dictionary when one is installed."
+              stacked
+            >
+              {() => <DictionaryManager transport={transport} />}
+            </Row>
+          </Group>
+        </>
+      );
+    }
   }
 }

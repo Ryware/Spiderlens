@@ -11,5 +11,7 @@ pub mod run;
 pub mod tokenize;
 
 pub use check::Checker;
-pub use dict::{Available, DictError, Installed, Origin, Store, default_dir, manifest};
+pub use dict::{
+    Available, DictError, Dictionaries, Downloadable, Installed, Origin, Store, default_dir, manifest,
+};
 pub use run::{RunError, SpellProgress, SpellSummary, run};

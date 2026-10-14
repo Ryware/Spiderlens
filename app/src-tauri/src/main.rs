@@ -8,6 +8,7 @@ mod crawl;
 mod files;
 mod results;
 mod settings;
+mod spelling;
 
 use spiderlens_engine::BuildInfo;
 use tauri::webview::PageLoadEvent;
@@ -36,6 +37,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(spelling::State::default());
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
             for arg in std::env::args_os().skip(1) {
@@ -99,6 +101,13 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            spelling::spell_dictionaries,
+            spelling::spell_download,
+            spelling::spell_add,
+            spelling::spell_remove,
+            spelling::spell_start,
+            spelling::spell_cancel,
+            spelling::spell_summary,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {
