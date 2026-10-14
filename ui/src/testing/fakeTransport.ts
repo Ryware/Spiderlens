@@ -115,6 +115,7 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
     crawls,
     pickCrawlFile: async () => null,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
+    pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",

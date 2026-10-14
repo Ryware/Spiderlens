@@ -70,6 +70,7 @@ fn main() {
             results::url_list,
             results::viz_scene,
             results::viz_term_links,
+            results::viz_export,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

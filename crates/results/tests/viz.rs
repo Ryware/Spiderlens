@@ -558,3 +558,103 @@ async fn anchor_clouds_count_terms_and_list_their_links() {
         again.nodes.iter().map(|n| (n.x, n.y)).collect::<Vec<_>>()
     );
 }
+
+#[tokio::test]
+async fn exports_svg_png_and_csv_of_the_view() {
+    use spiderlens_results::viz::export::{ExportFormat, ExportOptions, export};
+    use spiderlens_results::viz::palette::{Palette, Theme};
+    use spiderlens_results::viz::{ColourBy, png, svg};
+
+    let c = crawl().await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let state = ViewState::default();
+    let scene = r.viz_scene(&state).unwrap();
+    let header = r.viz_header().unwrap();
+    assert_eq!(
+        header.host,
+        url::Url::parse(&c.site.url(E, "/")).unwrap().host_str().unwrap()
+    );
+    assert_eq!(header.date.len(), 10, "YYYY-MM-DD: {}", header.date);
+
+    // SVG: the same bytes every time; header, legend and labels are text.
+    let light = Palette::theme(Theme::Light);
+    let a = svg::svg(&scene, &light, ColourBy::Status, &header);
+    assert_eq!(a, svg::svg(&scene, &light, ColourBy::Status, &header));
+    assert!(a.starts_with("<?xml"));
+    assert!(a.contains(">Crawl tree</text>"));
+    assert!(a.contains(&format!("{} · {}", header.host, header.date)));
+    assert!(a.contains("Success (2xx)  "), "legend with counts");
+    assert!(a.contains("<title>Crawl tree · "));
+    assert!(
+        a.contains(">/a</text>") || a.contains(">/a  (+"),
+        "labels are selectable text"
+    );
+    let dark = svg::svg(&scene, &Palette::theme(Theme::Dark), ColourBy::Status, &header);
+    assert_ne!(a, dark);
+    assert!(a.contains(&light.hex("--bg")) && dark.contains(&Palette::theme(Theme::Dark).hex("--bg")));
+
+    let dir = tempfile::tempdir().unwrap();
+    // PNG at 2x is twice the SVG's size.
+    let p = dir.path().join("tree.png");
+    let (w1, h1) = png::size(&a, 1.0).unwrap();
+    let done = export(
+        &scene,
+        ColourBy::Status,
+        &header,
+        &ExportOptions {
+            format: ExportFormat::Png,
+            scale: 2,
+            ..Default::default()
+        },
+        &p,
+    )
+    .unwrap();
+    assert_eq!(done.files, [p.display().to_string()]);
+    let bytes = std::fs::read(&p).unwrap();
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    let be = |o: usize| u32::from_be_bytes(bytes[o..o + 4].try_into().unwrap());
+    assert_eq!((be(16), be(20)), (w1 * 2, h1 * 2));
+    assert!(!dir.path().join("tree.png.part").exists());
+
+    // CSV: one row per node, and the tree lines in a second file.
+    let p = dir.path().join("tree.csv");
+    let done = export(
+        &scene,
+        ColourBy::Status,
+        &header,
+        &ExportOptions {
+            format: ExportFormat::Csv,
+            ..Default::default()
+        },
+        &p,
+    )
+    .unwrap();
+    assert_eq!(done.files.len(), 2);
+    let nodes = std::fs::read_to_string(&p).unwrap();
+    assert!(
+        nodes.starts_with(
+            "\u{feff}Node,Kind,URL,Label,Depth,Response,Link Score,Inlinks,Parent,URLs,Folded\r\n"
+        )
+    );
+    assert_eq!(nodes.lines().count(), scene.nodes.len() + 1);
+    let links = std::fs::read_to_string(&done.files[1]).unwrap();
+    assert_eq!(
+        links.lines().count(),
+        scene.nodes.iter().filter(|n| n.parent.is_some()).count() + 1
+    );
+    assert!(links.contains(&format!("{},{},tree", c.site.url(E, "/"), c.site.url(E, "/a"))));
+
+    // A big scene is drawn smaller, as fitting it to a window would.
+    let mut huge = scene.clone();
+    for nd in &mut huge.nodes {
+        nd.y *= 100.0;
+    }
+    huge.bounds.height *= 100.0;
+    let big = svg::svg(&huge, &light, ColourBy::Status, &header);
+    let (_, h) = png::size(&big, 1.0).unwrap();
+    assert!(h <= svg::MAX_PICTURE as u32 + 400, "{h}");
+    // Anything still too big for a PNG is refused.
+    let wide = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"5000\" height=\"10\"/>";
+    let e = png::png(wide, 4.0).unwrap_err();
+    assert!(e.to_string().contains("export it as SVG"), "{e}");
+}

@@ -39,7 +39,7 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+pub(crate) fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))

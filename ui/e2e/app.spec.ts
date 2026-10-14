@@ -306,6 +306,24 @@ test("anchor_text_cloud_from_the_details_lists_a_terms_links", async ({ page }) 
   await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.focus)).toBeNull();
 });
 
+test("export_a_view_from_the_toolbar", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByText("Directory tree").click();
+  await expect(page.getByRole("application")).toHaveAttribute("aria-label", /^Directory tree/);
+  await page.getByRole("button", { name: "Export" }).click();
+  const dialog = page.getByRole("dialog", { name: "Export view" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: "2x" }).click();
+  await dialog.getByRole("button", { name: "Export…" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("status").filter({ hasText: /^Saved / })).toContainText(".png");
+  const sent = await page.evaluate(() => window.spiderlens.results.vizExports.at(-1));
+  expect(sent?.options).toMatchObject({ format: "png", scale: 2 });
+  // The colours sent are the ones the window resolved.
+  expect(sent?.options.palette["--viz-ok"]).toMatch(/^(oklch|rgb|#)/);
+  expect(sent?.view.view).toBe("directory_tree");
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();

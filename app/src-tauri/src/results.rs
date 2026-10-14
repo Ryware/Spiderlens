@@ -256,6 +256,31 @@ pub async fn viz_scene(
     state.with(&path, move |r| r.viz_scene(&view).map_err(err)).await
 }
 
+/// Exports the view as SVG, PNG or CSV (spec 022 FR-024): the scene is
+/// rebuilt from `view`, so the file is what is on screen; drawing and
+/// writing run off the reader.
+#[tauri::command]
+pub async fn viz_export(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+    options: spiderlens_results::viz::export::ExportOptions,
+    file: PathBuf,
+) -> Cmd<spiderlens_results::viz::export::ExportDone> {
+    let colour = view.colour;
+    let (scene, header) = state
+        .with(&path, move |r| {
+            let scene = r.viz_scene(&view).map_err(err)?;
+            Ok((scene, r.viz_header().map_err(err)?))
+        })
+        .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        spiderlens_results::viz::export::export(&scene, colour, &header, &options, &file).map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
 /// The links behind one term of an anchor text cloud (spec 022 FR-018):
 /// `total` of them, the first `limit` listed.
 #[tauri::command]

@@ -2,7 +2,8 @@
 // legend, what was left out, and a tooltip. Rust builds every scene; this
 // only asks for the next one and draws it.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, Globe, Maximize2, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Crosshair, Download, Globe, Maximize2, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
+import type { ExportFormat } from "../generated/ExportFormat";
 import type { ColourBy } from "../generated/ColourBy";
 import type { Layout } from "../generated/Layout";
 import type { Scene } from "../generated/Scene";
@@ -13,7 +14,7 @@ import type { Terms } from "../generated/Terms";
 import type { ViewKind } from "../generated/ViewKind";
 import type { ViewState } from "../generated/ViewState";
 import type { Transport } from "../transport";
-import { Button, cn, Input, Notice, Segmented, Select, Switch } from "../components/ui";
+import { Button, cn, Input, Modal, Notice, Segmented, Select, Switch } from "../components/ui";
 import { categoryShape, categoryToken, VizCanvas, type VizCanvasHandle } from "./VizCanvas";
 
 export const vizViews: { id: string; view: ViewKind; title: string }[] = [
@@ -23,7 +24,7 @@ export const vizViews: { id: string; view: ViewKind; title: string }[] = [
   { id: "anchor-text", view: "anchors", title: "Anchor text" },
 ];
 
-const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--accent-text", "--fg-2", "--fg-3", "--bg", "--font-ui"];
+const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--accent-text", "--fg", "--fg-2", "--fg-3", "--bg", "--surface", "--line", "--font-ui"];
 
 /** The token values the canvas draws with, read again when the theme changes. */
 function useTokenColours(): Record<string, string> {
@@ -86,8 +87,9 @@ export function VizView({
   const cloud = view === "anchors";
   const [layout, setLayout] = useState<Layout>(graph ? "force" : cloud ? "cloud" : "tree");
   const [colour, setColour] = useState<ColourBy>("status");
-  // The graph sizes pages by Link Score unless asked otherwise.
-  const [size, setSize] = useState<SizeBy>(graph ? "score" : "uniform");
+  // Sized by Link Score unless asked otherwise (FR-004); the same for all
+  // until it has been worked out.
+  const [size, setSize] = useState<SizeBy>("score");
   // The anchor text cloud opens on the selected page, else the whole site.
   const [focus, setFocus] = useState<string | null>(cloud && focusId !== null ? `u:${focusId}` : null);
   const [terms, setTerms] = useState<Terms>("words");
@@ -105,6 +107,8 @@ export function VizView({
   const [anchor, setAnchor] = useState<{ key: string; sx: number; sy: number } | null>(null);
   const [tip, setTip] = useState<{ node: SceneNode; x: number; y: number } | null>(null);
   const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exported, setExported] = useState<{ ok: boolean; text: string } | null>(null);
   const canvas = useRef<VizCanvasHandle>(null);
   const colours = useTokenColours();
 
@@ -305,11 +309,38 @@ export function VizView({
           <Button variant="quiet" icon size="sm" aria-label="Fit to view" onClick={() => canvas.current?.fit()}>
             <Maximize2 className="size-3.5" />
           </Button>
+          <Button variant="quiet" icon size="sm" aria-label="Export" disabled={!scene} onClick={() => (setExported(null), setExporting(true))}>
+            <Download className="size-3.5" />
+          </Button>
           <Button variant="quiet" icon size="sm" aria-label="Refresh" onClick={() => (setAnchor(null), setRefresh((r) => r + 1))}>
             <RefreshCw className="size-3.5" />
           </Button>
         </div>
       </div>
+      {exported && (
+        <div role="status" className={cn("shrink-0 border-b border-line px-3 py-1.5 text-sm", exported.ok ? "text-fg-2" : "text-bad")}>
+          {exported.text}
+        </div>
+      )}
+      <ExportDialog
+        open={exporting}
+        onOpenChange={setExporting}
+        name={`${path.split(/[\\/]/).pop()?.replace(/\.spiderlens$/, "") ?? "crawl"}-${vizViews.find((v) => v.view === view)?.id ?? "view"}`}
+        transport={transport}
+        onExport={async (format, scale, theme, file) => {
+          setExporting(false);
+          // The window's own colours for its theme, so the file matches the screen (spec 018).
+          const current = theme === "current";
+          const tone = document.documentElement.dataset.tone === "dark" ? "dark" : "light";
+          const palette = current ? Object.fromEntries(Object.entries(colours).filter(([k, v]) => k !== "--font-ui" && v !== "currentColor")) : {};
+          try {
+            const done = await transport.vizExport(path, state, { format, scale, theme: current ? tone : theme, palette }, file);
+            setExported({ ok: true, text: `Saved ${done.files.join(" and ")}` });
+          } catch (e) {
+            setExported({ ok: false, text: String(e) });
+          }
+        }}
+      />
       <div className="flex min-h-0 flex-1">
       <div className="relative min-w-0 flex-1">
         {error && (
@@ -462,5 +493,78 @@ function TermList({
         )}
       </div>
     </div>
+  );
+}
+
+/** Export › format, size and theme (FR-024), then where to save. */
+function ExportDialog({
+  open,
+  onOpenChange,
+  name,
+  transport,
+  onExport,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  name: string;
+  transport: Transport;
+  onExport: (format: ExportFormat, scale: number, theme: "current" | "light" | "dark", file: string) => void;
+}) {
+  const [format, setFormat] = useState<ExportFormat>("png");
+  const [scale, setScale] = useState("2");
+  const [theme, setTheme] = useState<"current" | "light" | "dark">("current");
+  return (
+    <Modal open={open} onOpenChange={onOpenChange} title="Export view" description="The picture as shown, with its legend, the site and the crawl date.">
+      <div className="flex flex-col gap-3 text-sm">
+        <Segmented
+          label="Format"
+          value={format}
+          onChange={setFormat}
+          options={[
+            { value: "png", label: "PNG" },
+            { value: "svg", label: "SVG" },
+            { value: "csv", label: "Nodes and links (CSV)" },
+          ]}
+        />
+        {format === "png" && (
+          <Segmented
+            label="Size"
+            value={scale}
+            onChange={setScale}
+            options={[
+              { value: "1", label: "1x" },
+              { value: "2", label: "2x" },
+              { value: "4", label: "4x" },
+            ]}
+          />
+        )}
+        {format !== "csv" && (
+          <Segmented
+            label="Theme"
+            value={theme}
+            onChange={setTheme}
+            options={[
+              { value: "current", label: "As shown" },
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
+            ]}
+          />
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="quiet" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={async () => {
+              const file = await transport.pickVizPath(name, format);
+              if (file) onExport(format, Number(scale), theme, file);
+            }}
+          >
+            Export…
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
