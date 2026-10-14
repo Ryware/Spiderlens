@@ -44,7 +44,18 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "SEO crawler",
-    "publisher": "Ryware"
+    "publisher": "Ryware",
+    "fileAssociations": [
+      {
+        "ext": [
+          "spiderlens"
+        ],
+        "name": "SpiderLens crawl",
+        "description": "SpiderLens crawl file",
+        "role": "Editor",
+        "mimeType": "application/x-spiderlens"
+      }
+    ]
   },
   "plugins": {}
 }
