@@ -11,7 +11,7 @@ use cdp::browser::{Browser, BrowserConfig};
 use cdp::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
-use cdp::cdp::browser_protocol::network::ErrorReason;
+use cdp::cdp::browser_protocol::network::{ErrorReason, EventLoadingFailed};
 use cdp::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams,
 };
@@ -115,6 +115,19 @@ async fn render_in(
         .await
         .map_err(|e| format!("listener: {e}"))?;
     let url = shared.page_url(n);
+    // Requests the browser itself failed (for example in `--mode continue`).
+    let failures = {
+        let mut failed = page
+            .event_listener::<EventLoadingFailed>()
+            .await
+            .map_err(|e| format!("listener: {e}"))?;
+        let shared = shared.clone();
+        tokio::spawn(async move {
+            while let Some(event) = failed.next().await {
+                shared.note_error(format!("loading failed: {}", event.error_text));
+            }
+        })
+    };
     let interceptor = {
         let (page, shared, url) = (page.clone(), shared.clone(), url.clone());
         tokio::spawn(async move {
@@ -122,7 +135,7 @@ async fn render_in(
                 let (page, shared, url, main) = (page.clone(), shared.clone(), url.clone(), main.clone());
                 tokio::spawn(async move {
                     let _wait = shared.pause_begin();
-                    let answer = if event.request.url == url {
+                    let answer = if event.request.url == url && shared.mode == super::Mode::Fulfil {
                         Answer::Fulfil {
                             status: main.status,
                             headers: main.headers.clone(),
@@ -169,6 +182,7 @@ async fn render_in(
     .await;
     let t = Instant::now();
     interceptor.abort();
+    failures.abort();
     page.close().await.ok();
     shared.add_phase(4, t);
     outcome

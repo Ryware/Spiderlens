@@ -13,8 +13,11 @@
 //! otherwise the full browser runs in new headless mode. `--mode continue`
 //! answers subresources with `Fetch.continueRequest` and lets Chrome fetch
 //! them itself (mapped to the fixture with `--host-resolver-rules`), to
-//! measure what fulfilling every request from Rust costs. The main document
-//! is always fulfilled from memory, as the engine will do (plan D3).
+//! measure what fulfilling every request from Rust costs. In fulfil mode the
+//! main document is fulfilled from memory, as the engine will do (plan D3).
+//! In continue mode it is continued too: a document fulfilled from memory has
+//! no address, Chrome then treats the page as public and fails its requests
+//! to 127.0.0.1 with `net::ERR_FAILED` (Local Network Access checks).
 //!
 //! Prints one JSON line of results and appends it to `--out` if given.
 
@@ -169,7 +172,11 @@ impl Shared {
         let status = r.status().as_u16();
         let headers = headers_of(&r);
         let body = r.bytes().await.map_err(|e| e.to_string())?.to_vec();
-        Ok(MainDoc { status, headers, body })
+        Ok(MainDoc {
+            status,
+            headers,
+            body,
+        })
     }
 
     pub fn pause_begin(&self) -> PauseToken<'_> {
@@ -184,14 +191,19 @@ impl Shared {
     /// Paused right now, and the age of the oldest in milliseconds.
     fn paused_now(&self) -> (u64, u64) {
         let p = self.paused.lock().expect("lock");
-        let oldest = p.values().map(|t| t.elapsed().as_millis() as u64).max().unwrap_or(0);
+        let oldest = p
+            .values()
+            .map(|t| t.elapsed().as_millis() as u64)
+            .max()
+            .unwrap_or(0);
         (p.len() as u64, oldest)
     }
 
     pub fn encode(&self, body: &[u8]) -> String {
         let t = Instant::now();
         let s = base64::engine::general_purpose::STANDARD.encode(body);
-        self.b64_nanos.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.b64_nanos
+            .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         self.b64_bytes.fetch_add(s.len() as u64, Ordering::Relaxed);
         s
     }
@@ -256,7 +268,10 @@ fn headers_of(r: &reqwest::Response) -> Vec<(String, String)> {
         .iter()
         .filter(|(n, _)| {
             // The body is already decoded and its length may change.
-            !matches!(n.as_str(), "content-encoding" | "content-length" | "transfer-encoding")
+            !matches!(
+                n.as_str(),
+                "content-encoding" | "content-length" | "transfer-encoding"
+            )
         })
         .filter_map(|(n, v)| Some((n.as_str().to_string(), v.to_str().ok()?.to_string())))
         .collect()
@@ -364,12 +379,11 @@ async fn main() {
                     tree_memory(&sys, pid)
                 };
                 let (paused, oldest) = shared.paused_now();
-                samples.lock().expect("lock").rows.push((
-                    start.elapsed().as_secs_f64(),
-                    paused,
-                    oldest,
-                    mem,
-                ));
+                samples
+                    .lock()
+                    .expect("lock")
+                    .rows
+                    .push((start.elapsed().as_secs_f64(), paused, oldest, mem));
                 std::thread::sleep(Duration::from_millis(250));
             }
         })
@@ -399,6 +413,15 @@ async fn main() {
         rows.iter().map(|r| r.1 as f64).sum::<f64>() / rows.len() as f64
     };
     let oldest_seen = rows.iter().map(|r| r.2).max().unwrap_or(0);
+    // Paused requests over time: the most seen in each 10 s window.
+    let mut paused_series: Vec<u64> = Vec::new();
+    for r in &rows {
+        let bucket = (r.0 / 10.0) as usize;
+        if paused_series.len() <= bucket {
+            paused_series.resize(bucket + 1, 0);
+        }
+        paused_series[bucket] = paused_series[bucket].max(r.1);
+    }
     let mut ms = shared.page_ms.lock().expect("lock").clone();
     ms.sort_unstable();
     let done = shared.done.load(Ordering::Relaxed);
@@ -408,10 +431,14 @@ async fn main() {
         "{{\"crate\":\"{}\",\"browser\":\"{}\",\"mode\":\"{:?}\",\"tabs\":{},\"pages\":{},\"done\":{},\"failed\":{},\
          \"secs\":{:.1},\"pages_per_sec\":{:.1},\"page_ms_p50\":{},\"page_ms_p95\":{},\"page_ms_max\":{},\
          \"mem_peak_mb\":{},\"mem_steady_mb\":{},\"paused_total\":{},\"paused_peak\":{},\"paused_mean\":{:.1},\
-         \"pause_ms_mean\":{:.2},\"pause_ms_max\":{},\"oldest_paused_sampled_ms\":{},\"paused_over_5s\":{},\
+         \"pause_ms_mean\":{:.2},\"pause_ms_max\":{},\"oldest_paused_sampled_ms\":{},\"paused_over_5s\":{},\"paused_max_per_10s\":{:?},\
          \"b64_mb_per_page\":{:.3},\"b64_encode_ms_total\":{},\"fixture_requests\":{},\"phase_ms_per_page\":{:?},\"errors\":{:?}}}",
         args.krate,
-        if args.shell { "headless_shell" } else { "chrome --headless=new" },
+        if args.shell {
+            "headless_shell"
+        } else {
+            "chrome --headless=new"
+        },
         args.mode,
         args.tabs,
         args.pages,
@@ -435,6 +462,7 @@ async fn main() {
         shared.max_pause_us.load(Ordering::Relaxed) / 1000,
         oldest_seen,
         shared.over_5s.load(Ordering::Relaxed),
+        paused_series,
         b64_bytes as f64 / 1e6 / done.max(1) as f64,
         shared.b64_nanos.load(Ordering::Relaxed) / 1_000_000,
         site.requests(),
