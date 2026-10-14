@@ -4482,6 +4482,7 @@ dependencies = [
  "cookie_store",
  "ego-tree",
  "encoding_rs",
+ "fastrand",
  "flate2",
  "fs4",
  "html5ever 0.35.0",

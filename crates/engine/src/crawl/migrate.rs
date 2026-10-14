@@ -35,11 +35,30 @@ pub const STEPS: &[Step] = &[
         detail TEXT
     );",
     },
+    // Spec 004: attempt counts, the error's sub-reason, the retry timer and
+    // the crawl log (data-model.md).
+    Step {
+        version: 4,
+        additive: true,
+        sql: "ALTER TABLE urls ADD COLUMN attempts INTEGER;
+        ALTER TABLE urls ADD COLUMN round_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE urls ADD COLUMN error_reason TEXT;
+        ALTER TABLE urls ADD COLUMN retry_at INTEGER;
+        ALTER TABLE urls ADD COLUMN manual_retry INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE crawl_log (
+            id INTEGER PRIMARY KEY,
+            at INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            host_key TEXT,
+            url_id INTEGER,
+            message TEXT NOT NULL
+        );",
+    },
     // Removes cookie values from stored `Set-Cookie` headers (spec 025
     // FR-026), the same rule as `redact::set_cookie`. Data only, so older
     // readers still read the file.
     Step {
-        version: 4,
+        version: 5,
         additive: true,
         sql: "UPDATE headers SET headers = (
         SELECT json_group_array(CASE
@@ -65,7 +84,7 @@ pub const STEPS: &[Step] = &[
     // The cookie audit (spec 025 data-model.md): attributes of each cookie a
     // response set, never its value.
     Step {
-        version: 5,
+        version: 6,
         additive: true,
         sql: "CREATE TABLE cookies (
         url_id INTEGER NOT NULL,
@@ -190,9 +209,9 @@ mod tests {
         assert_eq!(LATEST, STEPS.last().unwrap().version);
     }
 
-    /// Step 4's SQL and `redact::set_cookie` give the same result.
+    /// Step 5's SQL and `redact::set_cookie` give the same result.
     #[test]
-    fn step_4_removes_cookie_values_like_the_writer() {
+    fn step_5_removes_cookie_values_like_the_writer() {
         let cases = [
             "sid=abc123; Path=/; Secure; HttpOnly; SameSite=Lax",
             "sid=abc",
@@ -219,7 +238,7 @@ mod tests {
             .unwrap();
         conn.execute("INSERT INTO headers VALUES (2, ?1)", [r#"[["Server","x"]]"#])
             .unwrap();
-        conn.execute_batch(STEPS.iter().find(|s| s.version == 4).unwrap().sql)
+        conn.execute_batch(STEPS.iter().find(|s| s.version == 5).unwrap().sql)
             .unwrap();
 
         let read = |id: i64| -> String {

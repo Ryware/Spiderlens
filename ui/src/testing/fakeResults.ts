@@ -19,6 +19,10 @@ export interface FakeUrl {
   internal: boolean;
   /** First H1, when the crawl collected page content. */
   h1?: string | null;
+  /** Requests made, retries included (spec 004). */
+  attempts?: number;
+  /** The result came from "Retry failed URLs". */
+  manual_retry?: boolean;
 }
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
@@ -242,9 +246,12 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: true,
+        attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
+        error_reason: null,
+        manual_retry: u.manual_retry ?? false,
         cookies: results.features.includes("cookies") ? results.cookies.filter((c) => c.setBy.includes(id)).map((c) => ({ ...cookieRow(c), urls: 1 })) : [],
         unavailable: {
-          attempts: "Request attempts are not recorded in this crawl yet.",
+          ...(results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." }),
           ...(results.features.includes("cookies") ? {} : { cookies: "This crawl was made before SpiderLens recorded the cookies each page sets." }),
         },
       };

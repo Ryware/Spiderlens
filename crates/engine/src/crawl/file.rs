@@ -408,6 +408,9 @@ pub enum LocalErrorKind {
     DiskFull,
     DriveGone,
     Permission,
+    /// Requests to several sites failed in a row: this computer is probably
+    /// offline (spec 004 FR-015).
+    Network,
     Other,
 }
 
@@ -418,6 +421,7 @@ impl LocalErrorKind {
             Self::DiskFull => "disk_full",
             Self::DriveGone => "drive_gone",
             Self::Permission => "permission",
+            Self::Network => "network",
             Self::Other => "other",
         }
     }
@@ -472,6 +476,16 @@ pub fn format_bytes(n: u64) -> String {
 }
 
 impl LocalError {
+    /// The network seems down; nothing was marked failed (spec 004 FR-015).
+    pub fn network_down(path: &Path, message: String) -> Self {
+        Self {
+            kind: LocalErrorKind::Network,
+            message,
+            path: path.to_path_buf(),
+            free_bytes: None,
+        }
+    }
+
     pub fn disk_low(path: &Path, free: u64, reserve: u64) -> Self {
         Self {
             kind: LocalErrorKind::DiskLow,
@@ -649,7 +663,7 @@ pub fn info(path: &Path) -> Result<CrawlInfo, StoreError> {
         match state {
             UrlState::Crawled => counts.crawled = n,
             UrlState::NotCrawled => counts.not_crawled = n,
-            UrlState::Queued | UrlState::InFlight => counts.queued += n,
+            UrlState::Queued | UrlState::InFlight | UrlState::Waiting => counts.queued += n,
         }
     }
     counts.failed = store.page_errors()?;

@@ -18,5 +18,5 @@ mod title;
 pub use build_info::BuildInfo;
 pub use check::{check_page, parse_input_url};
 pub use config::{CheckOptions, RequestHeader};
-pub use error::{CheckError, ErrorClass};
+pub use error::{CheckError, ErrorClass, ErrorReason, FinalClass};
 pub use result::{FinalState, PageCheckResult, RedirectHop, Title};

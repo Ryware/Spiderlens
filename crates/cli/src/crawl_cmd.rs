@@ -11,7 +11,7 @@ use spiderlens_config::{ModeInput, normalize_url, validate};
 use spiderlens_engine::crawl::file::{self, DEFAULT_DISK_RESERVE};
 use spiderlens_engine::crawl::{
     Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ResumeOptions,
-    Upgrade, UrlState, default_file_name,
+    Upgrade, UrlState, default_file_name, retry_preview,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -76,9 +76,74 @@ pub struct ReportArgs {
     /// Only this not-crawled reason (for example blocked_by_robots). Repeatable.
     #[arg(long, value_name = "REASON")]
     reason: Vec<String>,
+    /// The crawl log: retries, failures, host pauses, local problems
+    /// (spec 004 FR-035).
+    #[arg(long, conflicts_with_all = ["not_crawled", "crawled", "reason"])]
+    log: bool,
     /// JSON (one object per line for URL listings).
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args)]
+pub struct RetryArgs {
+    /// Crawl file of a paused or finished crawl.
+    file: PathBuf,
+    /// Do not ask before retrying.
+    #[arg(long)]
+    yes: bool,
+    /// Print counts and the summary as JSON.
+    #[arg(long)]
+    json: bool,
+    /// No progress on stderr.
+    #[arg(long)]
+    quiet: bool,
+}
+
+/// `spiderlens retry` (spec 004 US5, contracts/cli.md).
+pub fn run_retry(args: RetryArgs) -> ExitCode {
+    let by_class = match retry_preview(&args.file) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    let total: u64 = by_class.iter().map(|(_, n)| n).sum();
+    if args.json {
+        let map: serde_json::Map<String, serde_json::Value> =
+            by_class.iter().map(|(k, n)| (k.clone(), (*n).into())).collect();
+        print_json(&serde_json::json!({ "total": total, "by_class": map }));
+    }
+    if total == 0 {
+        if !args.json {
+            println!("Nothing to retry: no URL failed for a temporary reason.");
+        }
+        return ExitCode::from(exit::FETCHED);
+    }
+    if !args.json {
+        println!("{total} URLs failed for temporary reasons and will be retried:");
+        for (class, n) in &by_class {
+            println!("  {:<24} {n:>6}", spiderlens_results::error_class_label(class));
+        }
+    }
+    if !args.yes {
+        eprint!("Retry them? [y/N] ");
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_err() || !answer.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Nothing was changed.");
+            return ExitCode::from(exit::FETCHED);
+        }
+    }
+    let crawler = match Crawler::retry_failed(&args.file) {
+        Ok((c, _)) => c.with_disk_reserve(Some(DEFAULT_DISK_RESERVE)),
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    execute(crawler, args.file, args.quiet, args.json)
 }
 
 #[derive(Args)]
@@ -261,11 +326,16 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         }
     };
     let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    execute(crawler, file, cmd.quiet, cmd.json)
+}
+
+/// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and
+/// prints its progress and summary.
+fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode {
     let rt = match runtime() {
         Ok(rt) => rt,
         Err(code) => return code,
     };
-    let quiet = cmd.quiet;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -289,6 +359,9 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             while let Some(e) = event_rx.recv().await {
                 match e {
                     CrawlEvent::Warning(w) => eprintln!("warning: {w}"),
+                    // Host pauses and local problems are shown even with
+                    // --quiet: they explain a slow or stopped crawl.
+                    CrawlEvent::Notice(n) => eprintln!("notice: {}", n.message),
                     CrawlEvent::Progress(p) => {
                         speed.peak = speed.peak.max(p.urls_per_sec);
                         speed.average = p.avg_urls_per_sec;
@@ -298,8 +371,19 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                                 .eta_secs
                                 .map(|s| format!("  ~{} left for the URLs found so far", duration(s)))
                                 .unwrap_or_default();
+                            let waiting = if p.waiting > 0 {
+                                format!("  waiting to retry {}", p.waiting)
+                            } else {
+                                String::new()
+                            };
+                            let host = if p.waiting_for_host {
+                                let next = p.paused_hosts.iter().map(|h| h.seconds_left).min().unwrap_or(0);
+                                format!("  waiting for host ({})", duration(next))
+                            } else {
+                                String::new()
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}  {:.0} URLs/s{eta}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
                         }
@@ -328,8 +412,8 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    print_summary(&summary, cmd.json, &file);
-    if !cmd.json && !quiet {
+    print_summary(&summary, json, &file);
+    if !json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",
             duration(speed.secs),
@@ -388,6 +472,35 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
     if s.queued > 0 {
         let _ = writeln!(out, "{:<16} {}", "Still queued", s.queued);
     }
+    if !s.by_class.is_empty() {
+        let _ = writeln!(
+            out,
+            "{:<16} {} ({} temporary, {} permanent)",
+            "Errors",
+            s.transient_errors + s.permanent_errors,
+            s.transient_errors,
+            s.permanent_errors
+        );
+        for (class, n) in &s.by_class {
+            let _ = writeln!(out, "  {:<32} {n}", spiderlens_results::error_class_label(class));
+        }
+    }
+    if s.retries > 0 || s.recovered > 0 {
+        let _ = writeln!(
+            out,
+            "{:<16} {} made, {} URLs recovered",
+            "Retries", s.retries, s.recovered
+        );
+    }
+    if s.hosts_paused > 0 {
+        let _ = writeln!(out, "{:<16} {}", "Hosts paused", s.hosts_paused);
+    }
+    if s.manual_retries > 0 {
+        let _ = writeln!(out, "{:<16} {}", "Manual retries", s.manual_retries);
+    }
+    if s.pause_reason.as_deref() == Some("network") {
+        let _ = writeln!(out, "Paused because the network connection seemed to be down.");
+    }
     let _ = writeln!(out, "{:<16} {}", "External checks", s.external_checked);
     if s.external_blocked > 0 {
         let _ = writeln!(out, "  {:<32} {}", "Blocked by robots.txt", s.external_blocked);
@@ -436,6 +549,28 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
+    if args.log {
+        let entries = match store.log_entries(usize::MAX >> 1) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let mut out = std::io::stdout().lock();
+        for e in entries {
+            if args.json {
+                let _ = serde_json::to_writer(&mut out, &e);
+                let _ = writeln!(out);
+            } else {
+                let at = jiff::Timestamp::from_millisecond(e.at_ms)
+                    .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_default();
+                let _ = writeln!(out, "{at}  {:<18} {}", e.kind, e.message);
+            }
+        }
+        return ExitCode::from(exit::FETCHED);
+    }
     let state = if args.not_crawled || !reasons.is_empty() {
         Some(UrlState::NotCrawled)
     } else if args.crawled {

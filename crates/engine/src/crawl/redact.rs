@@ -3,7 +3,7 @@
 //!
 //! A `Set-Cookie` response header can carry a session token, so stored
 //! headers keep the cookie's name and attributes and replace its value with
-//! [`REMOVED`]. Migration step 4 applies the same rule to files written
+//! [`REMOVED`]. Migration step 5 applies the same rule to files written
 //! before it, and [`header_pairs`] applies it again when an older file is
 //! only viewed (viewing never modifies a file).
 
@@ -21,7 +21,7 @@ pub fn is_cookie_header(name: &str) -> bool {
 
 /// `id=abc; Path=/; HttpOnly` becomes `id=[removed]; Path=/; HttpOnly`.
 /// A cookie without a name (no `=` before the first `;`) loses its whole
-/// first part. Keep in step with the SQL of migration step 4.
+/// first part. Keep in step with the SQL of migration step 5.
 pub fn set_cookie(value: &str) -> String {
     let (pair, rest) = match value.find(';') {
         Some(i) => value.split_at(i),
