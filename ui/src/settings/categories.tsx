@@ -49,6 +49,9 @@ export const categories: Category[] = [
   },
 ];
 
+/** Categories a running crawl takes on at once, with "Apply to running crawl" (spec 004 D13). */
+export const liveCategories: CategoryId[] = ["speed", "network"];
+
 export const issuesFor = (setup: CrawlSetup, c: Category) => c.prefixes.flatMap((p) => issuesAt(setup.issues, p));
 
 /** One pattern per line. */
@@ -56,7 +59,8 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
   return <Textarea id={id} rows={3} placeholder={placeholder} value={value.join("\n")} onChange={(e) => onChange(e.target.value === "" ? [] : e.target.value.split("\n"))} />;
 }
 
-export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: CrawlSetup; transport: Transport }): ReactNode {
+/** `live`: a crawl is running and only the settings it can take on at once are editable. */
+export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
@@ -292,7 +296,7 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
     case "network":
       return (
         <>
-          <Group title="Network">
+          <Group title="Network" disabled={live}>
             <Row label="Connect timeout (seconds)" issues={at("network.connect_timeout_secs")}>
               {(i) => <NumberInput id={i} value={config.network.connect_timeout_secs} onChange={(v) => set((c) => ({ ...c, network: { ...c.network, connect_timeout_secs: v ?? NaN } }))} />}
             </Row>
@@ -310,6 +314,18 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             <Row label="Attempts per URL" help="Including the first. 1 means no retry." issues={at("retry.attempts")}>
               {(i) => <NumberInput id={i} value={config.retry.attempts} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, attempts: v ?? NaN } }))} />}
             </Row>
+            <Row label="First wait (seconds)" help="Before the second attempt. Each wait after that is twice as long." issues={at("retry.base_wait_secs")}>
+              {(i) => (
+                <NumberInput
+                  id={i}
+                  min={0.1}
+                  max={60}
+                  step={0.5}
+                  value={config.retry.base_wait_secs}
+                  onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, base_wait_secs: v ?? NaN } }))}
+                />
+              )}
+            </Row>
             <Row label="Max wait between attempts (seconds)" issues={at("retry.max_wait_secs")}>
               {(i) => <NumberInput id={i} value={config.retry.max_wait_secs} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, max_wait_secs: v ?? NaN } }))} />}
             </Row>
@@ -318,6 +334,34 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             </Row>
             <Row label="Retry rate limiting (429)">
               {(_, l) => <Switch labelledBy={l} checked={config.retry.retry_429} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, retry_429: v } }))} />}
+            </Row>
+          </Group>
+          <Group title="Sites that keep failing">
+            <Row label="Pause a site after failures in a row" help="Only failures that may pass count, such as timeouts. Other sites keep being crawled." issues={at("retry.host_pause_after")}>
+              {(i) => (
+                <NumberInput id={i} min={1} max={100} value={config.retry.host_pause_after} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, host_pause_after: v ?? NaN } }))} />
+              )}
+            </Row>
+            <Row label="First pause (seconds)" help="Then one test request is sent. If it fails, the pause doubles." issues={at("retry.host_pause_secs")}>
+              {(i) => (
+                <NumberInput id={i} min={1} max={3600} value={config.retry.host_pause_secs} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, host_pause_secs: v ?? NaN } }))} />
+              )}
+            </Row>
+            <Row label="Longest pause (seconds)" issues={at("retry.host_pause_max_secs")}>
+              {(i) => (
+                <NumberInput
+                  id={i}
+                  min={1}
+                  max={86400}
+                  value={config.retry.host_pause_max_secs}
+                  onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, host_pause_max_secs: v ?? NaN } }))}
+                />
+              )}
+            </Row>
+            <Row label="Give up after failed tests" help={'Its remaining URLs are then listed as "Host unavailable" and can be retried later.'} issues={at("retry.host_give_up_after")}>
+              {(i) => (
+                <NumberInput id={i} min={1} max={50} value={config.retry.host_give_up_after} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, host_give_up_after: v ?? NaN } }))} />
+              )}
             </Row>
           </Group>
         </>

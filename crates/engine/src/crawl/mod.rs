@@ -6,8 +6,11 @@
 //! - `speed` adapts how many requests each site gets at once (spec 008).
 
 pub mod file;
+mod health;
 pub mod migrate;
 pub mod reason;
+pub mod redact;
+pub mod retry;
 mod runner;
 pub mod scope;
 mod sitemap;
@@ -18,11 +21,11 @@ mod window;
 pub use file::{Access, CrawlInfo, LocalError, LocalErrorKind, LockNote, WriterLock};
 pub use reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 pub use runner::{
-    Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Opened, Progress, ResumeOptions,
-    RunCommand, SitemapSummary, Upgrade, default_file_name, host_key,
+    Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, Opened, PausedHost,
+    Progress, ResumeOptions, RunCommand, SitemapSummary, Upgrade, default_file_name, host_key, retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
-pub use store::{CrawlStore, UrlRow};
+pub use store::{CrawlStore, LogEntry, UrlRow};
 
 /// The scope tester (spec 003 FR-016): what the crawler would do with each
 /// of `inputs` if the start page linked to it. With `check_robots`, each
@@ -65,7 +68,7 @@ pub async fn fetch_robots(
 ) -> Result<crate::robots::RobotsPolicy, crate::CheckError> {
     let opts = crate::CheckOptions::from(config);
     let client = crate::fetch::build_client(&opts)?;
-    Ok(crate::robots::fetch(&client, url)
+    Ok(crate::robots::fetch(&client, url, &opts.headers)
         .await
         .policy(&opts.robots_token))
 }

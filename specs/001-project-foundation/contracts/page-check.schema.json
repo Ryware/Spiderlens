@@ -39,7 +39,8 @@
         { "type": "null" },
         { "type": "object", "required": ["class", "message", "attempts"], "additionalProperties": false,
           "properties": {
-            "class": { "enum": ["dns", "dns_temporary", "connection", "timeout", "tls_invalid", "redirect_loop", "content_problem", "malformed_url"] },
+            "class": { "enum": ["dns", "dns_temporary", "connection", "timeout", "tls_invalid", "redirect_problem", "content_problem", "malformed_url", "host_unavailable"] },
+            "reason": { "enum": ["connect", "read", "refused", "reset", "expired", "hostname", "untrusted", "loop", "over_limit", "invalid_target", "truncated", "over_size", "decompression"] },
             "message": { "type": "string" },
             "attempts": { "type": "integer", "minimum": 0 }
           } }

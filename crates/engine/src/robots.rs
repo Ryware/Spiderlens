@@ -11,7 +11,7 @@ use reqwest::Client;
 use url::Url;
 
 use crate::fetch::{BodyPolicy, OnLimit, get_following};
-use crate::{CheckError, ErrorClass};
+use crate::{CheckError, ErrorClass, RequestHeader};
 
 /// Google reads at most 500 KiB of robots.txt; so do we.
 pub(crate) const MAX_ROBOTS_BYTES: u64 = 500 * 1024;
@@ -299,8 +299,10 @@ impl RobotsFetch {
     }
 }
 
-/// Fetches `/robots.txt` for the origin of `url` once.
-pub(crate) async fn fetch(client: &Client, url: &Url) -> RobotsFetch {
+/// Fetches `/robots.txt` for the origin of `url` once, with the configured
+/// custom headers (spec 004 FR-001). `headers` is already filtered to the
+/// ones this host should get.
+pub(crate) async fn fetch(client: &Client, url: &Url, headers: &[RequestHeader]) -> RobotsFetch {
     let robots_url = url
         .join("/robots.txt")
         .expect("joining an absolute path is valid");
@@ -310,11 +312,11 @@ pub(crate) async fn fetch(client: &Client, url: &Url) -> RobotsFetch {
         on_limit: OnLimit::Truncate,
         keep: &keep_all,
     };
-    let outcome = get_following(client, &robots_url, MAX_ROBOTS_REDIRECTS, &policy, &[]).await;
+    let outcome = get_following(client, &robots_url, MAX_ROBOTS_REDIRECTS, &policy, headers).await;
     let fetched = match outcome.result {
         Ok(f) => f,
         // Too many redirects on robots.txt counts as "no robots.txt".
-        Err(e) if e.class == ErrorClass::RedirectLoop => return RobotsFetch::NotFound { status: 0 },
+        Err(e) if e.class == ErrorClass::RedirectProblem => return RobotsFetch::NotFound { status: 0 },
         Err(e) => return RobotsFetch::Unreachable(e),
     };
     let status = fetched.status.as_u16();

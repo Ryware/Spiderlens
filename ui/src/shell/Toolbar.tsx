@@ -1,7 +1,8 @@
 import { forwardRef } from "react";
-import { Command as CommandIcon, ListPlus, Pause, Play, SlidersHorizontal, Square, TriangleAlert } from "lucide-react";
+import { Command as CommandIcon, ListPlus, Pause, Play, RotateCcw, SlidersHorizontal, Square, TriangleAlert } from "lucide-react";
 import type { CrawlRun } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
+import type { RetryAvailability } from "../crawl/RetryFailed";
 import { Button, cn, Input, Kbd, Segmented, Tooltip } from "../components/ui";
 import { platform } from "./platform";
 import type { Appearance, Level } from "./appearance";
@@ -11,6 +12,7 @@ import { BrightnessPopover } from "./BrightnessPopover";
  * The crawl lives here (FR-002): mode, start URL or list, Start, settings and
  * the palette. Exactly one primary control: Start, or Pause while crawling,
  * or Resume while paused. Mode and URL are locked while a crawl is open.
+ * "Retry failed URLs" sits next to them once a crawl file is open.
  */
 export const Toolbar = forwardRef<HTMLInputElement, {
   setup: CrawlSetup;
@@ -24,7 +26,9 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   level: Level;
   systemDark: boolean;
   onAppearance: (patch: Partial<Appearance>) => void;
-}>(function Toolbar({ setup, run, onStart, onResume, onOpenSettings, onOpenPalette, appearance, level, systemDark, onAppearance }, urlRef) {
+  retry: RetryAvailability;
+  onRetry: () => void;
+}>(function Toolbar({ setup, run, onStart, onResume, onOpenSettings, onOpenPalette, appearance, level, systemDark, onAppearance, retry, onRetry }, urlRef) {
   const { config, list } = setup;
   const locked = run.active;
   const mode = config?.mode ?? "spider";
@@ -84,6 +88,16 @@ export const Toolbar = forwardRef<HTMLInputElement, {
             <TriangleAlert className="size-4" />
             <span className="tabular">{warnings}</span>
           </Button>
+        </Tooltip>
+      )}
+      {run.path && (
+        <Tooltip content={retry.available ? null : retry.reason}>
+          <span className="inline-flex">
+            <Button variant="quiet" disabled={!retry.available} onClick={onRetry} aria-label="Retry failed URLs">
+              <RotateCcw aria-hidden className="size-3.5" /> Retry failed
+              {retry.available && <span className="text-fg-3 tabular">{retry.total.toLocaleString()}</span>}
+            </Button>
+          </span>
         </Tooltip>
       )}
       <CrawlControls setup={setup} run={run} onStart={onStart} onResume={onResume} firstError={firstError} />

@@ -6,6 +6,8 @@
 //!
 //! - `crawl-progress` a few times a second while it runs,
 //! - `crawl-warning` once per warning,
+//! - `crawl-notice` when a host pauses, resumes or is given up, or the
+//!   network drops (spec 004),
 //! - `crawl-finished` when it completes, pauses, stops or fails; the near
 //!   duplicate analysis then runs on the same thread (spec 020).
 //!
@@ -17,10 +19,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::Deserialize;
 use serde::Serialize;
-use spiderlens_config::{Change, CrawlConfig, Mode, ModeInput, Severity, SpeedSettings, validate};
+use spiderlens_config::{
+    Change, CrawlConfig, Mode, ModeInput, RetrySettings, Severity, SpeedSettings, validate,
+};
 use spiderlens_engine::crawl::{
-    Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, LocalError, NotCrawledReason, Progress,
-    ResumeOptions, RunCommand, Upgrade, default_file_name,
+    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LocalError, LogEntry,
+    NotCrawledReason, Notice, Progress, ResumeOptions, RunCommand, Upgrade, default_file_name,
+    retry_preview as engine_retry_preview,
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -125,6 +130,13 @@ struct WarningEvent {
 }
 
 #[derive(Serialize, Clone)]
+struct NoticeEvent {
+    id: u64,
+    #[serde(flatten)]
+    notice: Notice,
+}
+
+#[derive(Serialize, Clone)]
 pub struct ReasonCount {
     reason: NotCrawledReason,
     label: &'static str,
@@ -208,10 +220,12 @@ pub fn free_path(dir: &Path, name: &str) -> PathBuf {
         .expect("an unused name exists")
 }
 
-/// How the crawl file is reached: created new, or reopened to resume.
+/// How the crawl file is reached: created new, reopened to resume, or
+/// reopened with its transient failures queued again (spec 004 US5).
 enum Open {
     Create(Box<(CrawlConfig, ModeInput)>),
     Resume(Box<Crawler>),
+    RetryFailed,
 }
 
 /// Speed and URL-limit changes for a resume (FR-011).
@@ -316,11 +330,111 @@ pub fn crawl_summary(path: PathBuf) -> Cmd<Report> {
     Ok(Report::new(path, summary))
 }
 
+/// Ends a host's pause now and sends it a test request (spec 004 US4.5).
+/// `host` is the host key shown in the paused-hosts list.
+#[tauri::command]
+pub fn crawl_resume_host(state: tauri::State<State>, id: u64, host: String) {
+    command(&state, id, RunCommand::ResumeHost(host));
+}
+
+/// Applies changed speed or retry settings to the running crawl. The change
+/// is recorded in the crawl's stored configuration (spec 004 D13).
+#[tauri::command]
+pub fn crawl_apply_settings(
+    state: tauri::State<State>,
+    id: u64,
+    speed: Option<SpeedSettings>,
+    retry: Option<RetrySettings>,
+) {
+    if let Some(speed) = speed {
+        command(&state, id, RunCommand::Apply(Change::Speed(speed)));
+    }
+    if let Some(retry) = retry {
+        command(&state, id, RunCommand::Apply(Change::Retry(retry)));
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ClassCount {
+    class: String,
+    label: String,
+    count: u64,
+}
+
+/// What "Retry failed URLs" would do, shown before anything changes
+/// (spec 004 US5.1, FR-034).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct RetryPreview {
+    total: u64,
+    by_class: Vec<ClassCount>,
+    available: bool,
+    reason: Option<String>,
+}
+
+#[tauri::command]
+pub fn retry_preview(state: tauri::State<State>, path: PathBuf) -> Cmd<RetryPreview> {
+    let running = state
+        .active
+        .lock()
+        .expect("crawl lock")
+        .as_ref()
+        .is_some_and(|a| a.path == path);
+    preview(&path, running)
+}
+
+fn preview(path: &Path, running: bool) -> Cmd<RetryPreview> {
+    let by_class: Vec<ClassCount> = engine_retry_preview(path)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|(class, count)| ClassCount {
+            label: spiderlens_results::error_class_label(&class).to_string(),
+            class,
+            count,
+        })
+        .collect();
+    let total = by_class.iter().map(|c| c.count).sum();
+    let reason = if running {
+        Some("Wait until the crawl is paused or finished.".to_string())
+    } else if total == 0 {
+        Some("No URL failed for a reason that could change.".to_string())
+    } else {
+        None
+    };
+    Ok(RetryPreview {
+        total,
+        by_class,
+        available: reason.is_none(),
+        reason,
+    })
+}
+
+/// Queues the crawl's transient failures again and runs them; progress and
+/// the finish arrive as the usual crawl events (spec 004 US5.2).
+#[tauri::command]
+pub fn retry_start(app: AppHandle, state: tauri::State<State>, path: PathBuf) -> Cmd<Started> {
+    launch(app, &state, path, Open::RetryFailed)
+}
+
+/// The newest entries of the crawl log (spec 004 FR-035).
+#[tauri::command]
+pub fn crawl_log(path: PathBuf, limit: Option<usize>) -> Cmd<Vec<LogEntry>> {
+    let store = CrawlStore::open(&path).map_err(|e| e.to_string())?;
+    store.log_entries(limit.unwrap_or(500)).map_err(|e| e.to_string())
+}
+
 fn send(state: &State, id: u64, c: Control) {
     if let Some(a) = state.active.lock().expect("crawl lock").as_ref()
         && a.id == id
     {
         let _ = a.control.send(c);
+    }
+}
+
+fn command(state: &State, id: u64, c: RunCommand) {
+    if let Some(a) = state.active.lock().expect("crawl lock").as_ref()
+        && a.id == id
+    {
+        let _ = a.commands.send(c);
     }
 }
 
@@ -413,6 +527,7 @@ fn run(
             c
         }
         Open::Resume(c) => *c,
+        Open::RetryFailed => Crawler::retry_failed(path)?.0,
     };
     let reserve = app.state::<crate::files::State>().disk_reserve;
     let crawler = crawler.with_disk_reserve(Some(reserve));
@@ -437,12 +552,20 @@ fn run(
                     CrawlEvent::Warning(message) => {
                         events.emit("crawl-warning", WarningEvent { id, message })
                     }
+                    CrawlEvent::Notice(notice) => events.emit("crawl-notice", NoticeEvent { id, notice }),
                 };
             }
         });
         tokio::spawn(async move {
             let mut from = from;
-            while let Some(RunCommand::SaveAs { dest, reply }) = commands.recv().await {
+            while let Some(cmd) = commands.recv().await {
+                // Only Save As needs an answer; the rest go straight through.
+                let RunCommand::SaveAs { dest, reply } = cmd else {
+                    if forward_tx.send(cmd).is_err() {
+                        break;
+                    }
+                    continue;
+                };
                 let (inner, wait) = oneshot::channel();
                 if forward_tx
                     .send(RunCommand::SaveAs { dest, reply: inner })
@@ -487,6 +610,27 @@ mod tests {
         assert_eq!(
             free_path(&dir, name),
             dir.join("example.com-20261012T000000Z-2.spiderlens")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn retry_preview_explains_why_it_is_unavailable() {
+        let dir = std::env::temp_dir().join(format!("spiderlens-retry-preview-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.spiderlens");
+        drop(CrawlStore::create(&path).unwrap());
+        let p = preview(&path, false).unwrap();
+        assert_eq!(p.total, 0);
+        assert!(!p.available);
+        assert_eq!(
+            p.reason.as_deref(),
+            Some("No URL failed for a reason that could change.")
+        );
+        let p = preview(&path, true).unwrap();
+        assert_eq!(
+            p.reason.as_deref(),
+            Some("Wait until the crawl is paused or finished.")
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
