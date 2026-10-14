@@ -19,9 +19,11 @@
         "minWidth": 900,
         "minHeight": 560,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 20, "y": 24 }
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'"
     }
@@ -43,7 +45,18 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "SEO crawler",
-    "publisher": "Ryware"
+    "publisher": "Ryware",
+    "fileAssociations": [
+      {
+        "ext": [
+          "spiderlens"
+        ],
+        "name": "SpiderLens crawl",
+        "description": "SpiderLens crawl file",
+        "role": "Editor",
+        "mimeType": "application/x-spiderlens"
+      }
+    ]
   },
   "plugins": {}
 }

@@ -32,4 +32,4 @@
 ## Notes
 
 - Defaults chosen without asking (owner can change them on review): four priorities High, Medium, Low, Opportunity; thresholds equal to the spec 007 filters; issue settings live in the crawl profile; per-URL ignore, sitemap rules, health score and near duplicates are out of scope.
-- The rule table has 74 rules in 16 categories.
+- The rule table has 75 rules in 16 categories (readability added 2026-10-13, FR-031).
