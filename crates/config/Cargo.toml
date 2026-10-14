@@ -21,6 +21,7 @@ ts-rs.workspace = true
 jiff.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

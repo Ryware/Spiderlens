@@ -1,0 +1,37 @@
+[package]
+name = "spiderlens-integrations"
+description = "SpiderLens external data integrations (spec 024): Search Console, Analytics, page experience and link metrics, fetched after a crawl with the user's own credentials. The crawl engine never depends on this crate."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-config.workspace = true
+spiderlens-engine.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+url.workspace = true
+rusqlite.workspace = true
+zstd.workspace = true
+xxhash-rust.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+jiff.workspace = true
+ts-rs.workspace = true
+keyring.workspace = true
+sha2.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+spiderlens-test-fixtures.workspace = true
+
+[lints]
+workspace = true

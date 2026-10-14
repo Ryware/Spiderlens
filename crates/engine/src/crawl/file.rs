@@ -242,6 +242,89 @@ pub fn recover_path(path: &Path) -> Result<Option<usize>, StoreError> {
     recover(&store)
 }
 
+/// A crawl file opened to add data beside the crawl, such as integration
+/// results (spec 024). Holds the writer lock, so neither a crawl nor another
+/// update can write the file at the same time.
+pub struct Update {
+    store: CrawlStore,
+    _lock: WriterLock,
+    /// The format the file had and the backup made, when it was upgraded.
+    pub upgraded: Option<(i64, Option<PathBuf>)>,
+}
+
+impl std::fmt::Debug for Update {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Update").field("upgraded", &self.upgraded).finish_non_exhaustive()
+    }
+}
+
+impl Update {
+    pub fn store(&self) -> &CrawlStore {
+        &self.store
+    }
+
+    pub fn conn(&self) -> &Connection {
+        self.store.conn()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateError {
+    #[error("this crawl is in use by {}", .0.describe())]
+    InUse(LockNote),
+    #[error("the crawl file uses an older format (version {from}) and must be upgraded first")]
+    NeedsUpgrade { from: i64 },
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error("could not lock the crawl file: {0}")]
+    Lock(std::io::Error),
+}
+
+impl From<LockError> for UpdateError {
+    fn from(e: LockError) -> Self {
+        match e {
+            LockError::InUse(n) => Self::InUse(n),
+            LockError::Io(e) => Self::Lock(e),
+        }
+    }
+}
+
+/// Opens a crawl file for an update: takes the writer lock (refused while a
+/// crawl runs on it), recovers it if it was not closed cleanly, and upgrades
+/// an older format the same way resuming does (spec 006). `upgrade` None
+/// refuses older files with [`UpdateError::NeedsUpgrade`].
+pub fn open_for_update(path: &Path, upgrade: Option<super::Upgrade>) -> Result<Update, UpdateError> {
+    let lock = WriterLock::acquire(path)?;
+    let store = CrawlStore::open(path)?;
+    recover(&store)?;
+    let version = store.format_version()?;
+    let mut upgraded = None;
+    if version < FORMAT_VERSION {
+        let Some(upgrade) = upgrade else {
+            return Err(UpdateError::NeedsUpgrade { from: version });
+        };
+        let backup = match upgrade {
+            super::Upgrade::KeepCopy => {
+                let to = backup_path(path, version);
+                write_atomically(&to, |p| copy_database(&store, path, p))?;
+                Some(to)
+            }
+            super::Upgrade::NoCopy => None,
+        };
+        super::migrate::upgrade(store.conn()).map_err(StoreError::from)?;
+        store.record_event(
+            "upgraded",
+            Some(&serde_json::json!({ "from": version, "to": FORMAT_VERSION, "backup": backup }).to_string()),
+        )?;
+        upgraded = Some((version, backup));
+    }
+    Ok(Update {
+        store,
+        _lock: lock,
+        upgraded,
+    })
+}
+
 /// Whether this process may write the file (not read-only media, not
 /// read-only permissions).
 pub fn writable(path: &Path) -> bool {

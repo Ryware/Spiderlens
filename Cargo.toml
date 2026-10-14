@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/config", "crates/engine", "crates/results", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
+members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
 # `cargo test` without --workspace skips the desktop app, which needs
 # webview system libraries. CI always uses --workspace.
-default-members = ["crates/config", "crates/engine", "crates/results", "crates/cli", "crates/test-fixtures"]
+default-members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/cli", "crates/test-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -53,6 +53,12 @@ rcgen = "0.13"
 assert_cmd = "2"
 predicates = "3"
 jsonschema = { version = "0.33", default-features = false }
+dirs = "7"
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+spiderlens-integrations = { path = "crates/integrations" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

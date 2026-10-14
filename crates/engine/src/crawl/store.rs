@@ -508,7 +508,9 @@ impl CrawlStore {
         Ok(store)
     }
 
-    pub(crate) fn conn(&self) -> &Connection {
+    /// The connection. Crates that keep their own tables in the crawl file
+    /// (spec 024) write through it while holding the writer lock.
+    pub fn conn(&self) -> &Connection {
         &self.conn
     }
 
