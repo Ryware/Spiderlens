@@ -44,6 +44,7 @@ string_enum! {
         NotIncluded = "not_included",
         OverDepthLimit = "over_depth_limit",
         Nofollow = "nofollow",
+        RedirectLimit = "redirect_limit",
         BlockedByRobots = "blocked_by_robots",
         RobotsUnavailable = "robots_unavailable",
         OverUrlLimit = "over_url_limit",
@@ -64,6 +65,7 @@ impl NotCrawledReason {
             Self::NotIncluded => "Not matching include rules",
             Self::OverDepthLimit => "Over depth limit",
             Self::Nofollow => "Nofollow",
+            Self::RedirectLimit => "Redirect chain over limit",
             Self::BlockedByRobots => "Blocked by robots.txt",
             Self::RobotsUnavailable => "Blocked: robots.txt unavailable",
             Self::OverUrlLimit => "Over URL limit",
@@ -77,7 +79,10 @@ impl NotCrawledReason {
     /// (FR-039, research R3). "Found only in sitemap" ends as soon as a
     /// link to the URL is found (spec 011 plan D5).
     pub fn can_upgrade(self) -> bool {
-        matches!(self, Self::OverDepthLimit | Self::Nofollow | Self::SitemapOnly)
+        matches!(
+            self,
+            Self::OverDepthLimit | Self::Nofollow | Self::RedirectLimit | Self::SitemapOnly
+        )
     }
 }
 
@@ -128,6 +133,7 @@ string_enum! {
     UrlState {
         Queued = "queued",
         InFlight = "in_flight",
+        Waiting = "waiting",
         Crawled = "crawled",
         NotCrawled = "not_crawled",
     }
@@ -151,6 +157,7 @@ mod tests {
                 "not_included",
                 "over_depth_limit",
                 "nofollow",
+                "redirect_limit",
                 "blocked_by_robots",
                 "robots_unavailable",
                 "over_url_limit",

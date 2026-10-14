@@ -586,6 +586,18 @@ pub struct RetrySettings {
     pub max_wait_secs: f64,
     pub retry_5xx: bool,
     pub retry_429: bool,
+    /// Wait before the second attempt; doubles for each one after (spec 004
+    /// FR-017).
+    pub base_wait_secs: f64,
+    /// Transient failures in a row that pause a host (FR-024).
+    pub host_pause_after: u32,
+    /// First pause of a failing host (FR-024).
+    pub host_pause_secs: f64,
+    /// Longest pause; each failed probe doubles the pause up to this
+    /// (FR-025).
+    pub host_pause_max_secs: f64,
+    /// Failed probes in a row after which the host is given up (FR-026).
+    pub host_give_up_after: u32,
 }
 
 impl Default for RetrySettings {
@@ -595,6 +607,11 @@ impl Default for RetrySettings {
             max_wait_secs: 60.0,
             retry_5xx: true,
             retry_429: true,
+            base_wait_secs: 1.0,
+            host_pause_after: 5,
+            host_pause_secs: 60.0,
+            host_pause_max_secs: 600.0,
+            host_give_up_after: 5,
         }
     }
 }

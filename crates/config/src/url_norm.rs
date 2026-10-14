@@ -164,7 +164,17 @@ fn tidy(s: &str) -> String {
             && let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
         {
             let v = h * 16 + l;
-            if v.is_ascii_alphanumeric() || matches!(v, b'-' | b'.' | b'_' | b'~') {
+            // A stray `%` before this escape would turn a decoded hex digit
+            // into a new escape (`%%30a` -> `%0a`), so the next pass would
+            // change the URL again. Keep the escape in that case.
+            let out_bytes = out.as_bytes();
+            let makes_escape = v.is_ascii_hexdigit()
+                && match out_bytes {
+                    [.., b'%'] => bytes.get(i + 3).is_some_and(u8::is_ascii_hexdigit),
+                    [.., b'%', d] => d.is_ascii_hexdigit(),
+                    _ => false,
+                };
+            if !makes_escape && (v.is_ascii_alphanumeric() || matches!(v, b'-' | b'.' | b'_' | b'~')) {
                 out.push(v as char);
             } else {
                 out.push('%');
@@ -359,6 +369,26 @@ mod tests {
             normalize_url("https://a.test/%7Ex").unwrap(),
             link("https://a.test/", "/~x").unwrap()
         );
+    }
+
+    #[test]
+    fn decoding_never_makes_a_new_escape() {
+        // Found by link_normalization_is_idempotent.
+        let base = Url::parse("https://a.test/").unwrap();
+        for href in ["/%%30a", "/%3%30", "/%%41b", "/?q=%%30a", "/%%30"] {
+            let once = link("https://a.test/", href).unwrap();
+            let twice = normalize_link(&base, once.as_str(), &QueryParams::default(), 2000).unwrap();
+            assert_eq!(once, twice, "{href}");
+        }
+        assert_eq!(
+            link("https://a.test/", "/%%30a").unwrap().as_str(),
+            "https://a.test/%%30a"
+        );
+        assert_eq!(
+            link("https://a.test/", "/%%30").unwrap().as_str(),
+            "https://a.test/%0"
+        );
+        assert_eq!(tidy_percent("%%30a"), "%%30a");
     }
 
     proptest! {

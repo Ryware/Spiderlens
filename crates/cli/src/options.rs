@@ -153,6 +153,21 @@ pub struct CrawlArgs {
     pub no_retry_5xx: bool,
     #[arg(long, help_heading = "Retry")]
     pub no_retry_429: bool,
+    /// Wait before the first retry, in seconds; doubles for each next one.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub retry_base_wait: Option<f64>,
+    /// Temporary failures in a row that pause a host.
+    #[arg(long, value_name = "N", help_heading = "Retry")]
+    pub host_pause_after: Option<u32>,
+    /// First pause of a failing host, in seconds.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub host_pause: Option<f64>,
+    /// Longest pause of a failing host, in seconds.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub host_pause_max: Option<f64>,
+    /// Failed checks in a row after which a host is given up.
+    #[arg(long, value_name = "N", help_heading = "Retry")]
+    pub host_give_up_after: Option<u32>,
 
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
@@ -459,6 +474,21 @@ impl CrawlArgs {
         }
         if self.no_retry_429 {
             c.retry.retry_429 = false;
+        }
+        if let Some(v) = self.retry_base_wait {
+            c.retry.base_wait_secs = v;
+        }
+        if let Some(v) = self.host_pause_after {
+            c.retry.host_pause_after = v;
+        }
+        if let Some(v) = self.host_pause {
+            c.retry.host_pause_secs = v;
+        }
+        if let Some(v) = self.host_pause_max {
+            c.retry.host_pause_max_secs = v;
+        }
+        if let Some(v) = self.host_give_up_after {
+            c.retry.host_give_up_after = v;
         }
         if self.no_store_html {
             c.extraction.store_html = false;
