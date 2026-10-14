@@ -286,7 +286,8 @@ test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) =
   await expect.poll(() => page.evaluate(() => document.activeElement?.contains(document.querySelector('aside[aria-label="Details"]')))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(grid).toBeFocused();
-  await page.keyboard.press("Control+3");
+  // Internal, Links (Link Score), External, Response codes.
+  await page.keyboard.press("Control+4");
   await expect(page.getByRole("region", { name: "Response codes" })).toBeVisible();
   await page.keyboard.press("Control+1");
   await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
