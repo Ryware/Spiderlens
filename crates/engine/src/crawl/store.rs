@@ -507,6 +507,21 @@ impl CrawlStore {
         Ok(store)
     }
 
+    /// Lets the write-ahead log start over (spec 008 T018). The background
+    /// checkpointer copies the log into the file but never quite reaches its
+    /// end while commits keep arriving, and SQLite only rewinds the log once
+    /// a checkpoint has caught up. Until then the log grows by every result
+    /// saved (3.6 GB at 250,000 pages) and so does its index, which is mapped
+    /// into memory. Run between transactions, this passive checkpoint copies
+    /// only the little the background thread has not, so the next commit
+    /// writes from the start of the log again. Never waits: when the
+    /// background thread is busy checkpointing, it is skipped.
+    pub fn catch_up_checkpoint(&self) {
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    }
+
     /// Opens a crawl file for reading only: nothing is written, not even the
     /// journal mode, so viewing never changes a file (spec 006 FR-036) and
     /// read-only files and newer formats can be shown (FR-021, FR-037).
@@ -1067,13 +1082,14 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Response headers of one fetched URL, as a JSON array of pairs.
+    /// Response headers of one fetched URL, as a JSON array of pairs, with
+    /// cookie values removed (`redact`).
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
         self.conn
             .prepare_cached("INSERT OR REPLACE INTO headers (url_id, headers) VALUES (?1, ?2)")?
             .execute(params![
                 id,
-                serde_json::to_string(headers).expect("pairs serialize")
+                serde_json::to_string(&super::redact::response_headers(headers)).expect("pairs serialize")
             ])?;
         Ok(())
     }
@@ -1136,13 +1152,15 @@ impl CrawlStore {
                 })
                 .collect()
         };
-        let headers: Value = self
+        let mut headers: Value = self
             .conn
             .prepare_cached("SELECT headers FROM headers WHERE url_id = ?1")?
             .query_row([id], |r| r.get::<_, String>(0))
             .optional()?
             .and_then(|h| serde_json::from_str(&h).ok())
             .unwrap_or(Value::Null);
+        // Files from before migration step 5 that are only viewed.
+        super::redact::header_pairs(&mut headers);
         let obj = response.as_object_mut().expect("the URL row exists");
         obj.insert("page".into(), page);
         obj.insert("titles".into(), Value::Array(pick("title")));
@@ -2244,7 +2262,7 @@ fn origin_at(o: Option<&Origins>, i: usize) -> &'static str {
 }
 
 /// Spec 014: the render queue and the rendered version of pages. Every table
-/// here comes from migration step 5 and stays empty when a crawl does not
+/// here comes from migration step 6 and stays empty when a crawl does not
 /// render.
 impl CrawlStore {
     fn take_render_seq(&self) -> Result<i64> {
@@ -2371,7 +2389,7 @@ impl CrawlStore {
         )?)
     }
 
-    /// Whether the file has the rendering tables (format 5 and later).
+    /// Whether the file has the rendering tables (format 6 and later).
     fn has_render_tables(&self) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'renders')",

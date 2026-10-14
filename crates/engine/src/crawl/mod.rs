@@ -10,6 +10,7 @@ mod health;
 mod hosts;
 pub mod migrate;
 pub mod reason;
+pub mod redact;
 pub mod render;
 pub mod retry;
 mod runner;
