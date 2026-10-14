@@ -8,6 +8,7 @@
 pub mod file;
 pub mod migrate;
 pub mod reason;
+pub mod render;
 mod runner;
 pub mod scope;
 mod sitemap;
