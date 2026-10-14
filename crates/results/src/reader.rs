@@ -31,6 +31,8 @@ pub struct Reader {
     pub(crate) thresholds: Arc<RwLock<Thresholds>>,
     /// See [`Reader::set_partial_sink`].
     pub(crate) partial: Option<Box<dyn FnMut(crate::issues::IssuesSummary) + Send>>,
+    /// The sidebar counts of the last data version asked for.
+    pub(crate) tab_counts: Option<crate::counts::TabCounts>,
     version: u64,
     /// Counts crawl data changes only (not settings changes).
     pub(crate) data_gen: u64,
@@ -118,6 +120,7 @@ impl Reader {
             issue_settings,
             thresholds,
             partial: None,
+            tab_counts: None,
             version: 1,
             data_gen: 1,
             data_version,

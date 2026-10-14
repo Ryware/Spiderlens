@@ -93,6 +93,7 @@ fn main() {
             results::view_locate,
             results::view_refresh,
             results::view_counts,
+            results::tab_counts,
             results::view_close,
             results::url_detail,
             results::url_list,

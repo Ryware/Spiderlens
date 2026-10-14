@@ -80,3 +80,49 @@ impl Reader {
         })
     }
 }
+
+/// How many URLs each result tab lists (its All filter, every scope), for
+/// the sidebar (T014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct TabCounts {
+    #[ts(type = "Record<string, number>")]
+    pub counts: BTreeMap<String, u64>,
+    pub version: u32,
+}
+
+impl Reader {
+    /// Every tab's row count in one pass over `urls` (tabs sharing a
+    /// condition share its sum); answered from memory while the crawl has
+    /// not written since, so the live refresh can ask every second.
+    pub fn tab_counts(&mut self) -> Result<TabCounts> {
+        let version = self.version()? as u32;
+        if let Some(c) = self.tab_counts.as_ref().filter(|c| c.version == version) {
+            return Ok(c.clone());
+        }
+        let mut conds: Vec<&str> = Vec::new();
+        for t in tabs::tabs() {
+            if !conds.contains(&t.eligible) {
+                conds.push(t.eligible);
+            }
+        }
+        let sums: Vec<String> = conds
+            .iter()
+            .map(|c| format!("COALESCE(SUM(CASE WHEN ({c}) THEN 1 ELSE 0 END), 0)"))
+            .collect();
+        let sql = format!("SELECT {} FROM urls u NOT INDEXED", sums.join(", "));
+        let values: Vec<i64> = self.conn.query_row(&sql, [], |r| {
+            (0..conds.len()).map(|i| r.get::<_, i64>(i)).collect()
+        })?;
+        let counts = tabs::tabs()
+            .iter()
+            .map(|t| {
+                let i = conds.iter().position(|c| *c == t.eligible).expect("listed");
+                (t.id.to_string(), values[i] as u64)
+            })
+            .collect();
+        let c = TabCounts { counts, version };
+        self.tab_counts = Some(c.clone());
+        Ok(c)
+    }
+}
