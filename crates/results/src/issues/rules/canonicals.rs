@@ -1,7 +1,7 @@
 //! Canonicals. The 007 Canonicals filters use these same conditions
 //! (FR-005).
 
-use super::{target_not_ok, target_not_ok_evidence};
+use super::target_not_ok_evidence;
 use crate::issues::{Category::Canonicals as C, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -37,7 +37,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'canonical' AND l.in_head = 0)",
+        super::links::has_link!("128"),
     )
     .needs(Need::Extraction)
     .evidence("'A canonical link sits in the body'")
@@ -51,7 +51,7 @@ pub const RULES: &[Rule] = &[
         C,
         High,
         Scope::Pages,
-        target_not_ok!("'canonical'"),
+        super::links::has_link!("4096"),
     )
     .site_wide()
     .needs(Need::Extraction)

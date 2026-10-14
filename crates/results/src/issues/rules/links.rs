@@ -1,7 +1,7 @@
 //! Links between pages.
 
 use crate::issues::{Category::Links as C, Priority::*, Rule, Scope, Unit, rule};
-use crate::tabs::{Derived, Need};
+use crate::tabs::Need;
 
 /// True when this page has a link of the kind given by a
 /// `tabs::link_flag` bit (as a number literal).
@@ -34,7 +34,6 @@ macro_rules! broken_evidence {
 pub const RULES: &[Rule] = &[
     rule("links.broken_internal", "Pages with broken internal links", C, High, Scope::Pages, has_link!("1"))
         .site_wide()
-        .reads(&[Derived::LinkStats])
         .evidence(broken_evidence!("1"))
         .explain(
             "This page links to internal URLs that return an error, so visitors hit dead ends and crawlers waste time.",
@@ -42,7 +41,6 @@ pub const RULES: &[Rule] = &[
         ),
     rule("links.broken_external", "Pages with broken external links", C, Medium, Scope::Pages, has_link!("2"))
         .site_wide()
-        .reads(&[Derived::LinkStats])
         .evidence(broken_evidence!("0"))
         .explain(
             "This page links to outside pages that return an error, which hurts visitors' trust in the page.",
@@ -57,7 +55,6 @@ pub const RULES: &[Rule] = &[
         has_link!("4"),
     )
     .site_wide()
-    .reads(&[Derived::LinkStats])
     .evidence(
         "(SELECT COUNT(DISTINCT t.id) || ' links to redirects' FROM links l JOIN urls t ON t.id = l.to_id \
          WHERE l.from_id = u.id AND l.kind = 'anchor' AND t.internal = 1 AND t.error_class IS NULL AND t.status BETWEEN 300 AND 399)",
@@ -74,7 +71,6 @@ pub const RULES: &[Rule] = &[
         Scope::Pages,
         has_link!("8"),
     )
-    .reads(&[Derived::LinkStats])
     .evidence(
         "(SELECT COUNT(*) || ' nofollow links to this site' FROM links l JOIN urls t ON t.id = l.to_id \
          WHERE l.from_id = u.id AND l.kind = 'anchor' AND l.nofollow = 1 AND t.internal = 1)",
@@ -91,7 +87,6 @@ pub const RULES: &[Rule] = &[
         Scope::Pages,
         concat!("NOT ", has_link!("16")),
     )
-    .reads(&[Derived::LinkStats])
     .evidence("'No links to other pages of the site'")
     .explain(
         "A page with no links to the rest of the site is a dead end for visitors and passes no value to other pages.",
@@ -103,7 +98,7 @@ pub const RULES: &[Rule] = &[
         C,
         Opportunity,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'anchor' AND weak_anchor(l.text))",
+        has_link!("64"),
     )
     .needs(Need::Extraction)
     .evidence(

@@ -77,12 +77,43 @@ fn runnable(features: &Features, settings: &ResolvedSettings) -> Vec<usize> {
 pub(crate) fn dependencies(features: &Features, settings: &ResolvedSettings) -> Vec<Derived> {
     let mut out: Vec<Derived> = Vec::new();
     for i in runnable(features, settings) {
-        for d in catalogue()[i].derived {
-            if !out.contains(d) {
-                out.push(*d);
+        for d in catalogue()[i].derived_tables() {
+            if !out.contains(&d) {
+                out.push(d);
             }
         }
     }
+    out
+}
+
+/// The page-field lookup rule conditions share with the 007 filters.
+const PAGE_FIELD: (&str, &str) = ("(SELECT p.", " FROM pages p WHERE p.url_id = u.id)");
+
+/// Rewrites each `(SELECT p.<field> FROM pages p WHERE p.url_id = u.id)`
+/// in `cond` as `pj.<field>`, for a query that joins `pages pj` once per
+/// URL. Equivalent: the subquery and the LEFT JOIN both give NULL when the
+/// URL has no pages row. A page rule otherwise repeats that lookup for
+/// every field it reads, about 300 lookups per URL for the whole set.
+fn inline_pages(cond: &str) -> String {
+    let (head, tail) = PAGE_FIELD;
+    let mut out = String::with_capacity(cond.len());
+    let mut rest = cond;
+    while let Some(at) = rest.find(head) {
+        let after = &rest[at + head.len()..];
+        let field_len = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        if field_len > 0 && after[field_len..].starts_with(tail) {
+            out.push_str(&rest[..at]);
+            out.push_str("pj.");
+            out.push_str(&after[..field_len]);
+            rest = &after[field_len + tail.len()..];
+        } else {
+            out.push_str(&rest[..at + head.len()]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -115,14 +146,27 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
         if mine.is_empty() {
             continue;
         }
+        let pages = *scope == Scope::Pages;
         let mut case = String::from("CASE r.idx");
         for i in &mine {
-            case.push_str(&format!(" WHEN {i} THEN ({})", catalogue()[*i].cond));
+            let cond = catalogue()[*i].cond;
+            let cond = if pages {
+                inline_pages(cond)
+            } else {
+                cond.to_string()
+            };
+            case.push_str(&format!(" WHEN {i} THEN ({cond})"));
         }
         case.push_str(" ELSE 0 END");
+        // CROSS JOIN keeps the URL scan outermost: each URL (and its pages
+        // row) is read once and tested against every rule of the scope.
+        let from = if pages {
+            "urls u NOT INDEXED LEFT JOIN pages pj ON pj.url_id = u.id CROSS JOIN temp.issue_rules r"
+        } else {
+            "urls u NOT INDEXED CROSS JOIN temp.issue_rules r"
+        };
         let sql = format!(
-            "INSERT INTO temp.issue_hits SELECT r.idx, u.id FROM urls u NOT INDEXED \
-             JOIN temp.issue_rules r ON r.scope = {si} WHERE ({}) AND {case}",
+            "INSERT INTO temp.issue_hits SELECT r.idx, u.id FROM {from} WHERE r.scope = {si} AND ({}) AND {case}",
             scope.sql()
         );
         conn.execute(&sql, [])?;

@@ -15,21 +15,10 @@ pub mod security;
 pub mod titles;
 pub mod url;
 
-/// A link of `kind` from this page to a URL that was fetched and failed or
-/// did not return 2xx. Targets never fetched are "not checked" (FR-011).
-macro_rules! target_not_ok {
-    ($kind:literal) => {
-        concat!(
-            "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id AND l.kind IN (",
-            $kind,
-            ") AND t.id <> u.id AND t.fetched_at IS NOT NULL \
-             AND (t.error_class IS NOT NULL OR t.status IS NULL OR t.status NOT BETWEEN 200 AND 299 OR t.noindex = 1 \
-             OR (t.canonical IS NOT NULL AND t.canonical <> t.url)))"
-        )
-    };
-}
-
-/// The first such target, with its state, as evidence.
+/// The first link of `kind` from this page to a URL that was fetched and
+/// failed or did not return 2xx, with its state, as evidence. Targets never
+/// fetched are "not checked" (FR-011); the matching condition is a
+/// `temp.link_stats` bit.
 macro_rules! target_not_ok_evidence {
     ($kind:literal) => {
         concat!(
@@ -44,4 +33,4 @@ macro_rules! target_not_ok_evidence {
     };
 }
 
-pub(crate) use {target_not_ok, target_not_ok_evidence};
+pub(crate) use target_not_ok_evidence;

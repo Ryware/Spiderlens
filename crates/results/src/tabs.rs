@@ -928,26 +928,50 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
 /// Bits of `temp.link_stats.flags`.
 pub(crate) mod link_flag {
     /// An anchor to an internal URL that failed or returned 4xx/5xx.
-    pub const BROKEN_INTERNAL: u8 = 1;
+    pub const BROKEN_INTERNAL: u32 = 1;
     /// An anchor to an external URL that failed or returned 4xx/5xx.
-    pub const BROKEN_EXTERNAL: u8 = 2;
+    pub const BROKEN_EXTERNAL: u32 = 2;
     /// An anchor to an internal 3xx.
-    pub const TO_REDIRECT: u8 = 4;
+    pub const TO_REDIRECT: u32 = 4;
     /// A nofollow anchor to an internal URL.
-    pub const NOFOLLOW_INTERNAL: u8 = 8;
+    pub const NOFOLLOW_INTERNAL: u32 = 8;
     /// Any anchor to an internal URL.
-    pub const INTERNAL_OUT: u8 = 16;
+    pub const INTERNAL_OUT: u32 = 16;
     /// An image whose address is http:.
-    pub const HTTP_IMAGE: u8 = 32;
+    pub const HTTP_IMAGE: u32 = 32;
+    /// An anchor whose text says nothing ("click here").
+    pub const WEAK_ANCHOR: u32 = 64;
+    /// A canonical link outside the head.
+    pub const CANONICAL_IN_BODY: u32 = 128;
+    /// Any hreflang link.
+    pub const HREFLANG: u32 = 256;
+    /// An hreflang link to the page itself.
+    pub const HREFLANG_SELF: u32 = 512;
+    /// An hreflang link for x-default.
+    pub const HREFLANG_X_DEFAULT: u32 = 1024;
+    /// An hreflang link with a missing or invalid language code.
+    pub const HREFLANG_BAD_CODE: u32 = 2048;
+    /// A canonical, hreflang or pagination link to another URL that was
+    /// fetched and failed, did not return 2xx, is noindex or canonicalised
+    /// elsewhere (`issues::rules::target_not_ok!`).
+    pub const CANONICAL_BAD_TARGET: u32 = 4096;
+    pub const HREFLANG_BAD_TARGET: u32 = 8192;
+    pub const PAGINATION_BAD_TARGET: u32 = 16384;
 }
 
 /// Builds `temp.link_stats` in Rust: one sequential scan of `links` with
 /// each target's class looked up in an array by URL id. A SQL join probes
-/// the urls b-tree once per link, which on 10 million links takes tens of
-/// seconds; this takes a few (spec 009 SC-003).
+/// the urls b-tree once per link, and a rule per page reads that page's
+/// links again; on 10 million links either takes tens of seconds, this a
+/// few (spec 009 SC-003).
 fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     use link_flag::*;
-    // Target classes, by URL id: bit 0 internal, 1 broken, 2 redirect, 3 http.
+    // Target classes, by URL id.
+    const INTERNAL: u8 = 1;
+    const BROKEN: u8 = 2;
+    const REDIRECT: u8 = 4;
+    const HTTP: u8 = 8;
+    const NOT_OK: u8 = 16;
     let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
     let len = usize::try_from(max_id).unwrap_or(0) + 1;
     let mut class = vec![0u8; len];
@@ -957,6 +981,8 @@ fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
                | (COALESCE(error_class IS NOT NULL OR status >= 400, 0) << 1)
                | (COALESCE(error_class IS NULL AND status BETWEEN 300 AND 399, 0) << 2)
                | ((url LIKE 'http:%') << 3)
+               | (COALESCE(fetched_at IS NOT NULL AND (error_class IS NOT NULL OR status IS NULL
+                   OR status NOT BETWEEN 200 AND 299 OR noindex = 1 OR (canonical IS NOT NULL AND canonical <> url)), 0) << 4)
              FROM urls",
         )?;
         let mut rows = stmt.query([])?;
@@ -967,49 +993,98 @@ fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             }
         }
     }
-    let mut flags = vec![0u8; len];
+    // Files from before page extraction have no link text, head or language.
+    let extracted = conn
+        .prepare("SELECT 1 FROM pragma_table_info('links') WHERE name = 'in_head'")?
+        .exists([])?;
+    let extra = if extracted {
+        "text, in_head, lang"
+    } else {
+        "NULL, NULL, NULL"
+    };
+    let mut flags = vec![0u32; len];
     {
-        // kind: 1 anchor, 2 image. An image without a URL row is judged by
-        // its written address.
-        let mut stmt = conn.prepare(
-            "SELECT from_id, to_id, CASE kind WHEN 'anchor' THEN 1 WHEN 'image' THEN 2 ELSE 0 END, nofollow,
-               to_id IS NULL AND kind = 'image' AND target LIKE 'http:%'
-             FROM links NOT INDEXED WHERE kind IN ('anchor', 'image')",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT from_id, to_id, kind, nofollow, target LIKE 'http:%', {extra} FROM links NOT INDEXED \
+             WHERE kind IN ('anchor', 'image', 'canonical', 'hreflang', 'next', 'prev')"
+        ))?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let Some(from) = usize::try_from(r.get::<_, i64>(0)?).ok().filter(|&i| i < len) else {
                 continue;
             };
-            let to: Option<i64> = r.get(1)?;
-            let t = to
-                .and_then(|t| usize::try_from(t).ok())
-                .and_then(|t| class.get(t).copied());
-            let kind: i64 = r.get(2)?;
-            let mut f = 0u8;
-            match (kind, t) {
-                (1, Some(c)) => {
-                    let internal = c & 1 != 0;
-                    if c & 2 != 0 {
-                        f |= if internal {
-                            BROKEN_INTERNAL
-                        } else {
-                            BROKEN_EXTERNAL
-                        };
+            let to = r.get::<_, Option<i64>>(1)?.and_then(|t| usize::try_from(t).ok());
+            let c = to.and_then(|t| class.get(t).copied());
+            let other = to.is_some_and(|t| t != from);
+            let not_ok = other && c.is_some_and(|c| c & NOT_OK != 0);
+            let kind = r.get_ref(2)?.as_str().unwrap_or("");
+            let mut f = 0u32;
+            match kind {
+                "anchor" => {
+                    if let Some(c) = c {
+                        let internal = c & INTERNAL != 0;
+                        if c & BROKEN != 0 {
+                            f |= if internal {
+                                BROKEN_INTERNAL
+                            } else {
+                                BROKEN_EXTERNAL
+                            };
+                        }
+                        if internal {
+                            f |= INTERNAL_OUT;
+                            if c & REDIRECT != 0 {
+                                f |= TO_REDIRECT;
+                            }
+                            if r.get::<_, i64>(3)? == 1 {
+                                f |= NOFOLLOW_INTERNAL;
+                            }
+                        }
                     }
-                    if internal {
-                        f |= INTERNAL_OUT;
-                        if c & 4 != 0 {
-                            f |= TO_REDIRECT;
-                        }
-                        if r.get::<_, i64>(3)? == 1 {
-                            f |= NOFOLLOW_INTERNAL;
-                        }
+                    if r.get_ref(5)?
+                        .as_str_or_null()?
+                        .is_some_and(crate::sql::weak_anchor)
+                    {
+                        f |= WEAK_ANCHOR;
                     }
                 }
-                (2, Some(c)) if c & 8 != 0 => f |= HTTP_IMAGE,
-                (2, None) if r.get::<_, bool>(4)? => f |= HTTP_IMAGE,
-                _ => {}
+                "image" => {
+                    let http = match c {
+                        Some(c) => c & HTTP != 0,
+                        None => to.is_none() && r.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                    };
+                    if http {
+                        f |= HTTP_IMAGE;
+                    }
+                }
+                "canonical" => {
+                    if r.get::<_, Option<i64>>(6)? == Some(0) {
+                        f |= CANONICAL_IN_BODY;
+                    }
+                    if not_ok {
+                        f |= CANONICAL_BAD_TARGET;
+                    }
+                }
+                "hreflang" => {
+                    f |= HREFLANG;
+                    if to == Some(from) {
+                        f |= HREFLANG_SELF;
+                    }
+                    let lang = r.get_ref(7)?.as_str_or_null()?;
+                    if lang.is_some_and(|l| l.eq_ignore_ascii_case("x-default")) {
+                        f |= HREFLANG_X_DEFAULT;
+                    }
+                    if !lang.is_some_and(crate::sql::lang_code_ok) {
+                        f |= HREFLANG_BAD_CODE;
+                    }
+                    if not_ok {
+                        f |= HREFLANG_BAD_TARGET;
+                    }
+                }
+                _ => {
+                    if not_ok {
+                        f |= PAGINATION_BAD_TARGET;
+                    }
+                }
             }
             flags[from] |= f;
         }

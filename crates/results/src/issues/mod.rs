@@ -221,6 +221,16 @@ pub const fn rule(
 }
 
 impl Rule {
+    /// Derived tables the condition reads: those declared, plus
+    /// `temp.link_stats` when the condition tests its bits.
+    pub fn derived_tables(&self) -> impl Iterator<Item = Derived> + '_ {
+        let stats = self
+            .cond
+            .contains("temp.link_stats")
+            .then_some(Derived::LinkStats);
+        self.derived.iter().copied().chain(stats)
+    }
+
     pub const fn site_wide(mut self) -> Self {
         self.kind = RuleKind::SiteWide;
         self
@@ -407,17 +417,27 @@ mod tests {
     #[test]
     fn link_rules_test_the_link_stats_bit_they_mean() {
         use crate::tabs::link_flag::*;
-        for (id, bit) in [
-            ("links.broken_internal", BROKEN_INTERNAL),
-            ("links.broken_external", BROKEN_EXTERNAL),
-            ("links.to_redirect", TO_REDIRECT),
-            ("links.nofollow_internal", NOFOLLOW_INTERNAL),
-            ("links.no_internal_outlinks", INTERNAL_OUT),
-            ("security.mixed_content", HTTP_IMAGE),
+        for (id, bits) in [
+            ("links.broken_internal", vec![BROKEN_INTERNAL]),
+            ("links.broken_external", vec![BROKEN_EXTERNAL]),
+            ("links.to_redirect", vec![TO_REDIRECT]),
+            ("links.nofollow_internal", vec![NOFOLLOW_INTERNAL]),
+            ("links.no_internal_outlinks", vec![INTERNAL_OUT]),
+            ("links.weak_anchor", vec![WEAK_ANCHOR]),
+            ("security.mixed_content", vec![HTTP_IMAGE]),
+            ("canonical.outside_head", vec![CANONICAL_IN_BODY]),
+            ("canonical.bad_target", vec![CANONICAL_BAD_TARGET]),
+            ("hreflang.no_self", vec![HREFLANG, HREFLANG_SELF]),
+            ("hreflang.no_x_default", vec![HREFLANG, HREFLANG_X_DEFAULT]),
+            ("hreflang.invalid_code", vec![HREFLANG_BAD_CODE]),
+            ("hreflang.bad_target", vec![HREFLANG_BAD_TARGET]),
+            ("pagination.bad_target", vec![PAGINATION_BAD_TARGET]),
         ] {
-            let r = get(id).unwrap();
-            assert!(r.cond.contains(&format!("& {bit})")), "{id}: {}", r.cond);
-            assert_eq!(r.derived, &[Derived::LinkStats], "{id}");
+            let r = get(id).unwrap_or_else(|| panic!("{id}"));
+            for bit in bits {
+                assert!(r.cond.contains(&format!("& {bit})")), "{id}: {}", r.cond);
+            }
+            assert!(r.derived_tables().any(|d| d == Derived::LinkStats), "{id}");
         }
     }
 

@@ -1,6 +1,6 @@
 //! Pagination and structured data.
 
-use super::{target_not_ok, target_not_ok_evidence};
+use super::target_not_ok_evidence;
 use crate::issues::{Category, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -11,7 +11,7 @@ pub const RULES: &[Rule] = &[
         Category::Pagination,
         Medium,
         Scope::Pages,
-        target_not_ok!("'next', 'prev'"),
+        super::links::has_link!("16384"),
     )
     .site_wide()
     .needs(Need::Extraction)

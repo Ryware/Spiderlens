@@ -1,6 +1,6 @@
 //! Hreflang annotations.
 
-use super::{target_not_ok, target_not_ok_evidence};
+use super::target_not_ok_evidence;
 use crate::issues::{Category::Hreflang as C, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -32,7 +32,7 @@ pub const RULES: &[Rule] = &[
         C,
         High,
         Scope::Pages,
-        target_not_ok!("'hreflang'"),
+        super::links::has_link!("8192"),
     )
     .site_wide()
     .needs(Need::Extraction)
@@ -47,8 +47,7 @@ pub const RULES: &[Rule] = &[
         C,
         Low,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang') \
-         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang' AND l.to_id = u.id)",
+        concat!(super::links::has_link!("256"), " AND NOT ", super::links::has_link!("512")),
     )
     .needs(Need::Extraction)
     .evidence("'Lists other languages but not itself'")
@@ -62,8 +61,7 @@ pub const RULES: &[Rule] = &[
         C,
         Opportunity,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang') \
-         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang' AND lower(l.lang) = 'x-default')",
+        concat!(super::links::has_link!("256"), " AND NOT ", super::links::has_link!("1024")),
     )
     .needs(Need::Extraction)
     .evidence("'No x-default alternate'")
@@ -77,7 +75,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang' AND NOT lang_code_ok(l.lang))",
+        super::links::has_link!("2048"),
     )
     .needs(Need::Extraction)
     .evidence("(SELECT 'Code \"' || COALESCE(l.lang, '') || '\"' FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang' AND NOT lang_code_ok(l.lang) ORDER BY l.pos LIMIT 1)")
