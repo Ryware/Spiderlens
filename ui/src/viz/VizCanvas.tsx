@@ -331,6 +331,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
         className="block h-full w-full cursor-grab touch-none outline-none focus-visible:ring-2 focus-visible:ring-accent active:cursor-grabbing"
         style={{ width: size.w, height: size.h }}
         data-camera={`${cam.x.toFixed(1)},${cam.y.toFixed(1)},${cam.k.toFixed(3)}`}
+        data-layout={scene.layout}
         onPointerDown={(e) => {
           (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           const p = local(e);

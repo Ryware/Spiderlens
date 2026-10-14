@@ -192,6 +192,8 @@ test("crawl_tree_draws_and_selecting_a_node_shows_it_in_the_details", async ({ p
   await page.getByRole("navigation", { name: "Sections" }).getByText("Crawl tree").click();
   const canvas = page.getByRole("application");
   await expect(canvas).toHaveAttribute("aria-label", /^Crawl tree: \d+ nodes/);
+  // The canvas takes its size from its box once laid out.
+  await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeGreaterThan(300);
   const box = (await canvas.boundingBox())!;
   expect(box.width).toBeGreaterThan(300);
   expect(box.height).toBeGreaterThan(200);
@@ -229,8 +231,11 @@ test("tree_views_switch_layout_and_keep_working_from_the_keyboard", async ({ pag
   await expect(canvas).toHaveAttribute("aria-label", /^Directory tree/);
   await page.getByRole("radio", { name: "Radial" }).click();
   await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.layout)).toBe("radial");
-  const cam = await canvas.getAttribute("data-camera");
+  // The radial scene is drawn and fitted before the camera is read.
+  await expect(canvas).toHaveAttribute("data-layout", "radial");
   await canvas.focus();
+  await page.keyboard.press("0");
+  const cam = await canvas.getAttribute("data-camera");
   await page.keyboard.press("+");
   await expect(canvas).not.toHaveAttribute("data-camera", cam!);
   await page.keyboard.press("0");
