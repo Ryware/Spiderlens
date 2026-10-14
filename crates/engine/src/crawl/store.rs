@@ -188,7 +188,6 @@ const TRANSIENT_FAILURE: &str = "fetched_at IS NOT NULL AND state IN ('crawled',
     OR (error_class = 'content_problem' AND error_reason = 'truncated')
     OR (error_class IS NULL AND (status = 429 OR (status BETWEEN 500 AND 599 AND status NOT IN (501, 505)))))";
 
-
 /// The queue order key: depth first, then discovery order (FR-020).
 pub type QueueKey = (u32, i64);
 

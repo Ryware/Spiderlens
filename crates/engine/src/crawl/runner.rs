@@ -1771,9 +1771,17 @@ impl Run {
                 Some(RobotsState::Known(p, _)) => Some(p.clone()),
                 _ => None,
             };
+            // A host the crawl gave up on gets no more requests (spec 004).
+            let given_up = host.is_some_and(|h| h.health.is_given_up());
             let paths: Vec<(String, Option<String>)> = site_files::PATHS
                 .iter()
                 .map(|path| {
+                    if given_up {
+                        return (
+                            (*path).to_string(),
+                            Some("host unavailable: the crawl gave up on it".to_string()),
+                        );
+                    }
                     let blocked = policy.as_ref().and_then(|p| {
                         let url = Url::parse(&format!("{key}{path}")).ok()?;
                         match p.check(&url) {
