@@ -7,6 +7,8 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { CrawlConfig } from "./generated/CrawlConfig";
+import type { CustomResult } from "./generated/CustomResult";
+import type { CustomRules } from "./generated/CustomRules";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
 import type { ListKind } from "./generated/ListKind";
@@ -276,6 +278,51 @@ export interface ExportProgress {
   path: string;
 }
 
+// Custom extraction and search (spec 013, contracts/desktop-commands.md).
+
+/** What one rule found on a tested page (FR-018). */
+export interface RuleTestResult {
+  name: string;
+  kind: "extractor" | "search";
+  count: number;
+  flags: string[];
+  values: string[];
+  error: string | null;
+}
+
+export interface RuleTestOutcome {
+  /** The page the rules ran on, after redirects. */
+  url: string;
+  /** Null for a stored page. */
+  status: number | null;
+  results: RuleTestResult[];
+  ms: number;
+}
+
+/** A rule as stored with a crawl, and how it last ran (FR-013). */
+export interface CrawlRule {
+  name: string;
+  kind: "extractor" | "search";
+  last_run_at: string | null;
+  run_pages: number | null;
+  run_state: "crawl" | "complete" | "partial" | "stale" | null;
+}
+
+export interface CustomRunProgress {
+  run: number;
+  done: number;
+  total: number;
+  per_sec: number;
+}
+
+export interface CustomRunDone {
+  run: number;
+  path: string;
+  state: "complete" | "partial" | "failed";
+  pages: number;
+  error: string | null;
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -335,7 +382,8 @@ export interface Transport {
   onAppQuitting(cb: (q: { pausing: boolean }) => void): Promise<() => void>;
   onCrawlsRecovered(cb: (entries: RecentEntry[]) => void): Promise<() => void>;
   // Results (spec 007, contracts/desktop-commands.md).
-  resultsTabs(): Promise<TabDef[]>;
+  /** With a crawl file, its custom extraction and search tabs too (spec 013). */
+  resultsTabs(path?: string | null): Promise<TabDef[]>;
   resultsOpen(path: string): Promise<{ features: Features }>;
   viewOpen(path: string, query: ViewQuery, count: number): Promise<RowPage>;
   viewRows(path: string, view: number, from: number, count: number): Promise<RowPage>;
@@ -347,10 +395,26 @@ export interface Transport {
   urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
-  exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
+  /** `allValues`: custom extraction columns hold every value joined by it (spec 013 FR-025). */
+  exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null): Promise<number>;
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // Custom extraction and search (spec 013).
+  /** Every rule's result on one page, for the detail pane. */
+  urlCustom(path: string, id: number): Promise<CustomResult[]>;
+  customTestUrl(rules: CustomRules, url: string, config: CrawlConfig): Promise<RuleTestOutcome>;
+  customTestPage(rules: CustomRules, crawlPath: string, urlId: number): Promise<RuleTestOutcome>;
+  customRulesOfCrawl(crawlPath: string): Promise<CrawlRule[]>;
+  /** Runs `rules`, or the rules stored with the crawl when null, on its stored HTML. */
+  customRun(crawlPath: string, rules: CustomRules | null, only?: string[]): Promise<number>;
+  customCancel(run: number): Promise<void>;
+  onCustomRunProgress(cb: (p: CustomRunProgress) => void): Promise<() => void>;
+  onCustomRunDone(cb: (d: CustomRunDone) => void): Promise<() => void>;
+  pickRulesFile(): Promise<string | null>;
+  pickRulesSavePath(name: string): Promise<string | null>;
+  customImport(path: string): Promise<CustomRules>;
+  customExport(path: string, rules: CustomRules): Promise<void>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -410,7 +474,7 @@ export const tauriTransport: Transport = {
   onCrawlMoved: (cb) => listen<CrawlMoved>("crawl-moved", (e) => cb(e.payload)),
   onAppQuitting: (cb) => listen<{ pausing: boolean }>("app-quitting", (e) => cb(e.payload)),
   onCrawlsRecovered: (cb) => listen<RecentEntry[]>("crawls-recovered", (e) => cb(e.payload)),
-  resultsTabs: () => invoke("results_tabs"),
+  resultsTabs: (path) => invoke("results_tabs", { path: path ?? null }),
   resultsOpen: (path) => invoke("results_open", { path }),
   viewOpen: (path, query, count) => invoke("view_open", { path, query, count }),
   viewRows: (path, view, from, count) => invoke("view_rows", { path, view, from, count }),
@@ -421,8 +485,20 @@ export const tauriTransport: Transport = {
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
-  exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
+  exportStart: (path, query, columns, ranges, dest, allValues) => invoke("export_start", { path, query, columns, ranges, dest, allValues: allValues ?? null }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  urlCustom: (path, id) => invoke("url_custom", { path, id }),
+  customTestUrl: (rules, url, config) => invoke("custom_test_url", { rules, url, config }),
+  customTestPage: (rules, crawlPath, urlId) => invoke("custom_test_page", { rules, crawlPath, urlId }),
+  customRulesOfCrawl: (crawlPath) => invoke("custom_rules_of_crawl", { crawlPath }),
+  customRun: (crawlPath, rules, only) => invoke("custom_run", { crawlPath, rules, only: only ?? null }),
+  customCancel: (run) => invoke("custom_cancel", { run }),
+  onCustomRunProgress: (cb) => listen<CustomRunProgress>("custom-run-progress", (e) => cb(e.payload)),
+  onCustomRunDone: (cb) => listen<CustomRunDone>("custom-run-done", (e) => cb(e.payload)),
+  pickRulesFile: async () => asPath(await open({ filters: [{ name: "SpiderLens rules", extensions: ["json"] }] })),
+  pickRulesSavePath: (name) => save({ defaultPath: `${name}.spiderlens-rules.json`, filters: [{ name: "SpiderLens rules", extensions: ["json"] }] }),
+  customImport: (path) => invoke("custom_import", { path }),
+  customExport: (path, rules) => invoke("custom_export", { path, rules }),
 };

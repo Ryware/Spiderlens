@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Braces, TextSearch, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -29,7 +29,24 @@ const later: NavItem[] = [
 ];
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
-export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean }) {
+export const customIcon = (id: string): LucideIcon => (id === "custom_search" ? TextSearch : Braces);
+
+export function Sidebar({
+  active,
+  onSelect,
+  collapsed,
+  onAbout,
+  results,
+  custom = [],
+}: {
+  active: string;
+  onSelect: (id: string) => void;
+  collapsed: boolean;
+  onAbout: () => void;
+  results: boolean;
+  /** The open crawl's custom extraction and search tabs (spec 013), when it ran rules. */
+  custom?: { id: string; title: string }[];
+}) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
     const Icon = it.icon;
@@ -60,6 +77,12 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
       <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
+      {results && custom.length > 0 && (
+        <>
+          {heading("Custom")}
+          <ul className="m-0 flex list-none flex-col gap-px p-0">{custom.map((t) => item({ id: t.id, title: t.title, icon: customIcon(t.id) }, true))}</ul>
+        </>
+      )}
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

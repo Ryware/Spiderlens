@@ -5,6 +5,7 @@ import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -47,6 +48,7 @@ export function defaultConfig(): CrawlConfig {
     network: { connect_timeout_secs: 10, read_timeout_secs: 30, max_redirects: 10, max_body_mb: 50 },
     retry: { attempts: 3, max_wait_secs: 60, retry_5xx: true, retry_429: true },
     extraction: { store_html: true },
+    custom: { extractors: [], searches: [] },
   };
 }
 
@@ -105,7 +107,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; custom: FakeCustom } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -129,6 +131,7 @@ export function fakeTransport(
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   return {
     ...resultsApi,
+    ...fakeCustomTransport(),
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
@@ -163,6 +166,15 @@ export function fakeTransport(
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      // Custom rules (spec 013): a few of the engine's checks, enough for the UI paths.
+      config.custom.extractors.forEach((e, i) => {
+        if (!e.expr.trim()) issues.push({ path: `custom.extractors[${i}].expr`, severity: "error", code: "custom_expr_empty", message: "Enter what to extract." });
+        if (config.custom.extractors.findIndex((x) => x.name === e.name) !== i)
+          issues.push({ path: `custom.extractors[${i}].name`, severity: "error", code: "custom_name_taken", message: `Another extractor is already called "${e.name}".` });
+      });
+      config.custom.searches.forEach((x, i) => {
+        if (!x.term) issues.push({ path: `custom.searches[${i}].term`, severity: "error", code: "custom_term_empty", message: "Enter what to search for." });
+      });
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });

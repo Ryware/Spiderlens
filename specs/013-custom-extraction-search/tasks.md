@@ -54,10 +54,10 @@
 ## Phase 8: Desktop and UI
 
 - [x] T027 [US1][US2][US4][US5] `app/src-tauri/src/custom.rs` commands (contracts/desktop-commands.md)
-- [ ] T028 [US1][US2][US5] Settings › Custom rules: lists, editor rows, inline errors, import/export, read-only while running; Vitest tests
-- [ ] T029 [US4] Test panel (crawled page or URL); Vitest tests (SC-006)
-- [ ] T030 [US3] Results: Run on this crawl with progress, cancel and disabled reasons; detail pane Custom section; Vitest tests
-- [ ] T031 Fake transport support and Playwright end-to-end: add rule, test, crawl, filter, rerun
+- [x] T028 [US1][US2][US5] Settings › Custom rules: lists, editor rows, inline errors, import/export, read-only while running; Vitest tests
+- [x] T029 [US4] Test panel (crawled page or URL); Vitest tests (SC-006)
+- [x] T030 [US3] Results: Run on this crawl with progress, cancel and disabled reasons; detail pane Custom section; Vitest tests
+- [x] T031 Fake transport support and Playwright end-to-end: add rule, test, crawl, filter, rerun
 
 ## Phase 9: Performance and converge
 

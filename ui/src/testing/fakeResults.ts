@@ -59,7 +59,7 @@ const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status
 export interface FakeResults {
   urls: FakeUrl[];
   copied: string[];
-  exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
+  exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
   /** What the open crawl file holds; base only unless a test adds more. */
   features: Need[];
@@ -68,6 +68,10 @@ export interface FakeResults {
   progress(p: Partial<ExportProgress>): void;
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** The open file's custom tabs (spec 013); none unless a test adds them. */
+  customTabs: TabDef[];
+  /** Custom column values by URL id; pages without an entry are not in the custom tabs. */
+  customCells: Map<number, Record<string, string | number | null>>;
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -107,11 +111,22 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.urls.push(...urls);
       version++;
     },
+    customTabs: [],
+    customCells: new Map(),
   };
+  const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
+  const tabOf = (id: string) => fakeTabs.find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
+  const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
-    const tab = fakeTabs.find((t) => t.id === q.tab)!;
+    const tab = tabOf(q.tab);
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    if (isCustom(q.tab)) {
+      us = us.filter((u) => results.customCells.has(u.id));
+      // `<column>_has`: a value; `<column>_none`: none.
+      const [, col, kind] = /^(.*)_(has|none)$/.exec(q.filter) ?? [];
+      if (col) us = us.filter((u) => (valueOf(u, col) !== null && valueOf(u, col) !== "") === (kind === "has"));
+    }
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -121,8 +136,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const k = q.sort.column;
       const d = q.sort.desc ? -1 : 1;
       us = [...us].sort((a, b) => {
-        const x = cell(a, k);
-        const y = cell(b, k);
+        const x = valueOf(a, k);
+        const y = valueOf(b, k);
         if (x === y) return a.id - b.id;
         if (x === null) return 1;
         if (y === null) return -1;
@@ -133,7 +148,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
-    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id) : null))];
+    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? valueOf(u, c.id) : null))];
   };
   const page = (view: number, from: number, count: number) => {
     const v = views.get(view)!;
@@ -141,7 +156,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   return {
     results,
-    resultsTabs: async () => fakeTabs,
+    resultsTabs: async (path) => (path ? [...fakeTabs, ...results.customTabs] : fakeTabs),
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -163,7 +178,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return { version, total: fresh.ids.length, positions: anchors.map((a) => (fresh.ids.indexOf(a) < 0 ? null : fresh.ids.indexOf(a))), build_ms: 1 };
     },
     viewCounts: async (_p, tab, scope) => {
-      const t = fakeTabs.find((x) => x.id === tab)!;
+      const t = tabOf(tab);
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
       for (const f of t.filters) {
@@ -241,8 +256,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.copied.push(text);
       return text;
     },
-    exportStart: async (_p, _q, columns, ranges, dest) => {
-      results.exports.push({ columns, ranges, dest });
+    exportStart: async (_p, _q, columns, ranges, dest, allValues) => {
+      results.exports.push({ columns, ranges, dest, allValues: allValues ?? null });
       return 1;
     },
     exportCancel: async () => {},

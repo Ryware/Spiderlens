@@ -11,8 +11,9 @@ import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { CustomRulesPanel } from "./CustomRules";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "custom" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +35,7 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "custom", title: "Custom rules", description: "Extract values and search every page. Rules run on each page's HTML as it arrives.", prefixes: ["custom"] },
   {
     id: "appearance",
     title: "Appearance",
@@ -50,7 +52,20 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
   return <Textarea id={id} rows={3} placeholder={placeholder} value={value.join("\n")} onChange={(e) => onChange(e.target.value === "" ? [] : e.target.value.split("\n"))} />;
 }
 
-export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: CrawlSetup; transport: Transport }): ReactNode {
+export function CategoryBody({
+  id,
+  setup,
+  transport,
+  crawlPath = null,
+  crawlRunning = false,
+}: {
+  id: CategoryId;
+  setup: CrawlSetup;
+  transport: Transport;
+  /** The open crawl, which custom rules can run on again (spec 013 US3). */
+  crawlPath?: string | null;
+  crawlRunning?: boolean;
+}): ReactNode {
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
@@ -328,5 +343,8 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
           </Row>
         </Group>
       );
+
+    case "custom":
+      return <CustomRulesPanel setup={setup} transport={transport} crawlPath={crawlPath} crawlRunning={crawlRunning} />;
   }
 }
