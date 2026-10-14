@@ -154,14 +154,14 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
             let c = tab
                 .column(&s.column)
                 .ok_or_else(|| Error::invalid(format!("unknown column {:?} on {}", s.column, tab.id)))?;
-            add(c.derived);
+            add(c.derived_in(values));
             sort_sql(c, s.desc, features, values)
         }
     };
     // Columns read derived tables too.
     for c in &tab.columns {
         if features.has(c.need) {
-            add(c.derived);
+            add(c.derived_in(values));
         }
     }
     Ok(Compiled {
@@ -338,10 +338,23 @@ impl Reader {
         } else {
             // Before the order is stored: a top-k query, fine for the first
             // screens, which is all the UI asks for at this point.
-            let sql = format!(
-                "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
-                v.where_sql, v.order_sql
-            );
+            let sql = if values == Values::Rendered {
+                // SQLite computes every result column of every row before a
+                // top-k sort keeps `count` of them. Rendered columns each
+                // cost lookups, so the rows are picked by id first and their
+                // columns read for those rows only (spec 014 T030).
+                format!(
+                    "SELECT {select} FROM (SELECT u.id AS k FROM urls u NOT INDEXED WHERE {}
+                       ORDER BY {} LIMIT {count} OFFSET {from}) t
+                     CROSS JOIN urls u ON u.id = t.k ORDER BY {}",
+                    v.where_sql, v.order_sql, v.order_sql
+                )
+            } else {
+                format!(
+                    "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
+                    v.where_sql, v.order_sql
+                )
+            };
             let mut stmt = self.conn.prepare(&sql)?;
             read_rows(&mut stmt, &params_of(&v.search), width)?
         };

@@ -109,6 +109,9 @@ pub enum Derived {
     OccH1,
     /// `temp.occ_h2(v, n)`: each first H2 and how many pages use it.
     OccH2,
+    /// `temp.gone_to(to_id, n)`: raw links to each URL that are gone after
+    /// rendering (spec 014). Read by Inlinks in rendered mode.
+    GoneTo,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -132,6 +135,10 @@ pub struct ColumnDef {
     #[serde(skip)]
     #[ts(skip)]
     pub rendered: Option<&'static str>,
+    /// The derived table `rendered` reads, when it differs from `derived`.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub rendered_derived: Option<Derived>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -236,10 +243,12 @@ const IMG_ALT: &str =
     "(SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1)";
 
 /// The page has a rendered version (spec 014): its rendered values replace
-/// the raw ones in rendered mode.
+/// the raw ones in rendered mode. Only in rendered expressions, where `u`
+/// is the rendered `urls` view, which shares one `rendered_pages` lookup
+/// per row between this flag and the rendered fields.
 macro_rules! rendered_page {
     () => {
-        "EXISTS (SELECT 1 FROM main.rendered_pages rp WHERE rp.url_id = u.id)"
+        "u.rendered_row = 1"
     };
 }
 
@@ -250,24 +259,24 @@ macro_rules! live_raw {
     };
 }
 
-/// Links in rendered mode: raw links still there after rendering plus
-/// links found only after rendering. Each side is an indexed lookup, so
-/// these are written out per expression rather than as a UNION view,
-/// which SQLite cannot search by index from a correlated subquery
-/// (research R11 fallback, measured in T030).
-macro_rules! rendered_links_count {
-    ($key:literal) => {
-        concat!(
-            "((SELECT COUNT(*) FROM links l WHERE l.",
-            $key,
-            " = u.id AND ",
-            live_raw!(),
-            ") + (SELECT COUNT(*) FROM rendered_links l WHERE l.",
-            $key,
-            " = u.id))"
-        )
-    };
-}
+// Link counts in rendered mode: the raw links, minus the raw links gone
+// after rendering, plus the links found only after rendering. The raw and
+// rendered parts are index-only counts; the gone part is a lookup in a
+// small table (`temp.gone_to`) or a count of `raw_only_links` by page
+// (every raw reference has a link row at its position, so each
+// `raw_only_links` row is one link). Filtering
+// the raw links with `live_raw!` instead read every link row and made
+// sorting by Inlinks 20 times slower on 100,000 pages; a UNION view of
+// both link tables is worse still (T030, benchmarks.md, research R11).
+// A delta table holding the rendered links too was faster to read but
+// grows with `rendered_links`, which on a script-only site holds every
+// link, and is rebuilt at each refresh of a running crawl.
+const INLINKS_RENDERED: &str = "((SELECT COUNT(*) FROM links l WHERE l.to_id = u.id) \
+     - COALESCE((SELECT g.n FROM temp.gone_to g WHERE g.to_id = u.id), 0) \
+     + (SELECT COUNT(*) FROM rendered_links l WHERE l.to_id = u.id))";
+const OUTLINKS_RENDERED: &str = "((SELECT COUNT(*) FROM links l WHERE l.from_id = u.id) \
+     - (SELECT COUNT(*) FROM main.raw_only_links g WHERE g.from_id = u.id) \
+     + (SELECT COUNT(*) FROM rendered_links l WHERE l.from_id = u.id))";
 
 const IMG_ALT_RENDERED: &str = concat!(
     "(SELECT a FROM (SELECT l.alt AS a, l.rowid AS k FROM links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
@@ -300,6 +309,7 @@ const fn col(
         need: Need::Base,
         derived: None,
         rendered: None,
+        rendered_derived: None,
     }
 }
 
@@ -307,6 +317,18 @@ impl ColumnDef {
     const fn with_rendered(mut self, expr: &'static str) -> Self {
         self.rendered = Some(expr);
         self
+    }
+    const fn with_rendered_reads(mut self, expr: &'static str, d: Derived) -> Self {
+        self.rendered = Some(expr);
+        self.rendered_derived = Some(d);
+        self
+    }
+    /// The derived table the column reads for `values`.
+    pub(crate) fn derived_in(&self, values: Values) -> Option<Derived> {
+        match (values, self.rendered_derived) {
+            (Values::Rendered, Some(d)) => Some(d),
+            _ => self.derived,
+        }
     }
     const fn hidden(mut self) -> Self {
         self.default_visible = false;
@@ -406,7 +428,7 @@ mod c {
         ValueKind::Int,
         80,
     )
-    .with_rendered(rendered_links_count!("to_id"));
+    .with_rendered_reads(INLINKS_RENDERED, Derived::GoneTo);
     pub const OUTLINKS: ColumnDef = col(
         "outlinks",
         "Outlinks",
@@ -414,7 +436,7 @@ mod c {
         ValueKind::Int,
         80,
     )
-    .with_rendered(rendered_links_count!("from_id"));
+    .with_rendered(OUTLINKS_RENDERED);
     /// Whether a row shows rendered or raw values (spec 014 FR-021).
     pub const VALUES: ColumnDef = col("values", "Values", "'Raw'", ValueKind::Text, 90)
         .hidden()
@@ -1093,6 +1115,13 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
+        Derived::GoneTo => conn.execute_batch(
+            "DROP TABLE IF EXISTS temp.gone_to;
+             CREATE TEMP TABLE gone_to(to_id INTEGER PRIMARY KEY, n INTEGER NOT NULL);
+             INSERT INTO temp.gone_to SELECT l.to_id, COUNT(*) FROM main.raw_only_links g
+               CROSS JOIN links l ON l.from_id = g.from_id AND l.pos = g.pos
+               WHERE l.to_id IS NOT NULL GROUP BY l.to_id;",
+        ),
     }
 }
 

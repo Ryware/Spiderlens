@@ -1,13 +1,15 @@
 //! Writes a synthetic crawl file for scale work:
-//! `cargo run --release -p spiderlens-results --example gen_crawl -- 1000000 /tmp/1m.spiderlens`
+//! `cargo run --release -p spiderlens-results --example gen_crawl -- 1000000 /tmp/1m.spiderlens [rendered]`
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let urls: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(1_000_000);
     let out = args.next().unwrap_or_else(|| "synthetic.spiderlens".into());
+    let rendered = args.next().as_deref() == Some("rendered");
     let start = std::time::Instant::now();
     spiderlens_results::synth::Synth {
         urls,
+        rendered,
         ..Default::default()
     }
     .write(std::path::Path::new(&out))

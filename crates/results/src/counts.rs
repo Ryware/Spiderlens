@@ -54,12 +54,23 @@ impl Reader {
                 f.sql(values)
             ));
         }
-        sql.push_str(&format!(" FROM urls u NOT INDEXED WHERE ({})", t.eligible));
+        let mut filter = format!(" WHERE ({})", t.eligible);
         match (t.scoped, scope) {
-            (true, UrlScope::Internal) => sql.push_str(" AND u.internal = 1"),
-            (true, UrlScope::External) => sql.push_str(" AND u.internal = 0"),
+            (true, UrlScope::Internal) => filter.push_str(" AND u.internal = 1"),
+            (true, UrlScope::External) => filter.push_str(" AND u.internal = 0"),
             _ => {}
         }
+        // SQLite keeps the rendered view's join in an aggregate even when
+        // no rendered field is read, so a tab whose conditions read none
+        // counts from the table itself (spec 014 T030).
+        let from = if values == Values::Rendered
+            && (crate::values::reads_overlay(&sql) || crate::values::reads_overlay(&filter))
+        {
+            "urls"
+        } else {
+            "main.urls"
+        };
+        sql.push_str(&format!(" FROM {from} u NOT INDEXED{filter}"));
         let values: Vec<i64> = self.conn.query_row(&sql, [], |r| {
             (0..available.len()).map(|i| r.get::<_, i64>(i)).collect()
         })?;

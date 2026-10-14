@@ -11,6 +11,13 @@
 //! tab expressions that read them have a rendered variant instead
 //! ([`crate::ColumnDef`] `rendered`).
 //!
+//! The `urls` view reads `main.urls` NOT INDEXED, as the tab queries do
+//! (`FROM urls u NOT INDEXED`): the hint does not pass through a view, and
+//! without it SQLite picks the state index and sorts, so a first screen in
+//! id order costs a full sort. Lookups by id still use the rowid.
+//!
+//! The view adds `rendered_row`, 1 when the row shows rendered values.
+//!
 //! A page has rendered values when it has a `rendered_pages` row: rendered
 //! or timed out with HTML. Every other row keeps its raw values.
 
@@ -53,6 +60,15 @@ const URL_FIELDS: [&str; 6] = [
     "canonical_conflict",
 ];
 
+/// Whether SQL over `urls u` reads a field the rendered `urls` view
+/// changes. Used where SQLite cannot drop the view's join by itself.
+pub(crate) fn reads_overlay(sql: &str) -> bool {
+    URL_FIELDS
+        .iter()
+        .chain(&["rendered_row"])
+        .any(|f| sql.contains(&format!("u.{f}")))
+}
+
 fn columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA main.table_info({table})"))?;
     let names = stmt.query_map([], |r| r.get::<_, String>(1))?;
@@ -82,7 +98,7 @@ pub(crate) fn apply(conn: &Connection, values: Values) -> rusqlite::Result<()> {
         .map(|c| pick("p", c, c != "url_id" && rendered.contains(c)))
         .collect();
     conn.execute_batch(&format!(
-        "CREATE TEMP VIEW urls AS SELECT {} FROM main.urls u
+        "CREATE TEMP VIEW urls AS SELECT {}, rp.url_id IS NOT NULL AS rendered_row FROM main.urls u NOT INDEXED
            LEFT JOIN main.rendered_pages rp ON rp.url_id = u.id;
          CREATE TEMP VIEW pages AS SELECT {} FROM main.pages p
            LEFT JOIN main.rendered_pages rp ON rp.url_id = p.url_id;",
