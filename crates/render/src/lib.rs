@@ -11,6 +11,7 @@
 //! rendering (T016) land.
 
 mod find;
+pub mod settle;
 mod types;
 
 use std::ffi::OsString;
