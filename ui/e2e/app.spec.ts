@@ -179,6 +179,14 @@ test("links_tab_sorts_by_link_score", async ({ page }) => {
 /** Where a scene node is on the page, from the canvas camera. */
 async function nodeOnPage(page: Page, key: string) {
   const canvas = page.getByRole("application");
+  // The camera fits the scene over a few frames: read it once it holds still.
+  await expect
+    .poll(async () => {
+      const a = await canvas.getAttribute("data-camera");
+      await page.waitForTimeout(100);
+      return a === (await canvas.getAttribute("data-camera"));
+    })
+    .toBe(true);
   const box = (await canvas.boundingBox())!;
   const [cx, cy, k] = (await canvas.getAttribute("data-camera"))!.split(",").map(Number);
   const state = await page.evaluate(() => window.spiderlens.results.viz[window.spiderlens.results.viz.length - 1]);
@@ -198,13 +206,18 @@ test("crawl_tree_draws_and_selecting_a_node_shows_it_in_the_details", async ({ p
   expect(box.width).toBeGreaterThan(300);
   expect(box.height).toBeGreaterThan(200);
   // Something was drawn: the canvas is not blank.
-  const painted = await canvas.evaluate((c: HTMLCanvasElement) => {
-    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
-    let n = 0;
-    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
-    return n;
-  });
-  expect(painted).toBeGreaterThan(100);
+  await expect(canvas).toHaveAttribute("data-layout", "cloud");
+  // The cloud is drawn on the next frames after its scene arrives.
+  await expect
+    .poll(() =>
+      canvas.evaluate((c: HTMLCanvasElement) => {
+        const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+        return n;
+      }),
+    )
+    .toBeGreaterThan(100);
   // Hover shows a tooltip; a click selects and the details follow.
   const root = await nodeOnPage(page, "u:1");
   await page.mouse.move(root.x, root.y);
@@ -253,6 +266,7 @@ test("link_graph_drags_a_page_and_centres_on_one", async ({ page }) => {
   await page.getByRole("navigation", { name: "Sections" }).getByText("Link graph").click();
   const canvas = page.getByRole("application");
   await expect(canvas).toHaveAttribute("aria-label", /^Link graph: \d+ nodes, \d+ links/);
+  await expect(canvas).toHaveAttribute("data-layout", "force");
   // Drag a page: it is pinned where it was dropped, and stays under the mouse.
   const before = await nodeOnPage(page, "u:4");
   await page.mouse.move(before.x, before.y);
