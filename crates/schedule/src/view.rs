@@ -14,7 +14,9 @@ use crate::runner::{is_running, read_progress};
 
 /// A time in the computer's time zone, with its offset: `2026-10-19T07:00:00+03:00`.
 pub fn local_time(t: Timestamp, tz: &TimeZone) -> String {
-    t.to_zoned(tz.clone()).strftime("%Y-%m-%dT%H:%M:%S%:z").to_string()
+    t.to_zoned(tz.clone())
+        .strftime("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -58,7 +60,11 @@ pub fn preview(f: &Frequency, tz: &TimeZone, now: Timestamp) -> Preview {
     match f.cron() {
         Ok(c) => Preview {
             describe: f.describe(),
-            next_runs: c.upcoming(tz, now, 5).into_iter().map(|t| local_time(t, tz)).collect(),
+            next_runs: c
+                .upcoming(tz, now, 5)
+                .into_iter()
+                .map(|t| local_time(t, tz))
+                .collect(),
             error: None,
         },
         Err(e) => Preview {
@@ -97,7 +103,13 @@ pub fn row(m: &Manager, s: &Schedule, tz: &TimeZone, now: Timestamp) -> Schedule
     }
 }
 
-pub fn detail(m: &Manager, s: &Schedule, tz: &TimeZone, now: Timestamp, profile_changed: bool) -> ScheduleDetail {
+pub fn detail(
+    m: &Manager,
+    s: &Schedule,
+    tz: &TimeZone,
+    now: Timestamp,
+    profile_changed: bool,
+) -> ScheduleDetail {
     let next_runs = if s.enabled {
         preview(&s.frequency, tz, now).next_runs
     } else {

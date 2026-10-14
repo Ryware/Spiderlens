@@ -67,6 +67,7 @@ fn setup_with(s: Schedule, config: &Path, site: Option<&Site>) -> (Context, Arc<
             tz: TimeZone::UTC,
             notifier: rec.clone(),
             resolve,
+            disk_reserve: 0,
         },
         rec,
     )
@@ -199,6 +200,25 @@ async fn missing_output_folder_fails_before_any_request() {
     assert_eq!(r.status, RunStatus::Failed);
     assert!(r.reason.unwrap().starts_with("The output folder"));
     assert!(r.file.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn low_disk_space_pauses_before_any_request() {
+    let site = Fixture::start();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    let (mut ctx, _) = setup(schedule(&out, site.url("/")), &dir.path().join("config"));
+    ctx.disk_reserve = u64::MAX;
+    let o = run(&ctx, "sched001", Some(at(14, 7, 0)), Trigger::Scheduled)
+        .await
+        .unwrap();
+    assert_eq!(exit_code(&o), 6);
+    let r = done(o);
+    assert_eq!(r.status, RunStatus::PausedDisk);
+    assert!(r.reason.unwrap().starts_with("Not enough free space"));
+    assert!(r.file.is_none());
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -144,9 +144,13 @@ impl RunStatus {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RunCounts {
+    #[ts(type = "number")]
     pub discovered: u64,
+    #[ts(type = "number")]
     pub crawled: u64,
+    #[ts(type = "number")]
     pub not_crawled: u64,
+    #[ts(type = "number")]
     pub failed: u64,
 }
 

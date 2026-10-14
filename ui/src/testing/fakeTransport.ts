@@ -7,6 +7,7 @@ import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -143,7 +144,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; aeo: FakeAeo } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; aeo: FakeAeo; schedules: FakeSchedules } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -194,9 +195,12 @@ export function fakeTransport(
   const resultsApi = fakeResultsTransport(urls);
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
     ...aeoApi,
+    ...schedulesApi,
+    schedules,
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,

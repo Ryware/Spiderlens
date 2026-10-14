@@ -30,6 +30,7 @@ export function SettingsSheet({
   level,
   systemDark,
   onAppearance,
+  onSchedule,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -42,6 +43,8 @@ export function SettingsSheet({
   level: Level;
   systemDark: boolean;
   onAppearance: (patch: Partial<Appearance>) => void;
+  /** Opens the schedule editor with these settings (spec 021 FR-002). */
+  onSchedule?: () => void;
 }) {
   const navRef = useRef<HTMLButtonElement>(null);
   const mode = setup.config?.mode ?? "spider";
@@ -129,6 +132,7 @@ export function SettingsSheet({
                 Apply to running crawl
               </Button>
             )}
+            {onSchedule && !current.app && <Button onClick={onSchedule}>Schedule this crawl…</Button>}
             <SheetClose render={<Button variant="primary" />}>
               Done <Kbd keys="Escape" onAccent />
             </SheetClose>

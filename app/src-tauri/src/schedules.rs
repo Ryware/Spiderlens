@@ -4,6 +4,7 @@
 //! Everything is a call into `spiderlens-schedule`; the command line has the
 //! same operations (FR-028, FR-029).
 
+use spiderlens_engine::crawl::file::DEFAULT_DISK_RESERVE;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -73,11 +74,14 @@ pub fn headless(args: &[String]) -> Option<i32> {
         tz: spiderlens_schedule::local_tz(),
         notifier: Arc::from(notify::system()),
         resolve: Vec::new(),
+        disk_reserve: DEFAULT_DISK_RESERVE,
     };
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     if flag == "--schedule-tick" {
         return Some(match runner::tick(&ctx, id, spiderlens_schedule::now()) {
-            Ok(TickAction::Run { slot, trigger }) => i32::from(launcher().spawn_run(id, Some(slot), trigger).is_err()),
+            Ok(TickAction::Run { slot, trigger }) => {
+                i32::from(launcher().spawn_run(id, Some(slot), trigger).is_err())
+            }
             Ok(_) => 0,
             Err(_) => 1,
         });
@@ -86,7 +90,10 @@ pub fn headless(args: &[String]) -> Option<i32> {
     let trigger = value("--trigger")
         .and_then(|t| runner::parse_trigger(t))
         .unwrap_or(Trigger::Scheduled);
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().ok()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .ok()?;
     Some(match rt.block_on(runner::run(&ctx, id, slot, trigger)) {
         Ok(outcome) => i32::from(runner::exit_code(&outcome)),
         Err(_) => 2,
@@ -112,14 +119,23 @@ fn invalid(e: ManageError) -> String {
 /// Current hash of a stored profile, in the same form `schedule_save` records.
 fn current_profile_hash(profiles: &settings::State, name: &str) -> Option<String> {
     let p = profiles.load_profile(name)?;
-    Some(profile_hash(&export_profile(&p.name, &p.config, p.start_url.as_deref())))
+    Some(profile_hash(&export_profile(
+        &p.name,
+        &p.config,
+        p.start_url.as_deref(),
+    )))
 }
 
 #[tauri::command]
 pub fn schedules_list(state: tauri::State<State>) -> Cmd<Vec<ScheduleRow>> {
     let m = state.manager();
     let (now, tz) = now_tz();
-    Ok(m.store.list().map_err(err)?.iter().map(|s| view::row(&m, s, &tz, now)).collect())
+    Ok(m.store
+        .list()
+        .map_err(err)?
+        .iter()
+        .map(|s| view::row(&m, s, &tz, now))
+        .collect())
 }
 
 fn detail(state: &State, profiles: &settings::State, s: &Schedule) -> ScheduleDetail {
@@ -133,7 +149,11 @@ fn detail(state: &State, profiles: &settings::State, s: &Schedule) -> ScheduleDe
 }
 
 #[tauri::command]
-pub fn schedule_get(state: tauri::State<State>, profiles: tauri::State<settings::State>, id: String) -> Cmd<ScheduleDetail> {
+pub fn schedule_get(
+    state: tauri::State<State>,
+    profiles: tauri::State<settings::State>,
+    id: String,
+) -> Cmd<ScheduleDetail> {
     let s = state.manager().store.get(&id).map_err(err)?;
     Ok(detail(&state, &profiles, &s))
 }
@@ -225,12 +245,19 @@ pub fn schedule_update_from_profile(
 ) -> Cmd<Saved> {
     let m = state.manager();
     let mut s = m.store.get(&id).map_err(err)?;
-    let name = s.source_profile.clone().ok_or("This schedule was not made from a profile.")?;
+    let name = s
+        .source_profile
+        .clone()
+        .ok_or("This schedule was not made from a profile.")?;
     let p = profiles
         .load_profile(&name)
         .ok_or_else(|| format!("The profile \"{name}\" no longer exists."))?;
     s.config = p.config.clone();
-    s.source_hash = Some(profile_hash(&export_profile(&p.name, &p.config, p.start_url.as_deref())));
+    s.source_hash = Some(profile_hash(&export_profile(
+        &p.name,
+        &p.config,
+        p.start_url.as_deref(),
+    )));
     let (s, warnings, refused) = m.save(s).map_err(invalid)?;
     Ok(Saved {
         detail: detail(&state, &profiles, &s),
@@ -253,5 +280,11 @@ pub fn schedules_remove_all(state: tauri::State<State>) -> Cmd<usize> {
 #[tauri::command]
 pub fn schedule_default_output() -> Option<PathBuf> {
     // Documents/SpiderLens schedules, a place the user can find.
-    Some(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)?.join("Documents").join("SpiderLens schedules"))
+    Some(
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)?
+            .join("Documents")
+            .join("SpiderLens schedules"),
+    )
 }

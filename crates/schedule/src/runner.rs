@@ -17,6 +17,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use serde::{Deserialize, Serialize};
 use spiderlens_config::{ListFormat, ModeInput, Severity, parse_list_bytes, validate};
+use spiderlens_engine::crawl::file::free_space;
 use spiderlens_engine::crawl::{Control, CrawlEvent, CrawlSummary, Crawler};
 use spiderlens_results::{UrlScope, ViewQuery, export_file};
 use tokio::sync::{mpsc, watch};
@@ -38,12 +39,16 @@ pub enum RunError {
     Io(#[from] std::io::Error),
 }
 
+const MB: u64 = 1024 * 1024;
+
 pub struct Context {
     pub paths: Paths,
     pub tz: TimeZone,
     pub notifier: Arc<dyn Notifier>,
     /// Host name pins for tests that serve `.test` hosts locally.
     pub resolve: Vec<(String, std::net::SocketAddr)>,
+    /// Free space to keep on the output drive (spec 006 FR-027).
+    pub disk_reserve: u64,
 }
 
 impl Context {
@@ -308,6 +313,18 @@ async fn execute(ctx: &Context, s: &Schedule, run: &mut Run) {
             ),
         );
     }
+    if let Some(free) = free_space(&s.output_dir)
+        && free < ctx.disk_reserve
+    {
+        run.status = RunStatus::PausedDisk;
+        run.reason = Some(format!(
+            "Not enough free space in {}: {} MB free, {} MB kept free.",
+            s.output_dir.display(),
+            free / MB,
+            ctx.disk_reserve / MB
+        ));
+        return;
+    }
     let input = match &s.input {
         ScheduleInput::Spider { start_url } => ModeInput::Spider {
             start_url: start_url.clone(),
@@ -339,7 +356,9 @@ async fn execute(ctx: &Context, s: &Schedule, run: &mut Run) {
     let at = run.slot.unwrap_or_else(Timestamp::now).to_zoned(ctx.tz.clone());
     let path = free_path(&s.output_dir, &run_stem(&s.name, &at));
     let crawler = match Crawler::create(&path, s.config.clone(), &input) {
-        Ok(c) => c.with_resolve(ctx.resolve.clone()),
+        Ok(c) => c
+            .with_resolve(ctx.resolve.clone())
+            .with_disk_reserve(Some(ctx.disk_reserve)),
         Err(e) => return fail(run, format!("The crawl could not start: {e}")),
     };
     let meta = serde_json::json!({

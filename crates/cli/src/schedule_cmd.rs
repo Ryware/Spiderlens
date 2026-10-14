@@ -1,5 +1,6 @@
 //! `spiderlens schedule ...` (spec 021, contracts/cli.md).
 
+use spiderlens_engine::crawl::file::DEFAULT_DISK_RESERVE;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -203,6 +204,7 @@ fn context(paths: Paths) -> Context {
         tz: spiderlens_schedule::local_tz(),
         notifier: Arc::from(notify::system()),
         resolve: Vec::new(),
+        disk_reserve: DEFAULT_DISK_RESERVE,
     }
 }
 
