@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,7 +34,35 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}];
+    },
+    // Removes cookie values from stored `Set-Cookie` headers (spec 025
+    // FR-026), the same rule as `redact::set_cookie`. Data only, so older
+    // readers still read the file.
+    Step {
+        version: 4,
+        additive: true,
+        sql: "UPDATE headers SET headers = (
+        SELECT json_group_array(CASE
+            WHEN lower(name) IN ('set-cookie', 'set-cookie2') THEN json_array(
+                name,
+                CASE WHEN instr(pair, '=') > 0 THEN substr(pair, 1, instr(pair, '=') - 1) || '=' ELSE '' END
+                    || '[removed]' || rest)
+            ELSE json(pj)
+        END)
+        FROM (
+            SELECT k, pj, name,
+                CASE WHEN instr(v, ';') > 0 THEN substr(v, 1, instr(v, ';') - 1) ELSE v END AS pair,
+                CASE WHEN instr(v, ';') > 0 THEN substr(v, instr(v, ';')) ELSE '' END AS rest
+            FROM (
+                SELECT p.key AS k, p.value AS pj, p.value ->> 0 AS name, p.value ->> 1 AS v
+                FROM json_each(headers.headers) AS p
+            )
+            ORDER BY k
+        )
+    )
+    WHERE headers.headers LIKE '%set-cookie%';",
+    },
+];
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();
@@ -135,6 +164,60 @@ mod tests {
     fn steps_are_numbered_from_the_base() {
         assert_eq!(STEPS[0].version, BASE + 1);
         assert_eq!(LATEST, STEPS.last().unwrap().version);
+    }
+
+    /// Step 4's SQL and `redact::set_cookie` give the same result.
+    #[test]
+    fn step_4_removes_cookie_values_like_the_writer() {
+        let cases = [
+            "sid=abc123; Path=/; Secure; HttpOnly; SameSite=Lax",
+            "sid=abc",
+            "sid=",
+            "token=a=b=c; Path=/",
+            "abc123; Path=/",
+            "abc123",
+            "üñí=çødé; Path=/ä",
+        ];
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE headers (url_id INTEGER PRIMARY KEY, headers TEXT NOT NULL);")
+            .unwrap();
+        let mut pairs = vec![("Content-Type".to_string(), "text/html; charset=utf-8".to_string())];
+        for c in cases {
+            pairs.push(("Set-Cookie".to_string(), c.to_string()));
+        }
+        pairs.push(("set-cookie2".to_string(), "x=1; Version=1".to_string()));
+        pairs.push((
+            "X-Note".to_string(),
+            "Set-Cookie: not a cookie header".to_string(),
+        ));
+        let raw = serde_json::to_string(&pairs).unwrap();
+        conn.execute("INSERT INTO headers VALUES (1, ?1)", [&raw])
+            .unwrap();
+        conn.execute("INSERT INTO headers VALUES (2, ?1)", [r#"[["Server","x"]]"#])
+            .unwrap();
+        conn.execute_batch(STEPS.iter().find(|s| s.version == 4).unwrap().sql)
+            .unwrap();
+
+        let read = |id: i64| -> String {
+            conn.query_row("SELECT headers FROM headers WHERE url_id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        let got: Vec<(String, String)> = serde_json::from_str(&read(1)).unwrap();
+        let want: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(n, v)| {
+                let v = if super::super::redact::is_cookie_header(n) {
+                    super::super::redact::set_cookie(v)
+                } else {
+                    v.clone()
+                };
+                (n.clone(), v)
+            })
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(read(2), r#"[["Server","x"]]"#);
     }
 
     #[test]

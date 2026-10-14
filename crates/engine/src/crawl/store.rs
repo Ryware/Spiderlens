@@ -1026,13 +1026,14 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Response headers of one fetched URL, as a JSON array of pairs.
+    /// Response headers of one fetched URL, as a JSON array of pairs, with
+    /// cookie values removed (`redact`).
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
         self.conn
             .prepare_cached("INSERT OR REPLACE INTO headers (url_id, headers) VALUES (?1, ?2)")?
             .execute(params![
                 id,
-                serde_json::to_string(headers).expect("pairs serialize")
+                serde_json::to_string(&super::redact::response_headers(headers)).expect("pairs serialize")
             ])?;
         Ok(())
     }
@@ -1094,13 +1095,15 @@ impl CrawlStore {
                 })
                 .collect()
         };
-        let headers: Value = self
+        let mut headers: Value = self
             .conn
             .prepare_cached("SELECT headers FROM headers WHERE url_id = ?1")?
             .query_row([id], |r| r.get::<_, String>(0))
             .optional()?
             .and_then(|h| serde_json::from_str(&h).ok())
             .unwrap_or(Value::Null);
+        // Files from before migration step 4 that are only viewed.
+        super::redact::header_pairs(&mut headers);
         let obj = response.as_object_mut().expect("the URL row exists");
         obj.insert("page".into(), page);
         obj.insert("titles".into(), Value::Array(pick("title")));
