@@ -1,6 +1,6 @@
 # Data Model: JavaScript Rendering
 
-All tables below arrive in one additive migration step in `crates/engine/src/crawl/migrate.rs` (spec 006 mechanism). **The step number is assigned at merge time; coordinate with the 006 and 004 threads.** `store.rs` `SCHEMA` (the format-2 base) is not edited. Nothing in the existing tables changes, so a reader that does not know about rendering sees the raw crawl exactly as before (FR-020).
+All tables below arrive in one additive migration step in `crates/engine/src/crawl/migrate.rs` (spec 006 mechanism). **It is step 5**, after 006's step 3 and 004's step 4 (main at a6af84f). `store.rs` `SCHEMA` (the format-2 base) is not edited. Nothing in the existing tables changes, so a reader that does not know about rendering sees the raw crawl exactly as before (FR-020).
 
 Conventions are those of spec 005's data model: text decoded, trimmed and whitespace-collapsed; URLs absolute; booleans 0/1; `pos` counts from 0 in document order. `url_id` always equals `urls.id`.
 

@@ -42,6 +42,9 @@ pub enum PermitAnswer {
     Granted { robots_rule: Option<String> },
     /// robots.txt disallows it and the crawl respects robots.txt.
     BlockedByRobots { rule: String },
+    /// The host was given up by the circuit breaker (spec 004 FR-026):
+    /// nothing more is sent to it.
+    HostUnavailable,
 }
 
 #[derive(Debug)]
@@ -152,6 +155,18 @@ impl Permits {
                     RobotsMode::IgnoreReport => robots_rule = Some(rule),
                     RobotsMode::Ignore => {}
                 }
+            }
+            if !r.third_party && host.health.is_given_up() {
+                let _ = r.reply.send(PermitAnswer::HostUnavailable);
+                continue;
+            }
+            // A paused host takes no request until its pause ends.
+            if !r.third_party
+                && let Some(until) = host.health.paused_until()
+            {
+                soonest(until, &mut out.wake);
+                still.push_back(r);
+                continue;
             }
             // Crawl-delay and Retry-After hold every request to the host.
             if host.next_start > now {
@@ -324,6 +339,12 @@ impl EngineNet {
                 self.note(&req.url, Note::BlockedByRobots(rule));
                 return ResourceAnswer::Fail {
                     reason: FailReason::BlockedByClient,
+                };
+            }
+            Ok(PermitAnswer::HostUnavailable) => {
+                self.note(&req.url, Note::Error("host_unavailable".into()));
+                return ResourceAnswer::Fail {
+                    reason: FailReason::Failed,
                 };
             }
             Err(_) => {
@@ -614,6 +635,38 @@ mod tests {
             rx.try_recv(),
             Ok(PermitAnswer::Granted { robots_rule: Some(_) })
         ));
+    }
+
+    #[test]
+    fn paused_and_given_up_hosts_hold_or_refuse_resources() {
+        let mut w = World::new(4);
+        let retry = spiderlens_config::RetrySettings {
+            host_pause_after: 1,
+            host_give_up_after: 1,
+            ..spiderlens_config::RetrySettings::default()
+        };
+        let now = Instant::now();
+        let health = &mut w.hosts.get_mut(SITE).unwrap().health;
+        health.on_transient_failure(&retry, now);
+        let until = health.paused_until().expect("paused");
+        // Paused (spec 004): the resource waits for the pause to end.
+        let mut rx = w.ask(SITE, "/app.js", false);
+        let served = w.serve(RobotsMode::Respect);
+        assert!(!granted(&mut rx));
+        assert_eq!(served.wake, Some(until));
+        assert_eq!(w.in_flight, 0);
+        // Third-party hosts are not under the circuit breaker.
+        let mut cdn = w.ask(CDN, "/lib.js", true);
+        w.serve(RobotsMode::Respect);
+        assert!(granted(&mut cdn));
+        // A failed probe gives the host up: the waiting resource is refused.
+        let health = &mut w.hosts.get_mut(SITE).unwrap().health;
+        health.resume_now();
+        health.on_transient_failure(&retry, now);
+        assert!(health.is_given_up());
+        w.serve(RobotsMode::Respect);
+        assert!(matches!(rx.try_recv(), Ok(PermitAnswer::HostUnavailable)));
+        assert_eq!(w.in_flight, 0, "a refused resource takes no slot");
     }
 
     #[test]

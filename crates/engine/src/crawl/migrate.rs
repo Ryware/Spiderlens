@@ -35,8 +35,27 @@ pub const STEPS: &[Step] = &[
         detail TEXT
     );",
     },
+    // Spec 004: attempt counts, the error's sub-reason, the retry timer and
+    // the crawl log (data-model.md).
     Step {
         version: 4,
+        additive: true,
+        sql: "ALTER TABLE urls ADD COLUMN attempts INTEGER;
+        ALTER TABLE urls ADD COLUMN round_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE urls ADD COLUMN error_reason TEXT;
+        ALTER TABLE urls ADD COLUMN retry_at INTEGER;
+        ALTER TABLE urls ADD COLUMN manual_retry INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE crawl_log (
+            id INTEGER PRIMARY KEY,
+            at INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            host_key TEXT,
+            url_id INTEGER,
+            message TEXT NOT NULL
+        );",
+    },
+    Step {
+        version: 5,
         additive: true,
         sql: RENDERING,
     },
@@ -337,8 +356,9 @@ mod tests {
     #[test]
     fn rendering_tables_apply_to_a_base_file() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
-            .unwrap();
+        // The format-2 base: earlier steps alter its tables (004 adds
+        // columns to `urls`).
+        conn.execute_batch(crate::crawl::store::SCHEMA).unwrap();
         apply_all(&conn).unwrap();
         for table in ["renders", "rendered_pages", "render_resources", "screenshots"] {
             let n: i64 = conn

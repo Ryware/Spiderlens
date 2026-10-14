@@ -384,6 +384,45 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "The maximum wait must be between 0 and 3600 seconds.",
         );
     }
+    let r = &c.retry;
+    if !(r.base_wait_secs.is_finite() && (0.1..=60.0).contains(&r.base_wait_secs)) {
+        i.error(
+            "retry.base_wait_secs",
+            "out_of_range",
+            "The first wait must be between 0.1 and 60 seconds.",
+        );
+    }
+    if !(1..=100).contains(&r.host_pause_after) {
+        i.error(
+            "retry.host_pause_after",
+            "out_of_range",
+            "Failures before a site is paused must be between 1 and 100.",
+        );
+    }
+    let pause_ok = r.host_pause_secs.is_finite() && (1.0..=3600.0).contains(&r.host_pause_secs);
+    if !pause_ok {
+        i.error(
+            "retry.host_pause_secs",
+            "out_of_range",
+            "The pause must be between 1 and 3600 seconds.",
+        );
+    }
+    if !(r.host_pause_max_secs.is_finite() && r.host_pause_max_secs <= 86_400.0)
+        || (pause_ok && r.host_pause_max_secs < r.host_pause_secs)
+    {
+        i.error(
+            "retry.host_pause_max_secs",
+            "out_of_range",
+            "The longest pause must be at least the first pause and at most 86400 seconds.",
+        );
+    }
+    if !(1..=50).contains(&r.host_give_up_after) {
+        i.error(
+            "retry.host_give_up_after",
+            "out_of_range",
+            "Failed checks before a site is given up must be between 1 and 50.",
+        );
+    }
 
     validate_rendering(c, &mut i);
 
@@ -814,6 +853,66 @@ mod tests {
             !validate_config(&c)
                 .iter()
                 .any(|i| i.code == "rendering_robots_ignored")
+        );
+    }
+
+    #[test]
+    fn retry_and_host_pause_ranges() {
+        let paths = |f: &dyn Fn(&mut CrawlConfig)| {
+            let mut c = CrawlConfig::default();
+            f(&mut c);
+            validate_config(&c)
+                .into_iter()
+                .map(|i| i.path)
+                .collect::<Vec<_>>()
+        };
+        assert!(paths(&|_| {}).is_empty());
+        assert_eq!(
+            paths(&|c| c.retry.base_wait_secs = 0.05),
+            ["retry.base_wait_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.base_wait_secs = f64::NAN),
+            ["retry.base_wait_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_after = 0),
+            ["retry.host_pause_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_after = 101),
+            ["retry.host_pause_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_secs = 0.5),
+            ["retry.host_pause_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_give_up_after = 0),
+            ["retry.host_give_up_after"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_give_up_after = 51),
+            ["retry.host_give_up_after"]
+        );
+        // The longest pause can't be shorter than the first one.
+        assert_eq!(
+            paths(&|c| {
+                c.retry.host_pause_secs = 120.0;
+                c.retry.host_pause_max_secs = 60.0;
+            }),
+            ["retry.host_pause_max_secs"]
+        );
+        assert_eq!(
+            paths(&|c| c.retry.host_pause_max_secs = 90_000.0),
+            ["retry.host_pause_max_secs"]
+        );
+        assert!(
+            paths(&|c| {
+                c.retry.host_pause_secs = 60.0;
+                c.retry.host_pause_max_secs = 60.0;
+            })
+            .is_empty()
         );
     }
 }

@@ -7,7 +7,7 @@ use std::error::Error as _;
 use reqwest::{Client, Response, StatusCode, header};
 use url::Url;
 
-use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop, RequestHeader};
+use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, RedirectHop, RequestHeader};
 
 pub(crate) fn build_client(opts: &CheckOptions) -> Result<Client, CheckError> {
     build_client_with(opts, &[])
@@ -112,16 +112,18 @@ async fn follow(
         if let Some(location) = redirect_location(&response) {
             let mut target = current.join(location).map_err(|_| {
                 CheckError::new(
-                    ErrorClass::ContentProblem,
+                    ErrorClass::RedirectProblem,
                     format!("The server redirected to an invalid address: {location}"),
                 )
+                .with_reason(ErrorReason::InvalidTarget)
             })?;
             target.set_fragment(None);
             if !matches!(target.scheme(), "http" | "https") {
                 return Err(CheckError::new(
-                    ErrorClass::ContentProblem,
+                    ErrorClass::RedirectProblem,
                     format!("The server redirected to an unsupported address: {target}"),
-                ));
+                )
+                .with_reason(ErrorReason::InvalidTarget));
             }
             hops.push(RedirectHop {
                 url: current.to_string(),
@@ -130,15 +132,17 @@ async fn follow(
             });
             if hops.len() > max_redirects {
                 return Err(CheckError::new(
-                    ErrorClass::RedirectLoop,
+                    ErrorClass::RedirectProblem,
                     format!("The redirect chain is longer than the limit of {max_redirects} hops."),
-                ));
+                )
+                .with_reason(ErrorReason::OverLimit));
             }
             if !visited.insert(target.clone()) {
                 return Err(CheckError::new(
-                    ErrorClass::RedirectLoop,
+                    ErrorClass::RedirectProblem,
                     format!("The redirects loop back to {target}, which was already visited."),
-                ));
+                )
+                .with_reason(ErrorReason::Loop));
             }
             current = target;
             continue;
@@ -354,6 +358,7 @@ async fn read_body_partial(mut response: Response, max_bytes: u64) -> (Vec<u8>, 
                 human_bytes(max_bytes)
             ),
         )
+        .with_reason(ErrorReason::OverSize)
     };
     let mut buf = Vec::new();
     loop {
@@ -430,6 +435,7 @@ async fn read_body(
                 human_bytes(max_bytes)
             ),
         )
+        .with_reason(ErrorReason::OverSize)
     };
     if matches!(on_limit, OnLimit::Fail) && response.content_length().is_some_and(|n| n > max_bytes) {
         return Err(too_large());
@@ -482,6 +488,20 @@ fn cause_text(err: &reqwest::Error) -> (String, Option<String>) {
     (text, innermost)
 }
 
+/// A body that stopped early. reqwest reports these as decode errors when
+/// its decompression layer is in the read path, so the cause text decides.
+fn is_cut_off(text: &str) -> bool {
+    [
+        "end of file before message length",
+        "incomplete",
+        "connection closed",
+        "connection reset",
+        "unexpected eof",
+    ]
+    .iter()
+    .any(|k| text.contains(k))
+}
+
 fn is_temporary_dns(err: &reqwest::Error, text: &str) -> bool {
     if text.contains("temporary failure") || text.contains("try again") {
         return true;
@@ -499,7 +519,8 @@ fn is_temporary_dns(err: &reqwest::Error, text: &str) -> bool {
     false
 }
 
-/// Maps a transport error to exactly one error class (FR-017).
+/// Maps a transport error to exactly one error class and, where it can be
+/// told, its sub-reason (spec 001 FR-017, spec 004 FR-012; research R1, R2).
 pub(crate) fn classify(err: &reqwest::Error) -> CheckError {
     let (text, innermost) = cause_text(err);
     let detail = innermost.unwrap_or_else(|| err.to_string());
@@ -509,40 +530,114 @@ pub(crate) fn classify(err: &reqwest::Error) -> CheckError {
         .unwrap_or("the server")
         .to_string();
 
-    let (class, message) = if err.is_timeout() || text.contains("timed out") {
-        (
-            ErrorClass::Timeout,
-            format!("{host} did not respond within the time limit."),
-        )
+    let (class, reason, message) = if err.is_timeout() || text.contains("timed out") {
+        if err.is_connect() {
+            (
+                ErrorClass::Timeout,
+                Some(ErrorReason::Connect),
+                format!("Connecting to {host} took longer than the time limit."),
+            )
+        } else {
+            (
+                ErrorClass::Timeout,
+                Some(ErrorReason::Read),
+                format!("{host} did not send its answer within the time limit."),
+            )
+        }
     } else if text.contains("dns error") || text.contains("failed to lookup address") {
         if is_temporary_dns(err, &text) {
             (
                 ErrorClass::DnsTemporary,
+                None,
                 format!("The address of {host} could not be looked up right now."),
             )
         } else {
-            (ErrorClass::Dns, format!("The host name {host} does not exist."))
+            (
+                ErrorClass::Dns,
+                None,
+                format!("The host name {host} does not exist."),
+            )
         }
     } else if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
+        let reason = if text.contains("expired") {
+            ErrorReason::Expired
+        } else if text.contains("notvalidforname")
+            || text.contains("not valid for")
+            || text.contains("hostname")
+        {
+            ErrorReason::Hostname
+        } else if text.contains("unknownissuer")
+            || text.contains("unknown issuer")
+            || text.contains("self-signed")
+            || text.contains("self signed")
+        {
+            ErrorReason::Untrusted
+        } else {
+            return CheckError::new(
+                ErrorClass::TlsInvalid,
+                format!("The secure connection to {host} was rejected. ({detail})"),
+            );
+        };
+        let why = match reason {
+            ErrorReason::Expired => "its certificate has expired",
+            ErrorReason::Hostname => "its certificate does not match the host name",
+            _ => "its certificate is not issued by a trusted authority",
+        };
         (
             ErrorClass::TlsInvalid,
-            format!("The secure connection to {host} was rejected."),
+            Some(reason),
+            format!("The secure connection to {host} was rejected: {why}."),
+        )
+    } else if err.is_decode() && !is_cut_off(&text) {
+        (
+            ErrorClass::ContentProblem,
+            Some(ErrorReason::Decompression),
+            format!("The response from {host} could not be decompressed."),
         )
     } else if err.is_body() || err.is_decode() {
         (
             ErrorClass::ContentProblem,
-            format!("The response from {host} was cut off or unreadable."),
+            Some(ErrorReason::Truncated),
+            format!("The response from {host} was cut off before it was complete."),
         )
     } else {
-        (ErrorClass::Connection, format!("Could not connect to {host}."))
+        let reason = if text.contains("refused") {
+            Some(ErrorReason::Refused)
+        } else if text.contains("reset")
+            || text.contains("closed")
+            || text.contains("broken pipe")
+            || text.contains("aborted")
+        {
+            Some(ErrorReason::Reset)
+        } else {
+            None
+        };
+        let message = match reason {
+            Some(ErrorReason::Refused) => format!("{host} refused the connection."),
+            Some(_) => format!("{host} closed the connection before answering."),
+            None => format!("Could not connect to {host}."),
+        };
+        (ErrorClass::Connection, reason, message)
     };
-    CheckError::new(class, format!("{message} ({detail})"))
+    CheckError {
+        class,
+        reason,
+        message: format!("{message} ({detail})"),
+        attempts: 1,
+    }
 }
 
+/// An error while reading a body: a timeout stays a (read) timeout, a
+/// decoding error is a decompression problem, anything else means the body
+/// was cut off (research R3).
 fn classify_body(err: &reqwest::Error) -> CheckError {
     let e = classify(err);
     match e.class {
-        ErrorClass::Timeout => e,
-        _ => CheckError::new(ErrorClass::ContentProblem, e.message),
+        ErrorClass::Timeout => CheckError {
+            reason: Some(ErrorReason::Read),
+            ..e
+        },
+        ErrorClass::ContentProblem => e,
+        _ => CheckError::new(ErrorClass::ContentProblem, e.message).with_reason(ErrorReason::Truncated),
     }
 }

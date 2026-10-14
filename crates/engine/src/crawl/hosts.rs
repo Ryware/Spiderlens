@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use spiderlens_config::SpeedSettings;
 
+use super::health::HostHealth;
 use super::speed::SiteSpeed;
 use crate::robots::RobotsPolicy;
 
@@ -25,6 +26,8 @@ pub(crate) struct Host {
     pub(crate) next_start: Instant,
     pub(crate) delay: Option<Duration>,
     pub(crate) speed: SiteSpeed,
+    /// Circuit breaker (spec 004 plan D6).
+    pub(crate) health: HostHealth,
 }
 
 impl Host {
@@ -35,15 +38,17 @@ impl Host {
             next_start: Instant::now(),
             delay: None,
             speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
+            health: HostHealth::default(),
         }
     }
 
     /// Requests this host may have open now.
     pub(crate) fn limit(&self) -> u32 {
-        if self.delay.is_some() {
+        let usual = if self.delay.is_some() {
             1
         } else {
             self.speed.allowance()
-        }
+        };
+        self.health.limit().map_or(usual, |l| l.min(usual))
     }
 }

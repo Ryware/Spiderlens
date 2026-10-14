@@ -3,12 +3,14 @@
 
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
+import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type {
   CrawlFinished,
   CrawlInfo,
   CrawlMoved,
+  CrawlNotice,
   CrawlProgress,
   CrawlReport,
   CrawlStatus,
@@ -16,6 +18,7 @@ import type {
   LocalError,
   OpenFailure,
   Presets,
+  RetryPreview,
   RecentEntry,
   ResumeOptions,
   StorageStatus,
@@ -45,7 +48,17 @@ export function defaultConfig(): CrawlConfig {
     speed: { ...polite, preset: "polite" },
     robots: { mode: "respect", honour_crawl_delay: true },
     network: { connect_timeout_secs: 10, read_timeout_secs: 30, max_redirects: 10, max_body_mb: 50 },
-    retry: { attempts: 3, max_wait_secs: 60, retry_5xx: true, retry_429: true },
+    retry: {
+      attempts: 3,
+      max_wait_secs: 60,
+      retry_5xx: true,
+      retry_429: true,
+      base_wait_secs: 1,
+      host_pause_after: 5,
+      host_pause_secs: 60,
+      host_pause_max_secs: 600,
+      host_give_up_after: 5,
+    },
     extraction: { store_html: true },
     rendering: {
       mode: "raw",
@@ -99,6 +112,14 @@ export function fakeReport(status: CrawlStatus, crawled: number, path = "/crawls
       hosts: [{ host: "example.com", robots: "ok", crawl_delay_secs: null, error: null }],
       sitemaps: [],
       warnings: [],
+      by_class: {},
+      transient_errors: 0,
+      permanent_errors: 0,
+      retries: 0,
+      recovered: 0,
+      hosts_paused: 0,
+      manual_retries: 0,
+      pause_reason: null,
     },
     reasons: [
       { reason: "external", label: "External", count: 2 },
@@ -114,8 +135,17 @@ export interface FakeCrawls {
   started: { config: CrawlConfig; startUrl: string | null }[];
   resumed: string[];
   controls: string[];
+  /** "Resume now" calls, as "id host". */
+  resumedHosts: string[];
+  /** Settings sent to a running crawl. */
+  applied: { id: number; speed: SpeedSettings | null; retry: RetrySettings | null }[];
+  /** Files "Retry failed URLs" ran on. */
+  retried: string[];
+  /** What retry_preview answers; tests replace it. */
+  preview: RetryPreview;
   progress(p: Partial<CrawlProgress>): void;
   warn(message: string): void;
+  notice(n: Partial<CrawlNotice> & { message: string }): void;
   finish(f: Partial<CrawlFinished>): void;
 }
 
@@ -128,6 +158,7 @@ export function fakeTransport(
   const onProgress: Listeners<CrawlProgress> = new Set();
   const onWarning: Listeners<{ id: number; message: string }> = new Set();
   const onFinished: Listeners<CrawlFinished> = new Set();
+  const onNotice: Listeners<CrawlNotice> = new Set();
   const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
     return () => void set.delete(cb);
@@ -136,8 +167,32 @@ export function fakeTransport(
     started: [],
     resumed: [],
     controls: [],
-    progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, urls_per_sec: 0, avg_urls_per_sec: 0, eta_secs: null, active_ms: 0, ...p })),
+    resumedHosts: [],
+    applied: [],
+    retried: [],
+    preview: { total: 0, by_class: [], available: false, reason: "No URL failed for a reason that could change." },
+    progress: (p) =>
+      onProgress.forEach((cb) =>
+        cb({
+          id: nextId - 1,
+          discovered: 0,
+          crawled: 0,
+          in_flight: 0,
+          queued: 0,
+          not_crawled: 0,
+          errors: 0,
+          urls_per_sec: 0,
+          avg_urls_per_sec: 0,
+          eta_secs: null,
+          active_ms: 0,
+          waiting: 0,
+          paused_hosts: [],
+          waiting_for_host: false,
+          ...p,
+        }),
+      ),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
+    notice: (n) => onNotice.forEach((cb) => cb({ id: nextId - 1, kind: "host_paused", host: null, ...n })),
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
@@ -178,6 +233,13 @@ export function fakeTransport(
       }
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
+      }
+      const r = config.retry;
+      if (!(r.base_wait_secs >= 0.1 && r.base_wait_secs <= 60)) {
+        issues.push({ path: "retry.base_wait_secs", severity: "error", code: "out_of_range", message: "The first wait must be between 0.1 and 60 seconds." });
+      }
+      if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
+        issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
@@ -254,6 +316,15 @@ export function fakeTransport(
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
     onCrawlFinished: (cb) => subscribe(onFinished, cb),
+    onCrawlNotice: (cb) => subscribe(onNotice, cb),
+    crawlResumeHost: async (id, host) => void crawls.resumedHosts.push(`${id} ${host}`),
+    crawlApplySettings: async (id, speed, retry) => void crawls.applied.push({ id, speed, retry }),
+    retryPreview: async () => structuredClone(crawls.preview),
+    retryStart: async (path) => {
+      crawls.retried.push(path);
+      return { id: nextId++, path };
+    },
+    crawlLog: async () => [],
     // Crawl files (spec 006), including pickCrawlFile, crawlResume and crawlSummary.
     ...filesApi,
     files,
