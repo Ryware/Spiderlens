@@ -15,8 +15,9 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
-/// 2: page data extraction (spec 005, data-model.md).
-pub const FORMAT_VERSION: i64 = 2;
+/// 2: page data extraction (spec 005). 3 and later: the steps in
+/// [`super::migrate::STEPS`] (spec 006).
+pub const FORMAT_VERSION: i64 = super::migrate::LATEST;
 /// Written to `meta.extraction_version` when a crawl collects page data.
 pub const EXTRACTION_VERSION: &str = "1";
 
@@ -26,6 +27,11 @@ pub enum StoreError {
     Sql(#[from] rusqlite::Error),
     #[error("{0}")]
     Format(String),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    /// The file is damaged; part of it may be recoverable (FR-038).
+    #[error("{0}")]
+    Damaged(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -64,12 +70,7 @@ CREATE TABLE urls (
     nofollow INTEGER,
     canonical TEXT,
     canonical_count INTEGER,
-    canonical_conflict INTEGER,
-    attempts INTEGER,
-    round_attempts INTEGER NOT NULL DEFAULT 0,
-    error_reason TEXT,
-    retry_at INTEGER,
-    manual_retry INTEGER NOT NULL DEFAULT 0
+    canonical_conflict INTEGER
 );
 CREATE INDEX urls_queue ON urls(depth, queue_seq) WHERE state = 'queued';
 CREATE INDEX urls_state ON urls(state, reason);
@@ -179,25 +180,6 @@ CREATE TABLE headers (
     headers TEXT NOT NULL
 );
 "#;
-
-/// Spec 004 additions, applied to format-2 files made before it (plan,
-/// data-model.md). Each column is added only when missing.
-const COLUMNS_004: &[(&str, &str)] = &[
-    ("attempts", "INTEGER"),
-    ("round_attempts", "INTEGER NOT NULL DEFAULT 0"),
-    ("error_reason", "TEXT"),
-    ("retry_at", "INTEGER"),
-    ("manual_retry", "INTEGER NOT NULL DEFAULT 0"),
-];
-
-const LOG_TABLE: &str = "CREATE TABLE IF NOT EXISTS crawl_log (
-    id INTEGER PRIMARY KEY,
-    at INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    host_key TEXT,
-    url_id INTEGER,
-    message TEXT NOT NULL
-);";
 
 /// URLs whose final state is a transient failure (spec 004 FR-030): what
 /// "Retry failed URLs" re-queues. Mirrors `FinalClass::is_transient`.
@@ -467,6 +449,7 @@ impl CrawlStore {
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
         conn.execute_batch(SCHEMA)?;
+        super::migrate::apply_all(&conn)?;
         let store = Self {
             conn,
             next_seq: 1,
@@ -474,10 +457,8 @@ impl CrawlStore {
             checkpointer: None,
         };
         store.set_meta("format", FORMAT)?;
-        store.set_meta("format_version", &FORMAT_VERSION.to_string())?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
         store.set_meta("status", "running")?;
-        store.ensure_retry_schema()?;
         Ok(store)
     }
 
@@ -498,15 +479,10 @@ impl CrawlStore {
                 path.display()
             )));
         }
-        let version: i64 = conn
-            .query_row("SELECT value FROM meta WHERE key = 'format_version'", [], |r| {
-                r.get::<_, String>(0)
-            })?
-            .parse()
-            .unwrap_or(0);
+        let version = super::migrate::version(&conn)?;
         if version > FORMAT_VERSION {
             return Err(StoreError::Format(format!(
-                "{} was written by a newer SpiderLens (crawl format {version}); update SpiderLens to open it",
+                "{} was written by a newer SpiderLens (crawl format {version}); update SpiderLens to change it",
                 path.display()
             )));
         }
@@ -524,6 +500,112 @@ impl CrawlStore {
         }
         store.live.set(live);
         Ok(store)
+    }
+
+    /// Opens a crawl file for reading only: nothing is written, not even the
+    /// journal mode, so viewing never changes a file (spec 006 FR-036) and
+    /// read-only files and newer formats can be shown (FR-021, FR-037).
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = connect_read_only(path)?;
+        let format: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
+            .optional()
+            .map_err(|e| damaged(path, e))?;
+        if format.as_deref() != Some(FORMAT) {
+            return Err(StoreError::Format(format!(
+                "{} is not a SpiderLens crawl file",
+                path.display()
+            )));
+        }
+        let compat = super::migrate::read_compat(&conn)?;
+        if compat > FORMAT_VERSION {
+            return Err(StoreError::Format(format!(
+                "{} was written by a newer SpiderLens (crawl format {}); update SpiderLens to open it",
+                path.display(),
+                super::migrate::version(&conn)?
+            )));
+        }
+        let store = Self {
+            conn,
+            next_seq: 0,
+            live: Cell::default(),
+            checkpointer: None,
+        };
+        let mut live = StateCounts::default();
+        for (state, n) in store.state_counts()? {
+            *live.slot(state) = n;
+        }
+        store.live.set(live);
+        Ok(store)
+    }
+
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// The connection, for tests that need to set up unusual files.
+    #[doc(hidden)]
+    pub fn conn_for_tests(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// Where the file is, when it is a file.
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        self.conn
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+    }
+
+    /// Records an event in the file's history (spec 006 data-model.md).
+    /// Files without the `events` table (format 2, viewed only) skip it.
+    pub fn record_event(&self, kind: &str, detail: Option<&str>) -> Result<()> {
+        if super::migrate::version(&self.conn)? < 3 {
+            return Ok(());
+        }
+        self.conn
+            .prepare_cached(
+                "INSERT INTO events (at, kind, app_version, os, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?
+            .execute(params![
+                jiff::Timestamp::now().as_millisecond(),
+                kind,
+                APP_VERSION,
+                os_name(),
+                detail
+            ])?;
+        Ok(())
+    }
+
+    /// Writes the crawl's last committed state into the database file alone
+    /// (empties the write-ahead log), so the file can be copied. False when
+    /// a reader still holds part of the log.
+    pub(crate) fn checkpoint_truncate(&self) -> Result<bool> {
+        let (busy, log, done): (i64, i64, i64) =
+            self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+        Ok(busy == 0 && log == done)
+    }
+
+    /// Moves the write connection to another file holding the same data
+    /// (Save As while crawling, plan D5): the old connection closes, the new
+    /// one is configured the same way and keeps its own checkpointer.
+    pub(crate) fn reopen_at(&mut self, path: &Path) -> Result<()> {
+        let background = self.checkpointer.is_some();
+        if let Some(mut c) = self.checkpointer.take() {
+            c.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = c.handle.take() {
+                let _ = h.join();
+            }
+        }
+        let conn = Connection::open(path)?;
+        Self::configure(&conn)?;
+        drop(std::mem::replace(&mut self.conn, conn));
+        if background {
+            self.checkpoint_in_background()?;
+        }
+        Ok(())
     }
 
     /// Hands write-ahead-log checkpoints to a background thread with its own
@@ -1311,6 +1393,15 @@ impl CrawlStore {
         Ok(a + b)
     }
 
+    /// Recovery: rows left in flight by a crash go back to the queue.
+    pub fn requeue_in_flight(&self) -> Result<usize> {
+        let a = self
+            .conn
+            .execute("UPDATE urls SET state = 'queued' WHERE state = 'in_flight'", [])?;
+        self.shift(Some(UrlState::InFlight), UrlState::Queued, a);
+        Ok(a)
+    }
+
     /// Requests started for crawling, which count toward the URL limit.
     pub fn pages_started(&self) -> Result<u64> {
         Ok(self.conn.query_row::<i64, _, _>(
@@ -1518,21 +1609,12 @@ impl CrawlStore {
         Ok(())
     }
 
-    /// Adds what spec 004 needs to a file made before it, and the crawl log
-    /// table. Cheap: SQLite adds a column without rewriting the table.
-    pub fn ensure_retry_schema(&self) -> Result<()> {
-        let have: Vec<String> = {
-            let mut stmt = self.conn.prepare("SELECT name FROM pragma_table_info('urls')")?;
-            let rows = stmt.query_map([], |r| r.get(0))?;
-            rows.collect::<std::result::Result<_, _>>()?
-        };
-        for (name, ty) in COLUMNS_004 {
-            if !have.iter().any(|h| h == name) {
-                self.conn
-                    .execute_batch(&format!("ALTER TABLE urls ADD COLUMN {name} {ty}"))?;
-            }
+    /// Lists attempt counts among the file's data features once spec 004's
+    /// columns exist (migration step 4), so a resumed older crawl shows them.
+    pub fn note_attempts_feature(&self) -> Result<()> {
+        if super::migrate::version(&self.conn)? < 4 {
+            return Ok(());
         }
-        self.conn.execute_batch(LOG_TABLE)?;
         // A comma-separated list read by spec 007's results crate.
         let listed = self.meta("data_features")?.unwrap_or_default();
         if !listed.split(',').any(|f| f.trim() == "attempts") {
@@ -1587,7 +1669,7 @@ impl CrawlStore {
     /// An in-flight request whose result does not count (its host was paused
     /// or the network is down): back to its old place in the queue, no
     /// attempt used (spec 004 FR-027).
-    pub fn requeue_in_flight(&self, id: i64) -> Result<()> {
+    pub fn return_in_flight(&self, id: i64) -> Result<()> {
         let n = self
             .conn
             .prepare_cached("UPDATE urls SET state = 'queued' WHERE id = ?1 AND state = 'in_flight'")?
@@ -1795,6 +1877,11 @@ impl CrawlStore {
     /// Transient failures by error class (HTTP classes derived), for the
     /// "Retry failed URLs" confirmation (spec 004 FR-031).
     pub fn transient_failures(&self) -> Result<Vec<(String, u64)>> {
+        // Files from before spec 004 are upgraded when resumed; until then
+        // there is nothing "Retry failed URLs" can do with them.
+        if super::migrate::version(&self.conn)? < 4 {
+            return Ok(Vec::new());
+        }
         if !self.has_column("urls", "error_reason")? {
             return Ok(Vec::new());
         }
@@ -1867,6 +1954,67 @@ impl CrawlStore {
         )?;
         let rows = stmt.query_map([url], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+}
+
+/// The engine's version, recorded with every event.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `macos-aarch64`, `windows-x86_64`, `linux-x86_64`.
+pub fn os_name() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// A read-only connection. On read-only media SQLite cannot create the
+/// shared-memory file a WAL database needs, so it retries with
+/// `immutable=1` (the file cannot change under us there anyway).
+pub fn connect_read_only(path: &Path) -> Result<Connection> {
+    use rusqlite::OpenFlags;
+    if !path.exists() {
+        return Err(StoreError::Format(format!("{} does not exist", path.display())));
+    }
+    let flags =
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
+    let probe =
+        |c: &Connection| c.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0));
+    let first = Connection::open_with_flags(path, flags).and_then(|c| probe(&c).map(|_| c));
+    match first {
+        Ok(c) => {
+            c.busy_timeout(std::time::Duration::from_secs(5))?;
+            Ok(c)
+        }
+        Err(e) if is_corrupt(&e) => Err(damaged(path, e)),
+        Err(_) => {
+            let c = Connection::open_with_flags(immutable_uri(path), flags)?;
+            probe(&c).map_err(|e| damaged(path, e))?;
+            Ok(c)
+        }
+    }
+}
+
+/// A `file:` URI for `path` with `immutable=1`.
+pub(crate) fn immutable_uri(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let p = p.replace('%', "%25").replace('?', "%3f").replace('#', "%23");
+    let p = if p.starts_with('/') { p } else { format!("/{p}") };
+    format!("file:{p}?immutable=1")
+}
+
+pub(crate) fn is_corrupt(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
+}
+
+fn damaged(path: &Path, e: rusqlite::Error) -> StoreError {
+    if is_corrupt(&e) {
+        StoreError::Damaged(format!(
+            "{} is damaged or is not a SpiderLens crawl file ({e})",
+            path.display()
+        ))
+    } else {
+        StoreError::Sql(e)
     }
 }
 

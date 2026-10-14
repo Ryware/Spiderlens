@@ -88,6 +88,86 @@ Licensing: Chromium is BSD-3-Clause; downloading or driving it is fine for an MI
 4. **Links found only after rendering**: (a) crawl them *(recommended, as Google does)*; (b) record them only.
 5. **Screenshots in M4**: (a) included, off by default *(recommended)*; (b) postponed.
 
+## Planning additions (2026-10-13, `/speckit-plan`)
+
+The sections below were added while writing `plan.md`, after reading the code on `main` (3c62a4e). They refine R1 to R3 where the code works differently from what R3 assumed. Each one is referenced from the plan as a design decision.
+
+## R6. The engine answers every request the browser makes
+
+**Decision**: With `Fetch.enable` on all requests, the engine fetches every HTTP(S) request the page makes with its own `reqwest` client and answers it with `Fetch.fulfillRequest`. Chrome never talks to the network itself. Requests that are blocked (by setting or robots.txt) are answered with `Fetch.failRequest` (`BlockedByClient`).
+
+**Rationale**:
+- The per-host limiter needs to know when a request starts and when it ends. With `Fetch.continueRequest` the engine only sees the start; the end would have to be matched from `Network.loadingFinished` events, a second event stream per tab.
+- The cache (FR-017), the resource records (FR-018), robots.txt (FR-016) and the host caps (FR-015) then sit in one place, in Rust, and are unit-testable without a browser.
+- Tests already pin `.test` host names to the local fixture through `reqwest` (`Crawler::with_resolve`). Chrome would need `--host-resolver-rules` for the same effect; fulfilling from the engine makes fixture tests work unchanged.
+- The crawl's proxy, TLS and header settings apply to page resources the same way as to pages.
+
+**Costs**: bodies cross the DevTools connection base64-encoded (about 33% larger) and every request takes one extra round trip. On a local fixture with a few hundred KB of script per page this is small, but it must be measured (spike T001). Streaming responses (Server-Sent Events, long polling) cannot be fulfilled until they end; they are answered when the engine's read timeout or the page's render cap hits, whichever comes first. WebSocket connections are not intercepted by the `Fetch` domain and are refused by a launch flag.
+
+**Alternative kept as a fallback**: `Fetch.continueRequest` for third-party hosts only, with the permit released on `Network.loadingFinished` or `loadingFailed`. Used only if the spike shows the fulfil path costs more than 20% of render throughput.
+
+## R7. The spec 008 limiter is owned by the coordinator
+
+R3 says each intercepted request "asks the existing per-host limiter". In the code that limiter is not a service: the per-host state (`Host`, with its `SiteSpeed` allowance, crawl-delay and Retry-After time) and the global caps (`in_flight`, `next_global`) are private fields of the coordinator's `Run` (`crates/engine/src/crawl/runner.rs:227-256` and `560-594`), and `dispatch()` applies them (`runner.rs:870-962`). Only the coordinator task may touch them.
+
+**Decision**: render tasks ask the coordinator for a permit over the existing message channel (`Msg::ResourcePermit` with a one-shot reply) and report the end (`Msg::ResourceDone`, with the response time and the 429/503 signal, so the AIMD allowance learns from resource responses too). The coordinator serves waiting resource permits before starting new page fetches, so a page being rendered is not starved by the raw crawl. This keeps the actor pattern (one owner of mutable state) and the rule that one host's caps cover every request to it.
+
+**Cost**: one channel round trip per resource. At the expected render rate (tens of pages per second, a few dozen resources each) this is well under what the coordinator already handles: about 2,500 responses per second on most of one core in spec 008's benchmark.
+
+## R8. Where the rendered input comes from
+
+R3 says the main document is "decompressed from `bodies` or kept in memory while hot". In the code, the received body is compressed into `bodies` only when "Store page HTML" is on and is dropped otherwise (`runner.rs:326-331`). Keeping it in memory would make memory grow with the render queue (FR-036).
+
+**Decision**: when rendering is on and "Store page HTML" is off, the compressed body of each queued page is written to a `render_inputs` table and deleted once the page reaches a final rendering state. When "Store page HTML" is on, the render stage reads `bodies`. Either way memory stays flat, and resume works from the file.
+
+## R9. Rendered HTML cannot share the `bodies` table
+
+R3 proposes a version column on `bodies`. `bodies` has `url_id` as its primary key (`crates/engine/src/crawl/store.rs:166-171`); adding a version to the key means rebuilding the table, which is not an additive migration step. **Decision**: a separate `rendered_bodies` table with the same columns.
+
+## R10. Comparing raw and rendered text
+
+FR-029 needs "the share of rendered visible text not present in the raw HTML". `extract_page` collects the visible text, hashes it and drops it (`crates/engine/src/extract/walk.rs:131-133`); `PageData` keeps only `word_count` and `text_hash`.
+
+**Decision**: `PageInput` gains `keep_text: bool` (false in the raw crawl, so nothing changes there) and `PageData` gains `visible_text: Option<String>`. The render stage re-extracts the raw HTML with `keep_text` (cheap: 50 µs to 4 ms per page, spec 005 D1) instead of reading raw rows back from the file. The dependence measure compares word multisets: rendered-only words are, per word, the rendered count minus the raw count when positive; the percentage is rendered-only words over rendered words. This is order-insensitive and deterministic, so the expected values for fixture pages (SC-011) can be computed by hand.
+
+*Alternative rejected*: word shingles (n-grams). More sensitive to reordering, harder to predict in tests, and not needed for "how much of this text exists only after JavaScript".
+
+## R11. Rendered values in the existing results tabs (FR-021)
+
+The tabs of spec 007 are static SQL over `urls u`, `pages p`, `links l`, `directives d` and `page_text` (`crates/results/src/tabs.rs`, for example lines 166-170). SQLite resolves an unqualified table name in the `temp` schema before `main`. **Decision**: when a file holds rendered data and the view asks for rendered values, the results reader creates `TEMP VIEW`s named `pages`, `page_text`, `directives`, `structured_data` and `links` (and a narrow overlay for the four `urls` columns that change: `title`, `noindex`, `nofollow`, `canonical*`) that pick the rendered rows for rendered pages and the raw rows otherwise. Every existing column and filter then shows rendered values without being written twice. The raw switch drops the views.
+
+**Risk**: a view over `urls` may stop SQLite from using the `urls_state` index in some tab conditions. The results benchmark (`crates/results/examples/bench.rs`) is run with and without the views; the fallback is to rewrite only the affected expressions with a `{pages}` placeholder.
+
+## R12. Closing the browser when SpiderLens dies (FR-046, SC-009)
+
+Normal exits (completion, pause, stop, Ctrl-C, window close) close the browser from Rust. A crash or a kill of SpiderLens is harder: the workspace forbids `unsafe` code (`Cargo.toml:57`), which rules out `prctl(PR_SET_PDEATHSIG)` on Linux and Job Objects on Windows through raw system calls.
+
+**Decision, in order of preference**:
+1. Launch Chrome with `--remote-debugging-pipe` if the chosen CDP crate supports a pipe transport. Chrome exits by itself when the pipe closes, which happens when the SpiderLens process dies for any reason.
+2. Otherwise, a small guard process: the `spiderlens` and desktop binaries accept a hidden `--render-guard <pid>` mode that starts Chrome, checks every 500 ms whether the parent process is alive (with `sysinfo`) and kills Chrome when it is not.
+
+The spike (T001) checks option 1 for chromiumoxide and chromey.
+
+## R13. Browsers on CI runners
+
+GitHub's hosted images for `ubuntu-24.04`, `windows-latest` and `macos-14` list Google Chrome as preinstalled, and Windows also has Edge *(from the runner image documentation, unverified for the exact images this repository pins)*. Task T002 adds a CI step that prints the browser found on each runner, so this is verified before any render test depends on it. Render integration tests read `SPIDERLENS_REQUIRE_BROWSER=1` in CI: without a browser they fail instead of being skipped silently. Locally they skip with a message.
+
+## R14. Integrity of the downloaded browser
+
+Chrome for Testing publishes download URLs but no checksums. **Decision**: each SpiderLens release pins one `chrome-headless-shell` version and records the SHA-256 of each platform's archive in `crates/render/src/fetcher/pins.rs`, generated by `scripts/pin-headless-shell.mjs` at release time. The download is refused if the hash differs. Downloads come only from `storage.googleapis.com` over HTTPS and only after consent (FR-045).
+
+## R15. New dependencies (constitution principle VIII)
+
+| Crate | Where | Why |
+|---|---|---|
+| `chromiumoxide` 0.9 (`tokio-runtime`, no default fetcher) | `crates/render` | Typed CDP client (R1). `chromey` is the fallback if the spike fails. |
+| `sysinfo` | `crates/render`, `crates/engine` | Free system memory and the browser process tree's memory for the guard (FR-038) and the orphan guard (R12). |
+| `zip` | `crates/render` | Unpacking the `chrome-headless-shell` archive. |
+| `sha2` | `crates/render` | Download integrity (R14). |
+| `similar` | `crates/results` | Line diff for the raw versus rendered pane (FR-028), shared by the desktop app and `spiderlens html --diff`. |
+
+Binary size: the generated CDP types are large. The desktop and CLI binaries are measured before and after in `benchmarks.md`; the budget is 8 MB added per binary *(target, to be confirmed by the spike)*.
+
 ## Sources
 
 - Screaming Frog user guide, configuration (rendering, window size, JavaScript tab): https://www.screamingfrog.co.uk/seo-spider/user-guide/configuration/
@@ -108,3 +188,5 @@ Licensing: Chromium is BSD-3-Clause; downloading or driving it is fine for an MI
 - Vercel and MERJ, The rise of the AI crawler (Dec 2024): https://vercel.com/blog/the-rise-of-the-ai-crawler
 - Advanced Web Ranking, What AI search crawlers read (Aug 2026): https://www.advancedwebranking.com/blog/what-ai-search-crawlers-read
 - Headless Chromium resource requirements (secondary): https://webscraping.ai/faq/headless-chromium/what-are-the-resource-requirements-for-running-headless-chromium-at-scale
+- GitHub Actions runner images (installed software): https://github.com/actions/runner-images
+- SQLite, name resolution of temp objects: https://www.sqlite.org/lang_naming.html

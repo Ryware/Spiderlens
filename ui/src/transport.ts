@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { CrawlConfig } from "./generated/CrawlConfig";
 import type { Features } from "./generated/Features";
@@ -237,6 +238,125 @@ export interface CrawlFinished {
   path: string;
   report: CrawlReport | null;
   error: string | null;
+  /** Set when a disk or write problem paused the crawl (spec 006 FR-029). */
+  local?: LocalError | null;
+}
+
+// Crawl files (spec 006, specs/006-crawl-storage/contracts/desktop-commands.md).
+
+export type LocalErrorKind = "disk_low" | "disk_full" | "drive_gone" | "permission" | "network" | "other";
+
+/** A disk or write problem that paused the crawl; never a website error. */
+export interface LocalError {
+  kind: LocalErrorKind;
+  message: string;
+  path: string;
+  free_bytes: number | null;
+}
+
+export interface LockNote {
+  app_version: string;
+  pid: number;
+  host: string;
+  since: string;
+}
+
+/** What may be done with a crawl file right now. */
+export type Access =
+  | { kind: "writable" }
+  | { kind: "in_use"; by: LockNote }
+  | { kind: "read_only_media" }
+  | { kind: "newer_format"; needs: string }
+  | { kind: "needs_upgrade"; from: number }
+  | { kind: "view_only"; reason: string };
+
+export interface VersionRecord {
+  kind: "created" | "resumed" | "upgraded";
+  app_version: string;
+  os: string;
+  at: string;
+}
+
+export interface CrawlEventRow {
+  at: string;
+  kind: string;
+  app_version: string;
+  os: string;
+  detail: string | null;
+}
+
+export interface CrawlInfo {
+  path: string;
+  name: string;
+  size_bytes: number;
+  format_version: number;
+  status: CrawlStatus;
+  pause_reason: string | null;
+  recovered: boolean;
+  mode: "spider" | "list";
+  start_url: string | null;
+  /** The stored configuration; null when the file has none it can read. */
+  config: CrawlConfig | null;
+  started_at: string | null;
+  ended_at: string | null;
+  counts: { discovered: number; crawled: number; failed: number; not_crawled: number; queued: number };
+  versions: VersionRecord[];
+  events: CrawlEventRow[];
+  access: Access;
+  /** Header names whose secret values must be entered again to resume. */
+  missing_secrets: string[];
+  /** Inside the app's folder for crawls not yet saved to a chosen place. */
+  unsaved: boolean;
+}
+
+export interface RecentEntry {
+  path: string;
+  name: string;
+  start_url: string | null;
+  urls: number;
+  status: CrawlStatus;
+  recovered: boolean;
+  last_used: string;
+  available: boolean;
+  unsaved: boolean;
+}
+
+export interface UnsavedCrawls {
+  entries: RecentEntry[];
+  total_bytes: number;
+  size_bytes: Record<string, number>;
+}
+
+export interface StorageStatus {
+  unsaved_dir: string;
+  free_bytes: number | null;
+  reserve_bytes: number;
+  low: boolean;
+}
+
+/** Speed and URL-limit changes allowed on resume (FR-011). */
+export interface ResumeChanges {
+  speed?: SpeedSettings;
+  max_urls?: number | null;
+}
+
+export interface ResumeOptions {
+  changes?: ResumeChanges;
+  secrets?: Record<string, string>;
+  upgrade?: "keep_copy" | "no_copy";
+}
+
+export interface CrawlMoved {
+  id: number;
+  from: string;
+  to: string;
+}
+
+/** A damaged or not-a-crawl file (FR-038). */
+export interface OpenFailure {
+  message: string;
+  /** Part of it is readable: offer to recover what can be read. */
+  salvageable: boolean;
 }
 
 /** A view's full order is built; rows can now be read at any position. */
@@ -280,7 +400,8 @@ export interface Transport {
   exportProfile(name: string, path: string): Promise<void>;
   importProfile(path: string): Promise<LoadedProfile>;
   crawlStart(config: CrawlConfig, startUrl: string | null): Promise<CrawlStarted>;
-  crawlResume(path: string): Promise<CrawlStarted>;
+  /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:" or "in_use:" plus a message. */
+  crawlResume(path: string, options?: ResumeOptions): Promise<CrawlStarted>;
   crawlPause(id: number): Promise<void>;
   crawlStop(id: number): Promise<void>;
   crawlSummary(path: string): Promise<CrawlReport>;
@@ -296,6 +417,28 @@ export interface Transport {
   crawlLog(path: string, limit?: number): Promise<CrawlLogEntry[]>;
   pickCrawlFile(): Promise<string | null>;
   pickCsvPath(name: string): Promise<string | null>;
+  // Crawl files (spec 006).
+  /** Opens a crawl file for viewing: recovers it if needed and adds it to the recent list. Rejects with an OpenFailure JSON string when damaged. */
+  crawlOpen(path: string): Promise<CrawlInfo>;
+  crawlInfo(path: string): Promise<CrawlInfo>;
+  /** Saves the crawl to dest; a running crawl keeps running in the new file. Returns the new path. */
+  crawlSaveAs(path: string, dest: string): Promise<string>;
+  pickSavePath(name: string): Promise<string | null>;
+  recentList(): Promise<RecentEntry[]>;
+  recentRemove(path: string): Promise<void>;
+  recentLocate(oldPath: string, newPath: string): Promise<RecentEntry>;
+  unsavedList(): Promise<UnsavedCrawls>;
+  unsavedDelete(path: string): Promise<void>;
+  /** Copies what can be read from a damaged file into a new unsaved crawl. */
+  crawlSalvage(path: string): Promise<CrawlInfo>;
+  storageStatus(): Promise<StorageStatus>;
+  /** Files the OS asked the app to open before the window was ready. */
+  pendingOpen(): Promise<string[]>;
+  onOpenFile(cb: (path: string) => void): Promise<() => void>;
+  onFileDrop(cb: (paths: string[]) => void): Promise<() => void>;
+  onCrawlMoved(cb: (m: CrawlMoved) => void): Promise<() => void>;
+  onAppQuitting(cb: (q: { pausing: boolean }) => void): Promise<() => void>;
+  onCrawlsRecovered(cb: (entries: RecentEntry[]) => void): Promise<() => void>;
   // Results (spec 007, contracts/desktop-commands.md).
   resultsTabs(): Promise<TabDef[]>;
   resultsOpen(path: string): Promise<{ features: Features }>;
@@ -343,7 +486,7 @@ export const tauriTransport: Transport = {
   exportProfile: (name, path) => invoke("profile_export", { name, path }),
   importProfile: (path) => invoke("profile_import", { path }),
   crawlStart: (config, startUrl) => invoke("crawl_start", { config, startUrl }),
-  crawlResume: (path) => invoke("crawl_resume", { path }),
+  crawlResume: (path, options) => invoke("crawl_resume", { path, ...options }),
   crawlPause: (id) => invoke("crawl_pause", { id }),
   crawlStop: (id) => invoke("crawl_stop", { id }),
   crawlSummary: (path) => invoke("crawl_summary", { path }),
@@ -358,6 +501,26 @@ export const tauriTransport: Transport = {
   crawlLog: (path, limit) => invoke("crawl_log", { path, limit }),
   pickCrawlFile: async () => asPath(await open({ filters: [{ name: "SpiderLens crawl", extensions: ["spiderlens"] }] })),
   pickCsvPath: (name) => save({ defaultPath: `${name}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] }),
+  crawlOpen: (path) => invoke("crawl_open", { path }),
+  crawlInfo: (path) => invoke("crawl_info", { path }),
+  crawlSaveAs: (path, dest) => invoke("crawl_save_as", { path, dest }),
+  pickSavePath: (name) => save({ defaultPath: `${name}.spiderlens`, filters: [{ name: "SpiderLens crawl", extensions: ["spiderlens"] }] }),
+  recentList: () => invoke("recent_list"),
+  recentRemove: (path) => invoke("recent_remove", { path }),
+  recentLocate: (oldPath, newPath) => invoke("recent_locate", { old: oldPath, new: newPath }),
+  unsavedList: () => invoke("unsaved_list"),
+  unsavedDelete: (path) => invoke("unsaved_delete", { path }),
+  crawlSalvage: (path) => invoke("crawl_salvage", { path }),
+  storageStatus: () => invoke("storage_status"),
+  pendingOpen: () => invoke("pending_open"),
+  onOpenFile: (cb) => listen<string>("open-file", (e) => cb(e.payload)),
+  onFileDrop: (cb) =>
+    getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "drop") cb(e.payload.paths);
+    }),
+  onCrawlMoved: (cb) => listen<CrawlMoved>("crawl-moved", (e) => cb(e.payload)),
+  onAppQuitting: (cb) => listen<{ pausing: boolean }>("app-quitting", (e) => cb(e.payload)),
+  onCrawlsRecovered: (cb) => listen<RecentEntry[]>("crawls-recovered", (e) => cb(e.payload)),
   resultsTabs: () => invoke("results_tabs"),
   resultsOpen: (path) => invoke("results_open", { path }),
   viewOpen: (path, query, count) => invoke("view_open", { path, query, count }),

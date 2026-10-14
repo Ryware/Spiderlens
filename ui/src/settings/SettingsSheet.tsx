@@ -6,6 +6,8 @@ import { Button, cn, Kbd, Notice, Sheet, SheetClose } from "../components/ui";
 import { categories, CategoryBody, type CategoryId, issuesFor, liveCategories } from "./categories";
 import { IssueList } from "./fields";
 import { ProfilePicker } from "./ProfilePicker";
+import { AppearanceSettings } from "./AppearanceSettings";
+import type { Appearance, Level } from "../shell/appearance";
 
 /**
  * Crawl settings as a sheet over the window (US2): profile and categories on
@@ -24,6 +26,10 @@ export function SettingsSheet({
   transport,
   category,
   onCategory,
+  appearance,
+  level,
+  systemDark,
+  onAppearance,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -32,16 +38,21 @@ export function SettingsSheet({
   transport: Transport;
   category: CategoryId;
   onCategory: (c: CategoryId) => void;
+  appearance: Appearance;
+  level: Level;
+  systemDark: boolean;
+  onAppearance: (patch: Partial<Appearance>) => void;
 }) {
   const navRef = useRef<HTMLButtonElement>(null);
   const mode = setup.config?.mode ?? "spider";
   const visible = categories.filter((c) => !c.listOnly || mode === "list");
+  const groups = [visible.filter((c) => !c.app), visible.filter((c) => c.app)];
   const current = visible.find((c) => c.id === category) ?? visible.find((c) => c.id === "speed")!;
   // Issues on a whole category (for example "speed") rather than one setting.
   const general = setup.issues.filter((i) => current.prefixes.includes(i.path));
   const running = run.phase === "running";
   const live = running && liveCategories.includes(current.id);
-  const locked = run.active && !live;
+  const locked = run.active && !live && !current.app;
   const { config } = setup;
   const changed = !!config && (!run.applied || JSON.stringify([config.speed, config.retry]) !== JSON.stringify([run.applied.speed, run.applied.retry]));
   const liveErrors = setup.errors.some((e) => /^(speed|retry)(\.|$)/.test(e.path));
@@ -59,32 +70,37 @@ export function SettingsSheet({
               <ProfilePicker transport={transport} setup={setup} />
             </fieldset>
           </div>
-          <ul className="m-0 flex list-none flex-col gap-0.5 p-0" role="tablist" aria-orientation="vertical">
-            {visible.map((c) => {
-              const iss = issuesFor(setup, c);
-              const errors = iss.filter((i) => i.severity === "error").length;
-              const warnings = iss.length - errors;
-              const on = c.id === current.id;
-              return (
-                <li key={c.id}>
-                  <button
-                    ref={on ? navRef : undefined}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => onCategory(c.id)}
-                    className={cn("flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-base", on ? "bg-selection text-fg" : "text-fg-2 hover:bg-surface-2")}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                    {errors > 0 && <span className="text-xs font-medium text-bad tabular">{errors === 1 ? "1 error" : `${errors} errors`}</span>}
-                    {errors === 0 && warnings > 0 && (
-                      <span className="text-xs font-medium text-warn tabular">{warnings === 1 ? "1 warning" : `${warnings} warnings`}</span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div role="tablist" aria-orientation="vertical" className="flex flex-col gap-3">
+            {groups.map((group, g) => (
+              <ul key={g} className="m-0 flex list-none flex-col gap-0.5 p-0" role="presentation">
+                {g === 1 && <li role="presentation" className="px-2 pb-1 text-xs font-semibold text-fg-3">App</li>}
+                {group.map((c) => {
+                  const iss = issuesFor(setup, c);
+                  const errors = iss.filter((i) => i.severity === "error").length;
+                  const warnings = iss.length - errors;
+                  const on = c.id === current.id;
+                  return (
+                    <li key={c.id} role="presentation">
+                      <button
+                        ref={on ? navRef : undefined}
+                        type="button"
+                        role="tab"
+                        aria-selected={on}
+                        onClick={() => onCategory(c.id)}
+                        className={cn("flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-base", on ? "bg-selection text-fg" : "text-fg-2 hover:bg-surface-2")}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                        {errors > 0 && <span className="text-xs font-medium text-bad tabular">{errors === 1 ? "1 error" : `${errors} errors`}</span>}
+                        {errors === 0 && warnings > 0 && (
+                          <span className="text-xs font-medium text-warn tabular">{warnings === 1 ? "1 warning" : `${warnings} warnings`}</span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ))}
+          </div>
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col" role="tabpanel" aria-label={current.title}>
@@ -96,15 +112,19 @@ export function SettingsSheet({
             {locked && <Notice kind="info">{lockNote}</Notice>}
             {live && current.id === "network" && <Notice kind="info">Retry settings can be applied to the running crawl. Network settings stay as they are until it ends.</Notice>}
             <IssueList issues={general} />
-            <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
-              <CategoryBody id={current.id} setup={setup} transport={transport} live={live} />
-            </fieldset>
+            {current.id === "appearance" ? (
+              <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
+            ) : (
+              <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
+                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} />
+              </fieldset>
+            )}
           </div>
           <footer className="flex items-center gap-2 border-t border-line px-6 py-3">
-            <span className="mr-auto text-sm text-fg-3" role={live ? "status" : undefined}>
-              {live ? (changed ? "Not applied to the running crawl yet" : "In use by the running crawl") : "Checked by the engine as you type"}
+            <span className="mr-auto text-sm text-fg-3" role={live && !current.app ? "status" : undefined}>
+              {current.app ? "Saved on this computer" : live ? (changed ? "Not applied to the running crawl yet" : "In use by the running crawl") : "Checked by the engine as you type"}
             </span>
-            {live && config && (
+            {live && !current.app && config && (
               <Button disabled={!changed || liveErrors} onClick={() => void run.applySettings(config.speed, config.retry)}>
                 Apply to running crawl
               </Button>

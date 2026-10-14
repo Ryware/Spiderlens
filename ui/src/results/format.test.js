@@ -1,0 +1,39 @@
+// How cell values read (plan D8).
+import { cellTone, formatBytes, formatCell, numeric } from "./format";
+test("format_bytes_picks_a_unit", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(1024)).toBe("1.0 KB");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(20 * 1024)).toBe("20 KB");
+    expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.0 GB");
+    expect(formatBytes(2048 * 1024 ** 3)).toBe("2048 GB");
+});
+test("format_cell_by_kind", () => {
+    expect(formatCell("text", null)).toBe("");
+    expect(formatCell("int", 1234567)).toBe((1234567).toLocaleString());
+    expect(formatCell("int", "n/a")).toBe("n/a");
+    expect(formatCell("bytes", 2048)).toBe("2.0 KB");
+    expect(formatCell("ms", 1500)).toBe(`${(1500).toLocaleString()} ms`);
+    expect(formatCell("bool", true)).toBe("Yes");
+    expect(formatCell("bool", false)).toBe("No");
+    expect(formatCell("url", "https://example.com/")).toBe("https://example.com/");
+    expect(formatCell("status", 404)).toBe("404");
+});
+test("cell_tone_follows_status_class_and_state", () => {
+    expect(cellTone("status", 200)).toBe("ok");
+    expect(cellTone("status", 301)).toBe("info");
+    expect(cellTone("status", 404)).toBe("warn");
+    expect(cellTone("status", 503)).toBe("bad");
+    expect(cellTone("status", null)).toBeNull();
+    expect(cellTone("state", "Failed: timeout")).toBe("bad");
+    expect(cellTone("state", "Blocked by robots.txt")).toBe("warn");
+    expect(cellTone("state", "Crawled")).toBeNull();
+    expect(cellTone("int", 404)).toBeNull();
+});
+test("numeric_kinds_align_right", () => {
+    expect(["int", "bytes", "ms", "status"].every((k) => numeric(k))).toBe(true);
+    expect(numeric("text")).toBe(false);
+    expect(numeric("url")).toBe(false);
+});

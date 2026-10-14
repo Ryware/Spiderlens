@@ -6,7 +6,9 @@
 //! - `speed` adapts how many requests each site gets at once (spec 008).
 //! - `pace` explains what limits the crawl's speed, per site (spec 008).
 
+pub mod file;
 mod health;
+pub mod migrate;
 pub mod pace;
 pub mod reason;
 pub mod retry;
@@ -17,10 +19,12 @@ mod speed;
 pub mod store;
 mod window;
 
+pub use file::{Access, CrawlInfo, LocalError, LocalErrorKind, LockNote, WriterLock};
 pub use reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 pub use runner::{
-    Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, PausedHost, Progress,
-    RunCommand, SitemapSummary, SpeedNote, default_file_name, host_key, retry_preview,
+    Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, Opened, PausedHost,
+    Progress, ResumeOptions, RunCommand, SitemapSummary, SpeedNote, Upgrade, default_file_name, host_key,
+    retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
 pub use store::{CrawlStore, LogEntry, UrlRow};

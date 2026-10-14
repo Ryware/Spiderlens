@@ -1,0 +1,10 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+import { ErrorBoundary } from "./shell/ErrorBoundary";
+import { tauriTransport } from "./transport";
+import "./styles/app.css";
+import { applyStoredAppearance } from "./shell/useUiState";
+applyStoredAppearance();
+createRoot(document.getElementById("root")).render(_jsx(StrictMode, { children: _jsx(ErrorBoundary, { children: _jsx(App, { transport: tauriTransport }) }) }));

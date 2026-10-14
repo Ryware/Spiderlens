@@ -17,6 +17,7 @@
   --spacing: var(--unit);
 
   --color-bg: var(--bg);
+  --color-frame: var(--frame);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
@@ -131,6 +132,55 @@
 }
 @utility sheet-max-h {
   max-height: calc(100vh - 2 * var(--toolbar));
+}
+
+@utility bg-ladder {
+  background: var(--ladder);
+}
+@utility bg-preview-side {
+  background: var(--preview-side);
+}
+@utility bg-preview-main {
+  background: var(--preview-main);
+}
+@utility bg-swatch {
+  background: var(--swatch);
+}
+
+/* Island (spec 018 FR-004): the content is a light panel inset in the dark frame. */
+:root[data-level="island"] .island-content {
+  margin: calc(2 * var(--unit));
+  margin-left: 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+/* Translucent material (spec 017 FR-027, macOS only): the window is
+   transparent over the system sidebar material, so the page clears its own
+   backgrounds down to the sidebar and toolbar, which keep a tint of their
+   token colour. Content stays opaque. With Reduce transparency on, macOS draws
+   the material solid, and the media query covers webviews that report it. */
+:root[data-material="on"] body,
+:root[data-material="on"] [data-shell] {
+  background: transparent;
+}
+:root[data-material="on"] .island-content {
+  background: var(--bg);
+}
+:root[data-material="on"] [data-material-region].bg-sidebar {
+  background: color-mix(in oklch, var(--sidebar) 72%, transparent);
+}
+:root[data-material="on"] [data-material-region].bg-chrome {
+  background: color-mix(in oklch, var(--chrome) 72%, transparent);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material="on"] [data-material-region].bg-sidebar {
+    background: var(--sidebar);
+  }
+  :root[data-material="on"] [data-material-region].bg-chrome {
+    background: var(--chrome);
+  }
 }
 
 /* Base UI scrollbar rules, shipped here because inline <style> is disabled (research R2). */

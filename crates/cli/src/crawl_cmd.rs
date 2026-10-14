@@ -6,10 +6,12 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::{ArgMatches, Args, parser::ValueSource};
+use spiderlens_config::Change;
 use spiderlens_config::{ModeInput, normalize_url, validate};
+use spiderlens_engine::crawl::file::{self, DEFAULT_DISK_RESERVE};
 use spiderlens_engine::crawl::{
-    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, UrlState,
-    default_file_name, retry_preview,
+    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ResumeOptions,
+    Upgrade, UrlState, default_file_name, retry_preview,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -36,8 +38,29 @@ pub struct CrawlCmd {
     /// No progress on stderr.
     #[arg(long)]
     quiet: bool,
+    /// Pause when less than this much space (MB) is free on the crawl
+    /// file's drive.
+    #[arg(long, value_name = "MB", default_value_t = DEFAULT_DISK_RESERVE / (1024 * 1024))]
+    disk_reserve: u64,
+    /// With --resume: upgrade an older crawl file without keeping a copy of
+    /// the original.
+    #[arg(long, requires = "resume")]
+    no_backup: bool,
+    /// With --resume: the value of a secret header, which crawl files never
+    /// store. Repeatable.
+    #[arg(long, value_name = "NAME=VALUE", requires = "resume")]
+    header_secret: Vec<String>,
     #[command(flatten)]
     crawl: CrawlArgs,
+}
+
+#[derive(Args)]
+pub struct InfoArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// Print as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -114,7 +137,7 @@ pub fn run_retry(args: RetryArgs) -> ExitCode {
         }
     }
     let crawler = match Crawler::retry_failed(&args.file) {
-        Ok((c, _)) => c,
+        Ok((c, _)) => c.with_disk_reserve(Some(DEFAULT_DISK_RESERVE)),
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(exit::USAGE);
@@ -156,23 +179,92 @@ fn default_out(input: &ModeInput) -> PathBuf {
 
 pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
-        // The stored configuration decides; other options would be ignored,
-        // so they are refused instead (contracts/cli.md).
+        // The stored configuration decides; only speed and the URL limit may
+        // change (spec 006 FR-011). Other options are refused, not ignored.
+        const ALLOWED: [&str; 12] = [
+            "resume",
+            "json",
+            "quiet",
+            "disk_reserve",
+            "no_backup",
+            "header_secret",
+            "speed",
+            "concurrency",
+            "per_host",
+            "rate",
+            "no_adaptive",
+            "max_urls",
+        ];
         let extra: Vec<String> = matches
             .ids()
             .map(|id| id.as_str().to_string())
-            .filter(|id| !["resume", "json", "quiet"].contains(&id.as_str()))
+            .filter(|id| !ALLOWED.contains(&id.as_str()))
             .filter(|id| matches.value_source(id) == Some(ValueSource::CommandLine))
             .collect();
         if !extra.is_empty() {
             eprintln!(
-                "error: --resume uses the settings stored in the crawl file; remove: --{}",
+                "error: --resume uses the settings stored in the crawl file (only speed and --max-urls can change); remove: --{}",
                 extra.join(", --").replace('_', "-")
             );
             return ExitCode::from(exit::USAGE);
         }
-        match Crawler::open(path) {
-            Ok(c) => (c, path.clone()),
+        let mut secrets = Vec::new();
+        for s in &cmd.header_secret {
+            match s.split_once('=') {
+                Some((n, v)) if !n.trim().is_empty() => secrets.push((n.trim().to_string(), v.to_string())),
+                _ => {
+                    eprintln!("error: --header-secret takes NAME=VALUE");
+                    return ExitCode::from(exit::USAGE);
+                }
+            }
+        }
+        let mut changes = Vec::new();
+        if let Ok(info) = file::info(path)
+            && let Some(stored) = &info.config
+        {
+            let current = stored.effective();
+            if let Some(speed) = cmd.crawl.speed_change(current.speed)
+                && speed != current.speed
+            {
+                changes.push(Change::Speed(speed));
+            }
+            if let Some(max) = cmd.crawl.max_urls
+                && Some(max) != current.limits.max_urls
+            {
+                changes.push(Change::MaxUrls(Some(max)));
+            }
+        }
+        let options = ResumeOptions {
+            upgrade: Some(if cmd.no_backup {
+                Upgrade::NoCopy
+            } else {
+                Upgrade::KeepCopy
+            }),
+            changes,
+            secrets,
+        };
+        match Crawler::open_with(path, &options) {
+            Ok(c) => {
+                if !cmd.quiet {
+                    if let Some(n) = c.opened().recovered {
+                        eprintln!(
+                            "recovered: the crawl was not closed cleanly; {n} URLs returned to the queue"
+                        );
+                    }
+                    if let Some((from, backup)) = &c.opened().upgraded {
+                        match backup {
+                            Some(b) => eprintln!(
+                                "upgraded the crawl file from format {from}; original kept as {}",
+                                b.display()
+                            ),
+                            None => {
+                                eprintln!("upgraded the crawl file from format {from}; original not kept")
+                            }
+                        }
+                    }
+                }
+                (c, path.clone())
+            }
             Err(e) => {
                 eprintln!("error: {e}");
                 return ExitCode::from(exit::USAGE);
@@ -219,6 +311,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     };
+    let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
     execute(crawler, file, cmd.quiet, cmd.json)
 }
 
@@ -298,10 +391,12 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
     });
     let (summary, speed) = match result {
         Ok(s) => s,
-        Err(e @ CrawlError::LocalProblem(_)) => {
-            eprintln!("error: {e}");
-            eprintln!("resume with: spiderlens crawl --resume {}", file.display());
-            return ExitCode::from(exit::FAILED);
+        // A disk or write problem: the file is consistent and resumable
+        // (spec 006 FR-040).
+        Err(CrawlError::Local(e)) => {
+            eprintln!("paused: {e}");
+            eprintln!("resume with: spiderlens crawl --resume {}", e.path.display());
+            return ExitCode::from(exit::LOCAL);
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -442,7 +537,7 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
             }
         }
     }
-    let store = match CrawlStore::open(&args.file) {
+    let store = match CrawlStore::open_read_only(&args.file) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: {e}");
@@ -597,7 +692,7 @@ fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
 }
 
 fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
-    let store = CrawlStore::open(file).map_err(|e| {
+    let store = CrawlStore::open_read_only(file).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::from(exit::USAGE)
     })?;
@@ -729,4 +824,104 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `spiderlens info` (spec 006 contracts/cli.md): never changes the file.
+pub fn run_info(args: InfoArgs) -> ExitCode {
+    let info = match file::info(&args.file) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("error: {e}");
+            if file::salvageable(&args.file)
+                && matches!(e, spiderlens_engine::crawl::store::StoreError::Damaged(_))
+            {
+                eprintln!("part of the file is readable; the desktop app can recover what can be read");
+            }
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    if args.json {
+        print_json(&serde_json::to_value(&info).expect("info serializes"));
+        return ExitCode::from(exit::FETCHED);
+    }
+    let mut out = std::io::stdout().lock();
+    let row = |out: &mut std::io::StdoutLock, k: &str, v: &str| {
+        let _ = writeln!(out, "{k:<16} {v}");
+    };
+    row(&mut out, "Name", &info.name);
+    row(&mut out, "File", &info.path.display().to_string());
+    row(&mut out, "Size", &file::format_bytes(info.size_bytes));
+    row(&mut out, "Format", &info.format_version.to_string());
+    let mut status = info.status.clone();
+    if let Some(r) = &info.pause_reason {
+        status.push_str(&format!(" ({r})"));
+    }
+    if info.recovered {
+        status.push_str(", recovered after a crash");
+    }
+    row(&mut out, "Status", &status);
+    row(&mut out, "Mode", &format!("{:?}", info.mode).to_lowercase());
+    if let Some(u) = &info.start_url {
+        row(&mut out, "Start URL", u);
+    }
+    if let Some(t) = &info.started_at {
+        row(&mut out, "Started", t);
+    }
+    if let Some(t) = &info.ended_at {
+        row(&mut out, "Ended", t);
+    }
+    let c = &info.counts;
+    row(
+        &mut out,
+        "URLs",
+        &format!(
+            "{} discovered, {} crawled ({} failed), {} not crawled, {} queued",
+            c.discovered, c.crawled, c.failed, c.not_crawled, c.queued
+        ),
+    );
+    for v in &info.versions {
+        row(
+            &mut out,
+            &format!("Version ({})", v.kind),
+            &format!("{} {} {}", v.app_version, v.os, v.at),
+        );
+    }
+    let access = match &info.access {
+        spiderlens_engine::crawl::Access::Writable => "can be resumed".to_string(),
+        spiderlens_engine::crawl::Access::InUse { by } => format!("in use by {}", by.describe()),
+        spiderlens_engine::crawl::Access::ReadOnlyMedia => "read-only here; save a copy to resume".into(),
+        spiderlens_engine::crawl::Access::NewerFormat { needs } => {
+            format!("view only; resuming needs {needs}")
+        }
+        spiderlens_engine::crawl::Access::NeedsUpgrade { from } => {
+            format!("format {from}; resuming upgrades it (a copy of the original is kept)")
+        }
+        spiderlens_engine::crawl::Access::ViewOnly { reason } => reason.clone(),
+    };
+    row(&mut out, "Access", &access);
+    if !info.missing_secrets.is_empty() {
+        row(&mut out, "Secrets needed", &info.missing_secrets.join(", "));
+    }
+    if let Some(cfg) = &info.config {
+        let json = serde_json::to_string_pretty(&cfg.effective()).expect("config serializes");
+        let _ = writeln!(out, "Configuration");
+        for line in json.lines() {
+            let _ = writeln!(out, "  {line}");
+        }
+    }
+    if !info.events.is_empty() {
+        let _ = writeln!(out, "History");
+        for e in &info.events {
+            let _ = writeln!(
+                out,
+                "  {}  {:<14} {} {}{}",
+                e.at,
+                e.kind,
+                e.app_version,
+                e.os,
+                e.detail.as_deref().map(|d| format!("  {d}")).unwrap_or_default()
+            );
+        }
+    }
+    ExitCode::from(exit::FETCHED)
 }

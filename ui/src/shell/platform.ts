@@ -11,6 +11,16 @@ export function detectPlatform(ua = typeof navigator === "undefined" ? "" : navi
 
 export const platform: Platform = detectPlatform();
 
+/**
+ * The window has the system's translucent material behind it (spec 017
+ * FR-027): only the macOS desktop app, whose window is transparent and carries
+ * the sidebar material (tauri.macos.conf.json). Browsers and other platforms
+ * stay solid.
+ */
+export function materialAvailable(p: Platform = platform, w: object = typeof window === "undefined" ? {} : window): boolean {
+  return p === "mac" && "__TAURI_INTERNALS__" in w;
+}
+
 /** `Mod+K` → `⌘K` on macOS, `Ctrl+K` elsewhere. */
 export function formatShortcut(keys: string, p: Platform = platform): string {
   const parts = keys.split("+");

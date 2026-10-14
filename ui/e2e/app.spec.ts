@@ -125,19 +125,21 @@ test("themes_change_the_real_colors", async ({ page }) => {
     await runInPalette(page, cmd);
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   };
-  await palette("Appearance: Light");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await palette("Brightness: Light");
+  await expect(page.locator("html")).toHaveAttribute("data-level", "light");
   const light = await bg();
-  await palette("Appearance: Dark");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await palette("Brightness: Dark");
+  await expect(page.locator("html")).toHaveAttribute("data-level", "dark");
   const dark = await bg();
   expect(dark).not.toBe(light);
+  await palette("Accent: Orchid");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "orchid");
 
-  await palette("Appearance: System");
+  await palette("Appearance: Follow system");
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-tone", "dark");
   await page.emulateMedia({ colorScheme: "light" });
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-tone", "light");
   expect(await bg()).toBe(light);
 });
 
@@ -218,7 +220,7 @@ test("a_command_that_opens_a_window_keeps_focus_there", async ({ page }) => {
 test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
   for (const wait of [0, 50, 150, 400]) {
     await page.keyboard.press("Control+K");
-    await runInPalette(page, "Appearance: Light");
+    await runInPalette(page, "Brightness: Light");
     await page.waitForTimeout(wait);
     await page.keyboard.press("Control+K");
     await expect(page.getByPlaceholder("Type a command or a tab name")).toHaveValue("");

@@ -3,10 +3,17 @@
  * the UI where colors, type sizes, spacing, radii, row heights and durations
  * are defined; everything else refers to these names. A test enforces it.
  *
- * Colors are OKLCH so lightness stays even across hues (research R2). The
- * accent comes from the app icon's teal. Light values sit on :root; dark
- * values apply when the app sets data-theme="dark" (System is resolved in
- * theme.ts).
+ * Colors are OKLCH so lightness stays even across hues (research R2).
+ *
+ * Appearance (spec 018) is two independent choices set on <html> by
+ * shell/appearance.ts:
+ * - data-level: one of six brightness steps. Light sits on :root; data-tone
+ *   ="dark" switches to Dark; Soft, Deep and Midnight then override neutrals
+ *   only. Island is Light, with the Dark tokens applied inside every element
+ *   marked data-region="chrome" (toolbar, sidebar, status bar).
+ * - data-accent: one palette. Teal sits with the levels; every other palette
+ *   redefines the six accent tokens once for light tone and once for dark.
+ * Meaning colors (ok, info, warn, bad) never depend on the accent (FR-010).
  */
 :root {
   color-scheme: light;
@@ -36,6 +43,11 @@
   --accent-text: oklch(0.45 0.09 188);
   --accent-soft: oklch(0.50 0.095 188 / 0.12);
   --selection: oklch(0.50 0.095 188 / 0.10);
+
+  /* Behind the content: the window itself, darker than the panes in Island. */
+  --frame: oklch(0.985 0.002 195);
+  /* The brightness slider's track: lightest step at the top, black at the bottom. */
+  --ladder: linear-gradient(oklch(0.985 0.002 195), oklch(0.945 0.009 80) 20%, oklch(0.6 0.01 195) 45%, oklch(0.175 0.006 195) 65%, oklch(0.13 0.006 195) 82%, oklch(0 0 0));
 
   /* Meaning colors (FR-017): text-safe on surfaces, plus soft fills. */
   --ok: oklch(0.50 0.12 155);
@@ -69,7 +81,10 @@
   --control-lg: 32px;
   --toolbar: 52px;
   --statusbar: 26px;
-  --mac-inset: 78px;
+  /* Room for the macOS window buttons, which tauri.conf.json centres on the
+     toolbar at x 20 (trafficLightPosition): 20 + 2 × 20 spacing + 14 wide,
+     plus a 16 px gap. */
+  --mac-inset: 90px;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
@@ -83,7 +98,8 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-:root[data-theme="dark"] {
+:root[data-tone="dark"],
+:root[data-level="island"] [data-region="chrome"] {
   color-scheme: dark;
 
   --bg: oklch(0.175 0.006 195);
@@ -108,6 +124,8 @@
   --accent-soft: oklch(0.80 0.10 178 / 0.16);
   --selection: oklch(0.80 0.10 178 / 0.13);
 
+  --frame: oklch(0.175 0.006 195);
+
   --ok: oklch(0.82 0.13 155);
   --info: oklch(0.82 0.09 230);
   --warn: oklch(0.85 0.12 80);
@@ -120,6 +138,244 @@
   --shadow-popover: 0 12px 32px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(1 0 0 / 0.08);
   --shadow-sheet: 0 28px 70px -18px oklch(0 0 0 / 0.7), 0 0 0 1px oklch(1 0 0 / 0.08);
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4);
+}
+
+/* ---- Brightness steps beyond Light and Dark (spec 018, research R3) ---- */
+
+/* Soft: light with less glare, on warm paper. Meaning colors sit a little
+   darker so they keep 4.5:1 on it. */
+:root[data-level="soft"] {
+  --bg: oklch(0.945 0.009 80);
+  --surface: oklch(0.965 0.009 80);
+  --surface-2: oklch(0.925 0.009 80);
+  --surface-3: oklch(0.895 0.009 80);
+  --sidebar: oklch(0.925 0.009 80);
+  --chrome: oklch(0.94 0.009 80);
+  --line: oklch(0.855 0.0117 80);
+  --line-strong: oklch(0.77 0.0117 80);
+  --control-border: oklch(0.58 0.0117 80);
+  --fg: oklch(0.24 0.0144 80);
+  --fg-2: oklch(0.4 0.0144 80);
+  --fg-3: oklch(0.465 0.0144 80);
+  --ok: oklch(0.455 0.12 155);
+  --ok-soft: oklch(0.455 0.12 155 / 0.12);
+  --info: oklch(0.455 0.12 240);
+  --info-soft: oklch(0.455 0.12 240 / 0.12);
+  --warn: oklch(0.475 0.12 65);
+  --warn-soft: oklch(0.7 0.14 75 / 0.18);
+  --bad: oklch(0.475 0.18 27);
+  --bad-soft: oklch(0.475 0.18 27 / 0.11);
+  --scrim: oklch(0.2 0.01 80 / 0.32);
+  --frame: oklch(0.945 0.009 80);
+}
+
+/* Island: Light content inside a Dark frame; the chrome regions get the Dark
+   block above. */
+:root[data-level="island"] {
+  --frame: oklch(0.19 0.007 195);
+}
+
+/* Deep: one step darker than Dark. */
+:root[data-level="deep"] {
+  --bg: oklch(0.13 0.006 195);
+  --surface: oklch(0.155 0.006 195);
+  --surface-2: oklch(0.195 0.006 195);
+  --surface-3: oklch(0.24 0.006 195);
+  --sidebar: oklch(0.14 0.006 195);
+  --chrome: oklch(0.155 0.006 195);
+  --line: oklch(0.25 0.0078 195);
+  --line-strong: oklch(0.35 0.0078 195);
+  --control-border: oklch(0.53 0.0078 195);
+  --fg: oklch(0.93 0.0096 195);
+  --fg-2: oklch(0.76 0.0096 195);
+  --fg-3: oklch(0.665 0.0096 195);
+  --frame: oklch(0.13 0.006 195);
+}
+
+/* Midnight: true black content for OLED and night work; panes are told
+   apart by lines, not shade. */
+:root[data-level="midnight"] {
+  --bg: oklch(0 0 0);
+  --surface: oklch(0 0 0);
+  --surface-2: oklch(0.16 0.003 195);
+  --surface-3: oklch(0.21 0.003 195);
+  --sidebar: oklch(0 0 0);
+  --chrome: oklch(0 0 0);
+  --line: oklch(0.24 0.0039 195);
+  --line-strong: oklch(0.34 0.0039 195);
+  --control-border: oklch(0.52 0.0039 195);
+  --fg: oklch(0.92 0.0048 195);
+  --fg-2: oklch(0.75 0.0048 195);
+  --fg-3: oklch(0.66 0.0048 195);
+  --frame: oklch(0 0 0);
+}
+
+/* ---- Accent palettes (spec 018, research R4). Teal is the default above. ---- */
+
+/* Cobalt: WGSN and Coloro colour of the year 2027, Luminous Blue; pushed towards indigo, away from the 3xx blue. */
+:root[data-accent="cobalt"] {
+  --accent: oklch(0.5 0.16 266);
+  --accent-hover: oklch(0.45 0.16 266);
+  --accent-fg: oklch(0.99 0.004 266);
+  --accent-text: oklch(0.45 0.16 266);
+  --accent-soft: oklch(0.5 0.16 266 / 0.12);
+  --selection: oklch(0.5 0.16 266 / 0.1);
+}
+:root[data-accent="cobalt"][data-tone="dark"],
+:root[data-level="island"][data-accent="cobalt"] [data-region="chrome"] {
+  --accent: oklch(0.76 0.11 266);
+  --accent-hover: oklch(0.81 0.093 266);
+  --accent-fg: oklch(0.2 0.04 266);
+  --accent-text: oklch(0.78 0.101 266);
+  --accent-soft: oklch(0.76 0.11 266 / 0.16);
+  --selection: oklch(0.76 0.11 266 / 0.13);
+}
+
+/* Lavender: Pantone spring/summer 2027, Lavender Oil. */
+:root[data-accent="lavender"] {
+  --accent: oklch(0.5 0.15 295);
+  --accent-hover: oklch(0.45 0.15 295);
+  --accent-fg: oklch(0.99 0.004 295);
+  --accent-text: oklch(0.45 0.15 295);
+  --accent-soft: oklch(0.5 0.15 295 / 0.12);
+  --selection: oklch(0.5 0.15 295 / 0.1);
+}
+:root[data-accent="lavender"][data-tone="dark"],
+:root[data-level="island"][data-accent="lavender"] [data-region="chrome"] {
+  --accent: oklch(0.78 0.11 295);
+  --accent-hover: oklch(0.83 0.093 295);
+  --accent-fg: oklch(0.2 0.04 295);
+  --accent-text: oklch(0.8 0.101 295);
+  --accent-soft: oklch(0.78 0.11 295 / 0.16);
+  --selection: oklch(0.78 0.11 295 / 0.13);
+}
+
+/* Orchid: WGSN S/S27 Pop Pink, Pantone Rosy Future; kept clear of the 5xx red. */
+:root[data-accent="orchid"] {
+  --accent: oklch(0.52 0.16 345);
+  --accent-hover: oklch(0.47 0.16 345);
+  --accent-fg: oklch(0.99 0.004 345);
+  --accent-text: oklch(0.47 0.16 345);
+  --accent-soft: oklch(0.52 0.16 345 / 0.12);
+  --selection: oklch(0.52 0.16 345 / 0.1);
+}
+:root[data-accent="orchid"][data-tone="dark"],
+:root[data-level="island"][data-accent="orchid"] [data-region="chrome"] {
+  --accent: oklch(0.78 0.12 345);
+  --accent-hover: oklch(0.83 0.102 345);
+  --accent-fg: oklch(0.2 0.04 345);
+  --accent-text: oklch(0.8 0.11 345);
+  --accent-soft: oklch(0.78 0.12 345 / 0.16);
+  --selection: oklch(0.78 0.12 345 / 0.13);
+}
+
+/* Celery: Sherwin-Williams 2027; leaned to yellow, away from the 2xx green. */
+:root[data-accent="celery"] {
+  --accent: oklch(0.5 0.11 122);
+  --accent-hover: oklch(0.45 0.11 122);
+  --accent-fg: oklch(0.99 0.004 122);
+  --accent-text: oklch(0.45 0.11 122);
+  --accent-soft: oklch(0.5 0.11 122 / 0.12);
+  --selection: oklch(0.5 0.11 122 / 0.1);
+}
+:root[data-accent="celery"][data-tone="dark"],
+:root[data-level="island"][data-accent="celery"] [data-region="chrome"] {
+  --accent: oklch(0.86 0.14 122);
+  --accent-hover: oklch(0.91 0.119 122);
+  --accent-fg: oklch(0.2 0.04 122);
+  --accent-text: oklch(0.88 0.129 122);
+  --accent-soft: oklch(0.86 0.14 122 / 0.16);
+  --selection: oklch(0.86 0.14 122 / 0.13);
+}
+
+/* Cloud: no hue; graphite on light steps, off-white on dark (Pantone 2026, Cloud Dancer). */
+:root[data-accent="cloud"] {
+  --accent: oklch(0.3 0.01 85);
+  --accent-hover: oklch(0.25 0.01 85);
+  --accent-fg: oklch(0.99 0.004 85);
+  --accent-text: oklch(0.25 0.01 85);
+  --accent-soft: oklch(0.3 0.01 85 / 0.12);
+  --selection: oklch(0.3 0.01 85 / 0.1);
+}
+:root[data-accent="cloud"][data-tone="dark"],
+:root[data-level="island"][data-accent="cloud"] [data-region="chrome"] {
+  --accent: oklch(0.93 0.012 85);
+  --accent-hover: oklch(0.98 0.01 85);
+  --accent-fg: oklch(0.2 0.012 85);
+  --accent-text: oklch(0.95 0.011 85);
+  --accent-soft: oklch(0.93 0.012 85 / 0.16);
+  --selection: oklch(0.93 0.012 85 / 0.13);
+}
+
+/* Swatches in the palette pickers: each shows its palette's accent in the
+   tone it sits on. Same values as the palette blocks above (a test checks). */
+[data-swatch="teal"] {
+  --swatch: oklch(0.50 0.095 188);
+}
+[data-swatch="cobalt"] {
+  --swatch: oklch(0.5 0.16 266);
+}
+[data-swatch="lavender"] {
+  --swatch: oklch(0.5 0.15 295);
+}
+[data-swatch="orchid"] {
+  --swatch: oklch(0.52 0.16 345);
+}
+[data-swatch="celery"] {
+  --swatch: oklch(0.5 0.11 122);
+}
+[data-swatch="cloud"] {
+  --swatch: oklch(0.3 0.01 85);
+}
+:root[data-tone="dark"] [data-swatch="teal"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="teal"] {
+  --swatch: oklch(0.80 0.10 178);
+}
+:root[data-tone="dark"] [data-swatch="cobalt"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="cobalt"] {
+  --swatch: oklch(0.76 0.11 266);
+}
+:root[data-tone="dark"] [data-swatch="lavender"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="lavender"] {
+  --swatch: oklch(0.78 0.11 295);
+}
+:root[data-tone="dark"] [data-swatch="orchid"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="orchid"] {
+  --swatch: oklch(0.78 0.12 345);
+}
+:root[data-tone="dark"] [data-swatch="celery"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="celery"] {
+  --swatch: oklch(0.86 0.14 122);
+}
+:root[data-tone="dark"] [data-swatch="cloud"],
+:root[data-level="island"] [data-region="chrome"] [data-swatch="cloud"] {
+  --swatch: oklch(0.93 0.012 85);
+}
+
+/* Step previews in Settings › Appearance: each step's sidebar and surface (a test checks). */
+[data-preview="light"] {
+  --preview-side: oklch(0.955 0.005 195);
+  --preview-main: oklch(1 0 0);
+}
+[data-preview="soft"] {
+  --preview-side: oklch(0.925 0.009 80);
+  --preview-main: oklch(0.965 0.009 80);
+}
+[data-preview="island"] {
+  --preview-side: oklch(0.19 0.007 195);
+  --preview-main: oklch(1 0 0);
+}
+[data-preview="dark"] {
+  --preview-side: oklch(0.19 0.007 195);
+  --preview-main: oklch(0.205 0.007 195);
+}
+[data-preview="deep"] {
+  --preview-side: oklch(0.14 0.006 195);
+  --preview-main: oklch(0.155 0.006 195);
+}
+[data-preview="midnight"] {
+  --preview-side: oklch(0 0 0);
+  --preview-main: oklch(0 0 0);
 }
 
 @media (prefers-reduced-motion: reduce) {
