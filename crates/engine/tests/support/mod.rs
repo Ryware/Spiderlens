@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 use spiderlens_config::{CrawlConfig, ListInput, Mode, ModeInput, SpeedSettings};
-use spiderlens_engine::crawl::{Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, RunCommand};
+use spiderlens_engine::crawl::{
+    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LocalError, RunCommand,
+};
 use spiderlens_test_fixtures::Site;
 use tokio::sync::{mpsc, watch};
 
@@ -34,6 +36,8 @@ pub struct Done {
     pub path: PathBuf,
     pub summary: CrawlSummary,
     pub notices: Vec<String>,
+    /// Set when the crawl paused itself for a problem on this machine.
+    pub local: Option<LocalError>,
 }
 
 impl Done {
@@ -114,19 +118,24 @@ pub async fn run(
         }
         notices
     });
-    let summary = tokio::time::timeout(
+    let result = tokio::time::timeout(
         Duration::from_secs(120),
-        crawler.run_with(rx, commands, Some(etx)),
+        crawler.run_with(rx, Some(etx), commands),
     )
     .await
-    .expect("crawl finishes")
-    .unwrap();
+    .expect("crawl finishes");
+    let (summary, local) = match result {
+        Ok(s) => (s, None),
+        Err(CrawlError::Local(l)) => (CrawlSummary::read(&path).unwrap(), Some(l)),
+        Err(e) => panic!("crawl failed: {e}"),
+    };
     let notices = collect.await.unwrap();
     Done {
         dir,
         path,
         summary,
         notices,
+        local,
     }
 }
 
