@@ -158,6 +158,9 @@ pub struct CrawlArgs {
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
+    /// Follow amphtml links and check AMP pages (core subset of AMP's rules).
+    #[arg(long, help_heading = "Extraction")]
+    pub check_amp: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -463,6 +466,9 @@ impl CrawlArgs {
         }
         if let Some(v) = self.host_give_up_after {
             c.retry.host_give_up_after = v;
+        }
+        if self.check_amp {
+            c.extraction.check_amp = true;
         }
         if self.no_store_html {
             c.extraction.store_html = false;
