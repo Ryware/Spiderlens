@@ -122,3 +122,14 @@ crates/test-fixtures/src/issues.rs   the issues fixture site (one positive and o
 - **Specs 011, 014, 015, 016** add rule files to `issues/rules/` with the shape in D1; ids are namespaced by category (`sitemap.*`, `render.*`, `aeo.*`, `agent.*`).
 - **Exit code** number taken at merge (D11).
 - **Analysis phase** (D12): this spec ships the runner with no passes of its own; specs 010, 011, 015, 020 and 022/023 add their passes. The app's status bar and the CLI `analyse` command come with the runner.
+
+## As built (2026-10-14)
+
+Where the code differs from the decisions above, and why. Figures are in benchmarks.md.
+
+- **D4 evaluation**: each scope is one `SELECT` over `urls` (Pages joins `pages` once) with one column per rule, and Rust collects the hits; the CASE dispatch per rule and the subquery per page field cost 8.4 s on a real 100k crawl, this 3.0 s. Link, title and heading checks read bits of `temp.page_flags(url_id, flags)`, built by one sequential scan of `links` (split over up to four read-only connections) and `page_text` in Rust, in place of D6's `headings_skip` function and `hreflang_pairs` table.
+- **D5 incremental**: not built. The full live evaluation every refresh did not slow the 100k crawl (benchmarks.md), so the watermark adds complexity for no measured gain. Settings changes are incremental instead: only rules switched on or off or given a new threshold are evaluated again (SC-004, 0.08 s).
+- **D10 colours**: priority badges reuse the meaning tokens (high bad, medium warn, low info, opportunity ok) instead of four new tokens, so the contrast test already covers them. The Issues column is hidden by default on every tab.
+- **Desktop command**: settings go through `issues_apply` (contracts/desktop-commands.md); the settings sheet saves them to the profile like other categories.
+- **D11a**: migration step 4 on this branch, renumbered at merge; the Readability column is on Internal, hidden by default.
+- **D12**: the runner, `spiderlens analyse`, the crawl-end run in the CLI and app, and the status bar are in; `PASSES` is empty until specs 010 to 023 add theirs. On a read-only file the app shows the file without running passes; `Reader::analyse_in_session` (temp schema) is ready for when a pass needs it.

@@ -1,13 +1,21 @@
 # Desktop commands: issues
 
-All return the ts-rs types in data-model.md; all run on the results reader thread.
+All return the ts-rs types in data-model.md; the reading ones run on the
+results reader thread of the file named by `path`.
 
 | Command | Arguments | Returns |
 |---|---|---|
-| `rule_catalogue` | none | `RuleInfo[]` with the active profile's settings applied |
-| `issues_summary` | none | `IssuesSummary` for the open crawl (provisional while running) |
-| `url_issues` | `url_id` | `UrlIssue[]` for one URL |
-| `set_issue_settings` | `IssueSettings` | `IssueSettingsResult`; saves to the active profile, re-evaluates, writes meta when the file is writable |
-| `open_view` (007) | `ViewQuery { tab: "issues", filter: "<rule id>", ... }` | unchanged 007 behaviour |
+| `rule_catalogue` | `settings: IssueSettings` | `RuleCatalogue { rules: RuleInfo[], notices }` with those settings applied (defaults when they have errors) |
+| `issues_summary` | `path`, `running` | `IssuesSummary` for that crawl (site-wide counts provisional while running) |
+| `url_issues` | `path`, `id` | `UrlIssue[]` for one URL, with evidence |
+| `issues_apply` | `path` (or null), `settings: IssueSettings` | `SettingsNotice[]`; rejected without change when any notice is an error. Otherwise applies to every open reader and export, updates the built hits in place, and records `rules_version` and `issue_settings` in a writable file in the background. The settings sheet saves the overrides to the active profile like every other category. |
+| `analysis_run` | `path` | `AnalysisReport`; runs the Crawl Analysis passes missing or stale on that file (plan D12) |
+| `open_view` (007) | `ViewQuery { tab: "issue:<rule id>", filter: "all", ... }` | unchanged 007 behaviour; `results_tabs` lists one `issue:` tab per rule |
 
-Event: the existing results `changed` event carries the issues summary version so the sidebar refetches only when it changed.
+Events:
+
+- `analysis-progress` (`AnalysisProgress { pass, label, done, total }`):
+  the Crawl Analysis phase at crawl end (before `crawl-finished`) and on
+  opening a writable file. The status bar shows "Analysing: <label> N%".
+- The sidebar refetches the summary on new crawl data (the 007 refresh)
+  and after each applied settings change.
