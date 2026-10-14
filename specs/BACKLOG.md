@@ -23,17 +23,17 @@ Status values:
 | 006 | Crawl storage and files | Crash-safe crawl files, save, open, resume, migrations, recent crawls | merged (code merging) |
 | 007 | Results interface | Grid, tabs, filters, inspector, CSV export | merged |
 | 008 | Crawl speed and performance | Per-host adaptive limits, compression, batched writes, benchmarks | merged |
-| 009 | Issue rules engine | Rule format, priorities, explanations, first rule set (security, hreflang, canonicals, duplicates, pixel width), readability scores | in progress |
+| 009 | Issue rules engine | Rule format, priorities, explanations, first rule set (security, hreflang, canonicals, duplicates, pixel width), readability scores | approved (plan in progress) |
 | 010 | End-of-crawl report and exports | Report screen, health score, HTML/XLSX/CSV, bulk exports | in progress |
 | 011 | Sitemaps and orphan pages | Sitemap discovery and audit, orphan pages, XML and image sitemap generation | in progress |
 | 012 | Crawl comparison | Diff two crawls, change detection, staging vs production URL mapping | in progress |
 | 013 | Custom extraction and search | XPath, CSS path and regex extraction; source code search | in progress |
-| 014 | JavaScript rendering | Headless Chromium, raw vs rendered, screenshots, JS errors | approved (plan merging, code started) |
-| 015 | AEO and GEO checks | AI crawler access, llms.txt, schema coverage, answer readiness, structured data validation | in progress |
+| 014 | JavaScript rendering | Headless Chromium, raw vs rendered, screenshots, JS errors | approved (plan merged, code in progress) |
+| 015 | AEO and GEO checks | AI crawler access, llms.txt, schema coverage, answer readiness, structured data validation | approved (plan in progress) |
 | 016 | AI agents | Local MCP server, LLM scoring, custom AI prompts per page | in progress |
 | 017 | Design system and app shell | Three-pane shell, tokens, settings sheet | merged |
 | 018 | Appearance and themes | Brightness steps, accent palettes, follow system | merged |
-| 019 | Crawl data management and cleanup | Manage crawls, delete to trash, remove stored HTML, auto cleanup, storage reserve | approved |
+| 019 | Crawl data management and cleanup | Manage crawls, delete to trash, remove stored HTML, auto cleanup, storage reserve | approved (plan merged, code in progress) |
 | 020 | Near duplicate content | Near-match similarity, semantic similarity with embeddings | in progress |
 | 021 | Scheduled crawls | Recurring crawls with automatic exports | in progress |
 | 022 | Site visualisations | Crawl tree, directory tree, force-directed graphs, word clouds | in progress |
