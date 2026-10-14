@@ -366,7 +366,7 @@ test("inspector_rows_copy_and_show_in_table", async ({ page }) => {
   await expect(shown).toHaveCSS("opacity", "0");
   await show.locator("xpath=ancestor::li").hover();
   await expect(shown).toHaveCSS("opacity", "1");
-  const copy = details.getByRole("button", { name: "Copy https://example.com/" });
+  const copy = details.getByRole("button", { name: "Copy https://example.com/", exact: true });
   await copy.focus();
   await page.keyboard.press("Enter");
   await expect(details.getByRole("status")).toHaveText("Copied.");
