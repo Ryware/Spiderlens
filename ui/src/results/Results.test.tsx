@@ -264,3 +264,51 @@ test("sidebar_counts_follow_a_live_crawl_one_query_at_a_time", async () => {
   expect(t.results.tabCountCalls).toBe(calls);
   expect(overlapped).toBe(false);
 });
+
+// "Show in table" from the inspector's lists (T027).
+
+const detailsPane = () => screen.getByRole("complementary", { name: "Details" });
+const selectedRow = () => rows().find((r) => r.getAttribute("aria-selected") === "true");
+
+test("show_in_table_clears_a_search_that_hides_the_url_and_selects_it", async () => {
+  const t = await openInternal();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search Internal" }), { target: { value: "page-1" } });
+  await waitFor(() => expect(t.results.opened.at(-1)?.search).toBe("page-1"));
+  act(() => t.results.ready());
+  await waitFor(() => expect(within(rows()[0]).getAllByRole("gridcell")[0].textContent).toBe("https://example.com/page-1"));
+  fireEvent.click(rows()[0]);
+  // The home page links to it; the home page is hidden by the search.
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.search).toBe(""));
+  act(() => t.results.ready());
+  await waitFor(() => expect(selectedRow()?.getAttribute("data-id")).toBe("1"));
+  expect((screen.getByRole("searchbox", { name: "Search Internal" }) as HTMLInputElement).value).toBe("");
+  await waitFor(() => expect(within(detailsPane()).getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/"));
+  expect(document.activeElement).toBe(grid());
+});
+
+test("show_in_table_switches_to_a_tab_that_lists_the_url", async () => {
+  const t = fakeTransport();
+  t.results.urls.push({ id: 500, url: "https://other.example/", status: 200, title: "Other", depth: 1, internal: false });
+  const list = t.urlList;
+  t.urlList = async (p, id, kind, from, count) => {
+    const page = await list(p, id, kind, from, count);
+    return kind === "inlinks" ? { ...page, rows: [{ ...page.rows[0], id: 500, url: "https://other.example/", internal: false }] } : page;
+  };
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://other.example/ in table" }));
+  await waitFor(() => expect(screen.getByRole("region", { name: "Response codes" })).toBeTruthy());
+  act(() => t.results.ready());
+  await waitFor(() => expect(selectedRow()?.getAttribute("data-id")).toBe("500"));
+  await waitFor(() => expect(within(detailsPane()).getByRole("heading", { level: 2 }).textContent).toBe("https://other.example/"));
+});
+
+test("show_in_table_says_when_no_tab_lists_the_url", async () => {
+  await openInternal();
+  fireEvent.click(rows()[1]);
+  fireEvent.click(await within(detailsPane()).findByRole("radio", { name: /^Images/ }));
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://example.com/img-0.png in table" }));
+  await waitFor(() => expect(within(detailsPane()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
+  expect(selectedRow()?.getAttribute("data-id")).toBe("2");
+});
