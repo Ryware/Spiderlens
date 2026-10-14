@@ -14,6 +14,7 @@ use crate::{CheckError, CheckOptions, ErrorClass, FinalState, PageCheckResult, T
 pub fn parse_input_url(input: &str) -> Result<Url, CheckError> {
     spiderlens_config::normalize_url(input).map_err(|e| CheckError {
         class: ErrorClass::MalformedUrl,
+        reason: None,
         message: format!("\"{}\" is not a valid web address: {}.", input.trim(), e.0),
         attempts: 0,
     })
@@ -35,7 +36,7 @@ pub async fn check_page(input: &str, opts: &CheckOptions) -> PageCheckResult {
 
     // A network failure on robots.txt is the page's failure too: the host
     // cannot be reached (spec 001 research R6).
-    let fetch = robots::fetch(&client, &url).await;
+    let fetch = robots::fetch(&client, &url, &opts.headers).await;
     match &fetch {
         RobotsFetch::Unreachable(e) if e.class != ErrorClass::ContentProblem => {
             return PageCheckResult::failed(requested, e.clone());

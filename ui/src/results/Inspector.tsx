@@ -294,6 +294,9 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
   ];
   if (d.size !== null) facts.push(["Size", formatBytes(d.size)]);
   if (d.response_ms !== null) facts.push(["Response time", `${d.response_ms.toLocaleString()} ms`]);
+  if (d.attempts !== null && (d.attempts > 1 || d.manual_retry)) {
+    facts.push(["Attempts", `${d.attempts}${d.manual_retry ? ", last by Retry failed URLs" : ""}`]);
+  }
   if (d.indexability) {
     const non = d.indexability.startsWith("Non-indexable");
     facts.push(["Indexability", <span className={non ? "text-warn" : undefined}>{d.indexability}</span>]);
