@@ -3,6 +3,7 @@ import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
+import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
@@ -254,6 +255,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
+      { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
@@ -324,7 +326,9 @@ export function AppShell({ transport }: { transport: Transport }) {
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
         <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
-          {resultTab && crawl.path ? (
+          {section === "log" && crawl.path ? (
+            <CrawlLog transport={transport} path={crawl.path} live={crawl.running} />
+          ) : resultTab && crawl.path ? (
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
               // tab's selection into the new tab's first render.
