@@ -236,16 +236,30 @@ impl Reader {
         Ok(out)
     }
 
-    /// The issue settings saved in the crawl file (plan D8), if any. A
-    /// value this version cannot read counts as none.
+    /// The issue settings saved in the crawl file (plan D8): the last ones
+    /// recorded, else the profile's when the crawl started. A value this
+    /// version cannot read counts as none.
     pub fn stored_issue_settings(&self) -> Result<Option<spiderlens_config::IssueSettings>> {
-        let text: Option<String> = self
+        if let Some(t) = self.meta("issue_settings")? {
+            return Ok(serde_json::from_str(&t).ok());
+        }
+        Ok(self
+            .meta("config")?
+            .and_then(|t| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&t).ok())
+            .map(|c| c.config.issues))
+    }
+
+    /// The rule set version the file's issues were last recorded with, if
+    /// any (FR-013: older files are simply evaluated again).
+    pub fn recorded_rules_version(&self) -> Result<Option<u32>> {
+        Ok(self.meta("rules_version")?.and_then(|v| v.parse().ok()))
+    }
+
+    fn meta(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
             .conn
-            .query_row("SELECT value FROM meta WHERE key = 'issue_settings'", [], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
     }
 
     pub fn issue_settings(&self) -> &ResolvedSettings {
@@ -275,6 +289,30 @@ impl Reader {
         self.ensure_derived(deps)?;
         build_hits(&self.conn, &self.features, &self.issue_settings)
     }
+}
+
+/// Records in the crawl file the rule set version and the issue settings
+/// its issues were last evaluated with (FR-013, plan D8). Meta is
+/// key/value, so no migration is needed. A file this version cannot write
+/// (another format, or not writable) is left alone and the error returned.
+pub fn record_issue_settings(path: &std::path::Path, s: &spiderlens_config::IssueSettings) -> Result<()> {
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let format: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
+        .optional()?;
+    if format.as_deref() != Some(spiderlens_engine::crawl::store::FORMAT) {
+        return Err(crate::Error::invalid("not a crawl file this version writes"));
+    }
+    let json = serde_json::to_string(s).expect("settings serialize");
+    let mut set = conn
+        .prepare("INSERT INTO meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2")?;
+    set.execute(("rules_version", super::RULES_VERSION.to_string()))?;
+    set.execute(("issue_settings", json))?;
+    Ok(())
 }
 
 /// Builds `derived` on a connection that has no [`Reader`] (CSV export).

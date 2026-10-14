@@ -18,7 +18,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 pub(crate) use eval::build_derived_with;
-pub use eval::{IssueCount, IssuesSummary, PriorityTotal, UrlIssue};
+pub use eval::{IssueCount, IssuesSummary, PriorityTotal, UrlIssue, record_issue_settings};
 pub use settings::{ResolvedRule, ResolvedSettings, SettingsNotice, resolve};
 pub use spiderlens_config::Priority;
 

@@ -214,6 +214,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         }
     };
     print_summary(&summary, cmd.json, &file);
+    record_issue_settings(&file);
     if !cmd.json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",
@@ -252,6 +253,17 @@ fn duration(secs: u64) -> String {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
         s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Records the rule set version and issue settings in the file at run end
+/// (spec 009 FR-013). The issues themselves are evaluated when read.
+fn record_issue_settings(file: &Path) {
+    let stored = spiderlens_results::Reader::open(file).and_then(|r| r.stored_issue_settings());
+    if let Ok(Some(s)) = stored
+        && let Err(e) = spiderlens_results::issues::record_issue_settings(file, &s)
+    {
+        eprintln!("warning: could not record the issue settings: {e}");
     }
 }
 
