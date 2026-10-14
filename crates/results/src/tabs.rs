@@ -79,6 +79,16 @@ pub enum ValueKind {
     Status,
     State,
     Bool,
+    /// A URL's issues: `(4 - highest priority) * 1,000,000 + count`, so
+    /// sorting descending puts the most urgent first (spec 009 FR-018).
+    /// Shown as "High · 3".
+    Issues,
+}
+
+/// Reads an [`ValueKind::Issues`] value: the highest priority and the count.
+pub fn decode_issues(v: i64) -> (spiderlens_config::Priority, i64) {
+    let p = spiderlens_config::Priority::ALL[(4 - (v / 1_000_000)).clamp(0, 3) as usize];
+    (p, v % 1_000_000)
 }
 
 impl ValueKind {
@@ -276,6 +286,16 @@ mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
+    pub const ISSUES: ColumnDef = col(
+        "issues",
+        "Issues",
+        "(SELECT (4 - MIN(r.prio)) * 1000000 + COUNT(*) FROM temp.issue_hits h \
+         JOIN temp.issue_rules r ON r.idx = h.rule WHERE h.url_id = u.id)",
+        ValueKind::Issues,
+        110,
+    )
+    .hidden()
+    .reads(Derived::IssueHits);
     pub const CONTENT_TYPE: ColumnDef = col(
         "content_type",
         "Content type",
@@ -532,7 +552,14 @@ macro_rules! heading_tab {
 
 /// Every tab in display order (FR-007, FR-009).
 pub fn tabs() -> &'static [TabDef] {
-    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(build);
+    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(|| {
+        let mut tabs = build();
+        // Every tab can show each URL's issues (spec 009 FR-018).
+        for t in &mut tabs {
+            t.columns.push(c::ISSUES);
+        }
+        tabs
+    });
     &TABS
 }
 

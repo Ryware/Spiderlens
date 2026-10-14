@@ -41,3 +41,10 @@ test("numeric_kinds_align_right", () => {
   expect(numeric("text")).toBe(false);
   expect(numeric("url")).toBe(false);
 });
+
+test("issues_cells_read_as_highest_priority_and_count", () => {
+  expect(formatCell("issues", 4_000_003)).toBe("High · 3");
+  expect(formatCell("issues", 1_000_012)).toBe("Opportunity · 12");
+  expect(cellTone("issues", 3_000_001)).toBe("warn");
+  expect(formatCell("issues", null)).toBe("");
+});

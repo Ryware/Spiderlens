@@ -64,10 +64,16 @@ fn cell_text(c: &ColumnDef, v: &Value) -> String {
     match v {
         Value::Null | Value::Blob(_) => String::new(),
         Value::Integer(i) if c.kind == crate::ValueKind::Bool => (if *i != 0 { "Yes" } else { "No" }).into(),
+        Value::Integer(i) if c.kind == crate::ValueKind::Issues => issues_text(*i),
         Value::Integer(i) => i.to_string(),
         Value::Real(f) => f.to_string(),
         Value::Text(s) => s.clone(),
     }
+}
+
+fn issues_text(v: i64) -> String {
+    let (p, n) = crate::tabs::decode_issues(v);
+    format!("{} · {n}", p.label())
 }
 
 fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
@@ -75,6 +81,9 @@ fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         serde_json::Value::Number(n) if c.kind == crate::ValueKind::Bool => {
             (if n.as_i64() != Some(0) { "Yes" } else { "No" }).into()
+        }
+        serde_json::Value::Number(n) if c.kind == crate::ValueKind::Issues => {
+            n.as_i64().map(issues_text).unwrap_or_default()
         }
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
