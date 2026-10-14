@@ -52,9 +52,23 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: true,
   },
+  {
+    id: "links",
+    title: "Links",
+    columns: [col("address", "Address", "url", 420), col("link_score", "Link Score", "score", 100, "analysis"), col("depth", "Crawl depth", "int", 100), col("followed_inlinks", "Unique followed inlinks", "int", 170, "analysis")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "depth_4", label: "Crawl depth 4 or more", need: "base" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
+/** A made-up Link Score: the start URL is the strongest page. */
+const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
+const cell = (u: FakeUrl, c: string) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7 })[c] ?? null;
 
 export interface FakeResults {
   urls: FakeUrl[];
@@ -98,7 +112,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     copied: [],
     exports: [],
     opened: [],
-    features: ["base"],
+    features: ["base", "analysis"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
     },
@@ -114,6 +128,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
+    if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
@@ -214,6 +229,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: true,
+        link_metrics: null,
         unavailable: { attempts: "Request attempts are not recorded in this crawl yet." },
       };
       return d;

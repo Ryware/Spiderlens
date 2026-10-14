@@ -250,3 +250,28 @@ test("changing_the_selected_url_loads_its_details", async () => {
   rerender(<Inspector transport={t} path={PATH} id={5} />);
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-4"));
 });
+
+// --- Link Score (spec 023 FR-008) -------------------------------------------
+
+test("link_score_section_shows_score_rank_and_counts", async () => {
+  const t = withDetail({
+    link_metrics: { score: 72.44, rank: 12, of: 4812, unique_inlinks: 40, followed_inlinks: 38, all_inlinks: 95, unique_outlinks: 17, external_outlinks: 3, pct_linking: 0.83 },
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const section = within(details()).getByRole("heading", { name: "Link Score" }).closest("section")!;
+  expect(within(section).getByText("72.4")).toBeTruthy();
+  expect(within(section).getByText(`Rank 12 of ${(4812).toLocaleString()} internal URLs`)).toBeTruthy();
+  expect(within(section).getByRole("meter", { name: "Link Score" }).getAttribute("aria-valuenow")).toBe("72");
+  expect(within(section).getByText("38")).toBeTruthy();
+  expect(within(section).getByText("0.8%")).toBeTruthy();
+});
+
+test("link_score_while_the_crawl_runs_says_when_it_comes", async () => {
+  const t = withDetail({ link_metrics: null, unavailable: { link_metrics: "Calculated when the crawl ends." } });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).queryByRole("heading", { name: "Link Score" })).toBeNull();
+  expect(within(details()).getByText("Link Score.")).toBeTruthy();
+  expect(within(details()).getByText(/Calculated when the crawl ends/)).toBeTruthy();
+});

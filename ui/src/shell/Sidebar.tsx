@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -11,6 +11,7 @@ export interface NavItem {
 
 export const resultTabs: NavItem[] = [
   { id: "internal", title: "Internal", icon: Globe },
+  { id: "links", title: "Links", icon: Network },
   { id: "external", title: "External", icon: ExternalLink },
   { id: "response-codes", title: "Response codes", icon: ListOrdered },
   { id: "url", title: "URL", icon: Link2 },

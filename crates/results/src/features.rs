@@ -56,6 +56,10 @@ impl Features {
                 available.push(need);
             }
         }
+        // Crawl Analysis runs once fetching has ended (spec 023 FR-029).
+        if meta("status")?.as_deref() != Some("running") {
+            available.push(Need::Analysis);
+        }
         let redirect_limit = config
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))

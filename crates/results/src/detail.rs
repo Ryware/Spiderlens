@@ -20,6 +20,23 @@ pub struct RedirectHop {
     pub final_state: String,
 }
 
+/// One URL's spec 023 values (FR-008).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct LinkMetrics {
+    /// 0-100, unrounded.
+    pub score: f64,
+    pub rank: u32,
+    /// Number of scored URLs, for "rank 12 of 4,812".
+    pub of: u32,
+    pub unique_inlinks: u32,
+    pub followed_inlinks: u32,
+    pub all_inlinks: u32,
+    pub unique_outlinks: u32,
+    pub external_outlinks: u32,
+    pub pct_linking: f64,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct UrlDetail {
@@ -72,6 +89,9 @@ pub struct UrlDetail {
     pub headings: u64,
     /// The page's HTML is stored in the crawl file.
     pub html_stored: bool,
+    /// Link Score and link counts (spec 023); None for external URLs and
+    /// while the crawl runs.
+    pub link_metrics: Option<LinkMetrics>,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
@@ -233,6 +253,32 @@ impl Reader {
                 [id],
                 |r| r.get(0),
             )?;
+        let link_metrics = if internal && self.features.has(Need::Analysis) {
+            self.ensure_derived([crate::tabs::Derived::LinkMetrics])?;
+            self.conn
+                .query_row(
+                    "SELECT score, rank, (SELECT COUNT(*) FROM link_metrics), unique_inlinks, followed_inlinks,
+                            all_inlinks, unique_outlinks, external_outlinks, pct_linking
+                     FROM link_metrics WHERE url_id = ?1",
+                    [id],
+                    |r| {
+                        Ok(LinkMetrics {
+                            score: r.get(0)?,
+                            rank: r.get(1)?,
+                            of: r.get(2)?,
+                            unique_inlinks: r.get(3)?,
+                            followed_inlinks: r.get(4)?,
+                            all_inlinks: r.get(5)?,
+                            unique_outlinks: r.get(6)?,
+                            external_outlinks: r.get(7)?,
+                            pct_linking: r.get(8)?,
+                        })
+                    },
+                )
+                .optional()?
+        } else {
+            None
+        };
         let mut unavailable = BTreeMap::new();
         for (field, need) in [
             ("indexability", Need::Extraction),
@@ -243,6 +289,7 @@ impl Reader {
             ("response_time", Need::Timing),
             ("attempts", Need::Attempts),
             ("raw_html", Need::RawHtml),
+            ("link_metrics", Need::Analysis),
         ] {
             if !self.features.has(need) {
                 unavailable.insert(field.to_string(), need.unavailable_reason().to_string());
@@ -287,6 +334,7 @@ impl Reader {
             headers,
             headings,
             html_stored,
+            link_metrics,
             unavailable,
         })
     }

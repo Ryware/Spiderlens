@@ -8,6 +8,7 @@
 //! temporary table on disk and hand out one page of rows at a time (plan D4,
 //! constitution principle VI).
 
+pub mod analysis;
 mod counts;
 mod detail;
 mod export;
@@ -20,7 +21,7 @@ mod tabs;
 mod view;
 
 pub use counts::FilterCounts;
-pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
+pub use detail::{HeadingRow, LinkMetrics, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
 pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
 pub use features::Features;
 pub use reader::Reader;

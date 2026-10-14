@@ -200,6 +200,14 @@ test("disabled_result_tabs_do_not_navigate", async () => {
   expect(screen.getByRole("heading", { name: "Crawl a website" })).toBeTruthy();
 });
 
+test("links_tab_follows_internal_and_waits_for_a_crawl", async () => {
+  await renderApp();
+  const nav = screen.getByRole("navigation", { name: "Sections" });
+  const titles = within(nav).getAllByRole("button").map((b) => b.textContent);
+  expect(titles.indexOf("Links")).toBe(titles.indexOf("Internal") + 1);
+  expect(within(nav).getByText("Links").closest("button")!.getAttribute("aria-disabled")).toBe("true");
+});
+
 test("ai_visibility_items_are_marked_for_m4_and_disabled", async () => {
   await renderApp();
   const nav = screen.getByRole("navigation", { name: "Sections" });
