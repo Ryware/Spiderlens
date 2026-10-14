@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Approved (2026-10-13)
+**Status**: Approved (2026-10-13). Amended 2026-10-13 with the plan: readability folded in from the backlog review (FR-031, one rule, one column).
 
 **Input**: Product backlog entry 009, "Issue rules engine: rule format, priorities, explanations, the first rule set" (milestone M2), started on the owner's go-ahead of 2026-10-13 ("go for everything, in parallel, and do not forget UI tests"). The engine turns a crawl into an audit: every problem SpiderLens can detect from stored crawl data becomes a named issue with a priority, a plain explanation, how to fix it and the list of affected URLs, shown per page and site-wide, in the desktop app and the command line.
 
@@ -181,6 +181,10 @@ A user opens a crawl saved by an older version of SpiderLens. Rules whose data t
 - **FR-029**: Evaluating rules during a crawl MUST NOT reduce crawl speed by more than 5% on the 100,000-page local fixture site (the spec 008 benchmark).
 - **FR-030**: Evaluating rules MUST NOT load the whole crawl into memory; memory use MUST stay flat as the crawl grows (constitution principle VI).
 
+**Readability** (added 2026-10-13)
+
+- **FR-031**: The system MUST compute a readability score (Flesch reading ease, 0 to 100, higher is easier) for every page from its visible body text during extraction, show it as an optional Readability column on the Internal tab, and use it in the "Difficult to read" rule. Pages declared in a language other than English (a `lang` not starting with `en`), or with fewer than 100 words, MUST have no score (shown empty, not zero), because the formula is only meaningful for English prose of some length. Crawl files made before this change show the column and rule as unavailable.
+
 ### First rule set
 
 Priorities: H = High, M = Medium, L = Low, O = Opportunity. "Pages" means internal HTML pages that returned 200 (spec 007, FR-010) unless stated otherwise. Thresholds are defaults the user can change (FR-021). Where a 007 filter tests the same thing, the threshold is the same (FR-005).
@@ -228,6 +232,7 @@ Priorities: H = High, M = Medium, L = Low, O = Opportunity. "Pages" means intern
 | Content | Partially extracted or encoding problem (spec 005 FR-008) | pages | M | |
 | Content | Large HTML page | pages | L | over 1 MB decoded |
 | Content | Missing language attribute | pages | L | |
+| Content | Difficult to read (Flesch reading ease below N) | pages not declared in another language, with at least 100 words | O | 30 |
 | Images | Missing alt attribute | images on pages | L | |
 | Images | Alt text over N characters | images on pages | L | 100 |
 | Images | Broken image (4xx, 5xx or no response) | images that were checked | H | |
@@ -293,7 +298,7 @@ Timings are measured on the reference machine defined in spec 007, Assumptions.
 - **Data**: the rules use only data that specs 003 to 006 already store (response facts, error classes, redirects, links, titles, descriptions, headings, directives, canonicals, hreflang, images, structured data blocks, headers, text fingerprints). This feature adds no extraction and no fetching.
 - **Health score, report and exports beyond CSV** belong to spec 010; this spec provides the issues, priorities and texts they present.
 - **Sitemap rules** (orphan pages, non-indexable URLs in sitemaps, URLs missing from sitemaps) belong to spec 011, which adds them to this catalogue.
-- **Near-duplicate content (spec 020), Link Score (spec 023), readability, spelling and grammar, pixel-width title and description checks, custom user-written rules, and structured data validation against vocabularies** are out of scope (M3, M5 or later). Structured data here only checks that JSON-LD parses.
+- **Near-duplicate content (spec 020), Link Score (spec 023), readability for languages other than English, spelling and grammar, pixel-width title and description checks, custom user-written rules, and structured data validation against vocabularies** are out of scope (M3, M5 or later). Structured data here only checks that JSON-LD parses.
 - **JavaScript rendering rules** (content only present after rendering, rendering errors) belong to spec 014; **AEO, GEO and AI bot rules** belong to spec 015; both add rules to the same catalogue.
 - **Ignoring an issue for a specific URL** ("this one is fine") is out of scope for this spec; turning a rule off or changing its priority covers the common cases.
 - **Language**: rule names, explanations and fixes are written in English, like the rest of the UI. Translation is a later concern.

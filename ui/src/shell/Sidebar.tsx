@@ -63,7 +63,7 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
   const heading = (t: string) => (collapsed ? <div className="mx-2 my-2 h-px bg-line" /> : <div className="px-2 pt-3 pb-1 text-xs font-semibold text-fg-3">{t}</div>);
 
   return (
-    <nav aria-label="Sections" className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
+    <nav aria-label="Sections" data-material-region className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>

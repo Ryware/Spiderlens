@@ -1,4 +1,5 @@
 import { ACCENTS, type Appearance, chooseLevel, type Level, LEVELS, toneOf } from "../shell/appearance";
+import { materialAvailable } from "../shell/platform";
 import { AccentSwatch } from "../shell/BrightnessPopover";
 import { cn, Select, Switch } from "../components/ui";
 import { Group, Row } from "./fields";
@@ -13,11 +14,14 @@ export function AppearanceSettings({
   level,
   systemDark,
   onChange,
+  material = materialAvailable(),
 }: {
   appearance: Appearance;
   level: Level;
   systemDark: boolean;
   onChange: (patch: Partial<Appearance>) => void;
+  /** Whether this window can show the system material at all. */
+  material?: boolean;
 }) {
   const side = (tone: "light" | "dark") => LEVELS.filter((l) => l.tone === tone);
   return (
@@ -76,6 +80,11 @@ export function AppearanceSettings({
               )}
             </Row>
           </>
+        )}
+        {material && (
+          <Row label="Translucent sidebar" help="Let the desktop show softly through the sidebar and toolbar. Off, or with Reduce transparency on in System Settings, they are solid.">
+            {(_, l) => <Switch labelledBy={l} checked={appearance.translucent !== false} onChange={(v) => onChange({ translucent: v })} />}
+          </Row>
         )}
       </Group>
       <Group>
