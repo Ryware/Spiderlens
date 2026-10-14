@@ -1,6 +1,6 @@
 //! A large synthetic site for crawl benchmarks (spec 008, FR-032).
 //!
-//! `bench-site --pages 100000 [--delay-ms 100] [--max-open 4] [--port 8700]`
+//! `bench-site --pages 100000 [--delay-ms 100] [--max-open 4] [--flaky-per-mille 20] [--port 8700]`
 //!
 //! Serves `/p/0` .. `/p/{pages-1}` on 127.0.0.1. Every page links to its ten
 //! children (a tree, so a breadth-first crawl reaches every page), its parent,
@@ -8,6 +8,8 @@
 //! real site's menu. Bodies are about 4 KB. Only ever binds to loopback.
 //! With `--max-open N`, a request arriving while N are already open gets
 //! 429 Too Many Requests, like a rate-limited server (SC-004).
+//! With `--flaky-per-mille N`, N pages in 1000 answer 503 the first time
+//! they are requested and normally after that (spec 004 retries).
 //!
 //! `GET /__stats` returns what the server saw: requests, peak simultaneous
 //! requests and the most requests started in any one second, so caps can be
@@ -41,6 +43,9 @@ struct App {
     pages: u64,
     delay: Duration,
     max_open: Option<u64>,
+    flaky_per_mille: u64,
+    /// Flaky pages that already failed once.
+    failed_once: std::sync::Mutex<std::collections::HashSet<u64>>,
     stats: Stats,
 }
 
@@ -58,6 +63,8 @@ async fn main() {
         pages: arg("--pages").unwrap_or(100_000),
         delay: Duration::from_millis(arg("--delay-ms").unwrap_or(0)),
         max_open: arg("--max-open"),
+        flaky_per_mille: arg("--flaky-per-mille").unwrap_or(0),
+        failed_once: Default::default(),
         stats: Stats {
             started: Instant::now(),
             requests: AtomicU64::new(0),
@@ -130,6 +137,9 @@ async fn page(State(app): State<Arc<App>>, Path(n): Path<u64>) -> Response {
     }
     if n >= app.pages {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    if n != 0 && mix(n ^ 0xf1a4) % 1000 < app.flaky_per_mille && app.failed_once.lock().unwrap().insert(n) {
+        return (StatusCode::SERVICE_UNAVAILABLE, "try again\n").into_response();
     }
     let mut html = String::with_capacity(6000);
     let _ = write!(
