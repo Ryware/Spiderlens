@@ -26,12 +26,17 @@ export function IssueList({ issues, className }: { issues: Issue[]; className?: 
   );
 }
 
-/** A titled group of rows, drawn as one rounded box (the macOS grouped form). */
-export function Group({ title, children }: { title?: string; children: ReactNode }) {
+/**
+ * A titled group of rows, drawn as one rounded box (the macOS grouped form).
+ * `disabled` locks every control in it, as while a crawl runs.
+ */
+export function Group({ title, children, disabled }: { title?: string; children: ReactNode; disabled?: boolean }) {
   return (
     <section className="flex flex-col gap-1.5">
       {title && <h3 className="m-0 px-1 text-xs font-semibold text-fg-3">{title}</h3>}
-      <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">{children}</div>
+      <fieldset disabled={disabled} className="m-0 min-w-0 divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface p-0">
+        {children}
+      </fieldset>
     </section>
   );
 }

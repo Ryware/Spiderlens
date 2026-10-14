@@ -28,3 +28,48 @@ Notes:
   starts at 2 requests and climbs; it reaches 32 after about 500 answers.
 - SC-002 measured 438/s over a 10,000 page run that includes the first
   seconds; the steady state on the server was 500/s.
+
+## Round 2: 1,000,000 pages and the CI benchmark (2026-10-13)
+
+Same machine and site. `main` at aab9013 before, this branch after.
+
+| Scenario | Before | After |
+|---|---|---|
+| Memory at 100,000 pages crawled | 33.7 MB | 29.8 MB |
+| Memory at 1,000,000 pages crawled (SC-007: at most 20% above) | 76.2 MB (+126%) | 31.1 MB (+4%) |
+| Peak memory, whole 1,000,000 page crawl | 78.5 MB | 33.5 MB (final index build) |
+| Write-ahead log while crawling | grows with every page: 3.6 GB at 250,000 pages | rewinds every second, 130 MB at most |
+| 1,000,000 pages, Fast | 495 s, 2,020 URLs/s | 462 s, 2,165 URLs/s |
+| 100,000 pages, Fast | 40.8 s | 35.5 s |
+
+What grew: not the crawler's own memory (heap stayed at 18 to 22 MB the
+whole way) but the crawl file's write-ahead log and its index, which SQLite
+maps into memory. The background checkpointer copied the log into the file
+but never reached its end, because the crawl starts its next transaction
+the moment it commits, and SQLite rewinds the log only for a transaction
+that starts once everything is copied. A passive checkpoint from the crawl
+itself, between two transactions once a second, copies the little that is
+left, so the next transaction writes from the start of the log again.
+
+Saving backpressure (FR-023) holds by construction: a result is only sent
+to the saving loop by a request that counts as in flight, and nothing new
+starts until the loop has saved it, so unsaved results never exceed the
+"at once" cap, and page extraction has its own memory budget.
+
+### CI benchmark (FR-034)
+
+`bench-check` (in `test-fixtures`) runs in the `Crawl benchmark` CI job:
+
+- 20,000 pages Fast, five runs, alternating with a build of the base
+  branch on the same machine; fails when the best run is more than 10%
+  slower than the base's best. A stored number would not work: identical
+  builds measured 8% apart on a median of five; the best of five agree
+  within 0.5%.
+- Write-ahead log under 200 MB on a 50,000 page crawl (63 MB now, 386 MB
+  before the fix).
+- Caps from the site's own counters: 100 URLs/s, 10 at once, 6 per site
+  with adaptive off; under 2% rejected by a site that answers 429 above 4
+  open requests.
+
+Local run: 3,003 vs 3,145 URLs/s median (noise), best of five +5.0% and
++2.8% against `main`; every check passes.

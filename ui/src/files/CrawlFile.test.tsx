@@ -357,6 +357,7 @@ test("disk_problem_titles", () => {
     disk_low: "Disk space is low",
     drive_gone: "The drive was disconnected",
     permission: "Permission denied",
+    network: "The network seems to be down",
     other: "Couldn't write the crawl file",
   });
 });
