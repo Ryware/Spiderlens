@@ -46,9 +46,15 @@ impl Reader {
             (true, UrlScope::External) => sql.push_str(" AND u.internal = 0"),
             _ => {}
         }
-        let values: Vec<i64> = self.conn.query_row(&sql, [], |r| {
-            (0..available.len()).map(|i| r.get::<_, i64>(i)).collect()
-        })?;
+        // A tab whose data this file lacks (spec 024 tabs before a fetch) has
+        // no filter to count.
+        let values: Vec<i64> = if available.is_empty() {
+            Vec::new()
+        } else {
+            self.conn.query_row(&sql, [], |r| {
+                (0..available.len()).map(|i| r.get::<_, i64>(i)).collect()
+            })?
+        };
         let mut counts = BTreeMap::new();
         let mut unavailable = BTreeMap::new();
         for f in &t.filters {

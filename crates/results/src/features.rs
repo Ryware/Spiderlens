@@ -50,9 +50,17 @@ impl Features {
             }
             None => String::new(),
         };
+        // Integration data (spec 024) is listed under its own key, written
+        // by the integrations crate, not by the crawl.
+        let integrations = meta("integration_features")?.unwrap_or_default();
         let mut available = vec![Need::Base];
         for need in [Need::Extraction, Need::Attempts, Need::Timing, Need::RawHtml] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {
+                available.push(need);
+            }
+        }
+        for need in [Need::SearchConsole] {
+            if integrations.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
             }
         }
