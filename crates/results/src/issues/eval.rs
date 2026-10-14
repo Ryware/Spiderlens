@@ -5,7 +5,7 @@
 //! rules with one `CASE`. Counts, a URL's issues and an issue's rows are then
 //! index reads. Nothing is written to the crawl file.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -234,6 +234,18 @@ impl Reader {
         }
         out.sort_by_key(|u| u.priority);
         Ok(out)
+    }
+
+    /// The issue settings saved in the crawl file (plan D8), if any. A
+    /// value this version cannot read counts as none.
+    pub fn stored_issue_settings(&self) -> Result<Option<spiderlens_config::IssueSettings>> {
+        let text: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'issue_settings'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
     }
 
     pub fn issue_settings(&self) -> &ResolvedSettings {

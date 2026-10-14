@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::types::Value;
 
 use crate::Error;
+use crate::issues::ResolvedSettings;
 use crate::reader::connect;
 use crate::tabs::{ColumnDef, TabDef};
 use crate::view::{ViewQuery, compile};
@@ -145,11 +146,27 @@ pub fn write_csv(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
-    let settings = crate::issues::ResolvedSettings::default();
-    let (conn, features, _) = connect(crawl, &settings)?;
+    let settings = ResolvedSettings::default();
+    write_csv_with(crawl, q, columns, ranges, &settings, out, cancel, progress)
+}
+
+/// [`write_csv`] with the issue settings in force (spec 009 FR-025: an
+/// issue's export lists the same URLs the app shows).
+#[allow(clippy::too_many_arguments)]
+pub fn write_csv_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    settings: &ResolvedSettings,
+    out: impl Write,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
+    let (conn, features, _) = connect(crawl, settings)?;
     let c = compile(q, &features)?;
     let cols = pick_columns(c.tab, columns)?;
-    crate::issues::build_derived_with(&conn, &features, &settings, &c.derived)?;
+    crate::issues::build_derived_with(&conn, &features, settings, &c.derived)?;
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;
     for (n, (_, col)) in cols.iter().enumerate() {
@@ -230,10 +247,26 @@ pub fn export_file(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
+    let settings = ResolvedSettings::default();
+    export_file_with(crawl, q, columns, ranges, &settings, dest, cancel, progress)
+}
+
+/// [`export_file`] with the issue settings in force.
+#[allow(clippy::too_many_arguments)]
+pub fn export_file_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    settings: &ResolvedSettings,
+    dest: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
     let part = part_path(dest);
     let result = (|| {
         let file = std::fs::File::create(&part)?;
-        let n = write_csv(crawl, q, columns, ranges, &file, cancel, progress)?;
+        let n = write_csv_with(crawl, q, columns, ranges, settings, &file, cancel, progress)?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&part, dest)?;

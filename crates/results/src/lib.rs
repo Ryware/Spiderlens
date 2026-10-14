@@ -22,7 +22,9 @@ mod view;
 
 pub use counts::FilterCounts;
 pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
-pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
+pub use export::{
+    COPY_LIMIT, ExportError, export_file, export_file_with, write_csv, write_csv_with, write_tsv_row,
+};
 pub use features::Features;
 pub use reader::Reader;
 pub use rusqlite::InterruptHandle;

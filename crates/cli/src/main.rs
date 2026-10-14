@@ -5,6 +5,7 @@
 
 mod crawl_cmd;
 mod export_cmd;
+mod issues_cmd;
 mod options;
 
 use std::io::Write;
@@ -30,6 +31,9 @@ pub(crate) mod exit {
     pub const FAILED: u8 = 4;
     /// The crawl was paused (Ctrl-C) and can be resumed.
     pub const PAUSED: u8 = 5;
+    /// `issues --fail-on`: an issue at or above that priority has URLs
+    /// (spec 009 FR-027).
+    pub const ISSUES_FOUND: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -60,6 +64,10 @@ enum Command {
     Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// List the issue rules: what each checks, why it matters, how to fix.
+    Rules(issues_cmd::RulesArgs),
+    /// List the issues found in a crawl file, or export them as CSV.
+    Issues(Box<issues_cmd::IssuesArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -151,6 +159,8 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Rules(args) => issues_cmd::run_rules(args),
+        Command::Issues(args) => issues_cmd::run_issues(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }
