@@ -11,6 +11,7 @@ import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
+import type { PageHtml } from "./generated/PageHtml";
 import type { Refresh } from "./generated/Refresh";
 import type { RowPage } from "./generated/RowPage";
 import type { TabCounts } from "./generated/TabCounts";
@@ -416,6 +417,8 @@ export interface Transport {
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  /** The page's stored HTML, or why there is none. */
+  urlHtml(path: string, id: number): Promise<PageHtml>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
@@ -498,6 +501,7 @@ export const tauriTransport: Transport = {
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  urlHtml: (path, id) => invoke("url_html", { path, id }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),

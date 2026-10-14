@@ -1,13 +1,14 @@
 // The detail pane for the selected URL (US3, FR-019..FR-025).
 
 import { useEffect, useState, type ReactNode } from "react";
-import { CornerDownRight, MousePointerClick } from "lucide-react";
+import { CornerDownRight, FileCode, MousePointerClick } from "lucide-react";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
 import { cellTone, formatBytes, toneText } from "./format";
+import { HtmlViewer } from "./HtmlViewer";
 
 const LIST_PAGE = 100;
 
@@ -139,6 +140,7 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [list, setList] = useState<ListKind>("inlinks");
+  const [htmlOpen, setHtmlOpen] = useState(false);
 
   useEffect(() => {
     if (!path || id === null) {
@@ -195,9 +197,10 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
   }
   if (d.fetched_at !== null) facts.push(["Fetched", new Date(d.fetched_at).toLocaleString()]);
   const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings };
-  // Fields the file has no data for, grouped by why.
+  // Fields the file has no data for, grouped by why. Page HTML has its own
+  // section, which says how to get it.
   const missing = new Map<string, string[]>();
-  for (const [k, why] of Object.entries(d.unavailable)) missing.set(why, [...(missing.get(why) ?? []), fieldLabels[k] ?? k]);
+  for (const [k, why] of Object.entries(d.unavailable)) if (k !== "raw_html") missing.set(why, [...(missing.get(why) ?? []), fieldLabels[k] ?? k]);
 
   return (
     <aside aria-label="Details" className="flex h-full flex-col overflow-y-auto bg-surface">
@@ -278,6 +281,26 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
           </dl>
         </Section>
       )}
+
+      <Section
+        title="Page HTML"
+        aside={
+          d.html_stored && (
+            <Button size="sm" onClick={() => setHtmlOpen(true)}>
+              <FileCode className="size-3.5" /> View source
+            </Button>
+          )
+        }
+      >
+        <p className="m-0 text-sm text-fg-3">
+          {d.html_stored
+            ? "The page's source as received, searchable and ready to copy."
+            : d.unavailable.raw_html
+              ? "Not stored in this crawl. Turn on Settings › Page data › Store page HTML and crawl again to keep each page's source."
+              : "None stored for this URL: it is not an HTML page or no body was received."}
+        </p>
+        <HtmlViewer transport={transport} path={path} id={d.id} url={d.url} open={htmlOpen} onOpenChange={setHtmlOpen} />
+      </Section>
 
       {missing.size > 0 && (
         <Section title="Not collected">
