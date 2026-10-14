@@ -42,7 +42,7 @@ export function useCrawlLibrary(transport: Transport) {
 
   useEffect(() => {
     reload();
-    const offs = [transport.onCrawlsRecovered(() => reload()), transport.onCrawlFinished(() => reload())];
+    const offs = [transport.onCrawlsRecovered(() => reload()), transport.onCrawlFinished(() => reload()), transport.onCrawlsChanged(() => reload())];
     return () => offs.forEach((o) => o.then((off) => off()));
   }, [transport, reload]);
 

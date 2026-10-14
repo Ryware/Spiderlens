@@ -25,7 +25,7 @@ fn live_refresh_keeps_anchor_and_respects_view() {
         urls: 2_000,
         links_per_page: 3,
         seed: 3,
-        html: false,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();
@@ -73,7 +73,7 @@ fn reopen_gives_identical_views() {
         urls: 1_500,
         links_per_page: 2,
         seed: 11,
-        html: false,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();
@@ -94,7 +94,7 @@ fn tab_counts_follow_the_crawl_and_stay_cheap() {
         urls: 100_000,
         links_per_page: 3,
         seed: 5,
-        html: false,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();

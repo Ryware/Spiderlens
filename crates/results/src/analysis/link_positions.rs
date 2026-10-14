@@ -83,6 +83,8 @@ fn links_of<T>(
         body: html,
         truncated: false,
         robots_token: "",
+        // Positions only need the links, not the accessibility checks.
+        a11y: false,
     };
     let Some(page) = parse_page(&input) else {
         return Vec::new();
@@ -398,6 +400,7 @@ mod tests {
             body: html.as_bytes(),
             truncated: false,
             robots_token: "",
+            a11y: false,
         });
         let anchors: Vec<u32> = data
             .refs

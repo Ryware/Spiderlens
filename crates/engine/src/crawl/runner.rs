@@ -470,6 +470,8 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     body: &bytes,
                     truncated,
                     robots_token: &token,
+                    // Spec 026: stored once the crawl file has the tables.
+                    a11y: false,
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
