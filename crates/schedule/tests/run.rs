@@ -172,7 +172,7 @@ async fn unreachable_site_fails_with_reason_and_notifies() {
     );
     assert_eq!(r.status, RunStatus::Failed);
     assert!(
-        r.reason.as_deref().unwrap().contains("Could not connect"),
+        r.reason.as_deref().unwrap().contains("refused the connection"),
         "{:?}",
         r.reason
     );
