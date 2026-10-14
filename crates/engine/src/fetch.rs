@@ -183,6 +183,26 @@ pub(crate) struct Once {
     /// `Content-Length` as sent, when reqwest did not decompress the body
     /// (it removes the header when it does).
     pub content_length: Option<u64>,
+    /// A PDF body, when PDFs are read (spec 027 part C).
+    pub pdf: Option<PdfBody>,
+}
+
+/// A downloaded PDF. Over the PDF size limit nothing is kept: a partial
+/// PDF cannot be read (its index is at the end).
+pub(crate) struct PdfBody {
+    pub bytes: Vec<u8>,
+    pub over_limit: bool,
+}
+
+/// PDFs by type, or by a `.pdf` path when the server sends a generic type.
+pub(crate) fn is_pdf(url: &Url, content_type: Option<&str>) -> bool {
+    match content_type {
+        Some("application/pdf" | "application/x-pdf") => true,
+        None | Some("application/octet-stream" | "binary/octet-stream" | "application/download") => {
+            url.path().to_ascii_lowercase().ends_with(".pdf")
+        }
+        _ => false,
+    }
 }
 
 pub(crate) async fn fetch_once(
@@ -192,6 +212,7 @@ pub(crate) async fn fetch_once(
     internal: bool,
     read_body: bool,
     max_bytes: u64,
+    pdf_max_bytes: Option<u64>,
 ) -> Result<Once, CheckError> {
     let mut request = client.get(url.clone());
     for h in headers.iter().filter(|h| h.all_hosts || internal) {
@@ -234,7 +255,25 @@ pub(crate) async fn fetch_once(
     let html = content_type
         .as_deref()
         .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
-    let (body, body_problem) = if read_body && location.is_none() && html {
+    let pdf_limit = pdf_max_bytes.filter(|_| {
+        read_body && location.is_none() && (200..300).contains(&status) && is_pdf(url, content_type.as_deref())
+    });
+    let mut pdf = None;
+    let (body, body_problem) = if let Some(limit) = pdf_limit {
+        if content_length.is_some_and(|n| n > limit) {
+            pdf = Some(PdfBody { bytes: Vec::new(), over_limit: true });
+            (None, None)
+        } else {
+            let (bytes, problem) = read_body_partial(response, limit).await;
+            let over_limit = problem.is_some() && bytes.len() as u64 >= limit;
+            pdf = Some(PdfBody {
+                bytes: if over_limit { Vec::new() } else { bytes },
+                over_limit,
+            });
+            // Over the PDF limit is a PDF fact, not a response problem.
+            (None, problem.filter(|_| !over_limit))
+        }
+    } else if read_body && location.is_none() && html {
         let (bytes, problem) = read_body_partial(response, max_bytes).await;
         (Some(bytes), problem)
     } else {
@@ -253,6 +292,7 @@ pub(crate) async fn fetch_once(
         body_problem,
         headers: all_headers,
         content_length,
+        pdf,
     })
 }
 

@@ -21,6 +21,8 @@ pub use directives::{Directive, DirectiveSource};
 pub enum RefSource {
     Html,
     Header,
+    /// A link annotation in a PDF (spec 027 part C).
+    Pdf,
 }
 
 impl RefSource {
@@ -28,6 +30,7 @@ impl RefSource {
         match self {
             Self::Html => "html",
             Self::Header => "header",
+            Self::Pdf => "pdf",
         }
     }
 }

@@ -9,6 +9,7 @@ mod config;
 pub mod crawl;
 mod error;
 pub mod extract;
+pub mod pdf;
 mod fetch;
 mod result;
 pub mod robots;

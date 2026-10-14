@@ -158,6 +158,19 @@ pub struct CrawlArgs {
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
+
+    /// Download and read PDFs: properties, text and links.
+    #[arg(long, help_heading = "PDF")]
+    pub crawl_pdfs: bool,
+    /// Store links found in PDFs without crawling them.
+    #[arg(long, help_heading = "PDF")]
+    pub no_follow_pdf_links: bool,
+    /// PDF size limit in MB (default 20).
+    #[arg(long, value_name = "MB", help_heading = "PDF")]
+    pub pdf_max_size: Option<u32>,
+    /// Time limit for reading one PDF, in seconds (default 5).
+    #[arg(long, value_name = "SECONDS", help_heading = "PDF")]
+    pub pdf_time_limit: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -466,6 +479,18 @@ impl CrawlArgs {
         }
         if self.no_store_html {
             c.extraction.store_html = false;
+        }
+        if self.crawl_pdfs {
+            c.extraction.pdf.crawl = true;
+        }
+        if self.no_follow_pdf_links {
+            c.extraction.pdf.follow_links = false;
+        }
+        if let Some(v) = self.pdf_max_size {
+            c.extraction.pdf.max_mb = v;
+        }
+        if let Some(v) = self.pdf_time_limit {
+            c.extraction.pdf.time_limit_secs = v;
         }
         Ok(Resolved { config: c, notices })
     }

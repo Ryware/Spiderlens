@@ -1055,6 +1055,47 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// What was read from one PDF, and its text when kept (spec 027 part C).
+    pub fn record_pdf(&self, id: i64, f: &crate::pdf::PdfFacts, text: Option<(&[u8], usize)>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO pdfs (url_id, status, status_reason, title, author, subject, keywords,
+                 creator, producer, created_at, modified_at, page_count, pages_read, word_count, lang, encrypted,
+                 no_text, tagged, link_count, text_stored)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            )?
+            .execute(params![
+                id,
+                f.status.as_str(),
+                f.detail,
+                f.title,
+                f.author,
+                f.subject,
+                f.keywords,
+                f.creator,
+                f.producer,
+                f.created,
+                f.modified,
+                f.pages,
+                f.pages_read,
+                f.words,
+                f.lang,
+                f.encrypted,
+                f.no_text(),
+                f.tagged,
+                f.links.len() as i64,
+                text.is_some(),
+            ])?;
+        if let Some((packed, size)) = text {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+
     /// Robots directives of one resource, numbered from `first_pos`.
     pub fn record_directives(&self, id: i64, directives: &[Directive], first_pos: usize) -> Result<()> {
         let mut stmt = self.conn.prepare_cached(

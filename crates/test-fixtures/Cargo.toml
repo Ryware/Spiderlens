@@ -16,6 +16,7 @@ rustls.workspace = true
 encoding_rs.workspace = true
 futures-util.workspace = true
 flate2.workspace = true
+lopdf.workspace = true
 
 [lints]
 workspace = true
