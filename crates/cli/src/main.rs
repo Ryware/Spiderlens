@@ -5,6 +5,7 @@
 
 mod crawl_cmd;
 mod export_cmd;
+mod links_cmd;
 mod options;
 
 use std::io::Write;
@@ -66,6 +67,9 @@ enum Command {
     Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Link Score and link positions of a crawl file.
+    #[command(subcommand)]
+    Links(links_cmd::LinksCommand),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -159,6 +163,7 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Links(cmd) => links_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

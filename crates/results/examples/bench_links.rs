@@ -1,6 +1,8 @@
 //! Times Link Score on a synthetic crawl file (spec 023 SC-002 to SC-004):
 //! `cargo run --release -p spiderlens-results --example bench_links -- 100000 50 /tmp/100k.spiderlens`
 //! (URLs, links per page, file; the file is written first when missing).
+//! With `SYNTH_HTML=1` the pages carry HTML and link positions are timed
+//! too (SC-009).
 
 use std::path::Path;
 use std::time::Instant;
@@ -20,6 +22,7 @@ fn main() {
         spiderlens_results::synth::Synth {
             urls,
             links_per_page: per_page,
+            html: std::env::var_os("SYNTH_HTML").is_some(),
             ..Default::default()
         }
         .write(path)
@@ -46,6 +49,15 @@ fn main() {
     );
     let first = page.rows.first().and_then(|row| row.get(1)).cloned();
     println!("top URL: {first:?}");
+    if std::env::var_os("SYNTH_HTML").is_some() {
+        let t = Instant::now();
+        let run = r.analyse().expect("analyse");
+        println!(
+            "{:>8.0} ms  link positions and Link Score, {} links classified",
+            t.elapsed().as_secs_f64() * 1000.0,
+            run.links
+        );
+    }
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for l in status.lines().filter(|l| l.starts_with("VmHWM")) {
             println!("peak memory: {}", l.trim_start_matches("VmHWM:").trim());

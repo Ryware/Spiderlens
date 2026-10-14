@@ -8,7 +8,10 @@ import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ViewState } from "../generated/ViewState";
 import { fakeScene, fakeTermLinks } from "./fakeViz";
-import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
+import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
+import type { AnalysisProgress } from "../generated/AnalysisProgress";
+import type { AnalysisRun } from "../generated/AnalysisRun";
+import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, Range, Transport, ViewReady } from "../transport";
 
 export interface FakeUrl {
   id: number;
@@ -90,6 +93,15 @@ export interface FakeResults {
   viz: ViewState[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** Link analysis settings sent for the open file (spec 023). */
+  linkSettings: LinkAnalysisSettings[];
+  /** Crawl Analysis runs started (file paths) and cancels asked for. */
+  analyses: string[];
+  analysisCancels: number;
+  /** Reports progress of the running analysis. */
+  analysisProgress(p: Partial<AnalysisProgress>): void;
+  /** Ends the running analysis: with a run, or cancelled or failed. */
+  analysisDone(d?: Partial<AnalysisDone>): void;
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -109,6 +121,13 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "copyRows"
   | "exportStart"
   | "exportCancel"
+  | "analysisRun"
+  | "analysisSettings"
+  | "analysisStart"
+  | "analysisCancel"
+  | "onAnalysisProgress"
+  | "onAnalysisDone"
+  | "positionsTest"
   | "onViewReady"
   | "onExportProgress"
 > & { results: FakeResults } {
@@ -117,10 +136,23 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
   const readyCbs = new Set<(r: ViewReady) => void>();
   const progressCbs = new Set<(p: ExportProgress) => void>();
+  const analysisProgressCbs = new Set<(p: AnalysisProgressEvent) => void>();
+  const analysisDoneCbs = new Set<(d: AnalysisDone) => void>();
+  let analysing: string | null = null;
+  const fakeRun = (): AnalysisRun => ({ urls: results.urls.length, links: 12, rounds: 30, pages_without_html: 0, weighted: false, ms: 40 });
   const results: FakeResults = {
     urls: [...initial],
     copied: [],
     viz: [],
+    linkSettings: [],
+    analyses: [],
+    analysisCancels: 0,
+    analysisProgress: (p) => analysisProgressCbs.forEach((cb) => cb({ path: analysing ?? "", phase: "positions", done: 0, total: 100, ...p })),
+    analysisDone: (d) => {
+      const path = analysing ?? "";
+      analysing = null;
+      analysisDoneCbs.forEach((cb) => cb({ path, run: d?.cancelled || d?.error ? null : fakeRun(), cancelled: false, error: null, ...d }));
+    },
     exports: [],
     opened: [],
     features: ["base", "analysis"],
@@ -253,16 +285,22 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       };
       return d;
     },
-    urlList: async (_p, id, kind, from) =>
+    urlList: async (_p, id, kind, from, _count, position) =>
       kind === "inlinks"
-        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false }].filter(() => id !== -1), headings: [], unavailable: null }
+        ? (() => {
+            const rows = [
+              { id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" },
+              { id: 2, url: results.urls[1 % results.urls.length].url, raw: "/story", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Read on", sponsored: false, ugc: false, position: "content" },
+            ].filter((r) => id !== -1 && (!position || r.position === position));
+            return { total: rows.length, from, rows, headings: [], unavailable: null };
+          })()
         : kind === "headings"
           ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
           : kind === "images"
             ? {
                 total: 2,
                 from,
-                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false })),
+                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false, position: null })),
                 headings: [],
                 unavailable: null,
               }
@@ -281,6 +319,36 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return 1;
     },
     exportCancel: async () => {},
+    analysisRun: async () => fakeRun(),
+    analysisStart: async (path) => {
+      analysing = path;
+      results.analyses.push(path);
+    },
+    analysisCancel: async () => {
+      results.analysisCancels++;
+    },
+    onAnalysisProgress: async (cb) => {
+      analysisProgressCbs.add(cb);
+      return () => void analysisProgressCbs.delete(cb);
+    },
+    onAnalysisDone: async (cb) => {
+      analysisDoneCbs.add(cb);
+      return () => void analysisDoneCbs.delete(cb);
+    },
+    analysisSettings: async (_p, settings) => {
+      results.linkSettings.push(settings);
+    },
+    // The page has a header link, a menu link and a content link; the first
+    // rule, when there is one, claims the menu link.
+    positionsTest: async (_p, url, rules) => {
+      if (!results.urls.some((u) => u.url === url.trim())) return null;
+      const rule = rules[0];
+      return [
+        { pos: 0, raw: "/", text: "Home", position: "header" as const, rule: null },
+        { pos: 1, raw: "/promo", text: "Promo", position: rule ? rule.position : ("content" as const), rule: rule ? 0 : null },
+        { pos: 2, raw: "/story", text: "Read the story", position: "content" as const, rule: null },
+      ];
+    },
     onViewReady: async (cb) => {
       readyCbs.add(cb);
       return () => void readyCbs.delete(cb);
