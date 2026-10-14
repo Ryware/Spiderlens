@@ -5,7 +5,9 @@
 pub mod body;
 pub mod directives;
 mod link_header;
+pub mod main_content;
 mod microdata;
+pub mod shingle;
 pub mod text;
 mod walk;
 
@@ -14,6 +16,7 @@ use url::Url;
 
 use crate::crawl::LinkKind;
 pub use directives::{Directive, DirectiveSource};
+pub use main_content::{ContentRules, MainContent, MainSource, MainText, Paragraph, Run};
 
 /// Where a reference was declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -154,6 +157,8 @@ pub struct PageData {
     pub lang: Option<String>,
     pub word_count: u32,
     pub text_hash: i64,
+    /// The main content summary for near duplicate detection (spec 020).
+    pub main: MainContent,
     /// Meta tag directives (header ones are in [`HeaderFacts`]).
     pub directives: Vec<Directive>,
     /// In document order.
@@ -191,6 +196,7 @@ impl PageData {
             lang: None,
             word_count: 0,
             text_hash: text::hash(""),
+            main: MainContent::empty(),
             directives: Vec::new(),
             refs: Vec::new(),
             meta_refresh: None,
@@ -210,6 +216,8 @@ pub struct PageInput<'a> {
     pub truncated: bool,
     /// The crawl's robots.txt token, for crawler-specific meta tags.
     pub robots_token: &'a str,
+    /// The user's main content settings (spec 020 FR-003); `None` = defaults.
+    pub content: Option<&'a ContentRules>,
 }
 
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
@@ -228,7 +236,13 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
         return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
     }
     let (text, used, had_errors) = encoding.decode(input.body);
-    let mut data = walk::walk(&text, input.url, input.robots_token, walk::PARSE_BUDGET);
+    let mut data = walk::walk(
+        &text,
+        input.url,
+        input.robots_token,
+        input.content,
+        walk::PARSE_BUDGET,
+    );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
@@ -242,6 +256,18 @@ fn utf8_or_cut(body: &[u8], truncated: bool) -> bool {
         Ok(_) => true,
         Err(e) => truncated && e.error_len().is_none(),
     }
+}
+
+/// A page's body text by paragraph with the compared main content marked
+/// (spec 020 comparison view). Decodes like [`extract_page`].
+pub fn main_text(url: &Url, charset: Option<&str>, body: &[u8], content: Option<&ContentRules>) -> MainText {
+    let encoding = match crate::title::declared_encoding(charset, body) {
+        Some(enc) => enc,
+        None if std::str::from_utf8(body).is_err() => encoding_rs::WINDOWS_1252,
+        None => encoding_rs::UTF_8,
+    };
+    let (text, _, _) = encoding.decode(body);
+    walk::main_text(&text, url, content)
 }
 
 /// Like [`extract_page`], but a panic inside the parser becomes an error

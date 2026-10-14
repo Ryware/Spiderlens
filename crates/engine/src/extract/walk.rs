@@ -11,11 +11,12 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use html5ever::{local_name, ns};
 use scraper::node::Element;
-use scraper::{Html, HtmlTreeSink, Node};
+use scraper::{ElementRef, Html, HtmlTreeSink, Node};
 use url::Url;
 
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
+use super::main_content::{ARTICLE, BOILER, ContentRules, EXCLUDED, MAIN, MainText, SELECTED, Spans};
 use super::text::{collapse, hash, word_count};
 use super::{
     Heading, MetaRefresh, PageData, Ref, RefSource, StructuredBlock, StructuredKind, TextItem, microdata,
@@ -65,6 +66,11 @@ struct Ctx {
     in_body: bool,
     noscript: bool,
     in_item: bool,
+    /// Main content flags for text here (`main_content::MAIN`, ...).
+    main: u8,
+    /// Inside `main`, `article` or `section`, where `header` and `footer`
+    /// are not site-wide landmarks.
+    sectioning: bool,
 }
 
 /// Text being collected for an element that is still open.
@@ -84,21 +90,49 @@ enum Frame<'a> {
 struct Walker<'p> {
     page: &'p Url,
     token: &'p str,
+    rules: Option<&'p ContentRules>,
     data: PageData,
     base_seen: bool,
     visible: String,
+    body: Spans,
     anchor: Option<Open>,
     heading: Option<Open>,
 }
 
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> PageData {
+pub(super) fn walk(
+    text: &str,
+    page: &Url,
+    token: &str,
+    rules: Option<&ContentRules>,
+    budget: Duration,
+) -> PageData {
+    walk_full(text, page, token, rules, budget).0
+}
+
+/// The page's body text by paragraph with its main content marked, for the
+/// comparison view (spec 020, plan D8).
+pub(super) fn main_text(text: &str, page: &Url, rules: Option<&ContentRules>) -> MainText {
+    let (_, body) = walk_full(text, page, "", rules, PARSE_BUDGET);
+    body.paragraphs(rules)
+}
+
+fn walk_full(
+    text: &str,
+    page: &Url,
+    token: &str,
+    rules: Option<&ContentRules>,
+    budget: Duration,
+) -> (PageData, Spans) {
+    let rules = rules.filter(|r| !r.is_default());
     let (doc, cut) = parse(text, budget);
     let mut w = Walker {
         page,
         token,
+        rules,
         data: PageData::empty(page.clone(), "", false),
         base_seen: false,
         visible: String::new(),
+        body: Spans::default(),
         anchor: None,
         heading: None,
     };
@@ -131,7 +165,15 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> Pag
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
-    w.data
+    w.data.main = w.body.summary(rules);
+    (w.data, w.body)
+}
+
+/// The first token of a `role` attribute, lowercase.
+fn role(e: &Element) -> Option<String> {
+    e.attr("role")
+        .and_then(|r| r.split_ascii_whitespace().next())
+        .map(str::to_ascii_lowercase)
 }
 
 /// Elements that do not break words apart (`a<b>b</b>` is one word).
@@ -185,6 +227,7 @@ fn dimension(e: &Element, name: &str) -> Option<u32> {
 
 impl Walker<'_> {
     fn separate(&mut self) {
+        self.body.separate();
         for buf in [
             Some(&mut self.visible),
             self.anchor.as_mut().map(|o| &mut o.buf),
@@ -202,6 +245,7 @@ impl Walker<'_> {
     fn text(&mut self, t: &str, ctx: Ctx) {
         if ctx.in_body && !ctx.noscript {
             self.visible.push_str(t);
+            self.body.push(t, ctx.main);
         }
         if let Some(o) = self.anchor.as_mut() {
             o.buf.push_str(t);
@@ -238,6 +282,9 @@ impl Walker<'_> {
             return;
         }
         let name = e.name.local.clone();
+        if ctx.in_body {
+            self.main_flags(node, e, &name, &mut ctx);
+        }
         let inline = is_inline(&name);
         if !inline {
             self.separate();
@@ -342,6 +389,42 @@ impl Walker<'_> {
             self.data.structured.push(microdata::item_block(node));
         }
         push_children(node, ctx, stack);
+    }
+
+    /// Main content flags for an element and everything inside it
+    /// (spec 020 research R5, FR-003).
+    fn main_flags(&mut self, node: NodeRef<'_, Node>, e: &Element, name: &str, ctx: &mut Ctx) {
+        let role = role(e);
+        let role = role.as_deref();
+        match name {
+            "main" if !self.body.main_seen => {
+                self.body.main_seen = true;
+                ctx.main |= MAIN;
+            }
+            "article" => ctx.main |= ARTICLE,
+            _ => {}
+        }
+        let landmark = matches!(name, "nav" | "aside")
+            || matches!(role, Some("navigation" | "complementary" | "search"))
+            || (!ctx.sectioning
+                && (matches!(name, "header" | "footer") || matches!(role, Some("banner" | "contentinfo"))));
+        if landmark {
+            ctx.main |= BOILER;
+        }
+        if matches!(name, "main" | "article" | "section") {
+            ctx.sectioning = true;
+        }
+        if let Some(rules) = self.rules
+            && let Some(el) = ElementRef::wrap(node)
+        {
+            if rules.is_excluded(el) {
+                ctx.main |= EXCLUDED;
+            }
+            if !self.body.selected_seen && rules.is_content(el) {
+                self.body.selected_seen = true;
+                ctx.main |= SELECTED;
+            }
+        }
     }
 
     fn meta(&mut self, e: &Element, ctx: Ctx) {
