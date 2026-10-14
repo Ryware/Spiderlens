@@ -29,7 +29,7 @@ Rendering flags other than `--render` given without `--render` are an error (exi
 With `--render`, before the crawl file is created:
 
 - A usable browser is found: `notice: rendering with Google Chrome 155.0.8059.39 (installed)` on stderr.
-- None found, without `--allow-browser-download`: `error: JavaScript rendering needs a Chromium-based browser and none was found. Run "spiderlens browser install" (downloads about 100 MB) or add --allow-browser-download, or crawl without --render.` Exit **6**. No crawl file is created.
+- None found, without `--allow-browser-download`: `error: JavaScript rendering needs a Chromium-based browser and none was found. Run "spiderlens browser install" (downloads about 100 MB) or add --allow-browser-download, or crawl without --render.` Exit **7** (6 was taken by spec 006's disk-problem pause). No crawl file is created. When this build has no pinned download for the platform, the message names `--browser PATH` and installing Chrome, Chromium or Edge instead of `spiderlens browser install`.
 - None found, with `--allow-browser-download`: the download runs with a progress line, then the crawl starts.
 
 ## Progress (stderr, FR-040)
@@ -50,7 +50,7 @@ Text summary gains a "Rendering" block: rendered, timed out, failed by reason, n
 
 ### `spiderlens browser status [--json]`
 
-Prints the browser rendering would use (name, version, source, path) or why none is usable. Exit 0 when usable, 6 when not. CI runs this on every runner (task T002).
+Prints the browser rendering would use (name, version, source, path) or why none is usable. Exit 0 when usable, 7 when not. CI runs this on every runner (task T002).
 
 ### `spiderlens browser install [--yes] [--json]`
 
@@ -84,4 +84,4 @@ The JavaScript tab exports like any other tab (spec 010 builds on this). `--valu
 
 ## Exit codes
 
-Existing codes are unchanged. New: **6** = no usable browser for rendering.
+Existing codes are unchanged. New: **7** = no usable browser for rendering (6 is spec 006's "paused by a disk or write problem").

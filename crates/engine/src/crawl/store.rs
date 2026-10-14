@@ -1983,6 +1983,18 @@ impl RenderStatus {
     }
 }
 
+/// What [`CrawlStore::render_totals`] counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderTotals {
+    pub by_state: Vec<(RenderStatus, u64)>,
+    pub by_reason: Vec<(String, u64)>,
+    pub avg_render_ms: Option<u64>,
+    pub max_render_ms: Option<u64>,
+    pub js_errors: u64,
+    pub failed_resources: u64,
+    pub blocked_resources: u64,
+}
+
 /// One page waiting in the render queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderEntry {
@@ -2230,6 +2242,51 @@ impl CrawlStore {
             }
         }
         Ok(out)
+    }
+
+    /// Totals for the summary's Rendering block (FR-041): renders per
+    /// state, final reasons, render times, and JavaScript errors and
+    /// resource problems over every page. None when nothing was queued.
+    pub fn render_totals(&self) -> Result<Option<RenderTotals>> {
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        let by_state = self.render_counts()?;
+        if by_state.is_empty() {
+            return Ok(None);
+        }
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT reason, COUNT(*) FROM renders WHERE reason IS NOT NULL GROUP BY reason ORDER BY reason",
+        )?;
+        let by_reason = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let (avg, max, errors, failed, blocked) = self.conn.query_row(
+            "SELECT AVG(render_ms) FILTER (WHERE state IN ('rendered', 'timed_out')),
+                    MAX(render_ms) FILTER (WHERE state IN ('rendered', 'timed_out')),
+                    COALESCE(SUM(console_errors), 0), COALESCE(SUM(resources_failed), 0),
+                    COALESCE(SUM(resources_blocked), 0)
+             FROM renders",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, Option<f64>>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+        Ok(Some(RenderTotals {
+            by_state,
+            by_reason,
+            avg_render_ms: avg.map(|a| a.round() as u64),
+            max_render_ms: max.map(|m| m as u64),
+            js_errors: errors as u64,
+            failed_resources: failed as u64,
+            blocked_resources: blocked as u64,
+        }))
     }
 
     /// The raw HTML a render starts from: the temporary input, or the stored

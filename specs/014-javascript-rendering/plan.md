@@ -154,7 +154,7 @@ Off by default. When on, `Page.captureScreenshot` in WebP at quality 60 at the r
 
 ### D12. Browser availability, consent and cleanup (FR-045, FR-046)
 
-- **Before a crawl starts** with rendering on, the CLI and the desktop app call `find_browser`. If none is usable: the CLI exits with code 6 and a message naming `spiderlens browser install` and `--allow-browser-download`; the desktop app shows a dialog with the download size, "Download and crawl" and "Crawl raw HTML instead". The crawl never starts in rendering mode without a browser. If the browser disappears mid-crawl and cannot be relaunched, the remaining pages become `not_rendered` with `browser_unavailable`, and a warning is shown.
+- **Before a crawl starts** with rendering on, the CLI and the desktop app call `find_browser`. If none is usable: the CLI exits with code 7 (6 is spec 006's disk-problem pause) and a message naming `spiderlens browser install` and `--allow-browser-download`; the desktop app shows a dialog with the download size, "Download and crawl" and "Crawl raw HTML instead". The crawl never starts in rendering mode without a browser. If the browser disappears mid-crawl and cannot be relaunched, the remaining pages become `not_rendered` with `browser_unavailable`, and a warning is shown.
 - **Cleanup**: normal exits close the browser from Rust and delete its temporary profile. Abnormal exits rely on the pipe transport or the guard process (research R12). A startup sweep removes stale temporary profiles left by a killed run.
 
 ### D13. Progress and summary (FR-040, FR-041)

@@ -158,6 +158,11 @@ pub struct CrawlArgs {
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
+
+    /// Render pages in a headless Chromium browser and store the rendered
+    /// version next to the raw HTML (spec 014).
+    #[arg(long, help_heading = "Rendering")]
+    pub render: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -466,6 +471,9 @@ impl CrawlArgs {
         }
         if self.no_store_html {
             c.extraction.store_html = false;
+        }
+        if self.render {
+            c.rendering.mode = spiderlens_config::RenderMode::Javascript;
         }
         Ok(Resolved { config: c, notices })
     }

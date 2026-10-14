@@ -260,6 +260,35 @@ pub struct CrawlSummary {
     pub manual_retries: u64,
     /// Why the crawl paused itself (`network`), if it did.
     pub pause_reason: Option<String>,
+    /// Rendering completeness (spec 014 FR-041); absent for raw crawls, so
+    /// their summary is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderSummary>,
+}
+
+/// The browser that rendered a crawl (`meta.renderer`, FR-003).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct RendererInfo {
+    pub name: String,
+    pub version: String,
+    /// `downloaded`, `installed` or `user_path`.
+    pub source: String,
+}
+
+/// The summary's Rendering block (spec 014 data-model.md). The final
+/// states (`rendered`, `timed_out`, `failed`, `not_rendered`) add up to
+/// the pages eligible for rendering.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderSummary {
+    pub by_state: BTreeMap<String, u64>,
+    /// Final reasons of failed and not rendered pages.
+    pub by_reason: BTreeMap<String, u64>,
+    pub avg_render_ms: Option<u64>,
+    pub max_render_ms: Option<u64>,
+    pub js_errors: u64,
+    pub failed_resources: u64,
+    pub blocked_resources: u64,
+    pub renderer: Option<RendererInfo>,
 }
 
 impl CrawlSummary {
@@ -340,6 +369,25 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
         pause_reason: store.meta("pause_reason")?.filter(|r| !r.is_empty()),
+        render: match store.render_totals()? {
+            Some(t) => Some(RenderSummary {
+                by_state: t
+                    .by_state
+                    .into_iter()
+                    .map(|(s, n)| (s.as_str().to_string(), n))
+                    .collect(),
+                by_reason: t.by_reason.into_iter().collect(),
+                avg_render_ms: t.avg_render_ms,
+                max_render_ms: t.max_render_ms,
+                js_errors: t.js_errors,
+                failed_resources: t.failed_resources,
+                blocked_resources: t.blocked_resources,
+                renderer: store
+                    .meta("renderer")?
+                    .and_then(|r| serde_json::from_str(&r).ok()),
+            }),
+            None => None,
+        },
     })
 }
 

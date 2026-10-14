@@ -3,6 +3,7 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod browser;
 mod crawl_cmd;
 mod export_cmd;
 mod options;
@@ -32,6 +33,9 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
+    /// No usable browser for JavaScript rendering (spec 014). The rendering
+    /// contract asked for 6, which spec 006 already uses.
+    pub const NO_BROWSER: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();

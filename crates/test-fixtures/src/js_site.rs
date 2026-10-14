@@ -9,6 +9,9 @@
 //! requests per host, and keeps a request log. `GET /__stats` on any host
 //! returns them as JSON; `GET /__reset` clears them. In bodies and headers,
 //! `{base:HOST}` becomes `http://HOST:PORT`.
+//!
+//! Requests to `127.0.0.1` or `localhost` are answered and counted as
+//! [`JS_HOST`], so the CLI, which cannot map host names, can crawl it.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -484,6 +487,13 @@ async fn serve(State(shared): State<Arc<Shared>>, req: Request) -> Response {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
+    // A client without a host override (the CLI) reaches the site host by
+    // its address.
+    let host = if host == "127.0.0.1" || host == "localhost" {
+        JS_HOST.to_string()
+    } else {
+        host
+    };
     let path = req
         .uri()
         .path_and_query()
@@ -609,6 +619,12 @@ impl JsSite {
     }
 
     /// `http://HOST:PORT/PATH`
+    /// The site's address without a host override: `http://127.0.0.1:PORT`
+    /// plus `path`, answered as [`JS_HOST`].
+    pub fn local_url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{path}", self.port())
+    }
+
     pub fn url(&self, host: &str, path: &str) -> String {
         format!("http://{host}:{}{path}", self.addr.port())
     }
