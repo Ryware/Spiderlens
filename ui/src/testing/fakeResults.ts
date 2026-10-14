@@ -172,7 +172,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           unavailable[f.id] = "Not collected yet: arrives with page extraction.";
         } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null }).ids.length;
       }
-      return { tab, counts, unavailable, version };
+      return { tab, counts, unavailable, labels: {}, version };
     },
     viewClose: async (_p, view) => {
       views.delete(view);

@@ -77,7 +77,7 @@ impl Category {
 /// scope are evaluated in one scan (plan D4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
+#[ts(export, rename = "RuleScope")]
 pub enum Scope {
     /// Every URL with a response or a blocking decision (Response codes tab).
     AllUrls,
