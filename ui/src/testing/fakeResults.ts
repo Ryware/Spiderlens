@@ -7,6 +7,7 @@ import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
+import { fakeIssueTabs, fakeIssuesTransport, hits, type FakeIssues } from "./fakeIssues";
 
 export interface FakeUrl {
   id: number;
@@ -87,7 +88,11 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "exportCancel"
   | "onViewReady"
   | "onExportProgress"
-> & { results: FakeResults } {
+  | "ruleCatalogue"
+  | "issuesApply"
+  | "issuesSummary"
+  | "urlIssues"
+> & { results: FakeResults; issues: FakeIssues } {
   let version = 1;
   let next = 0;
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
@@ -108,10 +113,12 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       version++;
     },
   };
+  const issuesApi = fakeIssuesTransport(() => results.urls);
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
-    const tab = fakeTabs.find((t) => t.id === q.tab)!;
-    let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    const tab = [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === q.tab)!;
+    const rule = q.tab.startsWith("issue:") ? issuesApi.issues.rules().find((r) => `issue:${r.id}` === q.tab) : undefined;
+    let us = rule ? hits(rule, results.urls) : results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -141,7 +148,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   return {
     results,
-    resultsTabs: async () => fakeTabs,
+    ...issuesApi,
+    resultsTabs: async () => [...fakeTabs, ...fakeIssueTabs],
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -163,7 +171,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return { version, total: fresh.ids.length, positions: anchors.map((a) => (fresh.ids.indexOf(a) < 0 ? null : fresh.ids.indexOf(a))), build_ms: 1 };
     },
     viewCounts: async (_p, tab, scope) => {
-      const t = fakeTabs.find((x) => x.id === tab)!;
+      const t = [...fakeTabs, ...fakeIssueTabs].find((x) => x.id === tab)!;
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
       for (const f of t.filters) {

@@ -319,6 +319,30 @@ pub struct ThresholdInfo {
     pub max: f64,
 }
 
+/// The catalogue with a profile's issue settings applied, and what was
+/// wrong with them (the desktop `rule_catalogue` command, Settings › Issues).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct RuleCatalogue {
+    pub rules: Vec<RuleInfo>,
+    pub notices: Vec<SettingsNotice>,
+}
+
+/// Resolves `s` and lists every rule with it applied. With an error
+/// notice, the rules show the defaults (the change would be rejected).
+pub fn rule_catalogue(s: &spiderlens_config::IssueSettings) -> RuleCatalogue {
+    let (resolved, notices) = resolve(s);
+    let resolved = if notices.iter().any(|n| n.error) {
+        ResolvedSettings::default()
+    } else {
+        resolved
+    };
+    RuleCatalogue {
+        rules: rule_infos(&resolved),
+        notices,
+    }
+}
+
 /// The catalogue with `settings` applied.
 pub fn rule_infos(settings: &ResolvedSettings) -> Vec<RuleInfo> {
     catalogue()

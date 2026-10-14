@@ -48,7 +48,7 @@ async function crawl(page: Page) {
 
 async function openInternal(page: Page) {
   await crawl(page);
-  await page.getByRole("button", { name: "Internal" }).click();
+  await page.getByRole("button", { name: "Internal", exact: true }).click();
   await page.evaluate(() => window.spiderlens.results.ready());
   await expect(page.getByTestId("row-count")).toHaveText("5,000 URLs");
   return page.getByRole("grid");
@@ -227,4 +227,34 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await page.keyboard.press("Escape");
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
+});
+
+test("issue_to_rows_to_inspector_and_a_threshold_change_updates_counts", async ({ page }) => {
+  await crawl(page);
+  const issues = page.getByRole("list", { name: "Issues" });
+  const fourxx = issues.getByRole("button", { name: /Internal client error/ });
+  await expect(fourxx).toContainText("500");
+  await fourxx.click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("500 URLs");
+  await expect(page.getByTestId("issue-header")).toContainText("Restore the page");
+
+  // On the Internal tab, a broken page's inspector lists its issue, and
+  // clicking the issue goes back to its URLs.
+  await page.getByRole("button", { name: "Internal", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("issue-header")).toHaveCount(0);
+  await page.getByRole("gridcell", { name: "https://example.com/page-9", exact: true }).click();
+  const section = page.getByRole("complementary", { name: "Details" }).locator("section").filter({ has: page.getByRole("heading", { name: /^Issues/ }) });
+  await expect(section).toContainText("Internal client error");
+  await section.getByRole("button", { name: /Internal client error/ }).click();
+  await expect(page.getByTestId("issue-header")).toBeVisible();
+
+  // A stricter threshold in Settings › Issues changes the count.
+  await page.getByRole("button", { name: "Configure" }).click();
+  await page.getByRole("navigation", { name: "Settings categories" }).getByRole("tab", { name: /^Issues/ }).click();
+  await page.getByLabel("Page title: below 30 characters threshold").fill("7");
+  await page.keyboard.press("Escape");
+  await issues.getByRole("button", { name: /^Medium/ }).click();
+  await expect(issues.getByRole("button", { name: /Page title: below 7 characters/ })).toContainText("9");
 });

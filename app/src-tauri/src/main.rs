@@ -71,6 +71,10 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            results::rule_catalogue,
+            results::issues_apply,
+            results::issues_summary,
+            results::url_issues,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

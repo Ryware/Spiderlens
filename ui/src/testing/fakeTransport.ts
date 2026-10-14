@@ -5,6 +5,7 @@ import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import type { FakeIssues } from "./fakeIssues";
 import type { CrawlFinished, CrawlProgress, CrawlReport, CrawlStatus, LoadedProfile, Presets, Transport } from "../transport";
 
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
@@ -89,7 +90,7 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
-export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults } {
+export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; issues: FakeIssues } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;

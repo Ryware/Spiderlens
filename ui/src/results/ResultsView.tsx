@@ -7,6 +7,7 @@ import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
+import type { RuleInfo } from "../generated/RuleInfo";
 import type { UrlScope } from "../generated/UrlScope";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
@@ -14,6 +15,7 @@ import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../comp
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
+import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
@@ -68,6 +70,8 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  issue = null,
+  onIssueSettings,
 }: {
   transport: Transport;
   path: string;
@@ -77,6 +81,9 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Set when this tab lists one issue's URLs (spec 009 D10). */
+  issue?: RuleInfo | null;
+  onIssueSettings?: () => void;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -254,7 +261,11 @@ export function ResultsView({
             />
           </div>
         </div>
-        <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        {issue ? (
+          <IssueHeader rule={issue} onSettings={onIssueSettings} />
+        ) : (
+          <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        )}
       </header>
 
       <div className="min-h-0 flex-1">

@@ -5,6 +5,8 @@ import { CornerDownRight, MousePointerClick } from "lucide-react";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
+import type { UrlIssue } from "../generated/UrlIssue";
+import { PriorityBadge } from "../issues/priority";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
 import { cellTone, formatBytes, toneText } from "./format";
@@ -135,9 +137,57 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
   );
 }
 
-export function Inspector({ transport, path, id }: { transport: Transport; path: string | null; id: number | null }) {
+/** The URL's issues, highest priority first; a click opens that issue (spec 009 FR-017). */
+function IssueList({ issues, onIssue }: { issues: UrlIssue[] | null; onIssue?: (id: string) => void }) {
+  if (!issues) return <div className="text-sm text-fg-3">Loading…</div>;
+  if (issues.length === 0) return <div className="text-sm text-fg-3">No issues.</div>;
+  return (
+    <ul className="m-0 flex list-none flex-col p-0">
+      {issues.map((i) => (
+        <li key={i.id} className="border-b border-line py-1 last:border-b-0">
+          <button type="button" onClick={() => onIssue?.(i.id)} className="flex w-full items-baseline gap-2 text-left text-sm hover:text-accent-text">
+            <PriorityBadge priority={i.priority} className="shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="text-fg">{i.name}</span>
+              {i.evidence && <span className="block break-words text-fg-3" data-selectable>{i.evidence}</span>}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function Inspector({
+  transport,
+  path,
+  id,
+  issuesVersion = 0,
+  onIssue,
+}: {
+  transport: Transport;
+  path: string | null;
+  id: number | null;
+  /** Changes when issue settings change, so the list is fetched again. */
+  issuesVersion?: number;
+  onIssue?: (ruleId: string) => void;
+}) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<UrlIssue[] | null>(null);
+
+  useEffect(() => {
+    if (!path || id === null) return;
+    let off = false;
+    setIssues(null);
+    transport.urlIssues(path, id).then(
+      (r) => !off && setIssues(r),
+      () => !off && setIssues([]),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id, issuesVersion]);
   const [list, setList] = useState<ListKind>("inlinks");
 
   useEffect(() => {
@@ -219,6 +269,10 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
           </Notice>
         </Section>
       )}
+
+      <Section title={issues && issues.length > 0 ? `Issues (${issues.length})` : "Issues"}>
+        <IssueList issues={issues} onIssue={onIssue} />
+      </Section>
 
       <Section title="Response">
         <Facts rows={facts} />

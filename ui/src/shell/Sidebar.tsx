@@ -1,5 +1,7 @@
 import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
+import type { IssuesSummary } from "../generated/IssuesSummary";
+import { IssuesNav } from "../issues/IssuesNav";
 
 export interface NavItem {
   id: string;
@@ -29,7 +31,22 @@ const later: NavItem[] = [
 ];
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
-export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean }) {
+export function Sidebar({
+  active,
+  onSelect,
+  collapsed,
+  onAbout,
+  results,
+  issues = null,
+}: {
+  active: string;
+  onSelect: (id: string) => void;
+  collapsed: boolean;
+  onAbout: () => void;
+  results: boolean;
+  /** The open crawl's issues (spec 009); the group shows once a crawl exists. */
+  issues?: IssuesSummary | null;
+}) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
     const Icon = it.icon;
@@ -58,6 +75,12 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
   return (
     <nav aria-label="Sections" className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
+      {results && (
+        <>
+          {heading("Issues")}
+          <IssuesNav summary={issues} active={active} collapsed={collapsed} onSelect={onSelect} />
+        </>
+      )}
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
       {heading("AI visibility")}

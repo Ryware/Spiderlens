@@ -17,6 +17,11 @@ import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
 import type { InvalidLine } from "./generated/InvalidLine";
+import type { IssueSettings } from "./generated/IssueSettings";
+import type { IssuesSummary } from "./generated/IssuesSummary";
+import type { RuleCatalogue } from "./generated/RuleCatalogue";
+import type { SettingsNotice } from "./generated/SettingsNotice";
+import type { UrlIssue } from "./generated/UrlIssue";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
 import type { ProfileEntry } from "./generated/ProfileEntry";
@@ -208,6 +213,12 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // Issues (spec 009, contracts/desktop-commands.md).
+  ruleCatalogue(settings: IssueSettings): Promise<RuleCatalogue>;
+  /** Makes these settings the ones in force; errors reject the whole change. */
+  issuesApply(path: string | null, settings: IssueSettings): Promise<SettingsNotice[]>;
+  issuesSummary(path: string, running: boolean): Promise<IssuesSummary>;
+  urlIssues(path: string, id: number): Promise<UrlIssue[]>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -262,4 +273,8 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  ruleCatalogue: (settings) => invoke("rule_catalogue", { settings }),
+  issuesApply: (path, settings) => invoke("issues_apply", { path, settings }),
+  issuesSummary: (path, running) => invoke("issues_summary", { path, running }),
+  urlIssues: (path, id) => invoke("url_issues", { path, id }),
 };

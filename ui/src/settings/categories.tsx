@@ -8,11 +8,12 @@ import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
 import { HeadersEditor } from "./HeadersEditor";
+import { IssueSettingsPanel } from "../issues/IssueSettingsPanel";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "issues" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +35,7 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "issues", title: "Issues", description: "Which checks run on the results, how urgent each is, and their limits. Changes apply to the open crawl right away.", prefixes: ["issues"] },
   {
     id: "appearance",
     title: "Appearance",
@@ -328,5 +330,8 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
           </Row>
         </Group>
       );
+
+    case "issues":
+      return <IssueSettingsPanel transport={transport} settings={config.issues} onChange={(v) => set((c) => ({ ...c, issues: v }))} />;
   }
 }
