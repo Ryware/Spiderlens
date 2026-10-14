@@ -82,15 +82,18 @@ test("unsaved_crawls_show_their_size_and_delete_asks_first", async () => {
 
   fireEvent.click(within(big).getByRole("button", { name: "Delete…" }));
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByText("Delete big? This can't be undone.")).toBeTruthy();
+  // Spec 019 FR-011: the start screen's delete goes to the Trash too.
+  expect(within(dialog).getByText("Move big to the Trash?")).toBeTruthy();
+  expect(within(dialog).getByText("You can restore it from the Trash.")).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(t.files.deleted).toEqual([]);
   expect(list.querySelector('[data-path="/data/Unsaved/big.spiderlens"]')).toBeTruthy();
 
   fireEvent.click(within(big).getByRole("button", { name: "Delete…" }));
-  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Move to Trash" }));
   await waitFor(() => expect(t.files.deleted).toEqual(["/data/Unsaved/big.spiderlens"]));
+  expect(t.files.trashed).toEqual(["/data/Unsaved/big.spiderlens"]);
   await waitFor(() => expect(screen.getByTestId("unsaved-total").textContent).toBe("Unsaved crawls use 205 MB"));
   expect(screen.queryByText("big")).toBeNull();
 });

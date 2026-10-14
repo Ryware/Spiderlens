@@ -17,6 +17,12 @@ pub struct Synth {
     /// Store each internal page's HTML (header, menu, content, footer
     /// around its links), for the link positions benchmark.
     pub html: bool,
+    /// Also writes page content (spec 005 `pages`, `page_text`) for the
+    /// HTML pages, marks the file as having it, and builds the indexes a
+    /// finished run leaves (`pages_title_hash`, `pages_md_hash`) when
+    /// `result_indexes` is set; a live or resumed crawl has none.
+    pub pages: bool,
+    pub result_indexes: bool,
 }
 
 impl Default for Synth {
@@ -26,6 +32,8 @@ impl Default for Synth {
             links_per_page: 10,
             seed: 7,
             html: false,
+            pages: false,
+            result_indexes: false,
         }
     }
 }
@@ -215,14 +223,88 @@ impl Synth {
                 }
             }
         }
+        if self.pages {
+            self.write_pages(&tx)?;
+        }
         tx.execute("UPDATE meta SET value = 'completed' WHERE key = 'status'", [])?;
-        // Base data only: no page content, timing or HTML.
+        // Base data, plus page content when asked: no timing or HTML.
         tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('data_features', '')",
-            [],
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('data_features', ?1)",
+            [if self.pages { "extraction" } else { "" }],
         )?;
         tx.commit()?;
+        if self.result_indexes {
+            conn.execute_batch(
+                "CREATE INDEX pages_title_hash ON pages(title_hash) WHERE title_hash IS NOT NULL;
+                 CREATE INDEX pages_md_hash ON pages(meta_description_hash) WHERE meta_description_hash IS NOT NULL;",
+            )?;
+        }
         conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
         Ok(self.urls)
+    }
+
+    /// A `pages` row for every HTML page: meta descriptions with known
+    /// duplicates, H1s that sometimes repeat the title, a few pages with a
+    /// second title (also in `page_text`).
+    fn write_pages(&self, tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+        let mut rng = Rng(self.seed.wrapping_mul(31).max(1));
+        let mut ins = tx.prepare(
+            "INSERT INTO pages (url_id, title_count, meta_description, meta_description_count, h1_1, h1_2, h1_count,
+              h2_1, h2_2, h2_count, heading_counts, word_count, text_hash, title_hash, meta_description_hash,
+              partial, encoding_errors, no_content, html_stored)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, NULL, ?8, '[]', ?9, ?10, ?11, ?12, 0, 0, 0, 0)",
+        )?;
+        let mut second = tx.prepare(
+            "INSERT INTO page_text (url_id, kind, level, pos, text, in_head) VALUES (?1, 'title', NULL, 1, ?2, 1)",
+        )?;
+        let mut pages =
+            tx.prepare("SELECT id, title FROM urls WHERE content_type LIKE 'text/html%' ORDER BY id")?;
+        let rows: Vec<(i64, Option<String>)> = pages
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let hash = |s: &str| {
+            s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+            }) as i64
+        };
+        for (id, title) in rows {
+            let title_count = i64::from(title.is_some()) + i64::from(rng.below(50) == 0);
+            let md = match rng.below(100) {
+                0..=4 => None,
+                5..=14 => Some("Welcome to our store".to_string()),
+                n => Some(format!(
+                    "{} page {id} about {}",
+                    WORDS[(n % WORDS.len() as u64) as usize],
+                    WORDS[rng.below(WORDS.len() as u64) as usize]
+                )),
+            };
+            let h1 = match (rng.below(100), &title) {
+                (0..=9, Some(t)) => Some(t.to_uppercase()),
+                (10..=14, _) => None,
+                (n, _) => Some(format!(
+                    "{} {}",
+                    WORDS[(n % WORDS.len() as u64) as usize],
+                    rng.below(1000)
+                )),
+            };
+            ins.execute(params![
+                id,
+                title_count,
+                md,
+                i64::from(md.is_some()),
+                h1,
+                i64::from(h1.is_some()) + i64::from(rng.below(30) == 0),
+                Some(format!("Section {}", rng.below(50))),
+                1 + rng.below(4) as i64,
+                50 + rng.below(2000) as i64,
+                rng.next() as i64,
+                title.as_deref().map(hash),
+                md.as_deref().map(hash),
+            ])?;
+            if title_count > 1 {
+                second.execute(params![id, format!("Second title {}", rng.below(100))])?;
+            }
+        }
+        Ok(())
     }
 }

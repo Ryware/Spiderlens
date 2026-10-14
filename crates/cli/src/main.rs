@@ -5,6 +5,7 @@
 
 mod crawl_cmd;
 mod export_cmd;
+mod files_cmd;
 mod links_cmd;
 mod options;
 mod viz_cmd;
@@ -66,6 +67,10 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// List crawl files in a folder with their size and stored HTML.
+    Files(files_cmd::FilesArgs),
+    /// Remove the stored page HTML from a crawl file, keeping its results.
+    PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
     /// Write a visualisation of a crawl file as SVG, PNG or CSV (same as the app's export).
@@ -165,6 +170,8 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Files(args) => files_cmd::run_files(args),
+        Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
