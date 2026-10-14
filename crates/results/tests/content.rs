@@ -396,9 +396,10 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     assert!(cell(&mut r, &c, "internal", "/", "response_time").is_i64());
 
     // Every filter is available, and its count equals the rows it lists.
+    // Spelling is checked after the crawl (spec 027 part D has its own test).
     for tab in tabs() {
         let counts = r.counts(tab.id, UrlScope::All).unwrap();
-        for f in &tab.filters {
+        for f in tab.filters.iter().filter(|f| f.need != Need::Spelling) {
             let n = counts.counts[f.id].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
             assert_eq!(
                 n,

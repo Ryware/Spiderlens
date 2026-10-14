@@ -27,7 +27,10 @@ pub fn script_of(c: char) -> Script {
 
 /// Hebrew points and cantillation: dropped before lookup.
 fn is_hebrew_mark(c: char) -> bool {
-    matches!(c, '\u{0591}'..='\u{05BD}' | '\u{05BF}' | '\u{05C1}' | '\u{05C2}' | '\u{05C4}' | '\u{05C5}' | '\u{05C7}')
+    matches!(
+        c,
+        '\u{0591}'..='\u{05BD}' | '\u{05BF}' | '\u{05C1}' | '\u{05C2}' | '\u{05C4}' | '\u{05C5}' | '\u{05C7}'
+    )
 }
 
 /// Combining marks that belong to the letter before them.
@@ -71,7 +74,10 @@ pub fn words(text: &str, opts: Options) -> Vec<Word> {
             i += 1;
             continue;
         }
-        let end = chars[i..].iter().position(|c| c.is_whitespace()).map_or(chars.len(), |n| i + n);
+        let end = chars[i..]
+            .iter()
+            .position(|c| c.is_whitespace())
+            .map_or(chars.len(), |n| i + n);
         let chunk: String = chars[i..end].iter().collect();
         if is_address(&chunk) {
             i = end;
@@ -88,7 +94,9 @@ fn is_address(chunk: &str) -> bool {
     lower.contains("://")
         || lower.starts_with("www.")
         || (chunk.contains('@') && chunk.contains('.'))
-        || lower.trim_end_matches(|c: char| !c.is_alphanumeric()).ends_with(".com")
+        || lower
+            .trim_end_matches(|c: char| !c.is_alphanumeric())
+            .ends_with(".com")
 }
 
 /// Splits one chunk into words.
@@ -164,12 +172,18 @@ mod tests {
     use super::*;
 
     fn texts(s: &str) -> Vec<String> {
-        words(s, Options { skip_all_caps: true }).into_iter().map(|w| w.text).collect()
+        words(s, Options { skip_all_caps: true })
+            .into_iter()
+            .map(|w| w.text)
+            .collect()
     }
 
     #[test]
     fn splits_on_spaces_punctuation_and_hyphens() {
-        assert_eq!(texts("Hello, world! A well-known fact."), ["Hello", "world", "well", "known", "fact"]);
+        assert_eq!(
+            texts("Hello, world! A well-known fact."),
+            ["Hello", "world", "well", "known", "fact"]
+        );
     }
 
     #[test]
@@ -201,7 +215,10 @@ mod tests {
     #[test]
     fn mixed_scripts_become_separate_words() {
         let w = words("Reactבעברית", Options::default());
-        assert_eq!(w.iter().map(|w| w.script).collect::<Vec<_>>(), [Script::Latin, Script::Hebrew]);
+        assert_eq!(
+            w.iter().map(|w| w.script).collect::<Vec<_>>(),
+            [Script::Latin, Script::Hebrew]
+        );
         assert_eq!(w[1].pos, 5);
     }
 

@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// The spelling pass's results (spec 027 part D).
+    Spelling,
 }
 
 impl Need {
@@ -44,6 +46,7 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Spelling => "Spelling has not been checked for this crawl. Run Check spelling to check it.",
         }
     }
 
@@ -55,6 +58,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Spelling => "spelling",
         }
     }
 }
@@ -222,6 +226,38 @@ impl ColumnDef {
         self.derived = Some(d);
         self
     }
+}
+
+/// A spelling result for the page (spec 027 part D).
+macro_rules! spell_fact {
+    ($col:literal) => {
+        concat!("(SELECT s.", $col, " FROM spell_pages s WHERE s.url_id = u.id)")
+    };
+}
+
+/// Pages with at least one finding matching `cond` (on `f`).
+macro_rules! has_finding {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM spell_findings f WHERE f.url_id = u.id AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+const fn spell_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::Spelling)
+}
+
+const fn spell_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::Spelling)
 }
 
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -817,6 +853,63 @@ fn build() -> Vec<TabDef> {
             search_column: Some("alt"),
             scoped: false,
         },
+        TabDef {
+            id: "spelling",
+            title: "Spelling",
+            eligible: HTML_OK,
+            columns: vec![
+                c::ADDRESS,
+                spell_col("spell_errors", "Spelling errors", spell_fact!("errors"), Int, 110),
+                spell_col(
+                    "spell_words",
+                    "Misspelt words",
+                    "(SELECT group_concat(word, ', ') FROM (SELECT DISTINCT f.word FROM spell_findings f \
+                     WHERE f.url_id = u.id ORDER BY f.pos LIMIT 8))",
+                    Text,
+                    320,
+                ),
+                spell_col("spell_lang", "Dictionary", spell_fact!("lang"), Text, 100),
+                spell_col(
+                    "spell_status",
+                    "Checked",
+                    "(SELECT CASE s.status WHEN 'checked' THEN 'Checked' \
+                     WHEN 'partly_checked' THEN 'Title and headings only' \
+                     WHEN 'no_dictionary' THEN 'No dictionary' ELSE 'No text' END \
+                     FROM spell_pages s WHERE s.url_id = u.id)",
+                    Text,
+                    170,
+                ),
+                c::TITLE,
+                spell_col("spell_checked_words", "Words checked", spell_fact!("words"), Int, 110).hidden(),
+                c::STATUS_CODE.hidden(),
+            ],
+            filters: vec![
+                filter("all", "All", "1"),
+                spell_filter("errors", "Spelling errors", concat!(spell_fact!("errors"), " > 0")),
+                spell_filter("in_title", "In title", has_finding!("f.source = 'title'")),
+                spell_filter("in_description", "In meta description", has_finding!("f.source = 'description'")),
+                spell_filter("in_headings", "In headings", has_finding!("f.source = 'heading'")),
+                spell_filter("in_body", "In body text", has_finding!("f.source = 'body' AND f.site_wide = 0")),
+                spell_filter("site_wide", "Site-wide (template)", has_finding!("f.site_wide = 1")),
+                spell_filter(
+                    "lang_mismatch",
+                    "Language mismatch",
+                    concat!(spell_fact!("lang_mismatch"), " = 1"),
+                ),
+                spell_filter(
+                    "no_dictionary",
+                    "No dictionary",
+                    concat!(spell_fact!("status"), " = 'no_dictionary'"),
+                ),
+                spell_filter(
+                    "partly_checked",
+                    "Body not checked",
+                    concat!(spell_fact!("status"), " = 'partly_checked'"),
+                ),
+            ],
+            search_column: Some("spell_words"),
+            scoped: false,
+        },
         content_tab(
             "canonicals",
             "Canonicals",
@@ -923,7 +1016,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 11);
+        assert_eq!(tab_ids.len(), 12);
     }
 
     #[test]

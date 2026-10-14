@@ -8,5 +8,6 @@ import type { RetrySettings } from "./RetrySettings";
 import type { RobotsSettings } from "./RobotsSettings";
 import type { Scope } from "./Scope";
 import type { SpeedSettings } from "./SpeedSettings";
+import type { SpellingSettings } from "./SpellingSettings";
 
-export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, };
+export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, spelling: SpellingSettings, };

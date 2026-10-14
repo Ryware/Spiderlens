@@ -63,10 +63,18 @@ impl Checker {
         Self::with(dicts, ignore, skip_all_caps)
     }
 
-    pub fn with(dicts: HashMap<String, spellbook::Dictionary>, ignore: &[String], skip_all_caps: bool) -> Self {
+    pub fn with(
+        dicts: HashMap<String, spellbook::Dictionary>,
+        ignore: &[String],
+        skip_all_caps: bool,
+    ) -> Self {
         Self {
             dicts,
-            ignore: ignore.iter().map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect(),
+            ignore: ignore
+                .iter()
+                .map(|w| w.trim().to_lowercase())
+                .filter(|w| !w.is_empty())
+                .collect(),
             opts: Options { skip_all_caps },
             suggestions: Mutex::new(HashMap::new()),
         }
@@ -91,7 +99,11 @@ impl Checker {
             return Some(primary);
         }
         // en-GB pages without a British dictionary: another English one.
-        self.dicts.keys().filter(|k| k.starts_with(&format!("{primary}-"))).min().cloned()
+        self.dicts
+            .keys()
+            .filter(|k| k.starts_with(&format!("{primary}-")))
+            .min()
+            .cloned()
     }
 
     /// The dictionary for words of `script` on a page checked in `lang`.
@@ -150,7 +162,10 @@ impl Checker {
             d.suggest(word, &mut s);
         }
         s.truncate(5);
-        self.suggestions.lock().expect("not poisoned").insert(key, s.clone());
+        self.suggestions
+            .lock()
+            .expect("not poisoned")
+            .insert(key, s.clone());
         s
     }
 }
@@ -193,8 +208,14 @@ mod tests {
         let c = checker(&[]);
         let mut n = Counts::default();
         let found = c.check("en", "We recieve SpiderLens news and acommodate NASA.", &mut n);
-        assert_eq!(found.iter().map(|m| m.word.as_str()).collect::<Vec<_>>(), ["recieve", "acommodate"]);
-        assert_eq!(c.suggest("en", "recieve").first().map(String::as_str), Some("receive"));
+        assert_eq!(
+            found.iter().map(|m| m.word.as_str()).collect::<Vec<_>>(),
+            ["recieve", "acommodate"]
+        );
+        assert_eq!(
+            c.suggest("en", "recieve").first().map(String::as_str),
+            Some("receive")
+        );
         assert_eq!(n.checked, 6);
     }
 
@@ -203,7 +224,10 @@ mod tests {
         let c = checker(&[("he", HE_AFF, HE_DIC)]);
         let mut n = Counts::default();
         let found = c.check("he", "ושלום בָּיִת שלוםם", &mut n);
-        assert_eq!(found.iter().map(|m| m.word.as_str()).collect::<Vec<_>>(), ["שלוםם"]);
+        assert_eq!(
+            found.iter().map(|m| m.word.as_str()).collect::<Vec<_>>(),
+            ["שלוםם"]
+        );
     }
 
     #[test]
@@ -211,7 +235,13 @@ mod tests {
         let with_he = checker(&[("he", HE_AFF, HE_DIC)]);
         let mut n = Counts::default();
         let found = with_he.check("en", "The word שלוםם and recieve", &mut n);
-        assert_eq!(found.iter().map(|m| (m.word.as_str(), m.lang.as_str())).collect::<Vec<_>>(), [("שלוםם", "he"), ("recieve", "en")]);
+        assert_eq!(
+            found
+                .iter()
+                .map(|m| (m.word.as_str(), m.lang.as_str()))
+                .collect::<Vec<_>>(),
+            [("שלוםם", "he"), ("recieve", "en")]
+        );
 
         let en_only = checker(&[]);
         let mut n = Counts::default();

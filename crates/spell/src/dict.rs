@@ -119,6 +119,25 @@ pub fn normalize_lang(tag: &str) -> Option<String> {
     }
 }
 
+/// Where the app keeps dictionaries: `dictionaries` in the desktop app's
+/// data folder (identifier com.ryware.spiderlens), so the app and the CLI
+/// share them. `SPIDERLENS_DICTIONARIES` overrides it.
+pub fn default_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("SPIDERLENS_DICTIONARIES") {
+        return Some(PathBuf::from(d));
+    }
+    const ID: &str = "com.ryware.spiderlens";
+    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let base = if cfg!(target_os = "windows") {
+        env("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|h| h.join("Library/Application Support"))
+    } else {
+        env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share")))
+    }?;
+    Some(base.join(ID).join("dictionaries"))
+}
+
 const INFO: &str = "info.json";
 const AFF: &str = "index.aff";
 const DIC: &str = "index.dic";
@@ -147,7 +166,9 @@ impl Store {
             size: (BUNDLED_AFF.len() + BUNDLED_DIC.len()) as u64,
             origin: Origin::Bundled,
         }];
-        let Ok(entries) = std::fs::read_dir(&self.dir) else { return out };
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return out;
+        };
         let mut found: Vec<Installed> = entries
             .flatten()
             .filter_map(|e| {
@@ -168,7 +189,8 @@ impl Store {
     /// Loads one dictionary.
     pub fn load(&self, lang: &str) -> Result<spellbook::Dictionary> {
         if lang == BUNDLED {
-            return spellbook::Dictionary::new(BUNDLED_AFF, BUNDLED_DIC).map_err(|e| DictError::Invalid(e.to_string()));
+            return spellbook::Dictionary::new(BUNDLED_AFF, BUNDLED_DIC)
+                .map_err(|e| DictError::Invalid(e.to_string()));
         }
         let dir = self.dir.join(lang);
         if !dir.join(INFO).is_file() {
@@ -278,7 +300,10 @@ impl Store {
         for (name, bytes) in files {
             std::fs::write(tmp.join(name), bytes)?;
         }
-        std::fs::write(tmp.join(INFO), serde_json::to_vec_pretty(info).expect("info serializes"))?;
+        std::fs::write(
+            tmp.join(INFO),
+            serde_json::to_vec_pretty(info).expect("info serializes"),
+        )?;
         let dest = self.dir.join(&info.lang);
         let _ = std::fs::remove_dir_all(&dest);
         std::fs::rename(&tmp, &dest)?;
@@ -306,7 +331,11 @@ mod tests {
         let he = manifest().dictionaries.iter().find(|d| d.lang == "he").unwrap();
         assert_eq!(he.licence, "AGPL-3.0");
         assert!(he.size() > 5_000_000);
-        assert!(he.files.iter().all(|f| f.sha256.len() == 64 && f.url.starts_with("https://")));
+        assert!(
+            he.files
+                .iter()
+                .all(|f| f.sha256.len() == 64 && f.url.starts_with("https://"))
+        );
     }
 
     #[test]
@@ -331,7 +360,10 @@ mod tests {
             .add_files("xx", &src.path().join("x.aff"), &src.path().join("x.dic"))
             .unwrap();
         assert!(matches!(info.origin, Origin::File));
-        assert_eq!(store.list().iter().map(|d| d.lang.as_str()).collect::<Vec<_>>(), ["en", "xx"]);
+        assert_eq!(
+            store.list().iter().map(|d| d.lang.as_str()).collect::<Vec<_>>(),
+            ["en", "xx"]
+        );
         assert!(store.load("xx").unwrap().check("toda"));
         store.remove("xx").unwrap();
         assert_eq!(store.list().len(), 1);
@@ -345,7 +377,11 @@ mod tests {
         std::fs::write(src.path().join("x.aff"), "FLAG num\n").unwrap();
         std::fs::write(src.path().join("x.dic"), "1\nword/abc\n").unwrap();
         let store = Store::new(dir.path());
-        assert!(store.add_files("xx", &src.path().join("x.aff"), &src.path().join("x.dic")).is_err());
+        assert!(
+            store
+                .add_files("xx", &src.path().join("x.aff"), &src.path().join("x.dic"))
+                .is_err()
+        );
         assert_eq!(store.list().len(), 1);
     }
 }

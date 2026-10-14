@@ -22,11 +22,12 @@ xxhash-rust.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
+spiderlens-results.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 spiderlens-test-fixtures.workspace = true
 rusqlite.workspace = true
-axum.workspace = true
 
 [lints]
 workspace = true

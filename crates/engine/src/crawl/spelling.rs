@@ -50,6 +50,9 @@ pub struct SpellFindingRow {
     pub block: Option<i64>,
 }
 
+/// id, title, meta description, lang.
+type PageRow = (i64, Option<String>, Option<String>, Option<String>);
+
 /// Internal HTML pages fetched successfully: the pages spelling covers.
 const ELIGIBLE: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND u.resource_type = 'html'";
@@ -75,9 +78,11 @@ pub fn open_for_spelling(path: &Path) -> std::result::Result<(WriterLock, CrawlS
 
 impl CrawlStore {
     pub fn spell_eligible(&self) -> Result<u64> {
-        let n: i64 = self
-            .conn()
-            .query_row(&format!("SELECT COUNT(*) FROM urls u WHERE {ELIGIBLE}"), [], |r| r.get(0))?;
+        let n: i64 = self.conn().query_row(
+            &format!("SELECT COUNT(*) FROM urls u WHERE {ELIGIBLE}"),
+            [],
+            |r| r.get(0),
+        )?;
         Ok(n as u64)
     }
 
@@ -87,16 +92,20 @@ impl CrawlStore {
             "SELECT u.id, u.title, p.meta_description, p.lang FROM urls u LEFT JOIN pages p ON p.url_id = u.id
              WHERE {ELIGIBLE} AND u.id > ?1 ORDER BY u.id LIMIT ?2"
         );
-        let rows: Vec<(i64, Option<String>, Option<String>, Option<String>)> = self
+        let rows: Vec<PageRow> = self
             .conn()
             .prepare_cached(&sql)?
-            .query_map(params![after, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .query_map(params![after, limit], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
             .collect::<rusqlite::Result<_>>()?;
         let mut pages = Vec::with_capacity(rows.len());
         for (id, title, description, lang) in rows {
             let headings = self
                 .conn()
-                .prepare_cached("SELECT text FROM page_text WHERE url_id = ?1 AND kind = 'heading' ORDER BY pos")?
+                .prepare_cached(
+                    "SELECT text FROM page_text WHERE url_id = ?1 AND kind = 'heading' ORDER BY pos",
+                )?
                 .query_map([id], |r| r.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
             pages.push(SpellPage {
@@ -124,15 +133,31 @@ impl CrawlStore {
                 "INSERT OR REPLACE INTO spell_pages (url_id, lang, status, words, errors, lang_mismatch)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?
-            .execute(params![id, page.lang, page.status, page.words, page.errors, page.lang_mismatch])?;
+            .execute(params![
+                id,
+                page.lang,
+                page.status,
+                page.words,
+                page.errors,
+                page.lang_mismatch
+            ])?;
         let mut stmt = self.conn().prepare_cached(
             "INSERT INTO spell_findings (url_id, kind, word, source, pos, context, suggestions, block, site_wide)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
         )?;
         for f in findings {
-            let suggestions =
-                (!f.suggestions.is_empty()).then(|| serde_json::to_string(&f.suggestions).expect("strings serialize"));
-            stmt.execute(params![id, f.kind, f.word, f.source, f.pos, f.context, suggestions, f.block])?;
+            let suggestions = (!f.suggestions.is_empty())
+                .then(|| serde_json::to_string(&f.suggestions).expect("strings serialize"));
+            stmt.execute(params![
+                id,
+                f.kind,
+                f.word,
+                f.source,
+                f.pos,
+                f.context,
+                suggestions,
+                f.block
+            ])?;
         }
         Ok(())
     }

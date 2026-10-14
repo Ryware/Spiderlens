@@ -7,14 +7,43 @@
 use scraper::{ElementRef, Html, Node};
 
 const SKIP: &[&str] = &[
-    "script", "style", "template", "noscript", "code", "pre", "kbd", "samp", "var", "svg", "math", "textarea",
-    "select", "option", "button", "h1", "h2", "h3", "h4", "h5", "h6", "head", "title", "iframe", "object",
+    "script", "style", "template", "noscript", "code", "pre", "kbd", "samp", "var", "svg", "math",
+    "textarea", "select", "option", "button", "h1", "h2", "h3", "h4", "h5", "h6", "head", "title", "iframe",
+    "object",
 ];
 
 const BLOCK: &[&str] = &[
-    "p", "div", "li", "td", "th", "dd", "dt", "section", "article", "aside", "header", "footer", "nav", "main",
-    "blockquote", "figcaption", "caption", "summary", "details", "form", "fieldset", "legend", "label", "ul", "ol",
-    "dl", "table", "tr", "br", "hr", "address",
+    "p",
+    "div",
+    "li",
+    "td",
+    "th",
+    "dd",
+    "dt",
+    "section",
+    "article",
+    "aside",
+    "header",
+    "footer",
+    "nav",
+    "main",
+    "blockquote",
+    "figcaption",
+    "caption",
+    "summary",
+    "details",
+    "form",
+    "fieldset",
+    "legend",
+    "label",
+    "ul",
+    "ol",
+    "dl",
+    "table",
+    "tr",
+    "br",
+    "hr",
+    "address",
 ];
 
 /// Body text split into blocks, whitespace collapsed, empty blocks dropped.
@@ -74,6 +103,9 @@ mod tests {
         let html = "<html><head><title>T</title></head><body><h1>Head</h1><p>First <b>bold</b> para</p>\
                     <script>var x</script><pre>let y</pre><p>Use <code>fn main</code> here</p>\
                     <ul><li>One</li><li>Two</li></ul><footer>Copyright notise</footer></body></html>";
-        assert_eq!(body_blocks(html), ["First bold para", "Use here", "One", "Two", "Copyright notise"]);
+        assert_eq!(
+            body_blocks(html),
+            ["First bold para", "Use here", "One", "Two", "Copyright notise"]
+        );
     }
 }

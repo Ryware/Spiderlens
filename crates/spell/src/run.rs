@@ -21,6 +21,8 @@ use crate::dict::{Store, normalize_lang};
 use crate::html::body_blocks;
 
 const BATCH: u32 = 200;
+/// Findings kept per page; the page's error count is not capped.
+const MAX_ROWS_PER_PAGE: usize = 200;
 
 /// Pages a block must be on, as a share of checked pages, to be site-wide.
 const SITE_WIDE_SHARE: f64 = 0.5;
@@ -138,7 +140,10 @@ pub fn run(
         d
     };
     summary.ms = started.elapsed().as_millis() as u64;
-    crawl.set_meta("spelling", &serde_json::to_string(&summary).expect("summary serializes"))?;
+    crawl.set_meta(
+        "spelling",
+        &serde_json::to_string(&summary).expect("summary serializes"),
+    )?;
     crawl.commit()?;
     Ok(summary)
 }
@@ -180,30 +185,43 @@ impl Pass<'_> {
         self.used.insert(lang.clone());
         let mut counts = Counts::default();
         let mut findings = Vec::new();
-        let mut add = |found: Vec<Misspelling>, source: &'static str, text: &str, offset: usize, block: Option<i64>| {
-            for m in found {
-                let suggestions = self.checker.suggest(&m.lang, &m.word);
-                self.distinct.insert((m.lang.clone(), m.word.clone()));
-                findings.push(SpellFindingRow {
-                    kind: "spelling",
-                    context: context(text, m.pos, m.len),
-                    pos: (offset + m.pos) as u32,
-                    word: m.word,
-                    source,
-                    suggestions,
-                    block,
-                });
-            }
-        };
+        let mut add =
+            |found: Vec<Misspelling>, source: &'static str, text: &str, offset: usize, block: Option<i64>| {
+                for m in found {
+                    let suggestions = self.checker.suggest(&m.lang, &m.word);
+                    self.distinct.insert((m.lang.clone(), m.word.clone()));
+                    findings.push(SpellFindingRow {
+                        kind: "spelling",
+                        context: context(text, m.pos, m.len),
+                        pos: (offset + m.pos) as u32,
+                        word: m.word,
+                        source,
+                        suggestions,
+                        block,
+                    });
+                }
+            };
         if let Some(t) = &page.title {
             add(self.checker.check(&lang, t, &mut counts), "title", t, 0, None);
         }
         if let Some(d) = &page.description {
-            add(self.checker.check(&lang, d, &mut counts), "description", d, 0, None);
+            add(
+                self.checker.check(&lang, d, &mut counts),
+                "description",
+                d,
+                0,
+                None,
+            );
         }
         let mut offset = 0;
         for h in &page.headings {
-            add(self.checker.check(&lang, h, &mut counts), "heading", h, offset, None);
+            add(
+                self.checker.check(&lang, h, &mut counts),
+                "heading",
+                h,
+                offset,
+                None,
+            );
             offset += h.chars().count() + 1;
         }
         let status = match &page.html {
@@ -241,12 +259,19 @@ impl Pass<'_> {
             self.summary.partly_checked += 1;
         }
         let status = if counts.all == 0 { "no_text" } else { status };
-        self.summary.errors += findings.len() as u64;
+        let errors = findings.len() as u32;
+        self.summary.errors += u64::from(errors);
+        // One row per word and place on a page: a word repeated in many
+        // paragraphs is one thing to fix, and storing every copy made a
+        // 10,000-page crawl of placeholder text grow by 400 MB.
+        let mut seen = HashSet::new();
+        findings.retain(|f| seen.insert((f.word.clone(), f.source, f.block)));
+        findings.truncate(MAX_ROWS_PER_PAGE);
         let row = SpellPageRow {
             lang: Some(lang),
             status,
             words: counts.checked,
-            errors: findings.len() as u32,
+            errors,
             lang_mismatch: counts.all >= MISMATCH_MIN_WORDS && counts.own_script * 2 < counts.all,
         };
         (row, findings)

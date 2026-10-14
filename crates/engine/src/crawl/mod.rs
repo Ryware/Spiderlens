@@ -13,9 +13,9 @@ pub mod redact;
 pub mod retry;
 mod runner;
 pub mod scope;
-mod spelling;
 mod sitemap;
 mod speed;
+mod spelling;
 pub mod store;
 mod window;
 

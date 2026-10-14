@@ -6,6 +6,7 @@
 mod crawl_cmd;
 mod export_cmd;
 mod options;
+mod spell_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -66,6 +67,8 @@ enum Command {
     Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Check the spelling of a crawl file, or manage dictionaries.
+    Spell(Box<spell_cmd::SpellArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -159,6 +162,7 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

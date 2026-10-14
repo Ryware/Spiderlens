@@ -372,7 +372,9 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
     let lang = c.spelling.default_lang.trim();
     if lang.is_empty()
         || lang.len() > 35
-        || !lang.split('-').all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_alphanumeric()))
+        || !lang
+            .split('-')
+            .all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_alphanumeric()))
     {
         i.error(
             "spelling.default_lang",
