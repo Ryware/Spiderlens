@@ -10,9 +10,14 @@ use std::sync::LazyLock;
 use ego_tree::NodeRef;
 use regex::Regex;
 use scraper::{Html, Node};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use spiderlens_engine::extract::text::{collapse, word_count};
+use spiderlens_engine::extract::{HookInput, PageFacts, PageHook};
 use url::Url;
+
+/// One of the fixed names [`read`] writes. An alias so that serde does not
+/// take the field as borrowed from the input; [`names`] reads it back.
+pub type Name = &'static str;
 
 /// A block of the main content, in document order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +32,7 @@ pub enum Block {
 }
 
 /// A heading phrased as a question, and what followed it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionHeading {
     pub level: u8,
     pub text: String,
@@ -35,20 +40,22 @@ pub struct QuestionHeading {
     pub answer: Option<String>,
     pub answer_words: u32,
     /// What came next: "paragraph", "list", "heading", "media", "table", "nothing", ...
-    pub followed_by: &'static str,
+    #[serde(deserialize_with = "names::one")]
+    pub followed_by: Name,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DateFound {
     pub date: String,
     /// Where it was found: `time`, `visible`.
-    pub source: &'static str,
+    #[serde(deserialize_with = "names::one")]
+    pub source: Name,
     /// Next to an "updated" word.
     pub modified: bool,
 }
 
 /// Raw-HTML evidence that a page is built by JavaScript (FR-017).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsEvidence {
     pub html_bytes: usize,
     pub script_bytes: usize,
@@ -56,6 +63,7 @@ pub struct JsEvidence {
     pub body_words: u32,
     /// An application container with no text (`#root`, `#app`, `#__next`, ...).
     pub empty_container: Option<String>,
+    #[serde(deserialize_with = "names::many")]
     pub framework_markers: Vec<&'static str>,
 }
 
@@ -69,17 +77,24 @@ impl JsEvidence {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Stored in `page_facts` when the crawl reads them ([`page_hook`]); the
+/// blocks are only needed while reading, so they are not.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentFacts {
     /// Which element was taken as the main content.
-    pub main_source: &'static str,
+    #[serde(deserialize_with = "names::one")]
+    pub main_source: Name,
     pub main_words: u32,
+    #[serde(skip)]
     pub blocks: Vec<Block>,
     pub questions: Vec<QuestionHeading>,
     pub subheadings: u32,
     pub paragraphs: u32,
     pub longest_paragraph: u32,
     pub long_paragraphs: u32,
+    /// Words in each paragraph, so a changed long-paragraph threshold
+    /// applies to facts read during the crawl.
+    pub paragraph_words: Vec<u32>,
     pub lists: u32,
     pub tables: u32,
     pub figures: u32,
@@ -138,8 +153,16 @@ const SKIP: &[&str] = &["script", "style", "template", "noscript", "svg", "head"
 const CHROME: &[&str] = &["nav", "header", "footer", "aside", "form"];
 const CHROME_ROLES: &[&str] = &["navigation", "banner", "contentinfo", "complementary", "search"];
 
+/// An attribute's value. `Element::attr` interns the name on every call,
+/// and names html5ever does not know (`data-nosnippet`, `itemprop`) go
+/// through one lock shared by all threads; a scan of the few attributes an
+/// element has is faster and does not contend.
+fn attr<'a>(el: &'a scraper::node::Element, name: &str) -> Option<&'a str> {
+    el.attrs().find(|(k, _)| *k == name).map(|(_, v)| v)
+}
+
 fn is_chrome(el: &scraper::node::Element) -> bool {
-    CHROME.contains(&el.name()) || el.attr("role").is_some_and(|r| CHROME_ROLES.contains(&r))
+    CHROME.contains(&el.name()) || attr(el, "role").is_some_and(|r| CHROME_ROLES.contains(&r))
 }
 
 /// Text of a node, skipping scripts and similar.
@@ -175,29 +198,40 @@ fn text_of(node: NodeRef<'_, Node>) -> String {
             }
             _ => {}
         }
-        let children: Vec<_> = n.children().collect();
-        stack.extend(children.into_iter().rev());
+        stack.extend(n.children().rev());
     }
     collapse(&out)
 }
 
 /// The main content root and its name (plan D7).
 fn main_root(doc: &Html) -> (NodeRef<'_, Node>, &'static str) {
-    let find = |name: &str| -> Vec<NodeRef<'_, Node>> {
-        doc.tree
-            .root()
-            .descendants()
-            .filter(|n| n.value().as_element().is_some_and(|e| e.name() == name))
-            .collect()
-    };
-    if let Some(m) = find("main").into_iter().next() {
+    // One walk: the first <main>, the only <article>, else the first <body>.
+    let (mut main, mut body, mut article, mut articles) = (None, None, None, 0);
+    for n in doc.tree.root().descendants() {
+        match n.value().as_element().map(|e| e.name()) {
+            Some("main") => {
+                main = Some(n);
+                break;
+            }
+            Some("article") => {
+                articles += 1;
+                article.get_or_insert(n);
+            }
+            Some("body") => {
+                body.get_or_insert(n);
+            }
+            _ => {}
+        }
+    }
+    if let Some(m) = main {
         return (m, "main");
     }
-    let articles = find("article");
-    if articles.len() == 1 {
-        return (articles[0], "article");
+    if articles == 1
+        && let Some(a) = article
+    {
+        return (a, "article");
     }
-    match find("body").into_iter().next() {
+    match body {
         Some(b) => (b, "body"),
         None => (doc.tree.root(), "document"),
     }
@@ -256,8 +290,7 @@ fn blocks(root: NodeRef<'_, Node>) -> Vec<Block> {
                 if word_count(&direct) >= 5 && n.id() != root.id() {
                     out.push(Block::Other { text: direct });
                 }
-                let children: Vec<_> = n.children().collect();
-                stack.extend(children.into_iter().rev());
+                stack.extend(n.children().rev());
             }
         }
     }
@@ -467,6 +500,7 @@ pub fn read(
                 let w = word_count(text);
                 f.paragraphs += 1;
                 f.longest_paragraph = f.longest_paragraph.max(w);
+                f.paragraph_words.push(w);
                 if w > limits.long_paragraph_words {
                     f.long_paragraphs += 1;
                 }
@@ -503,11 +537,10 @@ pub fn read(
         };
         match el.name() {
             "a" if !in_chrome(n) => {
-                if let Some(u) = el.attr("href").and_then(|h| page_url.join(h).ok())
+                if let Some(u) = attr(el, "href").and_then(|h| page_url.join(h).ok())
                     && matches!(u.scheme(), "http" | "https")
                     && !same_site(&u, page_url)
-                    && !el
-                        .attr("rel")
+                    && !attr(el, "rel")
                         .is_some_and(|r| r.split_whitespace().any(|v| v.eq_ignore_ascii_case("sponsored")))
                 {
                     // One citation per cited site.
@@ -525,40 +558,33 @@ pub fn read(
         let Some(el) = n.value().as_element() else {
             continue;
         };
-        if el.attr("data-nosnippet").is_some() {
+        if attr(el, "data-nosnippet").is_some() {
             f.data_nosnippet += 1;
         }
-        if el.attr("data-snippet").is_some() {
+        if attr(el, "data-snippet").is_some() {
             f.data_snippet += 1;
         }
-        let class_id = format!(
-            "{} {}",
-            el.attr("class").unwrap_or(""),
-            el.attr("id").unwrap_or("")
-        )
-        .to_ascii_lowercase();
-        let is_author = el
-            .attr("rel")
-            .is_some_and(|r| r.split_whitespace().any(|v| v == "author"))
-            || el.attr("itemprop") == Some("author")
-            || class_id.contains("author")
-            || class_id.contains("byline");
+        // Class and id words, ignoring case, without building a string.
+        let (class, id) = (attr(el, "class").unwrap_or(""), attr(el, "id").unwrap_or(""));
+        let class_id = |word: &str| contains_ignore_case(class, word) || contains_ignore_case(id, word);
+        let is_author = attr(el, "rel").is_some_and(|r| r.split_whitespace().any(|v| v == "author"))
+            || attr(el, "itemprop") == Some("author")
+            || class_id("author")
+            || class_id("byline");
         if is_author && f.byline.is_none() {
             let t = text_of(n);
             let t = t.trim_start_matches(|c: char| !c.is_alphanumeric()).to_string();
             if !t.is_empty() && t.chars().count() <= 120 {
                 f.byline = Some(t);
                 if el.name() == "a" {
-                    f.author_link = el
-                        .attr("href")
+                    f.author_link = attr(el, "href")
                         .and_then(|h| page_url.join(h).ok())
                         .map(String::from);
                 } else if let Some(a) = n
                     .descendants()
                     .find_map(|d| d.value().as_element().filter(|e| e.name() == "a"))
                 {
-                    f.author_link = a
-                        .attr("href")
+                    f.author_link = attr(a, "href")
                         .and_then(|h| page_url.join(h).ok())
                         .map(String::from);
                 }
@@ -580,22 +606,21 @@ pub fn read(
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            if let Some(d) = el
-                .attr("datetime")
+            if let Some(d) = attr(el, "datetime")
                 .and_then(|v| parse_visible_date(v, None))
                 .or_else(|| parse_visible_date(&text_of(n), lang))
             {
                 f.dates.push(DateFound {
                     date: d,
                     source: "time",
-                    modified: is_updated_label(&label, lang) || el.attr("itemprop") == Some("dateModified"),
+                    modified: is_updated_label(&label, lang) || attr(el, "itemprop") == Some("dateModified"),
                 });
             }
-        } else if (class_id.contains("date")
-            || class_id.contains("posted")
-            || class_id.contains("updated")
-            || class_id.contains("byline")
-            || class_id.contains("meta"))
+        } else if (class_id("date")
+            || class_id("posted")
+            || class_id("updated")
+            || class_id("byline")
+            || class_id("meta"))
             && !n
                 .descendants()
                 .any(|d| d.value().as_element().is_some_and(|e| e.name() == "time"))
@@ -607,7 +632,7 @@ pub fn read(
                 f.dates.push(DateFound {
                     date: d,
                     source: "visible",
-                    modified: is_updated_label(&t, lang) || class_id.contains("updated"),
+                    modified: is_updated_label(&t, lang) || class_id("updated"),
                 });
             }
         }
@@ -637,7 +662,7 @@ fn js_evidence(doc: &Html, body: NodeRef<'_, Node>, html_bytes: usize, body_word
             continue;
         };
         if el.name() == "script" {
-            if el.attr("src").is_some() {
+            if attr(el, "src").is_some() {
                 e.external_scripts += 1;
             } else {
                 let t: usize = n
@@ -645,7 +670,7 @@ fn js_evidence(doc: &Html, body: NodeRef<'_, Node>, html_bytes: usize, body_word
                     .filter_map(|c| c.value().as_text().map(|t| t.len()))
                     .sum();
                 e.script_bytes += t;
-                if el.attr("id") == Some("__NEXT_DATA__") {
+                if attr(el, "id") == Some("__NEXT_DATA__") {
                     e.framework_markers.push("Next.js data");
                 }
                 if n.children()
@@ -655,10 +680,10 @@ fn js_evidence(doc: &Html, body: NodeRef<'_, Node>, html_bytes: usize, body_word
                 }
             }
         }
-        if el.attr("ng-version").is_some() {
+        if attr(el, "ng-version").is_some() {
             e.framework_markers.push("Angular");
         }
-        if el.attr("data-reactroot").is_some() {
+        if attr(el, "data-reactroot").is_some() {
             e.framework_markers.push("React root");
         }
     }
@@ -666,10 +691,10 @@ fn js_evidence(doc: &Html, body: NodeRef<'_, Node>, html_bytes: usize, body_word
         let Some(el) = n.value().as_element() else {
             continue;
         };
-        let id = el.attr("id").unwrap_or("");
+        let id = attr(el, "id").unwrap_or("");
         let container = matches!(id, "root" | "app" | "__next" | "__nuxt" | "svelte" | "main-app")
             || el.name() == "app-root"
-            || el.attr("data-reactroot").is_some();
+            || attr(el, "data-reactroot").is_some();
         if container && word_count(&text_of(n)) < 5 {
             e.empty_container = Some(if id.is_empty() {
                 el.name().to_string()
@@ -682,6 +707,108 @@ fn js_evidence(doc: &Html, body: NodeRef<'_, Node>, html_bytes: usize, body_word
     e.framework_markers.sort_unstable();
     e.framework_markers.dedup();
     e
+}
+
+/// The `page_facts` kind and version of [`ContentFacts`]. Bump the version
+/// whenever [`read`] changes what it finds, so older rows are read again.
+pub const FACTS_KIND: &str = "aeo_content";
+pub const FACTS_VERSION: i64 = 1;
+
+/// Reads content facts while the crawl has each page parsed, so the AI
+/// checks do not parse stored HTML again (the pass stays a small share of
+/// crawl time). The full visible text is kept only on pages with question
+/// markup, the one check that compares against it.
+pub fn page_hook() -> PageHook {
+    PageHook(std::sync::Arc::new(|doc: &Html, input: &HookInput<'_>| {
+        let mut f = read(
+            doc,
+            input.url,
+            input.body_len,
+            input.lang,
+            ContentLimits::default(),
+        );
+        if !has_question_markup(doc) {
+            f.visible_text = String::new();
+        }
+        Some(PageFacts {
+            kind: FACTS_KIND,
+            version: FACTS_VERSION,
+            data: serde_json::to_vec(&f).ok()?,
+        })
+    }))
+}
+
+/// Facts stored by [`page_hook`], with the long-paragraph count for
+/// `limits`; `None` when they cannot be read.
+pub fn from_stored(data: &[u8], limits: ContentLimits) -> Option<ContentFacts> {
+    let mut f: ContentFacts = serde_json::from_slice(data).ok()?;
+    f.long_paragraphs = f
+        .paragraph_words
+        .iter()
+        .filter(|w| **w > limits.long_paragraph_words)
+        .count() as u32;
+    Some(f)
+}
+
+/// JSON-LD that may hold questions and answers (FAQPage, QAPage).
+fn has_question_markup(doc: &Html) -> bool {
+    doc.tree.root().descendants().any(|n| {
+        n.value().as_element().is_some_and(|e| {
+            e.name() == "script"
+                && attr(e, "type").is_some_and(|t| t.trim().eq_ignore_ascii_case("application/ld+json"))
+        }) && n
+            .children()
+            .any(|c| c.value().as_text().is_some_and(|t| t.contains("Question")))
+    })
+}
+
+fn contains_ignore_case(hay: &str, word: &str) -> bool {
+    hay.len() >= word.len()
+        && hay
+            .as_bytes()
+            .windows(word.len())
+            .any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
+}
+
+/// Reading back the fixed names [`read`] writes (`&'static str` fields).
+mod names {
+    use serde::{Deserialize, Deserializer, de::Error};
+
+    const KNOWN: &[&str] = &[
+        "main",
+        "article",
+        "body",
+        "document",
+        "paragraph",
+        "list",
+        "heading",
+        "media",
+        "table",
+        "quote",
+        "nothing",
+        "time",
+        "visible",
+        "Next.js data",
+        "Nuxt state",
+        "Angular",
+        "React root",
+    ];
+
+    fn known<E: Error>(s: &str) -> Result<&'static str, E> {
+        KNOWN
+            .iter()
+            .find(|k| **k == s)
+            .copied()
+            .ok_or_else(|| E::custom(format!("unknown name {s:?}")))
+    }
+
+    pub fn one<'de, D: Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
+        known(&String::deserialize(d)?)
+    }
+
+    pub fn many<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<&'static str>, D::Error> {
+        Vec::<String>::deserialize(d)?.iter().map(|s| known(s)).collect()
+    }
 }
 
 #[cfg(test)]
@@ -844,5 +971,61 @@ mod tests {
         );
         assert_eq!(f.visible_qa, 1);
         assert!(f.visible_text.contains("can i return shoes?"));
+    }
+
+    fn hooked(html: &str) -> PageFacts {
+        let url = Url::parse("https://shop.test/articles/x").unwrap();
+        let doc = Html::parse_document(html);
+        let input = HookInput {
+            url: &url,
+            body_len: html.len(),
+            lang: Some("en"),
+        };
+        (page_hook().0)(&doc, &input).unwrap()
+    }
+
+    #[test]
+    fn stored_facts_round_trip_with_the_threshold_of_the_run() {
+        let long = "word ".repeat(40);
+        let html = format!(
+            "<html><body><main><h2>How long does it take?</h2><p>About two weeks.</p><p>{long}</p>\
+             <p>Updated <time datetime=\"2026-10-01\">1 October 2026</time></p></main>\
+             <div id=\"root\"></div></body></html>"
+        );
+        let stored = hooked(&html);
+        assert_eq!((stored.kind, stored.version), (FACTS_KIND, FACTS_VERSION));
+        let read_now = facts(&html, Some("en"));
+        let back = from_stored(&stored.data, ContentLimits::default()).unwrap();
+        assert_eq!(
+            back,
+            ContentFacts {
+                blocks: vec![],
+                visible_text: String::new(),
+                ..read_now
+            }
+        );
+        // A lower threshold set after the crawl still applies.
+        let strict = from_stored(
+            &stored.data,
+            ContentLimits {
+                long_paragraph_words: 30,
+            },
+        )
+        .unwrap();
+        assert_eq!((back.long_paragraphs, strict.long_paragraphs), (0, 1));
+        assert!(from_stored(b"{}", ContentLimits::default()).is_none());
+    }
+
+    #[test]
+    fn visible_text_is_kept_only_for_question_markup() {
+        let faq = r#"<html><head><script type="application/ld+json">{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Q"}]}</script></head><body><p>Hello there</p></body></html>"#;
+        let plain = "<html><body><p>Hello there</p></body></html>";
+        let text = |html| {
+            from_stored(&hooked(html).data, ContentLimits::default())
+                .unwrap()
+                .visible_text
+        };
+        assert_eq!(text(faq), "hello there");
+        assert_eq!(text(plain), "");
     }
 }

@@ -517,7 +517,11 @@ fn run(
         Open::RetryFailed => Crawler::retry_failed(path)?.0,
     };
     let reserve = app.state::<crate::files::State>().disk_reserve();
-    let crawler = crawler.with_disk_reserve(Some(reserve));
+    let mut crawler = crawler.with_disk_reserve(Some(reserve));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     let ai_checks = crawler.config().ai_checks.auto;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

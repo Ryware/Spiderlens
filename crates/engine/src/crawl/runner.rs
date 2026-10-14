@@ -35,7 +35,7 @@ use super::store::{
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
@@ -462,7 +462,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    hook: Option<PageHook>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -483,6 +490,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     robots_token: &token,
                     // Spec 026: stored once the crawl file has the tables.
                     a11y: false,
+                    hook: hook.as_ref(),
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
@@ -540,9 +548,16 @@ pub struct Crawler {
     start: Option<Url>,
     resolve: Vec<(String, SocketAddr)>,
     retry_base: Duration,
+    page_hook: Option<PageHook>,
 }
 
 impl Crawler {
+    /// Reads more from every parsed page during this crawl (see
+    /// [`PageHook`]); its facts are stored in `page_facts`.
+    pub fn set_page_hook(&mut self, hook: PageHook) {
+        self.page_hook = Some(hook);
+    }
+
     /// Creates the crawl file and records the seeds. The configuration must
     /// already be validated (spec 002); invalid patterns are refused here too.
     pub fn create(path: &Path, config: CrawlConfig, input: &ModeInput) -> Result<Self, CrawlError> {
@@ -635,6 +650,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -754,6 +770,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -1657,13 +1674,16 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // The hook's facts stand in for stored HTML, so it runs only when the
+        // HTML is kept (a crawl without it has no content checks either).
+        let hook = self.c.page_hook.clone().filter(|_| store_html);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {

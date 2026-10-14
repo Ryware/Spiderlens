@@ -169,6 +169,7 @@ pub fn analyze_open(
     store::ensure_schema(conn)?;
     let tx = conn.transaction()?;
     store::clear_results(&tx)?;
+    store::drop_finding_indexes(&tx)?;
     let today = crawl_day(&tx)?;
     let has_render = store::has_table(&tx, "render_comparisons")?;
 
@@ -232,42 +233,61 @@ pub fn analyze_open(
         [],
         |r| r.get::<_, i64>(0).map(|n| n as u64),
     )?;
+    // Every core checks pages; this thread only reads and writes the file,
+    // so it reads the next chunk while the workers check the last one.
     let workers = opts
         .workers
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)))
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .max(1);
     let mut agg = Aggregate::default();
     let mut done = 0u64;
-    let mut after = 0i64;
-    loop {
-        if cancelled() {
-            return Err(Error::Cancelled);
-        }
-        let rows = read_chunk(&tx, after, has_render)?;
-        let Some(last) = rows.last() else { break };
-        after = last.id;
-        let mut inputs = Vec::new();
-        for row in rows {
-            let Ok(url) = Url::parse(&row.url) else { continue };
-            let (blocked, known) = match host_state.get_mut(&row.host_key) {
-                Some(h) => (h.tally.add(&url), h.robots_known),
-                None => (0, false),
-            };
-            if row.page.is_some() {
-                inputs.push((row, url, blocked, known));
+    let th = opts.thresholds;
+    let check = |(row, url, blocked, known): PageJob| {
+        page(row, &url, blocked, known, &bots, masks, today, &th, &opts.weights)
+    };
+    std::thread::scope(|scope| -> Result<()> {
+        let pool = Pool::start(scope, workers, &check);
+        let mut after = 0i64;
+        let mut in_flight: Option<usize> = None;
+        loop {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let rows = read_chunk(&tx, after, has_render)?;
+            let next = rows.last().map(|last| last.id);
+            let mut inputs = Vec::new();
+            for row in rows {
+                let Ok(url) = Url::parse(&row.url) else { continue };
+                let (blocked, known) = match host_state.get_mut(&row.host_key) {
+                    Some(h) => (h.tally.add(&url), h.robots_known),
+                    None => (0, false),
+                };
+                if row.page.is_some() {
+                    inputs.push((row, url, blocked, known));
+                }
+            }
+            // Results of the chunk before, in page order, while this one runs.
+            let previous = in_flight.take().map(|n| pool.collect(n));
+            if next.is_some() {
+                in_flight = Some(pool.submit(inputs));
+            }
+            if let Some(results) = previous {
+                write_pages(&tx, &results)?;
+                for r in &results {
+                    agg.add(r);
+                }
+                done += results.len() as u64;
+                progress(Progress::Pages { done, total });
+            }
+            match next {
+                Some(id) => after = id,
+                None => break,
             }
         }
-        let th = opts.thresholds;
-        let results = run_parallel(inputs, workers, |(row, url, blocked, known)| {
-            page(row, &url, blocked, known, &bots, masks, today, &th, &opts.weights)
-        });
-        write_pages(&tx, &results)?;
-        for r in &results {
-            agg.add(r);
-        }
-        done += results.len() as u64;
-        progress(Progress::Pages { done, total });
-    }
+        // Dropping the pool closes the job queue; the scope joins the workers.
+        drop(pool);
+        Ok(())
+    })?;
 
     // Site.
     progress(Progress::Site);
@@ -336,6 +356,7 @@ pub fn analyze_open(
         },
     };
     write_site(&tx, &summary, opts, started.elapsed().as_millis() as i64)?;
+    store::create_finding_indexes(&tx)?;
     store::set_meta(&tx, "aeo_analysis", &ANALYSIS_VERSION.to_string())?;
     tx.execute_batch("DROP TABLE IF EXISTS temp.aeo_title_counts;")?;
     tx.commit()?;
@@ -439,7 +460,11 @@ struct PageRaw {
     lang: Option<String>,
     encoding: Option<String>,
     partial: bool,
-    html: Option<Vec<u8>>,
+    /// The stored body, still compressed (a worker unpacks it), and its size.
+    /// Not read when the crawl stored content facts for the page.
+    html: Option<(Vec<u8>, usize)>,
+    /// Content facts the crawl read while it had the page parsed.
+    facts: Option<Vec<u8>>,
     directives: Vec<Directive>,
     json_ld: Vec<String>,
     sd_blocks: u32,
@@ -488,6 +513,7 @@ fn read_chunk(conn: &Connection, after: i64, has_render: bool) -> Result<Vec<Url
                     encoding: r.get(11)?,
                     partial: r.get(12)?,
                     html: None,
+                    facts: None,
                     directives: vec![],
                     json_ld: vec![],
                     sd_blocks: 0,
@@ -500,22 +526,32 @@ fn read_chunk(conn: &Connection, after: i64, has_render: bool) -> Result<Vec<Url
         out.push((id, r.get::<_, String>(1)?, r.get::<_, String>(2)?, page));
     }
     drop(rows);
+    // One range query per table for the whole chunk, not one per URL.
+    let hi = out.last().map_or(after, |(id, ..)| *id);
+    let mut dirs = directives(conn, after, hi)?;
+    let mut sd = structured_blocks(conn, after, hi)?;
+    let mut facts = page_facts(conn, after, hi)?;
+    let mut bodies = html(conn, after, hi)?;
+    let mut renders = if has_render {
+        render(conn, after, hi)?
+    } else {
+        HashMap::new()
+    };
     let mut result = Vec::with_capacity(out.len());
     for (id, url, host_key, page) in out {
         let page = match page {
             Some((extracted, html_stored, mut p)) => {
                 if extracted {
-                    p.directives = directives(conn, id)?;
-                    let (blocks, json_ld) = structured_blocks(conn, id)?;
+                    p.directives = dirs.remove(&id).unwrap_or_default();
+                    let (blocks, json_ld) = sd.remove(&id).unwrap_or_default();
                     p.sd_blocks = blocks;
                     p.json_ld = json_ld;
                 }
                 if html_stored {
-                    p.html = html(conn, id)?;
+                    p.facts = facts.remove(&id);
+                    p.html = bodies.remove(&id);
                 }
-                if has_render {
-                    p.render = render(conn, id)?;
-                }
+                p.render = renders.remove(&id);
                 // `pages` row present ⇔ extraction ran; kept on the raw row.
                 if !extracted {
                     p.h1_count = u32::MAX;
@@ -534,69 +570,105 @@ fn read_chunk(conn: &Connection, after: i64, has_render: bool) -> Result<Vec<Url
     Ok(result)
 }
 
-fn directives(conn: &Connection, id: i64) -> Result<Vec<Directive>> {
+/// Directives of the URLs with ids in `(after, hi]`, in page order.
+fn directives(conn: &Connection, after: i64, hi: i64) -> Result<HashMap<i64, Vec<Directive>>> {
     let mut st = conn.prepare_cached(
-        "SELECT directive, value, crawler, source FROM directives WHERE url_id = ?1 ORDER BY pos",
+        "SELECT url_id, directive, value, crawler, source FROM directives
+         WHERE url_id > ?1 AND url_id <= ?2 ORDER BY url_id, pos",
+    )?;
+    let mut out: HashMap<i64, Vec<Directive>> = HashMap::new();
+    let mut rows = st.query([after, hi])?;
+    while let Some(r) = rows.next()? {
+        out.entry(r.get(0)?).or_default().push(Directive {
+            directive: r.get(1)?,
+            value: r.get(2)?,
+            crawler: r.get(3)?,
+            source: r.get(4)?,
+        });
+    }
+    Ok(out)
+}
+
+/// Structured data blocks per URL in `(after, hi]`: their count and the
+/// JSON-LD ones.
+fn structured_blocks(conn: &Connection, after: i64, hi: i64) -> Result<HashMap<i64, (u32, Vec<String>)>> {
+    let mut st = conn.prepare_cached(
+        "SELECT url_id, kind, raw FROM structured_data
+         WHERE url_id > ?1 AND url_id <= ?2 ORDER BY url_id, pos",
+    )?;
+    let mut out: HashMap<i64, (u32, Vec<String>)> = HashMap::new();
+    let mut rows = st.query([after, hi])?;
+    while let Some(r) = rows.next()? {
+        let e = out.entry(r.get(0)?).or_default();
+        e.0 += 1;
+        let kind: String = r.get(1)?;
+        if kind == "json_ld" {
+            e.1.push(r.get(2)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Content facts the crawl stored for the URLs in `(after, hi]`, in this
+/// build's version.
+fn page_facts(conn: &Connection, after: i64, hi: i64) -> Result<HashMap<i64, Vec<u8>>> {
+    let mut st = conn.prepare_cached(
+        "SELECT url_id, data FROM page_facts WHERE url_id > ?1 AND url_id <= ?2 AND kind = ?3 AND version = ?4",
     )?;
     let rows = st
-        .query_map([id], |r| {
-            Ok(Directive {
-                directive: r.get(0)?,
-                value: r.get(1)?,
-                crawler: r.get(2)?,
-                source: r.get(3)?,
-            })
-        })?
+        .query_map(
+            params![after, hi, content::FACTS_KIND, content::FACTS_VERSION],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
-fn structured_blocks(conn: &Connection, id: i64) -> Result<(u32, Vec<String>)> {
-    let mut st =
-        conn.prepare_cached("SELECT kind, raw FROM structured_data WHERE url_id = ?1 ORDER BY pos")?;
-    let mut n = 0;
-    let mut json_ld = Vec::new();
-    let mut rows = st.query([id])?;
+/// Stored bodies of the URLs in `(after, hi]` that have no content facts,
+/// still compressed, with their sizes. Bodies in another codec are left out.
+fn html(conn: &Connection, after: i64, hi: i64) -> Result<HashMap<i64, (Vec<u8>, usize)>> {
+    let mut st = conn.prepare_cached(
+        "SELECT b.url_id, b.codec, b.size, b.body FROM bodies b
+         WHERE b.url_id > ?1 AND b.url_id <= ?2
+         AND NOT EXISTS (SELECT 1 FROM page_facts f WHERE f.url_id = b.url_id AND f.kind = ?3 AND f.version = ?4)",
+    )?;
+    let mut out = HashMap::new();
+    let mut rows = st.query(params![after, hi, content::FACTS_KIND, content::FACTS_VERSION])?;
     while let Some(r) = rows.next()? {
-        n += 1;
-        let kind: String = r.get(0)?;
-        if kind == "json_ld" {
-            json_ld.push(r.get(1)?);
+        let codec: String = r.get(1)?;
+        if codec == body::CODEC {
+            let size: i64 = r.get(2)?;
+            out.insert(r.get(0)?, (r.get(3)?, size.max(0) as usize));
         }
     }
-    Ok((n, json_ld))
+    Ok(out)
 }
 
-fn html(conn: &Connection, id: i64) -> Result<Option<Vec<u8>>> {
-    let row: Option<(String, i64, Vec<u8>)> = conn
-        .prepare_cached("SELECT codec, size, body FROM bodies WHERE url_id = ?1")?
-        .query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-        .optional()?;
-    Ok(row
-        .filter(|(codec, _, _)| codec == body::CODEC)
-        .and_then(|(_, size, packed)| body::decompress(&packed, size.max(0) as usize).ok()))
-}
-
-fn render(conn: &Connection, id: i64) -> Result<Option<RenderFacts>> {
-    Ok(conn
-        .prepare_cached(
-            "SELECT dep_text, dep_headings, dep_internal_links, dep_structured,
-                    raw_has_title, raw_has_description, raw_has_canonical, raw_has_directives
-             FROM render_comparisons WHERE url_id = ?1",
-        )?
-        .query_row([id], |r| {
-            Ok(RenderFacts {
-                dependence: r.get::<_, Option<f64>>(0)?.unwrap_or(0.0),
-                dep_headings: r.get(1)?,
-                dep_internal_links: r.get(2)?,
-                dep_structured: r.get(3)?,
-                raw_has_title: r.get::<_, Option<bool>>(4)?.unwrap_or(true),
-                raw_has_description: r.get::<_, Option<bool>>(5)?.unwrap_or(true),
-                raw_has_canonical: r.get::<_, Option<bool>>(6)?.unwrap_or(true),
-                raw_has_directives: r.get::<_, Option<bool>>(7)?.unwrap_or(true),
-            })
-        })
-        .optional()?)
+/// Raw-versus-rendered facts per URL in `(after, hi]` (spec 014).
+fn render(conn: &Connection, after: i64, hi: i64) -> Result<HashMap<i64, RenderFacts>> {
+    let mut st = conn.prepare_cached(
+        "SELECT url_id, dep_text, dep_headings, dep_internal_links, dep_structured,
+                raw_has_title, raw_has_description, raw_has_canonical, raw_has_directives
+         FROM render_comparisons WHERE url_id > ?1 AND url_id <= ?2",
+    )?;
+    let mut out = HashMap::new();
+    let mut rows = st.query([after, hi])?;
+    while let Some(r) = rows.next()? {
+        out.insert(
+            r.get(0)?,
+            RenderFacts {
+                dependence: r.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
+                dep_headings: r.get(2)?,
+                dep_internal_links: r.get(3)?,
+                dep_structured: r.get(4)?,
+                raw_has_title: r.get::<_, Option<bool>>(5)?.unwrap_or(true),
+                raw_has_description: r.get::<_, Option<bool>>(6)?.unwrap_or(true),
+                raw_has_canonical: r.get::<_, Option<bool>>(7)?.unwrap_or(true),
+                raw_has_directives: r.get::<_, Option<bool>>(8)?.unwrap_or(true),
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// What the writer stores for one page.
@@ -609,9 +681,16 @@ struct PageRow {
     blocked: u64,
     js_dependence: Option<f64>,
     counts: Option<Counts>,
-    snippet_limits: Option<Value>,
+    /// `snippet_limits` as stored (JSON), made on the worker.
+    snippet_limits: Option<String>,
+    /// Failed and unavailable checks as stored, made on the worker so the
+    /// writing thread only binds values.
+    findings: Vec<FindingRow>,
     entity: Option<Entity>,
 }
+
+/// One `aeo_findings` row: rule, outcome, points lost, evidence (JSON).
+type FindingRow = (&'static str, &'static str, i64, Option<String>);
 
 struct Counts {
     question_headings: u32,
@@ -638,18 +717,22 @@ fn page(
 ) -> PageRow {
     let p = row.page.expect("only pages are evaluated");
     let extracted = p.h1_count != u32::MAX;
-    let content: Option<ContentFacts> = p.html.as_deref().and_then(|bytes| {
-        let doc = extract::parse_body(p.encoding.as_deref(), bytes, p.partial)?;
-        Some(content::read(
-            &doc,
-            url,
-            bytes.len(),
-            p.lang.as_deref(),
-            ContentLimits {
-                long_paragraph_words: th.long_paragraph_words,
-            },
-        ))
-    });
+    let limits = ContentLimits {
+        long_paragraph_words: th.long_paragraph_words,
+    };
+    // Facts read during the crawl; otherwise parse the stored HTML (files
+    // crawled by an older build, or by a version of the reader since bumped).
+    let content: Option<ContentFacts> = match &p.facts {
+        Some(data) => content::from_stored(data, limits),
+        None => p
+            .html
+            .as_ref()
+            .and_then(|(packed, size)| body::decompress(packed, *size).ok())
+            .and_then(|bytes| {
+                let doc = extract::parse_body(p.encoding.as_deref(), &bytes, p.partial)?;
+                Some(content::read(&doc, url, bytes.len(), p.lang.as_deref(), limits))
+            }),
+    };
     let blocks: Vec<&str> = p.json_ld.iter().map(String::as_str).collect();
     let (items, mut messages) = structured::read_json_ld(&blocks);
     messages.extend(structured::validate(&items));
@@ -689,7 +772,30 @@ fn page(
         .filter(|(r, o)| r.points > 0 && matches!(o, Outcome::Pass | Outcome::Fail))
         .map(|(r, _)| score::scaled_points(r, weights))
         .sum();
-    let snippet_limits = snippet_summary(&p.directives, content.as_ref());
+    let snippet_limits = snippet_summary(&p.directives, content.as_ref()).map(|v| v.to_string());
+    let lost: HashMap<&str, u64> = score.lost.iter().copied().collect();
+    let findings = eval
+        .outcomes
+        .iter()
+        .filter_map(|(rule, outcome)| {
+            let label = match outcome {
+                Outcome::Fail => "fail",
+                Outcome::NotAvailable => "not_available",
+                _ => return None,
+            };
+            let evidence = eval
+                .evidence
+                .iter()
+                .find(|(id, _)| *id == rule.rule.id)
+                .map(|(_, v)| v.to_string());
+            Some((
+                rule.rule.id,
+                label,
+                lost.get(rule.rule.id).copied().unwrap_or(0) as i64,
+                evidence,
+            ))
+        })
+        .collect();
     PageRow {
         id: row.id,
         counts: content.as_ref().map(|c| Counts {
@@ -712,6 +818,7 @@ fn page(
         blocked,
         js_dependence: p.render.map(|r| r.dependence * 100.0),
         snippet_limits,
+        findings,
         entity: facts.org.clone(),
     }
 }
@@ -739,29 +846,72 @@ fn snippet_summary(directives: &[Directive], content: Option<&ContentFacts>) -> 
     Some(json!({ "directives": by, "data_nosnippet": dn, "data_snippet": ds }))
 }
 
-fn run_parallel<I: Send, O: Send>(items: Vec<I>, workers: usize, f: impl Fn(I) -> O + Sync) -> Vec<O> {
-    if workers <= 1 || items.len() < 2 {
-        return items.into_iter().map(f).collect();
+type PageJob = (UrlRaw, Url, u64, bool);
+
+/// Pages per batch handed to one worker, so the cores stay busy on uneven
+/// pages.
+const BATCH: usize = 32;
+
+/// Page workers that live for the whole pass. One chunk is in flight at a
+/// time: [`Pool::submit`] hands it out in batches and [`Pool::collect`]
+/// returns its results in page order.
+struct Pool {
+    jobs: std::sync::mpsc::Sender<(usize, Vec<PageJob>)>,
+    results: std::sync::mpsc::Receiver<(usize, Vec<PageRow>)>,
+}
+
+impl Pool {
+    fn start<'scope, 'env, F>(
+        s: &'scope std::thread::Scope<'scope, 'env>,
+        workers: usize,
+        check: &'env F,
+    ) -> Pool
+    where
+        F: Fn(PageJob) -> PageRow + Sync,
+    {
+        let (jobs, job_rx) = std::sync::mpsc::channel::<(usize, Vec<PageJob>)>();
+        let (result_tx, results) = std::sync::mpsc::channel();
+        let job_rx = std::sync::Arc::new(std::sync::Mutex::new(job_rx));
+        for _ in 0..workers {
+            let job_rx = job_rx.clone();
+            let result_tx = result_tx.clone();
+            s.spawn(move || {
+                loop {
+                    // The guard drops at the end of the statement, so other
+                    // workers take batches while this one checks pages.
+                    let job = job_rx.lock().expect("job queue").recv();
+                    let Ok((n, batch)) = job else { break };
+                    let rows: Vec<PageRow> = batch.into_iter().map(check).collect();
+                    if result_tx.send((n, rows)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        Pool { jobs, results }
     }
-    let per = items.len().div_ceil(workers);
-    let mut slices: Vec<Vec<I>> = Vec::new();
-    let mut it = items.into_iter().peekable();
-    while it.peek().is_some() {
-        slices.push(it.by_ref().take(per).collect());
+
+    /// Hands out one chunk; returns how many batches it made.
+    fn submit(&self, inputs: Vec<PageJob>) -> usize {
+        let mut n = 0;
+        let mut it = inputs.into_iter().peekable();
+        while it.peek().is_some() {
+            let batch: Vec<PageJob> = it.by_ref().take(BATCH).collect();
+            self.jobs.send((n, batch)).expect("page workers are running");
+            n += 1;
+        }
+        n
     }
-    std::thread::scope(|s| {
-        let handles: Vec<_> = slices
-            .into_iter()
-            .map(|slice| {
-                let f = &f;
-                s.spawn(move || slice.into_iter().map(f).collect::<Vec<_>>())
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("page worker panicked"))
-            .collect()
-    })
+
+    /// The results of the chunk in flight, in page order.
+    fn collect(&self, batches: usize) -> Vec<PageRow> {
+        let mut parts: Vec<Option<Vec<PageRow>>> = (0..batches).map(|_| None).collect();
+        for _ in 0..batches {
+            let (n, rows) = self.results.recv().expect("page worker panicked");
+            parts[n] = Some(rows);
+        }
+        parts.into_iter().flatten().flatten().collect()
+    }
 }
 
 fn write_pages(conn: &Connection, rows: &[PageRow]) -> Result<()> {
@@ -809,28 +959,10 @@ fn write_pages(conn: &Connection, rows: &[PageRow]) -> Result<()> {
             c.map(|c| c.lists),
             c.map(|c| c.tables),
             c.map(|c| c.longest_paragraph),
-            r.snippet_limits.as_ref().map(Value::to_string),
+            r.snippet_limits,
         ])?;
-        let lost: HashMap<&str, u64> = r.score.lost.iter().copied().collect();
-        for (rule, outcome) in &r.eval.outcomes {
-            let label = match outcome {
-                Outcome::Fail => "fail",
-                Outcome::NotAvailable => "not_available",
-                _ => continue,
-            };
-            let evidence = r
-                .eval
-                .evidence
-                .iter()
-                .find(|(id, _)| *id == rule.rule.id)
-                .map(|(_, v)| v.to_string());
-            finding.execute(params![
-                r.id,
-                rule.rule.id,
-                label,
-                lost.get(rule.rule.id).copied().unwrap_or(0) as i64,
-                evidence
-            ])?;
+        for (rule, label, lost, evidence) in &r.findings {
+            finding.execute(params![r.id, rule, label, lost, evidence])?;
         }
     }
     Ok(())

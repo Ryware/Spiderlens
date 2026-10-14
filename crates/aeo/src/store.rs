@@ -27,6 +27,20 @@ pub fn clear_results(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The findings indexes, as the migration step creates them. A full run
+/// drops them before writing and builds them once at the end, which is
+/// faster than keeping them up to date row by row.
+const FINDING_INDEXES: &str = "CREATE INDEX IF NOT EXISTS aeo_findings_rule ON aeo_findings(rule_id, url_id);
+     CREATE INDEX IF NOT EXISTS aeo_findings_url ON aeo_findings(url_id);";
+
+pub fn drop_finding_indexes(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("DROP INDEX IF EXISTS aeo_findings_rule; DROP INDEX IF EXISTS aeo_findings_url;")
+}
+
+pub fn create_finding_indexes(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(FINDING_INDEXES)
+}
+
 pub fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     Ok(conn
         .query_row(

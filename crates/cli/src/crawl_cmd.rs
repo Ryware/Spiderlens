@@ -311,7 +311,11 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     };
-    let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    let mut crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     execute(crawler, file, cmd.quiet, cmd.json)
 }
 

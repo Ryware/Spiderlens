@@ -1052,6 +1052,13 @@ impl CrawlStore {
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
+        if let Some(f) = &d.facts {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO page_facts (url_id, kind, version, data) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, f.kind, f.version, f.data])?;
+        }
         Ok(())
     }
 

@@ -163,6 +163,44 @@ pub struct PageData {
     pub structured: Vec<StructuredBlock>,
     /// Static accessibility checks (spec 026), when asked for.
     pub a11y: Option<a11y::A11yStatic>,
+    /// What the crawl's [`PageHook`] read from the parsed page.
+    #[serde(skip)]
+    pub facts: Option<PageFacts>,
+}
+
+/// Facts a [`PageHook`] read from a parsed page, stored in `page_facts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageFacts {
+    /// Who wrote them, such as `aeo_content` (spec 015).
+    pub kind: &'static str,
+    /// Bumped when the reader changes, so older rows are read again.
+    pub version: i64,
+    pub data: Vec<u8>,
+}
+
+/// What a [`PageHook`] is given besides the parsed page.
+pub struct HookInput<'a> {
+    pub url: &'a Url,
+    /// Length of the body as received, before decoding.
+    pub body_len: usize,
+    /// The `lang` of the root element, as stored in `pages.lang`.
+    pub lang: Option<&'a str>,
+}
+
+/// Reads more from each page while extraction has it parsed, so a later
+/// pass need not parse the stored HTML again (spec 015 reads its content
+/// facts this way). Runs on the extraction threads; a panic only loses the
+/// facts of that page.
+#[derive(Clone)]
+pub struct PageHook(pub std::sync::Arc<PageHookFn>);
+
+/// The function behind a [`PageHook`].
+pub type PageHookFn = dyn Fn(&scraper::Html, &HookInput<'_>) -> Option<PageFacts> + Send + Sync;
+
+impl std::fmt::Debug for PageHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PageHook")
+    }
 }
 
 impl PageData {
@@ -199,6 +237,7 @@ impl PageData {
             meta_refresh: None,
             structured: Vec::new(),
             a11y: None,
+            facts: None,
         }
     }
 }
@@ -216,6 +255,7 @@ pub struct PageInput<'a> {
     pub robots_token: &'a str,
     /// Run the static accessibility checks (spec 026).
     pub a11y: bool,
+    pub hook: Option<&'a PageHook>,
 }
 
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
@@ -226,12 +266,14 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
         return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
     }
     let (text, used, had_errors) = encoding.decode(input.body);
+    let hook = input.hook.map(|h| (h, input.body.len()));
     let mut data = walk::walk(
         &text,
         input.url,
         input.robots_token,
         walk::PARSE_BUDGET,
         input.a11y,
+        hook,
     );
     data.encoding = used.name();
     data.encoding_errors = had_errors;

@@ -91,6 +91,15 @@ pub const STEPS: &[Step] = &[
 ];
 
 const AEO_TABLES: &str = r#"
+-- Facts a page hook read while the crawl had the page parsed (spec 015
+-- reads its content facts here instead of parsing stored HTML again).
+CREATE TABLE page_facts (
+    url_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (url_id, kind)
+) WITHOUT ROWID;
 CREATE TABLE site_files (
     host_key TEXT NOT NULL,
     path TEXT NOT NULL,

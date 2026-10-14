@@ -71,6 +71,11 @@ struct Crawled {
 }
 
 async fn crawl() -> Crawled {
+    crawl_with(false).await
+}
+
+/// `hook`: read content facts during the crawl, as the CLI and app do.
+async fn crawl_with(hook: bool) -> Crawled {
     let site = site();
     let mut c = CrawlConfig {
         speed: SpeedSettings::FAST,
@@ -82,10 +87,13 @@ async fn crawl() -> Crawled {
     let input = ModeInput::Spider {
         start_url: site.url(E, "/"),
     };
-    let crawler = Crawler::create(&path, c, &input)
+    let mut crawler = Crawler::create(&path, c, &input)
         .unwrap()
         .with_resolve(site.resolve())
         .with_retry_base(Duration::from_millis(10));
+    if hook {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     let (_tx, rx) = watch::channel(Control::Run);
     tokio::time::timeout(Duration::from_secs(60), crawler.run(rx, None))
         .await
@@ -260,4 +268,49 @@ async fn analysis_of_a_crawled_site() {
     let again = analyze::analyze(&c.path, &AnalyzeOptions::default(), &|_| {}).unwrap();
     assert_eq!(again.score, s.score);
     assert_eq!(dump(&c.path), first);
+}
+
+/// Every row the analysis wrote for pages, in a fixed order.
+fn results(conn: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
+    let mut out = Vec::new();
+    for sql in [
+        "SELECT * FROM aeo_pages ORDER BY url_id",
+        "SELECT * FROM aeo_findings ORDER BY url_id, rule_id",
+    ] {
+        let mut st = conn.prepare(sql).unwrap();
+        let n = st.column_count();
+        let rows = st
+            .query_map([], |r| {
+                (0..n).map(|i| r.get::<_, rusqlite::types::Value>(i)).collect()
+            })
+            .unwrap()
+            .collect::<Result<Vec<Vec<_>>, _>>()
+            .unwrap();
+        out.extend(rows);
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn facts_read_during_the_crawl_give_the_same_results() {
+    let c = crawl_with(true).await;
+    let conn = Connection::open(&c.path).unwrap();
+    let stored: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM page_facts WHERE kind = 'aeo_content'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(stored >= 6, "{stored} pages with facts");
+
+    analyze::analyze(&c.path, &AnalyzeOptions::default(), &|_: Progress| {}).unwrap();
+    let from_facts = results(&conn);
+    assert!(!from_facts.is_empty());
+
+    // Without the facts the pass parses the stored HTML, as for a file
+    // crawled by an older build.
+    conn.execute("DELETE FROM page_facts", []).unwrap();
+    analyze::analyze(&c.path, &AnalyzeOptions::default(), &|_: Progress| {}).unwrap();
+    assert_eq!(results(&conn), from_facts);
 }
