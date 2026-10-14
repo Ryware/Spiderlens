@@ -66,6 +66,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    ai_checks: { auto: true, site_files: true },
   };
 }
 

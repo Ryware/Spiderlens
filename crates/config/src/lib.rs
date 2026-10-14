@@ -21,7 +21,7 @@ mod validate;
 
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
+    AiChecks, CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
     NetworkSettings, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings,
     SubdomainMode, UserAgent,
 };

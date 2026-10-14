@@ -26,6 +26,7 @@ use super::health::{HostHealth, Transition};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
+use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
 use super::store::{
@@ -424,6 +425,16 @@ enum Msg {
     },
     SitemapDone(SitemapRow),
     SitemapsFinished,
+    SiteFile(SiteFileRow),
+    SiteFilesFinished,
+}
+
+/// The per-host AI site files (spec 015 FR-010), fetched after the last page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteFiles {
+    NotStarted,
+    Pending,
+    Done,
 }
 
 struct PageOutcome {
@@ -896,6 +907,7 @@ struct Run {
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
     errors: u64,
@@ -1016,6 +1028,7 @@ impl Run {
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
             errors,
@@ -1366,14 +1379,20 @@ impl Run {
                             && !self.sitemaps_pending
                             && self.retries.is_empty()
                         {
-                            self.c.store.set_meta("status", "completed")?;
-                            self.c
-                                .store
-                                .conn()
-                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
-                                .map_err(StoreError::from)?;
-                            self.c.store.record_event("completed", None)?;
-                            break;
+                            match self.site_files {
+                                SiteFiles::NotStarted => self.start_site_files()?,
+                                SiteFiles::Pending => {}
+                                SiteFiles::Done => {
+                                    self.c.store.set_meta("status", "completed")?;
+                                    self.c
+                                        .store
+                                        .conn()
+                                        .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                        .map_err(StoreError::from)?;
+                                    self.c.store.record_event("completed", None)?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1737,6 +1756,59 @@ impl Run {
         });
     }
 
+    /// Fetches each internal host's AI site files, one at a time per host
+    /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    fn start_site_files(&mut self) -> Result<(), CrawlError> {
+        if !self.c.config.ai_checks.site_files {
+            self.site_files = SiteFiles::Done;
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        for key in self.c.store.internal_hosts()? {
+            let host = self.hosts.get(&key);
+            let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
+            let policy = match host.map(|h| &h.robots) {
+                Some(RobotsState::Known(p, _)) => Some(p.clone()),
+                _ => None,
+            };
+            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+                .iter()
+                .map(|path| {
+                    let blocked = policy.as_ref().and_then(|p| {
+                        let url = Url::parse(&format!("{key}{path}")).ok()?;
+                        match p.check(&url) {
+                            RobotsVerdict::Disallowed(rule) => Some(format!("blocked by robots.txt: {rule}")),
+                            _ => None,
+                        }
+                    });
+                    ((*path).to_string(), blocked)
+                })
+                .collect();
+            jobs.push((key, delay, paths));
+        }
+        self.site_files = SiteFiles::Pending;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (key, delay, paths) in jobs {
+                for (i, (path, blocked)) in paths.into_iter().enumerate() {
+                    let row = match blocked {
+                        Some(why) => SiteFileRow::skipped(&key, &path, &why),
+                        None => {
+                            if i > 0 && !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            site_files::fetch(&client, &key, &path).await
+                        }
+                    };
+                    let _ = tx.send(Msg::SiteFile(row));
+                }
+            }
+            let _ = tx.send(Msg::SiteFilesFinished);
+        });
+        Ok(())
+    }
+
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
         if !self.c.config.scope.use_sitemaps || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
         {
@@ -1841,6 +1913,11 @@ impl Run {
             }
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
+                Ok(())
+            }
+            Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SiteFilesFinished => {
+                self.site_files = SiteFiles::Done;
                 Ok(())
             }
         }

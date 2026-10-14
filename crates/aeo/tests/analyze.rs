@@ -48,6 +48,13 @@ fn site() -> Site {
             E,
             "Content-Signal: search=yes, ai-train=no\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /private/\n\nUser-agent: *\nAllow: /\n",
         )
+        .raw(
+            E,
+            "/llms.txt",
+            200,
+            "text/plain; charset=utf-8",
+            b"# Example\n\n> A small shop.\n\n## Guides\n\n- [Shipping](/blog/shipping): how long it takes\n",
+        )
         .html(E, "/", home)
         .html(E, "/blog/shipping", ARTICLE)
         .html(E, "/app", SHELL)
@@ -169,14 +176,35 @@ async fn analysis_of_a_crawled_site() {
     assert_ne!(flags & (1 << 5), 0);
     assert!(findings(&conn, "/app").contains(&"ai.readable.js_suspected".to_string()));
 
-    // Site: entity from the home page, about and contact found, no llms.txt fetched yet.
+    // Site: entity from the home page, about and contact found, a valid llms.txt.
     assert_eq!(s.entity.as_ref().and_then(|e| e.name.as_deref()), Some("Example"));
     assert!(s.about_url.as_deref().unwrap().ends_with("/about"));
     let outcome = |id: &str| s.site_outcomes.iter().find(|o| o.rule_id == id).unwrap().outcome;
     assert_eq!(outcome("ai.site.entity"), Outcome::Pass);
     assert_eq!(outcome("ai.site.about_contact"), Outcome::Pass);
     assert_eq!(outcome("ai.site.search_access"), Outcome::Pass);
-    assert_eq!(outcome("ai.site.llms_txt"), Outcome::NotAvailable);
+    assert_eq!(outcome("ai.site.llms_txt"), Outcome::Pass);
+    let llms = host.llms_txt.as_ref().unwrap();
+    assert_eq!(llms.outcome, "ok");
+    assert_eq!(llms.report.as_ref().unwrap().links.len(), 1);
+    // The other two site files were asked for once and are missing.
+    let conn2 = Connection::open(&c.path).unwrap();
+    let outcomes: Vec<(String, String)> = conn2
+        .prepare("SELECT path, outcome FROM site_files ORDER BY path")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        outcomes,
+        [
+            ("/.well-known/tdmrep.json".to_string(), "not_found".to_string()),
+            ("/llms-full.txt".into(), "not_found".into()),
+            ("/llms.txt".into(), "ok".into()),
+        ]
+    );
+    drop(conn2);
     assert!(s.score > 0 && s.score <= 100);
 
     // The stored summary reads back equal.
