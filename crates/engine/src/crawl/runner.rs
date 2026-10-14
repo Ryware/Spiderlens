@@ -7,18 +7,20 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    CrawlConfig, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings, StoredCrawlConfig, normalize_url,
+    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings,
+    StoredCrawlConfig, normalize_url,
 };
-use tokio::sync::{Semaphore, mpsc, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
+use super::file::{self, LocalError, LockError, WriterLock};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
@@ -49,6 +51,8 @@ const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
+/// How often free space on the crawl file's drive is checked (spec 006 FR-027).
+const DISK_CHECK_EVERY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlError {
@@ -58,6 +62,60 @@ pub enum CrawlError {
     Config(String),
     #[error("could not start the HTTP client: {0}")]
     Client(CheckError),
+    #[error(transparent)]
+    Lock(#[from] LockError),
+    /// The file is an older format: resuming upgrades it (spec 006 FR-036).
+    #[error(
+        "this crawl file uses crawl format {from}; resuming upgrades it to format {}, after which older SpiderLens versions cannot open it",
+        super::store::FORMAT_VERSION
+    )]
+    NeedsUpgrade { from: i64 },
+    /// Header values that are never stored must be entered again (FR-034).
+    #[error("enter the secret value of these headers to resume: {}", .0.join(", "))]
+    NeedsSecrets(Vec<String>),
+    /// Read-only file or media: save a copy elsewhere to resume (FR-021).
+    #[error("{} cannot be changed here (read-only); save a copy to another folder to resume it", .0.display())]
+    ReadOnly(PathBuf),
+    /// A disk or write problem paused the crawl; it can be resumed (FR-028).
+    #[error("paused: {0}")]
+    Local(LocalError),
+}
+
+/// What to do with an older crawl file on resume (FR-036).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Upgrade {
+    KeepCopy,
+    NoCopy,
+}
+
+/// Options for [`Crawler::open_with`].
+#[derive(Debug, Clone, Default)]
+pub struct ResumeOptions {
+    /// None refuses older files with [`CrawlError::NeedsUpgrade`].
+    pub upgrade: Option<Upgrade>,
+    /// Speed and URL-limit changes, recorded in the configuration history.
+    pub changes: Vec<Change>,
+    /// Header name and value for secrets that were not stored.
+    pub secrets: Vec<(String, String)>,
+}
+
+/// What [`Crawler::open_with`] did to the file before the run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Opened {
+    /// URLs requeued because the crawl was not closed cleanly.
+    pub recovered: Option<usize>,
+    /// The format it was upgraded from, and the backup copy if kept.
+    pub upgraded: Option<(i64, Option<PathBuf>)>,
+}
+
+/// Requests a running crawl handles between batches.
+#[derive(Debug)]
+pub enum RunCommand {
+    /// Move the crawl to `dest` and continue there (spec 006 FR-015).
+    SaveAs {
+        dest: PathBuf,
+        reply: oneshot::Sender<Result<PathBuf, String>>,
+    },
 }
 
 /// What the user asked the crawl to do (FR-022).
@@ -141,7 +199,7 @@ pub struct CrawlSummary {
 
 impl CrawlSummary {
     pub fn read(path: &Path) -> Result<Self, CrawlError> {
-        summarize(&CrawlStore::open(path)?)
+        summarize(&CrawlStore::open_read_only(path)?)
     }
 }
 
@@ -368,6 +426,13 @@ fn self_reason(raw: &str) -> &'static str {
 /// A crawl bound to its crawl file.
 pub struct Crawler {
     store: CrawlStore,
+    path: PathBuf,
+    /// Held while this value may write the file (spec 006 plan D2).
+    lock: WriterLock,
+    /// Created by this value, so the run is not a resume.
+    fresh: bool,
+    disk_reserve: Option<u64>,
+    opened: Opened,
     stored: StoredCrawlConfig,
     config: CrawlConfig,
     rules: ScopeRules,
@@ -390,7 +455,9 @@ impl Crawler {
             return Err(CrawlError::Config("there are no URLs to crawl".into()));
         }
         let rules = ScopeRules::new(&config, &seeds).map_err(CrawlError::Config)?;
+        let lock = WriterLock::acquire(path)?;
         let mut store = CrawlStore::create(path)?;
+        store.record_event("created", None)?;
 
         // List URLs live in the urls table; storing them again in the
         // configuration would double a large list (data-model.md).
@@ -456,6 +523,11 @@ impl Crawler {
         store.commit()?;
         Ok(Self {
             store,
+            path: path.to_path_buf(),
+            lock,
+            fresh: true,
+            disk_reserve: None,
+            opened: Opened::default(),
             stored,
             config,
             rules,
@@ -466,7 +538,23 @@ impl Crawler {
     }
 
     /// Opens a crawl file to resume it with its stored configuration.
+    /// Refuses older formats; see [`Self::open_with`].
     pub fn open(path: &Path) -> Result<Self, CrawlError> {
+        Self::open_with(path, &ResumeOptions::default())
+    }
+
+    /// Opens a crawl file to resume it: takes the writer lock, recovers it if
+    /// it was not closed cleanly, upgrades an older format (keeping a copy
+    /// unless declined) and applies speed and URL-limit changes (spec 006).
+    pub fn open_with(path: &Path, options: &ResumeOptions) -> Result<Self, CrawlError> {
+        if !path.exists() {
+            return Err(CrawlError::Config(format!("{} does not exist", path.display())));
+        }
+        if !file::writable(path) {
+            return Err(CrawlError::ReadOnly(path.to_path_buf()));
+        }
+        let lock = WriterLock::acquire(path)?;
+        let mut opened = Opened::default();
         let store = CrawlStore::open(path)?;
         if store.format_version()? < 2 {
             return Err(CrawlError::Config(
@@ -475,10 +563,71 @@ impl Crawler {
                     .into(),
             ));
         }
-        let stored: StoredCrawlConfig = store
+        let mut stored: StoredCrawlConfig = store
             .meta("config")?
             .and_then(|c| serde_json::from_str(&c).ok())
             .ok_or_else(|| CrawlError::Config("the crawl file has no readable configuration".into()))?;
+        // Secrets are never stored (FR-034): the caller supplies them again.
+        let mut missing = Vec::new();
+        for h in &mut stored.config.identity.headers {
+            if h.value.is_secret() && h.value.expose().is_none() {
+                match options
+                    .secrets
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(&h.name))
+                {
+                    Some((_, v)) => h.value = HeaderValue::secret(v.clone()),
+                    None => missing.push(h.name.clone()),
+                }
+            }
+        }
+        if !missing.is_empty() {
+            return Err(CrawlError::NeedsSecrets(missing));
+        }
+        let version = store.format_version()?;
+        if version < super::store::FORMAT_VERSION {
+            let Some(upgrade) = options.upgrade else {
+                return Err(CrawlError::NeedsUpgrade { from: version });
+            };
+            opened.recovered = file::recover(&store)?;
+            let backup = match upgrade {
+                Upgrade::KeepCopy => {
+                    let to = file::backup_path(path, version);
+                    file::write_atomically(&to, |p| file::copy_database(&store, path, p))?;
+                    Some(to)
+                }
+                Upgrade::NoCopy => None,
+            };
+            super::migrate::upgrade(store.conn()).map_err(StoreError::from)?;
+            store.record_event(
+                "upgraded",
+                Some(&serde_json::json!({ "from": version, "to": super::store::FORMAT_VERSION, "backup": backup }).to_string()),
+            )?;
+            opened.upgraded = Some((version, backup));
+        } else {
+            opened.recovered = file::recover(&store)?;
+        }
+        if !options.changes.is_empty() {
+            let now = jiff::Timestamp::now();
+            for change in &options.changes {
+                stored.record(now, change.clone());
+                store.record_event(
+                    "config_changed",
+                    Some(&serde_json::to_string(change).expect("changes serialize")),
+                )?;
+            }
+            // The stored copy never holds secret values.
+            let mut on_disk = stored.clone();
+            for h in &mut on_disk.config.identity.headers {
+                if h.value.is_secret() {
+                    h.value = HeaderValue::Secret(None);
+                }
+            }
+            store.set_meta(
+                "config",
+                &serde_json::to_string(&on_disk).expect("config serializes"),
+            )?;
+        }
         let config = stored.effective();
         let start = store.meta("start_url")?.and_then(|u| Url::parse(&u).ok());
         let seeds: Vec<Url> = match &start {
@@ -493,6 +642,11 @@ impl Crawler {
         rules.restore_hosts(&stored.resolved_hosts);
         Ok(Self {
             store,
+            path: path.to_path_buf(),
+            lock,
+            fresh: false,
+            disk_reserve: None,
+            opened,
             stored,
             config,
             rules,
@@ -518,16 +672,63 @@ impl Crawler {
         &self.config
     }
 
+    /// The crawl file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// What opening did to the file (recovery, upgrade).
+    pub fn opened(&self) -> &Opened {
+        &self.opened
+    }
+
+    /// Pause when free space on the crawl file's drive drops below `bytes`
+    /// (spec 006 FR-027). None turns the check off.
+    pub fn with_disk_reserve(mut self, bytes: Option<u64>) -> Self {
+        self.disk_reserve = bytes;
+        self
+    }
+
+    /// Limits the crawl file's size in database pages, so tests can make the
+    /// disk "full" (SQLite then fails writes with SQLITE_FULL).
+    #[doc(hidden)]
+    pub fn with_max_pages(self, pages: u64) -> Result<Self, CrawlError> {
+        self.store
+            .conn()
+            .pragma_update(None, "max_page_count", pages as i64)
+            .map_err(StoreError::from)?;
+        Ok(self)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
     ) -> Result<CrawlSummary, CrawlError> {
+        self.run_with(control, events, None).await
+    }
+
+    /// [`Self::run`] that also takes requests such as Save As.
+    pub async fn run_with(
+        self,
+        control: watch::Receiver<Control>,
+        events: Option<mpsc::UnboundedSender<CrawlEvent>>,
+        commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
+    ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
         let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, events)?;
-        run.main_loop().await?;
+        let mut run = Run::new(self, opts, client, control, events, commands)?;
+        match run.main_loop().await {
+            Ok(()) => {}
+            // A write failed: nothing of the open batch reached the file, so
+            // no URL is marked crawled without its result (FR-028).
+            Err(CrawlError::Store(e)) => return Err(CrawlError::Local(run.fail_locally(&e))),
+            Err(e) => return Err(e),
+        }
+        if let Some(local) = run.local.take() {
+            return Err(CrawlError::Local(local));
+        }
         summarize(&run.c.store)
     }
 }
@@ -592,6 +793,10 @@ struct Run {
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     last_catch_up: Instant,
+    commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
+    /// A disk problem that is pausing the crawl (spec 006 FR-027).
+    local: Option<LocalError>,
+    next_disk_check: Instant,
 }
 
 impl Run {
@@ -601,6 +806,7 @@ impl Run {
         client: Client,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
+        commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<Self, CrawlError> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut c = c;
@@ -608,6 +814,13 @@ impl Run {
         c.store.drop_result_indexes()?;
         c.store.requeue_for_resume()?;
         c.store.set_meta("status", "running")?;
+        c.store
+            .conn()
+            .execute("DELETE FROM meta WHERE key = 'pause_reason'", [])
+            .map_err(StoreError::from)?;
+        if !c.fresh {
+            c.store.record_event("resumed", None)?;
+        }
         let warnings: Vec<String> = c
             .store
             .meta("warnings")?
@@ -669,6 +882,9 @@ impl Run {
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
             active_before_ms,
             last_catch_up: Instant::now(),
+            commands,
+            local: None,
+            next_disk_check: Instant::now(),
         })
     }
 
@@ -748,7 +964,71 @@ impl Run {
     }
 
     fn state(&self) -> Control {
-        *self.control.borrow()
+        let asked = *self.control.borrow();
+        if self.local.is_some() && asked == Control::Run {
+            Control::Pause
+        } else {
+            asked
+        }
+    }
+
+    /// Pauses the crawl when free space drops below the reserve (FR-027).
+    fn check_disk(&mut self) {
+        let Some(reserve) = self.c.disk_reserve else {
+            return;
+        };
+        if self.local.is_some() || Instant::now() < self.next_disk_check {
+            return;
+        }
+        self.next_disk_check = Instant::now() + DISK_CHECK_EVERY;
+        if let Some(free) = file::free_space(&self.c.path)
+            && free < reserve
+        {
+            self.local = Some(LocalError::disk_low(&self.c.path, free, reserve));
+        }
+    }
+
+    fn handle_command(&mut self, cmd: RunCommand) -> Result<(), CrawlError> {
+        match cmd {
+            RunCommand::SaveAs { dest, reply } => {
+                self.commit()?;
+                let result = self.move_to(&dest);
+                let _ = reply.send(result.as_ref().map(|()| dest.clone()).map_err(|e| e.to_string()));
+                Ok(())
+            }
+        }
+    }
+
+    /// Save As while crawling (plan D5): between batches, copy the file,
+    /// switch the write connection and the lock to the copy, and go on.
+    fn move_to(&mut self, dest: &Path) -> Result<(), CrawlError> {
+        if file::same_path(&self.c.path, dest) {
+            return Ok(());
+        }
+        let lock = WriterLock::acquire(dest)?;
+        let src = self.c.path.clone();
+        file::write_atomically(dest, |p| file::copy_database(&self.c.store, &src, p))?;
+        self.c.store.reopen_at(dest)?;
+        self.c.lock = lock;
+        self.c.path = dest.to_path_buf();
+        self.c.store.record_event("saved", Some(&file::json_path(dest)))?;
+        Ok(())
+    }
+
+    /// After a failed write: roll the open batch back and record the pause
+    /// as well as the file still allows.
+    fn fail_locally(&mut self, e: &StoreError) -> LocalError {
+        let local = LocalError::from_store(e, &self.c.path);
+        let store = &self.c.store;
+        let _ = store.conn().execute_batch("ROLLBACK");
+        self.write_tx = None;
+        let _ = store.set_meta("status", "paused");
+        let _ = store.set_meta("pause_reason", local.kind.as_str());
+        let _ = store.record_event(
+            "local_error",
+            Some(&serde_json::to_string(&local).expect("serializes")),
+        );
+        local
     }
 
     /// Every write in the loop goes into one transaction (plan D2).
@@ -795,6 +1075,7 @@ impl Run {
         self.maybe_start_sitemaps()?;
         loop {
             self.open_tx()?;
+            self.check_disk();
             let mut wake = if self.state() == Control::Run {
                 self.dispatch()?
             } else {
@@ -804,12 +1085,22 @@ impl Run {
             if self.in_flight == 0 {
                 match self.state() {
                     Control::Pause => {
+                        let reason = self.local.as_ref().map_or("user", |l| l.kind.as_str());
                         self.c.store.set_meta("status", "paused")?;
+                        self.c.store.set_meta("pause_reason", reason)?;
+                        match &self.local {
+                            Some(l) => self.c.store.record_event(
+                                "local_error",
+                                Some(&serde_json::to_string(l).expect("serializes")),
+                            )?,
+                            None => self.c.store.record_event("paused", None)?,
+                        }
                         break;
                     }
                     Control::Stop => {
                         self.c.store.stop_queue()?;
                         self.c.store.set_meta("status", "stopped")?;
+                        self.c.store.record_event("stopped", None)?;
                         break;
                     }
                     Control::Run => {
@@ -817,6 +1108,12 @@ impl Run {
                         if self.window.is_empty() && self.window.holds_everything() && !self.sitemaps_pending
                         {
                             self.c.store.set_meta("status", "completed")?;
+                            self.c
+                                .store
+                                .conn()
+                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                .map_err(StoreError::from)?;
+                            self.c.store.record_event("completed", None)?;
                             break;
                         }
                     }
@@ -826,13 +1123,25 @@ impl Run {
                 let due = since + COMMIT_EVERY;
                 wake = Some(wake.map_or(due, |w| w.min(due)));
             }
+            if self.c.disk_reserve.is_some() && self.local.is_none() {
+                wake = Some(wake.map_or(self.next_disk_check, |w| w.min(self.next_disk_check)));
+            }
             let sleep = async {
                 match wake {
                     Some(t) => tokio::time::sleep_until(t.into()).await,
                     None => std::future::pending().await,
                 }
             };
+            let command = async {
+                match self.commands.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
+                Some(cmd) = command => {
+                    self.handle_command(cmd)?;
+                }
                 Some(msg) = self.rx.recv() => {
                     self.handle(msg)?;
                     if let Some((_, writes)) = &mut self.write_tx {
