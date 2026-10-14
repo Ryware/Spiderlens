@@ -17,6 +17,7 @@ pub mod os;
 pub mod runner;
 pub mod store;
 pub mod validate;
+pub mod view;
 
 pub use cron::{Cron, CronError};
 pub use due::{Due, due};
