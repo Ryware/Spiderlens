@@ -296,8 +296,8 @@ pub fn analyze(
         })
         .collect();
     let mut members: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
-    for i in 0..n {
-        if pages[i].near_count > 0 {
+    for (i, page) in pages.iter().enumerate() {
+        if page.near_count > 0 {
             members.entry(clusters.find(i as u32)).or_default().push(i);
         }
     }
@@ -344,6 +344,9 @@ pub fn analyze(
     Ok(Analysis { pages, clusters: out })
 }
 
+/// Per-member stats and spanning edges of one dense group.
+type GroupScore = (Vec<(u32, Stats)>, Vec<(u32, u32)>);
+
 /// Scores a dense group. Returns per-member stats and edges at or above the
 /// threshold that connect the same members the full threshold graph does
 /// (a spanning set from per-thread union-finds, never every edge).
@@ -352,7 +355,7 @@ fn score_group(
     members: &[u32],
     p: &Params,
     cancel: &AtomicBool,
-) -> Result<(Vec<(u32, Stats)>, Vec<(u32, u32)>), Cancelled> {
+) -> Result<GroupScore, Cancelled> {
     let sampled = members.len() > p.exact_limit;
     // Positions in `members` to compare each member with.
     let compare: Vec<usize> = if sampled {
@@ -460,7 +463,7 @@ mod tests {
 
     #[test]
     fn band_table_matches_research() {
-        assert_eq!(bands(80).0 * bands(80).1 <= BINS, true);
+        assert!(bands(80).0 * bands(80).1 <= BINS);
         // Higher floors use more rows per band (fewer chance candidates).
         assert!(bands(90).0 > bands(80).0 && bands(80).0 > bands(50).0);
         for f in [50u8, 60, 70, 80, 85, 90, 95] {

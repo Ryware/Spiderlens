@@ -345,6 +345,23 @@ pub fn stored_settings(conn: &Connection) -> rusqlite::Result<ContentSettings> {
         .unwrap_or_default())
 }
 
+/// The settings of the last run, else those stored with the crawl: what a
+/// viewer compares and re-runs with when the user names none.
+pub fn effective_settings(conn: &Connection) -> rusqlite::Result<ContentSettings> {
+    let stored = stored_settings(conn)?;
+    Ok(match last_run(conn)? {
+        Some(run) => ContentSettings {
+            threshold: run.settings.threshold,
+            report_floor: run.settings.report_floor,
+            min_words: run.settings.min_words,
+            indexable_only: run.settings.indexable_only,
+            content_selector: run.settings.content_selector,
+            exclude_selectors: run.settings.exclude_selectors,
+        },
+        None => stored,
+    })
+}
+
 /// Runs the pass on a crawl file. Writes into the file when it can be
 /// opened for writing and `write` is set; otherwise into a temporary
 /// schema of the returned connection, which keeps the results readable

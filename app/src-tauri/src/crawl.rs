@@ -6,7 +6,8 @@
 //!
 //! - `crawl-progress` a few times a second while it runs,
 //! - `crawl-warning` once per warning,
-//! - `crawl-finished` when it completes, pauses, stops or fails.
+//! - `crawl-finished` when it completes, pauses, stops or fails; the near
+//!   duplicate analysis then runs on the same thread (spec 020).
 //!
 //! One crawl runs at a time, as in other desktop crawlers.
 
@@ -26,6 +27,7 @@ type Cmd<T> = Result<T, String>;
 
 struct Active {
     id: u64,
+    path: PathBuf,
     control: watch::Sender<Control>,
 }
 
@@ -43,6 +45,15 @@ impl State {
             active: Mutex::new(None),
             next_id: AtomicU64::new(1),
         }
+    }
+
+    /// Whether a crawl is writing `path` now.
+    pub fn is_running(&self, path: &Path) -> bool {
+        self.active
+            .lock()
+            .expect("crawl lock")
+            .as_ref()
+            .is_some_and(|a| a.path == path)
     }
 }
 
@@ -215,6 +226,7 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
     let (control_tx, control_rx) = watch::channel(Control::Run);
     *active = Some(Active {
         id,
+        path: path.clone(),
         control: control_tx,
     });
     drop(active);
@@ -230,6 +242,12 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
             let result = run(&app, id, &file, open, control_rx);
             let state = tauri::Manager::state::<State>(&app);
             state.active.lock().expect("crawl lock").take();
+            // Claimed before `crawl-finished` so the window never sees the
+            // file as "not analysed" in between.
+            let analysis = match &result {
+                Ok(summary) if summary.crawled > 0 => crate::near_dup::after_crawl(&app, &file),
+                _ => None,
+            };
             let (report, error) = match result {
                 Ok(summary) => (Some(Report::new(file.clone(), summary)), None),
                 Err(e) => (None, Some(e)),
@@ -243,6 +261,9 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                     error,
                 },
             );
+            if let Some(analyse) = analysis {
+                analyse();
+            }
         })
         .map_err(|e| format!("Could not start the crawl: {e}"))?;
     Ok(Started { id, path })

@@ -87,8 +87,13 @@ impl State {
             .map_err(|_| "The results reader stopped.".to_string())
     }
 
+    /// Queues `f` on the reader of `path` without waiting for it.
+    pub(crate) fn send_job(&self, path: &Path, f: impl FnOnce(&mut Reader) + Send + 'static) -> Cmd<()> {
+        self.send(path, move |r, _| f(r))
+    }
+
     /// Runs `f` on the reader of `path` and returns its answer.
-    async fn with<T: Send + 'static>(
+    pub(crate) async fn with<T: Send + 'static>(
         &self,
         path: &Path,
         f: impl FnOnce(&mut Reader) -> Result<T, String> + Send + 'static,

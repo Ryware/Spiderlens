@@ -17,6 +17,8 @@ use crate::Result;
 pub enum NearDupState {
     /// No results yet (crawl running, or never analysed).
     NotRun,
+    /// The analysis is running now (set by the app, which owns the run).
+    Running,
     Done,
     /// Results exist but do not match the data or settings.
     Stale,
@@ -81,12 +83,9 @@ pub fn status(conn: &Connection, settings: &ContentSettings) -> Result<NearDupSt
     };
     if !has(conn, "content_sig")? {
         st.state = NearDupState::Unavailable;
-        st.reason = Some(if html_stored {
-            "This crawl was made before near duplicate analysis; it can be analysed from its stored HTML."
-                .into()
-        } else {
-            "This crawl was made before near duplicate analysis and did not keep its HTML.".into()
-        });
+        st.reason = Some(
+            "This crawl was made before near duplicate analysis; crawl the site again to see them.".into(),
+        );
         return Ok(st);
     }
     let running: bool = conn

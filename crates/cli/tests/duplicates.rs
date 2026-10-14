@@ -125,7 +125,7 @@ fn files_without_signatures_are_unavailable() {
         .unwrap();
     let (_, _, err, code) = run(&["duplicates", path.to_str().unwrap()]);
     assert_eq!(code, Some(4), "{err}");
-    assert!(err.contains("did not keep its HTML"));
+    assert!(err.contains("crawl the site again"), "{err}");
     let (_, _, _, code) = run(&["duplicates", dir.path().join("nope").to_str().unwrap()]);
     assert_eq!(code, Some(3));
 }

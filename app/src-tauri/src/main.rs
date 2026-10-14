@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod crawl;
+mod near_dup;
 mod results;
 mod settings;
 
@@ -33,6 +34,7 @@ fn main() {
             app.manage(settings::State::open(dir)?);
             app.manage(crawl::State::new(app.path().app_data_dir()?.join("crawls")));
             app.manage(results::State::default());
+            app.manage(near_dup::State::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,6 +73,13 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            near_dup::near_dup_status,
+            near_dup::near_dup_clusters,
+            near_dup::near_dup_pairs,
+            near_dup::compare_pages,
+            near_dup::run_near_dup,
+            near_dup::cancel_near_dup,
+            near_dup::export_near_dup,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

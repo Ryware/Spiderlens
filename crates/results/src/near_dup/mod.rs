@@ -12,14 +12,15 @@ pub use analyze::{Analysis, Cluster, Item, PageResult, Params, bands};
 pub use diff::{CompareSide, Comparison, DiffOp, DiffParagraph, DiffSpan};
 pub use export::Listing;
 pub use pass::{
-    PASS_ID, PASS_VERSION, PassSummary, Schema, analyse_file, run_pass, stale_reason, stored_settings,
+    PASS_ID, PASS_VERSION, PassSummary, Schema, analyse_file, effective_settings, run_pass, stale_reason,
+    stored_settings,
 };
 pub use query::{
     ClusterRow, ClustersPage, NearDupState, NearDupStatus, PageSummaryRow, PairExportRow, PairRow, PairsPage,
     clusters, compare, page_rows, pair_rows, pairs, status,
 };
 
-pub use rusqlite::Connection;
+pub use rusqlite::{Connection, OpenFlags};
 
 /// Opens a crawl file read-only for near duplicate queries.
 pub fn open_read_only(path: &std::path::Path) -> crate::Result<Connection> {

@@ -1578,7 +1578,8 @@ mod tests {
         let (_d, s) = store();
         s.conn
             .execute_batch(
-                "DROP TABLE content_sig; ALTER TABLE pages DROP COLUMN main_words;
+                "DROP TABLE content_sig; DROP TABLE near_dup_pages; DROP TABLE near_dup_pairs;
+                 DROP TABLE near_dup_clusters; ALTER TABLE pages DROP COLUMN main_words;
                  ALTER TABLE pages DROP COLUMN main_hash; ALTER TABLE pages DROP COLUMN main_source;",
             )
             .unwrap();
