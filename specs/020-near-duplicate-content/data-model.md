@@ -17,7 +17,7 @@ One additive migration step (spec 006 rule: number taken at merge as main's late
 | Column | Type | Meaning |
 |---|---|---|
 | `url_id` | INTEGER PRIMARY KEY | = `urls.id` |
-| `sig` | BLOB NOT NULL | 480 little-endian `u16`, 960 bytes: one-permutation MinHash bins after densification (plan D2) |
+| `sig` | BLOB NOT NULL | 960 bytes, one byte per bin: low 8 bits of each one-permutation MinHash bin after densification (plan D2) |
 
 `meta.data_features` gains `near_dup` (`Need::ContentSig`).
 

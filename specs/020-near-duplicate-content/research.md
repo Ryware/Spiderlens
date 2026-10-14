@@ -8,7 +8,9 @@
 
 **Alternatives**: cosine over word counts (ignores order, "a b" equals "b a" text); edit distance (quadratic per pair, no compact summary); embeddings (semantic, needs a model, out of scope).
 
-## R2. Summary: one-permutation MinHash, 480 bins, 16 bits
+## R2. Summary: one-permutation MinHash, 960 bins, 8 bits
+
+> **Changed during implementation (PR #92)**: 960 bins × 8 bits replaced 480 × 16 bits at the same 960 bytes. The test suite's 400-pair accuracy check measured p95 3.9 points at 80% with 480 × 16, and 2.2 points with 960 × 8 after the b-bit correction `(m − 1/256) / (1 − 1/256)`. Twice the bins halves the variance; the 1 in 256 chance match is corrected exactly. The alternatives below are kept as written.
 
 **Decision**: one-permutation hashing (OPH) with optimal densification, K = 480 bins, low 16 bits stored per bin.
 

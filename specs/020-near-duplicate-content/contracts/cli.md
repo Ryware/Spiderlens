@@ -24,4 +24,4 @@ JSON: an array of objects with the same keys, numbers as numbers, booleans as bo
 
 ## Exit codes
 
-Existing codes only: 0 success; 2 usage error (bad option values); 4 the file cannot be read, or it has no near duplicate data (no signatures and no stored HTML), with the reason on stderr.
+0 success; 2 usage error (bad option values); 3 the file cannot be read (same as `spiderlens export`); 4 the file has no near duplicate data (made before this feature), with the reason on stderr.

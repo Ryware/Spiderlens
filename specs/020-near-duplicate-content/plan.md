@@ -39,14 +39,16 @@ Paragraph breaks are kept in the main text (the walk's existing `Separate` frame
 
 In Rust terms this is like adding a field to a visitor rather than writing a second visitor: the walk owns a small `MainCollector` struct, and `extract_page` returns `PageData.main: MainContent { text_hash, words, source, signature }`.
 
-### D2. The signature: one-permutation MinHash, 480 bins of 16 bits
+### D2. The signature: one-permutation MinHash, 960 bins of 8 bits
+
+> **Changed during implementation (PR #92)**: the code stores 960 bins of 8 bits (b-bit MinHash) in the same 960 bytes, with the estimator `(m − 1/256) / (1 − 1/256)`. With 480 × 16 bits the full test suite measured a 95th-percentile error of 3.9 points at 80%, outside SC-003; 960 × 8 bits measures 2.2 points at 80% and 1.4 at 90%. Bands become 11 rows × 87 bands at the 80% floor. The text below keeps the original reasoning; the numbers in this note win.
 
 - **Tokens**: words by the 005 word rules (`text::word_count`), lowercased. Runs of Han, Hiragana, Katakana, Hangul or Thai characters are split into single-character tokens (FR-005), so a page in those scripts gets meaningful shingles.
 - **Shingles**: every run of 5 consecutive tokens, hashed with xxh3-64 (specified output, identical on every platform). Pages with fewer than 5 tokens get one shingle of what they have; they are below the 50-word minimum anyway.
 - **Why MinHash**: the share of shared shingles (Jaccard similarity) is exactly what the spec's similarity means (FR-007): moved, added and removed passages all lower it. MinHash is the standard unbiased estimator of it from a fixed-size summary. SimHash, the usual alternative, estimates cosine similarity of weighted features, is tuned for "almost identical", and has no clean mapping from bits to a percentage in the 80 to 95% range users set. Exact comparison (keeping every shingle) is accurate but costs 4 bytes per word per page and still needs a candidate index.
 - **Why one permutation**: classic MinHash computes K hash functions per shingle (480 times the work). One-permutation hashing (Li, Owen and Zhang, 2012) hashes each shingle once, uses the top bits to choose one of K bins and keeps the minimum per bin; empty bins are filled by optimal densification (Shrivastava, 2017), which keeps the estimator unbiased. The cost per page is one hash per word plus 480 bin fills, about 5 µs for a 1,000-word page, against roughly 1.2 ms of CPU per page for the rest of extraction today.
 - **Why 480 × 16 bits**: the estimate is the share of equal bins. Its standard deviation is √(J(1−J)/K): 1.4 points at J = 0.9 with K = 480. A prototype with exact Jaccard as reference (research R2) measured a 95th-percentile error of 2.0 points at 90% and 2.9 points at 80% similarity, inside SC-003's 3 points. Storing the low 16 bits of each bin's minimum (b-bit MinHash) adds a 1 in 65,536 chance of a false bin match, negligible, and keeps the signature at 960 bytes (SC-009).
-- **Exact flag**: `main_hash`, xxh3-64 of the main text, decides FR-014; equal hashes mean identical main content.
+- **Exact flag**: `main_hash` decides FR-014; equal hashes mean identical main content. (Implementation: the hash is taken over the token sequence, so case, spacing and punctuation do not matter, and it comes from the same pass that makes the signature.)
 
 ### D3. Storage during the crawl: one table, one insert
 
