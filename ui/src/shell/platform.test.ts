@@ -1,4 +1,12 @@
-import { detectPlatform, formatShortcut, matches } from "./platform";
+import { detectPlatform, formatShortcut, materialAvailable, matches } from "./platform";
+
+test("material_only_in_the_mac_desktop_app", () => {
+  const tauri = { __TAURI_INTERNALS__: {} };
+  expect(materialAvailable("mac", tauri)).toBe(true);
+  expect(materialAvailable("mac", {})).toBe(false);
+  expect(materialAvailable("windows", tauri)).toBe(false);
+  expect(materialAvailable("linux", tauri)).toBe(false);
+});
 
 test("detects_platform_from_user_agent", () => {
   expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)")).toBe("mac");
