@@ -80,7 +80,9 @@ pub enum Phase {
 #[ts(export)]
 pub struct Progress {
     pub phase: Phase,
+    #[ts(type = "number")]
     pub done: u64,
+    #[ts(type = "number")]
     pub total: u64,
 }
 

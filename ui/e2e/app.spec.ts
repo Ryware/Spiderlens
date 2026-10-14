@@ -228,3 +228,33 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+test("compare_two_crawls_and_open_a_changed_url", async ({ page }) => {
+  // Spec 012: setup sheet, progress, overview, a group list and the
+  // side-by-side detail, in a real browser.
+  await crawl(page);
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Compare crawls");
+  const sheet = page.getByRole("dialog", { name: "Compare crawls" });
+  await expect(sheet.getByLabel("Previous file", { exact: true })).toHaveText("example.com-old.spiderlens");
+  await expect(sheet.getByLabel("Previous crawl", { exact: true })).toContainText("Complete");
+  await sheet.getByRole("button", { name: "Compare", exact: true }).click();
+  await expect(page.getByRole("meter", { name: "Comparison progress" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.compare.finish());
+
+  const filters = page.getByRole("table", { name: "Filter changes" });
+  await expect(filters).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Comparison", exact: true })).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Missing URLs: 10" }).click();
+  const list = page.getByRole("grid", { name: "Missing URLs URLs" });
+  await expect(page.getByTestId("group-count")).toHaveText("10 URLs");
+  await list.getByRole("row").nth(1).click();
+  const detail = page.getByRole("table", { name: "Previous and current" });
+  await expect(detail).toContainText("Not in this crawl");
+
+  const { scrollH, innerH } = await page.evaluate(() => ({ scrollH: document.documentElement.scrollHeight, innerH: window.innerHeight }));
+  expect(scrollH).toBeLessThanOrEqual(innerH);
+
+  await page.getByRole("button", { name: "Close comparison" }).click();
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Comparison", exact: true })).toHaveCount(0);
+});

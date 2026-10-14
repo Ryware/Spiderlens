@@ -13,6 +13,7 @@ use crate::{Comparison, Group, Result};
 pub struct ElementReport {
     pub element: String,
     pub label: String,
+    #[ts(type = "number")]
     pub changed: u64,
     pub comparable: bool,
     /// Up to 20 changed URLs (current address, else previous).

@@ -25,7 +25,9 @@ pub struct CrawlInfo {
     /// The file was still being crawled when the comparison read it; the
     /// comparison uses a snapshot.
     pub snapshot: bool,
+    #[ts(type = "number")]
     pub urls: u64,
+    #[ts(type = "number")]
     pub crawled: u64,
     #[serde(skip)]
     #[ts(skip)]

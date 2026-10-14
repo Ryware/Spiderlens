@@ -78,7 +78,9 @@ pub(crate) const PAIRS: &str = "matches m \
 #[ts(export)]
 pub struct StateDelta {
     pub state: String,
+    #[ts(type = "number")]
     pub previous: u64,
+    #[ts(type = "number")]
     pub current: u64,
 }
 
@@ -90,12 +92,19 @@ pub struct FilterDelta {
     pub filter: String,
     pub filter_label: String,
     /// Null when that crawl cannot evaluate the filter.
+    #[ts(type = "number | null")]
     pub previous: Option<u64>,
+    #[ts(type = "number | null")]
     pub current: Option<u64>,
+    #[ts(type = "number")]
     pub new: u64,
+    #[ts(type = "number")]
     pub added: u64,
+    #[ts(type = "number")]
     pub removed: u64,
+    #[ts(type = "number")]
     pub missing: u64,
+    #[ts(type = "number")]
     pub not_reached: u64,
     pub comparable: bool,
     pub reason: Option<String>,
@@ -115,6 +124,7 @@ pub struct ElementDelta {
     pub kind: ElementKind,
     pub on: bool,
     pub threshold: Option<f64>,
+    #[ts(type = "number")]
     pub changed: u64,
     pub comparable: bool,
     pub reason: Option<String>,
@@ -128,14 +138,21 @@ pub struct Summary {
     pub config_diffs: Vec<ConfigDiff>,
     pub by_state: Vec<StateDelta>,
     /// URLs with a final state in both crawls.
+    #[ts(type = "number")]
     pub matched: u64,
+    #[ts(type = "number")]
     pub new: u64,
+    #[ts(type = "number")]
     pub missing: u64,
+    #[ts(type = "number")]
     pub not_reached: u64,
+    #[ts(type = "number")]
     pub collisions: u64,
     /// Internal HTML pages of the previous crawl missing from the current one.
+    #[ts(type = "number")]
     pub missing_pages: u64,
     /// Pages indexable in the previous crawl and not in the current one.
+    #[ts(type = "number")]
     pub lost_indexable: u64,
     /// Fewer than 10% of the smaller crawl's URLs matched (FR-010).
     pub low_overlap: bool,

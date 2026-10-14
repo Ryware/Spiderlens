@@ -4,6 +4,7 @@
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type { CrawlFinished, CrawlProgress, CrawlReport, CrawlStatus, LoadedProfile, Presets, Transport } from "../transport";
 
@@ -88,7 +89,7 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
-export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults } {
+export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; compare: FakeCompare } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -109,8 +110,10 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const compareApi = fakeCompareTransport(resultsApi.results.progress);
   return {
     ...resultsApi,
+    ...compareApi,
     saved,
     crawls,
     pickCrawlFile: async () => null,

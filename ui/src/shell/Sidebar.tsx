@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -29,7 +29,7 @@ const later: NavItem[] = [
 ];
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
-export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean }) {
+export function Sidebar({ active, onSelect, collapsed, onAbout, results, comparison = false }: { active: string; onSelect: (id: string) => void; collapsed: boolean; onAbout: () => void; results: boolean; comparison?: boolean }) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
     const Icon = it.icon;
@@ -57,7 +57,11 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
 
   return (
     <nav aria-label="Sections" className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
-      <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
+      <ul className="m-0 flex list-none flex-col gap-px p-0">
+        {item({ id: "overview", title: "Overview", icon: Activity }, true)}
+        {/* Spec 012: the open comparison, alongside the crawl. */}
+        {comparison && item({ id: "comparison", title: "Comparison", icon: GitCompareArrows }, true)}
+      </ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
       {heading("AI visibility")}

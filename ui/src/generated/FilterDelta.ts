@@ -4,4 +4,4 @@ export type FilterDelta = { tab: string, tab_title: string, filter: string, filt
 /**
  * Null when that crawl cannot evaluate the filter.
  */
-previous: bigint | null, current: bigint | null, new: bigint, added: bigint, removed: bigint, missing: bigint, not_reached: bigint, comparable: boolean, reason: string | null, };
+previous: number | null, current: number | null, new: number, added: number, removed: number, missing: number, not_reached: number, comparable: boolean, reason: string | null, };

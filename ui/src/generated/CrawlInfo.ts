@@ -17,4 +17,4 @@ complete: boolean, url_limit_reached: boolean,
  * The file was still being crawled when the comparison read it; the
  * comparison uses a snapshot.
  */
-snapshot: boolean, urls: bigint, crawled: bigint, };
+snapshot: boolean, urls: number, crawled: number, };

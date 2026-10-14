@@ -9,15 +9,15 @@ export type Summary = { previous: CrawlInfo, current: CrawlInfo, config_diffs: A
 /**
  * URLs with a final state in both crawls.
  */
-matched: bigint, new: bigint, missing: bigint, not_reached: bigint, collisions: bigint, 
+matched: number, new: number, missing: number, not_reached: number, collisions: number, 
 /**
  * Internal HTML pages of the previous crawl missing from the current one.
  */
-missing_pages: bigint, 
+missing_pages: number, 
 /**
  * Pages indexable in the previous crawl and not in the current one.
  */
-lost_indexable: bigint, 
+lost_indexable: number, 
 /**
  * Fewer than 10% of the smaller crawl's URLs matched (FR-010).
  */

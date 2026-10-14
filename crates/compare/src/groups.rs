@@ -87,7 +87,9 @@ pub struct GroupColumn {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct GroupRow {
+    #[ts(type = "number | null")]
     pub prev_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub cur_id: Option<i64>,
     pub values: Vec<serde_json::Value>,
 }

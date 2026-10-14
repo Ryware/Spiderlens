@@ -211,7 +211,7 @@ function Table({ title, head, children }: { title: string; head: [string, string
 }
 
 /** Main area before any crawl (FR-008): what to do next, and anything to be careful about. */
-export function StartState({ setup, error, onFocusUrl, onOpenSettings }: { setup: CrawlSetup; error?: string | null; onFocusUrl: () => void; onOpenSettings: () => void }) {
+export function StartState({ setup, error, onFocusUrl, onOpenSettings, onCompare }: { setup: CrawlSetup; error?: string | null; onFocusUrl: () => void; onOpenSettings: () => void; onCompare?: () => void }) {
   const mode = setup.config?.mode ?? "spider";
   const urlIssues = setup.issues.filter((i) => i.path === "input.start_url");
   return (
@@ -256,6 +256,11 @@ export function StartState({ setup, error, onFocusUrl, onOpenSettings }: { setup
         <span>
           Commands <Kbd keys="Mod+K" />
         </span>
+        {onCompare && (
+          <button type="button" className="rounded-sm hover:text-fg-2" onClick={onCompare}>
+            Compare crawls…
+          </button>
+        )}
       </div>
     </section>
   );
