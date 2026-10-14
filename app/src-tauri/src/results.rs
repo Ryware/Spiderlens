@@ -318,7 +318,8 @@ pub fn analysis_start(app: AppHandle, state: tauri::State<'_, State>, path: Path
             },
         };
         // Finished: a late cancel must not interrupt the next job.
-        let mut current = app.state::<State>().analysis.lock().expect("analysis lock");
+        let state = app.state::<State>();
+        let mut current = state.analysis.lock().expect("analysis lock");
         if current.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancel)) {
             *current = None;
         }
