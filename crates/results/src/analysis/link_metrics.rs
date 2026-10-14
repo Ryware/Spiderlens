@@ -6,6 +6,8 @@
 //! order make the result bit-for-bit the same on every platform (FR-005).
 
 use rusqlite::{Connection, params};
+
+use super::Watch;
 use spiderlens_config::PositionWeights;
 
 /// The damping factor of FR-001.
@@ -88,7 +90,11 @@ struct Pending {
 /// URL has one edge, to its redirect target (none when the chain loops or
 /// leaves the site). Two sequential scans: `urls` by id, `links` by source.
 /// With `weighting`, `link_positions` must be built first.
-pub fn read_graph(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite::Result<Graph> {
+pub fn read_graph(
+    conn: &Connection,
+    weighting: Option<&PositionWeights>,
+    watch: &mut Watch<'_>,
+) -> rusqlite::Result<Graph> {
     let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
     let slots = usize::try_from(max_id).unwrap_or(0) + 1;
     let mut index = vec![NONE; slots];
@@ -174,6 +180,7 @@ pub fn read_graph(conn: &Connection, weighting: Option<&PositionWeights>) -> rus
     };
     let mut pending = Pending::default();
     let mut next = 0usize;
+    let mut reported = 0usize;
     let mut stmt = conn.prepare(if weighted {
         "SELECT l.from_id, l.to_id, l.nofollow OR l.page_nofollow OR l.sponsored OR l.ugc,
                 COALESCE(p.position, 0)
@@ -191,6 +198,10 @@ pub fn read_graph(conn: &Connection, weighting: Option<&PositionWeights>) -> rus
         }
         let to_id: i64 = r.get(1)?;
         let from = from as usize;
+        if from >= reported + 4096 {
+            reported = from;
+            watch.tick("link_score", from as u64, n as u64)?;
+        }
         while next < from {
             finish(&mut g, next, &mut pending);
             next += 1;
@@ -333,7 +344,11 @@ pub fn ranks(scores: &[f64]) -> Vec<u32> {
 }
 
 /// Builds `temp.link_metrics` (data model) from the crawl on `conn`.
-pub fn build(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite::Result<Stats> {
+pub fn build(
+    conn: &Connection,
+    weighting: Option<&PositionWeights>,
+    watch: &mut Watch<'_>,
+) -> rusqlite::Result<Stats> {
     let t0 = std::time::Instant::now();
     let lap = |l: &str| {
         if std::env::var_os("SPIDERLENS_TIMING").is_some() {
@@ -343,8 +358,9 @@ pub fn build(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite
             );
         }
     };
-    let g = read_graph(conn, weighting)?;
+    let g = read_graph(conn, weighting, watch)?;
     lap("graph");
+    watch.tick("link_score", g.len() as u64, g.len() as u64)?;
     let (r, rounds) = rank(&g);
     let scores = scale(&g, &r);
     let rank = ranks(&scores);
@@ -361,10 +377,9 @@ pub fn build(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite
         [],
         |r| r.get(0),
     )?;
-    let tx = conn.unchecked_transaction()?;
-    {
+    Watch::savepoint(conn, "metrics", || {
         let mut ins =
-            tx.prepare("INSERT INTO temp.link_metrics VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")?;
+            conn.prepare("INSERT INTO temp.link_metrics VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")?;
         for (i, &id) in g.ids.iter().enumerate() {
             let pct = if pages > 0 {
                 f64::from(g.unique_in[i]) * 100.0 / pages as f64
@@ -383,8 +398,8 @@ pub fn build(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite
                 pct
             ])?;
         }
-    }
-    tx.commit()?;
+        Ok(())
+    })?;
     lap("written");
     Ok(Stats {
         urls: g.len() as u64,

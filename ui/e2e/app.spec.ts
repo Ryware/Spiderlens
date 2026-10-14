@@ -191,6 +191,21 @@ test("link_position_tester_runs_the_rules_on_a_crawled_page", async ({ page }) =
   await expect(panel.getByRole("row").filter({ hasText: "/story" })).toContainText("Built-in rule");
 });
 
+test("link_score_runs_after_the_crawl_with_progress_and_cancel", async ({ page }) => {
+  await crawl(page);
+  const bar = page.getByRole("contentinfo", { name: "Crawl status" });
+  await expect(bar).toContainText("Analysing: Link positions");
+  await page.evaluate(() => window.spiderlens.results.analysisProgress({ phase: "link_score", done: 3, total: 4 }));
+  await expect(bar).toContainText("Analysing: Link Score 75%");
+  await bar.getByRole("button", { name: "Cancel analysis" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.analysisCancels)).toBe(1);
+  await page.evaluate(() => window.spiderlens.results.analysisDone({ cancelled: true }));
+  await expect(bar).toContainText("Analysis cancelled");
+  await bar.getByRole("button", { name: "Run analysis again" }).click();
+  await page.evaluate(() => window.spiderlens.results.analysisDone());
+  await expect(bar).toContainText("Link Score ready");
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();

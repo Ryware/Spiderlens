@@ -23,6 +23,7 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
 import type { AnalysisRun } from "./generated/AnalysisRun";
 import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
 import type { PositionRule } from "./generated/PositionRule";
@@ -213,6 +214,12 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
   analysisRun(path: string): Promise<AnalysisRun>;
+  /** Starts Crawl Analysis in the background: progress and done arrive as events. */
+  analysisStart(path: string): Promise<void>;
+  /** Cancels the running Crawl Analysis; earlier results stay. */
+  analysisCancel(): Promise<void>;
+  onAnalysisProgress(cb: (p: AnalysisProgressEvent) => void): Promise<() => void>;
+  onAnalysisDone(cb: (d: AnalysisDone) => void): Promise<() => void>;
   /** Uses these link analysis settings for the open file from now on. */
   analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
   /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
@@ -220,6 +227,11 @@ export interface Transport {
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
 }
+
+/** `analysis-progress` (spec 023 FR-013). */
+export type AnalysisProgressEvent = AnalysisProgress & { path: string };
+/** `analysis-done`: `run` is null when cancelled or failed. */
+export type AnalysisDone = { path: string; run: AnalysisRun | null; cancelled: boolean; error: string | null };
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
 
@@ -272,6 +284,10 @@ export const tauriTransport: Transport = {
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisStart: (path) => invoke("analysis_start", { path }),
+  analysisCancel: () => invoke("analysis_cancel"),
+  onAnalysisProgress: (cb) => listen<AnalysisProgressEvent>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisDone: (cb) => listen<AnalysisDone>("analysis-done", (e) => cb(e.payload)),
   analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),

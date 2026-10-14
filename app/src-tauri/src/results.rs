@@ -14,10 +14,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use serde::Serialize;
 use spiderlens_config::{LinkAnalysisSettings, PositionRule};
 use spiderlens_results::{
-    AnalysisRun, ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef,
-    TestedLink, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    AnalysisProgress, AnalysisRun, ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh,
+    RowPage, TabDef, TestedLink, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 type Cmd<T> = Result<T, String>;
@@ -36,6 +36,8 @@ pub struct State {
     actor: Mutex<Option<Actor>>,
     exports: Mutex<HashMap<u32, Arc<AtomicBool>>>,
     next_export: AtomicU32,
+    /// Cancel flag of the running Crawl Analysis, if any.
+    analysis: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -253,6 +255,88 @@ pub async fn url_list(
 #[tauri::command]
 pub async fn analysis_run(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<AnalysisRun> {
     state.with(&path, move |r| r.analyse().map_err(err)).await
+}
+
+#[derive(Serialize, Clone)]
+struct AnalysisProgressEvent {
+    path: PathBuf,
+    #[serde(flatten)]
+    progress: AnalysisProgress,
+}
+
+#[derive(Serialize, Clone)]
+struct AnalysisDone {
+    path: PathBuf,
+    /// None when cancelled or failed.
+    run: Option<AnalysisRun>,
+    cancelled: bool,
+    error: Option<String>,
+}
+
+/// Starts Crawl Analysis on the open file's reader (spec 023 FR-012,
+/// FR-013): `analysis-progress` events at most every 100 ms, then one
+/// `analysis-done`. Other reader commands wait until it ends.
+#[tauri::command]
+pub fn analysis_start(app: AppHandle, state: tauri::State<'_, State>, path: PathBuf) -> Cmd<()> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(old) = state
+        .analysis
+        .lock()
+        .expect("analysis lock")
+        .replace(cancel.clone())
+    {
+        old.store(true, Ordering::Relaxed);
+    }
+    let p = path.clone();
+    state.send(&path, move |r, _| {
+        let mut last: Option<std::time::Instant> = None;
+        let mut on = |progress: AnalysisProgress| {
+            let due = last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(100));
+            if due || progress.done == progress.total {
+                last = Some(std::time::Instant::now());
+                let _ = app.emit(
+                    "analysis-progress",
+                    AnalysisProgressEvent {
+                        path: p.clone(),
+                        progress,
+                    },
+                );
+            }
+        };
+        let done = match r.analyse_with(&mut on, &cancel) {
+            Ok(run) => AnalysisDone {
+                path: p.clone(),
+                cancelled: run.is_none(),
+                run,
+                error: None,
+            },
+            Err(e) => AnalysisDone {
+                path: p.clone(),
+                run: None,
+                cancelled: false,
+                error: Some(e.to_string()),
+            },
+        };
+        // Finished: a late cancel must not interrupt the next job.
+        let mut current = app.state::<State>().analysis.lock().expect("analysis lock");
+        if current.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancel)) {
+            *current = None;
+        }
+        drop(current);
+        let _ = app.emit("analysis-done", done);
+    })
+}
+
+/// Cancels the running Crawl Analysis (FR-013): checked between batches,
+/// and the reader's query is interrupted, so it stops within a second.
+#[tauri::command]
+pub fn analysis_cancel(state: tauri::State<'_, State>) {
+    if let Some(c) = state.analysis.lock().expect("analysis lock").take() {
+        c.store(true, Ordering::Relaxed);
+        if let Some(a) = state.actor.lock().expect("results lock").as_ref() {
+            a.interrupt.interrupt();
+        }
+    }
 }
 
 /// Uses `settings` for the open file's link positions and Link Score from

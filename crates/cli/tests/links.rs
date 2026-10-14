@@ -42,12 +42,15 @@ fn analyse_prints_the_reader_summary() {
         .args(["links", "analyse", path.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicates::str::contains("Link Score worked out for"));
+        .stdout(predicates::str::contains("Link Score worked out for"))
+        .stderr(predicates::str::contains("Analysing: Link positions 0%"))
+        .stderr(predicates::str::contains("Analysing: Link Score 100% ("));
     cli()
         .args(["links", "analyse", path.to_str().unwrap(), "--quiet"])
         .assert()
         .success()
-        .stdout("");
+        .stdout("")
+        .stderr("");
     cli()
         .args([
             "links",

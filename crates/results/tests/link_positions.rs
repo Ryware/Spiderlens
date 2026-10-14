@@ -238,3 +238,71 @@ async fn pages_without_html_are_unknown() {
     // Unknown links count as content for the filter.
     assert!(paths(&mut r, &c, "boilerplate_only").is_empty());
 }
+
+#[tokio::test]
+async fn analysis_reports_progress_and_cancels_cleanly() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let c = crawl(true).await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let home = id(&c, "/");
+
+    // Cancelled before any results: nothing is left behind.
+    let cancel = AtomicBool::new(false);
+    let run = r
+        .analyse_with(
+            &mut |p| {
+                if p.phase == "link_score" {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+            &cancel,
+        )
+        .unwrap();
+    assert!(run.is_none());
+    assert!(matches!(
+        r.list_at(home, ListKind::Outlinks, Some("footer"), 0, 100),
+        Err(spiderlens_results::Error::Unavailable(_))
+    ));
+
+    // A full run reports both phases, ending at its total.
+    let mut seen = Vec::new();
+    let run = r
+        .analyse_with(&mut |p| seen.push(p), &AtomicBool::new(false))
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.urls, 5);
+    assert_eq!(seen.first().unwrap().phase, "positions");
+    assert_eq!(seen.first().unwrap().total, 5);
+    let last = seen.last().unwrap();
+    assert_eq!((last.phase, last.done, last.total), ("link_score", 5, 5));
+    let footer = r
+        .list_at(home, ListKind::Outlinks, Some("footer"), 0, 100)
+        .unwrap()
+        .total;
+    assert_eq!(footer, 1);
+    let score = r.detail(id(&c, "/story")).unwrap().link_metrics.unwrap().score;
+
+    // Cancelling a later run keeps the earlier results (FR-013).
+    let cancel = AtomicBool::new(false);
+    let run = r
+        .analyse_with(
+            &mut |p| {
+                if p.phase == "link_score" {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+            &cancel,
+        )
+        .unwrap();
+    assert!(run.is_none());
+    assert_eq!(
+        r.list_at(home, ListKind::Outlinks, Some("footer"), 0, 100)
+            .unwrap()
+            .total,
+        footer
+    );
+    assert_eq!(
+        r.detail(id(&c, "/story")).unwrap().link_metrics.unwrap().score,
+        score
+    );
+}

@@ -7,7 +7,9 @@ import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
-import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
+import type { AnalysisProgress } from "../generated/AnalysisProgress";
+import type { AnalysisRun } from "../generated/AnalysisRun";
+import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, Range, Transport, ViewReady } from "../transport";
 
 export interface FakeUrl {
   id: number;
@@ -85,6 +87,13 @@ export interface FakeResults {
   add(urls: FakeUrl[]): void;
   /** Link analysis settings sent for the open file (spec 023). */
   linkSettings: LinkAnalysisSettings[];
+  /** Crawl Analysis runs started (file paths) and cancels asked for. */
+  analyses: string[];
+  analysisCancels: number;
+  /** Reports progress of the running analysis. */
+  analysisProgress(p: Partial<AnalysisProgress>): void;
+  /** Ends the running analysis: with a run, or cancelled or failed. */
+  analysisDone(d?: Partial<AnalysisDone>): void;
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -104,6 +113,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "exportCancel"
   | "analysisRun"
   | "analysisSettings"
+  | "analysisStart"
+  | "analysisCancel"
+  | "onAnalysisProgress"
+  | "onAnalysisDone"
   | "positionsTest"
   | "onViewReady"
   | "onExportProgress"
@@ -113,10 +126,22 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
   const readyCbs = new Set<(r: ViewReady) => void>();
   const progressCbs = new Set<(p: ExportProgress) => void>();
+  const analysisProgressCbs = new Set<(p: AnalysisProgressEvent) => void>();
+  const analysisDoneCbs = new Set<(d: AnalysisDone) => void>();
+  let analysing: string | null = null;
+  const fakeRun = (): AnalysisRun => ({ urls: results.urls.length, links: 12, rounds: 30, pages_without_html: 0, weighted: false, ms: 40 });
   const results: FakeResults = {
     urls: [...initial],
     copied: [],
     linkSettings: [],
+    analyses: [],
+    analysisCancels: 0,
+    analysisProgress: (p) => analysisProgressCbs.forEach((cb) => cb({ path: analysing ?? "", phase: "positions", done: 0, total: 100, ...p })),
+    analysisDone: (d) => {
+      const path = analysing ?? "";
+      analysing = null;
+      analysisDoneCbs.forEach((cb) => cb({ path, run: d?.cancelled || d?.error ? null : fakeRun(), cancelled: false, error: null, ...d }));
+    },
     exports: [],
     opened: [],
     features: ["base", "analysis"],
@@ -275,7 +300,22 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return 1;
     },
     exportCancel: async () => {},
-    analysisRun: async () => ({ urls: results.urls.length, links: 12, rounds: 30, pages_without_html: 0, weighted: false, ms: 40 }),
+    analysisRun: async () => fakeRun(),
+    analysisStart: async (path) => {
+      analysing = path;
+      results.analyses.push(path);
+    },
+    analysisCancel: async () => {
+      results.analysisCancels++;
+    },
+    onAnalysisProgress: async (cb) => {
+      analysisProgressCbs.add(cb);
+      return () => void analysisProgressCbs.delete(cb);
+    },
+    onAnalysisDone: async (cb) => {
+      analysisDoneCbs.add(cb);
+      return () => void analysisDoneCbs.delete(cb);
+    },
     analysisSettings: async (_p, settings) => {
       results.linkSettings.push(settings);
     },

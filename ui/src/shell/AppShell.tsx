@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
+import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
@@ -82,6 +83,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
+  const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
@@ -151,6 +153,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
       { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], enabled: !crawl.active, run: () => void openCrawl() },
+      {
+        id: "analyse",
+        title: "Work out Link Score",
+        group: "Crawl",
+        keywords: ["analysis", "link positions", "pagerank"],
+        enabled: crawl.path !== null && !crawl.running && analysis.status !== "running",
+        run: analysis.start,
+      },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -180,7 +190,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, hasInput, startCrawl, openCrawl, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, analysis, hasInput, startCrawl, openCrawl, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -261,7 +271,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         )}
         </div>
       </div>
-      <StatusBar setup={setup} run={crawl} />
+      <StatusBar setup={setup} run={crawl} analysis={analysis} />
 
       <SettingsSheet
         open={settingsOpen}

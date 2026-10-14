@@ -1022,8 +1022,12 @@ pub(crate) fn build_derived(
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
-        Derived::LinkMetrics => crate::analysis::link_metrics::build(conn, links.weighting.as_ref()).map(|_| ()),
-        Derived::LinkPositions => crate::analysis::link_positions::build(conn, &links.position_rules).map(|_| ()),
+        Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+        }),
+        Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+        }),
     }
 }
 
