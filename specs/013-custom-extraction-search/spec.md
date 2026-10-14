@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved 2026-10-13 (Ryware), defaults assumed for all owner decisions
 
 **Input**: User description: "Custom extraction and custom search, in the spirit of the custom extraction and custom search features of other SEO crawlers: user-defined extractors (CSS selector, XPath, regex, JSON-LD path) that produce extra columns per page, and custom search (text or regex, contains or does not contain, in the HTML or in the visible text) with match counts. Both are configured per crawl profile, run during a crawl when configured up front, and can also be run on an existing crawl from its stored HTML without crawling again. Crawl speed is the top priority: rules must not slow the crawl noticeably, and a crawl with no rules must not change at all."
 
@@ -238,7 +238,7 @@ The user wants to know which pages mention "free shipping" in the main content, 
 - **Storage**: new crawl file data follows the storage rules of spec 006 (additive change, older files keep opening, files without custom data open normally).
 - **Security**: rules are user-entered expressions evaluated locally on the user's own crawl data; they never execute code and never reach the network, except the single user-requested fetch when testing on a typed URL.
 
-## Owner decisions (defaults assumed in this draft)
+## Owner decisions (defaults approved 2026-10-13)
 
 1. **Rerunning replaces values**: running a changed rule replaces its old values; no history of earlier runs is kept (a new crawl or the comparison feature covers history).
 2. **Rules locked while running**: rules can be edited only while a crawl is paused or finished.
