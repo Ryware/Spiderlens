@@ -92,6 +92,10 @@ export function AppShell({ transport }: { transport: Transport }) {
   const retry = useRetryAvailability(transport, crawl);
   const [infoOpen, setInfoOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
+  const inspectorRef = useRef<HTMLDivElement>(null);
+  const inspectFrom = useRef<HTMLElement | null>(null);
+  const inspectPending = useRef(false);
+  const [inspectAsked, setInspectAsked] = useState(0);
   const results = useResults(transport, crawl.path, crawl.running);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
@@ -129,6 +133,20 @@ export function AppShell({ transport }: { transport: Transport }) {
 
   const sidebarIcons = ui.sidebarCollapsed || width < AUTO_COLLAPSE_SIDEBAR;
   const detailHidden = ui.detailCollapsed || width < AUTO_COLLAPSE_DETAIL;
+
+  // Enter on a row (FR-018): show the details if they were hidden, then move
+  // focus into them; Escape there goes back to the row.
+  const inspect = useCallback(() => {
+    inspectFrom.current = document.activeElement as HTMLElement | null;
+    inspectPending.current = true;
+    if (ui.detailCollapsed) updateUi({ detailCollapsed: false });
+    setInspectAsked((n) => n + 1);
+  }, [ui.detailCollapsed, updateUi]);
+  useEffect(() => {
+    // A window too narrow for details keeps focus on the row.
+    if (inspectPending.current) inspectorRef.current?.focus();
+    inspectPending.current = false;
+  }, [inspectAsked, detailHidden]);
 
   const openSettings = useCallback(
     (category?: CategoryId) => {
@@ -215,7 +233,8 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
-      ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      // Mod+1…Mod+9 open the first nine result tabs (FR-018).
+      ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
@@ -278,7 +297,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
-          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
+          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
@@ -297,6 +316,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              onInspect={inspect}
             />
           ) : vizView && crawl.path ? (
             <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
@@ -309,7 +329,18 @@ export function AppShell({ transport }: { transport: Transport }) {
         {!detailHidden && (
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
-            <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
+            <div
+              ref={inspectorRef}
+              tabIndex={-1}
+              className="shrink-0 border-l border-line outline-none"
+              style={{ width: ui.detailWidth }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && !e.defaultPrevented && inspectFrom.current?.isConnected) {
+                  e.preventDefault();
+                  inspectFrom.current.focus();
+                }
+              }}
+            >
               {resultTab || vizView ? <Inspector transport={transport} path={crawl.path} id={results.focusId} onAnchorCloud={openAnchorCloud} /> : <DetailPanel />}
             </div>
           </>
