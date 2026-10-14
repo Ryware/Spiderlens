@@ -3,6 +3,7 @@ import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
+import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
@@ -17,6 +18,11 @@ import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { useResults } from "../results/useResults";
+import { useCrawlLibrary } from "../files/useCrawlLibrary";
+import { useCrawlFile } from "../files/useCrawlFile";
+import { CrawlFileDialogs } from "../files/CrawlFileDialogs";
+import { CrawlInfoSheet } from "../files/CrawlInfoSheet";
+import type { CrawlInfo } from "../transport";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
 export const AUTO_COLLAPSE_DETAIL = 1100;
@@ -81,6 +87,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [retryOpen, setRetryOpen] = useState(false);
+  const retry = useRetryAvailability(transport, crawl);
+  const [infoOpen, setInfoOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
@@ -137,11 +146,29 @@ export function AppShell({ transport }: { transport: Transport }) {
     }
   }, [setup, crawl]);
 
-  const openCrawl = useCallback(async () => {
-    if (crawl.active) return;
-    const path = await transport.pickCrawlFile();
-    if (path && (await crawl.open(path))) setSection((s) => (s === "overview" ? "internal" : s));
-  }, [transport, crawl]);
+  const library = useCrawlLibrary(transport);
+  const file = useCrawlFile(transport, crawl, {
+    onOpened: () => setSection((s) => (s === "overview" ? "internal" : s)),
+    onChanged: library.reload,
+  });
+
+  // The crawl's settings go back into the setup, and the window returns to the start screen.
+  const newCrawlFrom = useCallback(
+    (info: CrawlInfo) => {
+      if (!info.config || !crawl.close()) return;
+      const config = info.config;
+      setup.set(() => config);
+      setup.setLoaded(null);
+      if (config.mode === "spider" && info.start_url) setup.setStartUrl(info.start_url);
+      setInfoOpen(false);
+      setSection("overview");
+    },
+    [crawl, setup],
+  );
+  const { resume: resumeFile, saveAs: saveFileAs, open: openFile, openPicker } = file;
+  const resume = useCallback(() => void resumeFile(), [resumeFile]);
+  const saveAs = useCallback(() => void saveFileAs(), [saveFileAs]);
+  const recentOpen = useMemo(() => library.recent.filter((e) => e.available).slice(0, 5), [library.recent]);
 
   const hasInput = setup.config?.mode === "list" || setup.startUrl.trim() !== "";
   const commands: Command[] = useMemo(
@@ -150,9 +177,13 @@ export function AppShell({ transport }: { transport: Transport }) {
       // reach startCrawl, which checks the field as it is now (like Enter).
       { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: hasInput && !crawl.active, run: startCrawl },
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
-      { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
+      { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: resume },
+      { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
-      { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], enabled: !crawl.active, run: () => void openCrawl() },
+      { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], run: () => void openPicker() },
+      ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
+      { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
+      { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
       {
         id: "analyse",
         title: "Work out Link Score",
@@ -190,7 +221,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, analysis, hasInput, startCrawl, openCrawl, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, retry, hasInput, startCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -208,7 +239,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -217,23 +248,26 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, file.prompt, file.quitting]);
 
   return (
-    <div className="flex h-full flex-col bg-bg text-fg">
+    <div data-shell className="flex h-full flex-col bg-bg text-fg">
       <Toolbar
         ref={urlRef}
         setup={setup}
         run={crawl}
         onStart={startCrawl}
+        onResume={resume}
         onOpenSettings={openSettings}
         onOpenPalette={() => setPaletteOpen(true)}
         appearance={ui}
         level={level}
         systemDark={systemDark}
         onAppearance={updateUi}
+        retry={retry}
+        onRetry={() => setRetryOpen(true)}
       />
-      <div className="flex min-h-0 flex-1 bg-frame">
+      <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
         </div>
@@ -256,9 +290,9 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
           ) : (
-            <CrawlOverview run={crawl} />
+            <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} />
           )}
         </main>
         {!detailHidden && (
@@ -277,6 +311,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         setup={setup}
+        run={crawl}
         transport={transport}
         category={ui.settingsCategory as CategoryId}
         onCategory={(c) => updateUi({ settingsCategory: c })}
@@ -288,6 +323,9 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
+      <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
+      <CrawlInfoSheet open={infoOpen} onOpenChange={setInfoOpen} transport={transport} path={crawl.path} onNewCrawl={newCrawlFrom} />
+      <CrawlFileDialogs file={file} />
     </div>
   );
 }

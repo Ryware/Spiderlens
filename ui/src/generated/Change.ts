@@ -3,7 +3,8 @@ import type { RetrySettings } from "./RetrySettings";
 import type { SpeedSettings } from "./SpeedSettings";
 
 /**
- * Only speed and retry settings may change during a crawl. The type cannot
- * express any other change.
+ * Only speed, retry and the URL limit may change during or between runs of
+ * a crawl (spec 006 FR-011). The type cannot express any other change, so a
+ * resumed crawl can never change which URLs are in scope.
  */
-export type Change = { "speed": SpeedSettings } | { "retry": RetrySettings };
+export type Change = { "speed": SpeedSettings } | { "retry": RetrySettings } | { "max_urls": number | null };

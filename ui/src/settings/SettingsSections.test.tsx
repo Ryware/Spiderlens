@@ -326,7 +326,18 @@ test("network_and_retry_settings_reach_the_crawl", async () => {
   await waitFor(() => expect(sw("Retry rate limiting (429)").getAttribute("aria-checked")).toBe("false"));
   const config = await startCrawl(t);
   expect(config.network).toEqual({ connect_timeout_secs: 5, read_timeout_secs: 45, max_redirects: 3, max_body_mb: 20 });
-  expect(config.retry).toEqual({ attempts: 1, max_wait_secs: 15, retry_5xx: false, retry_429: false });
+  expect(config.retry).toEqual({
+    attempts: 1,
+    max_wait_secs: 15,
+    retry_5xx: false,
+    retry_429: false,
+    // Spec 004 settings, left at their defaults here.
+    base_wait_secs: 1,
+    host_pause_after: 5,
+    host_pause_secs: 60,
+    host_pause_max_secs: 600,
+    host_give_up_after: 5,
+  });
 });
 
 // ---------------------------------------------------------------- pattern tester
