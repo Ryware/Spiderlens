@@ -321,7 +321,7 @@ impl Reader {
             ViewKind::CrawlTree => Derived::VizCrawlTree,
             ViewKind::DirectoryTree => Derived::VizDirs,
             ViewKind::LinkGraph => {
-                let scores = self.has_current(Derived::LinkMetrics)?;
+                let scores = self.has_derived(Derived::LinkMetrics)?;
                 return graph::scene(&self.conn, state, scores);
             }
             ViewKind::Anchors => return anchors::scene(&self.conn, state),
@@ -329,7 +329,7 @@ impl Reader {
         self.ensure_derived([derived])?;
         // Link Score sizes and orders nodes only once worked out: a view
         // never waits for the analysis.
-        let scores = self.has_current(Derived::LinkMetrics)?;
+        let scores = self.has_derived(Derived::LinkMetrics)?;
         let tree = match state.view {
             ViewKind::CrawlTree => crawl_tree::load(&self.conn, scores)?,
             ViewKind::DirectoryTree => dirs::load(&self.conn, scores)?,
