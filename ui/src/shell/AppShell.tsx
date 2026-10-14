@@ -86,6 +86,12 @@ export function AppShell({ transport }: { transport: Transport }) {
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const onFocusId = results.setFocusId;
+  // Opening the anchor text cloud from the details starts a fresh view for the selected page.
+  const [anchorOpens, setAnchorOpens] = useState(0);
+  const openAnchorCloud = useCallback(() => {
+    setAnchorOpens((n) => n + 1);
+    setSection("anchor-text");
+  }, []);
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   useEffect(() => {
@@ -237,7 +243,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
             />
           ) : vizView && crawl.path ? (
-            <VizView key={`${crawl.path}\n${vizView.id}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
+            <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
           ) : (
@@ -248,7 +254,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab || vizView ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab || vizView ? <Inspector transport={transport} path={crawl.path} id={results.focusId} onAnchorCloud={openAnchorCloud} /> : <DetailPanel />}
             </div>
           </>
         )}

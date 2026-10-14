@@ -51,6 +51,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = "0.13"
 assert_cmd = "2"
 predicates = "3"
+unicode-segmentation = "1"
 jsonschema = { version = "0.33", default-features = false }
 
 [workspace.lints.rust]

@@ -69,6 +69,7 @@ fn main() {
             results::url_detail,
             results::url_list,
             results::viz_scene,
+            results::viz_term_links,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

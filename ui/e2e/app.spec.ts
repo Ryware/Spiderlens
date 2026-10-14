@@ -270,6 +270,37 @@ test("link_graph_drags_a_page_and_centres_on_one", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.distance)).toBe(2);
 });
 
+test("anchor_text_cloud_from_the_details_lists_a_terms_links", async ({ page }) => {
+  await crawl(page);
+  // Select a page in the crawl tree, then open its cloud from the details.
+  await page.getByRole("navigation", { name: "Sections" }).getByText("Crawl tree").click();
+  const tree = page.getByRole("application");
+  await tree.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await details.getByRole("button", { name: "Anchor text cloud" }).click();
+  const canvas = page.getByRole("application");
+  await expect(canvas).toHaveAttribute("aria-label", /^Anchor text: \d+ nodes/);
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.focus)).toMatch(/^u:\d+$/);
+  const painted = await canvas.evaluate((c: HTMLCanvasElement) => {
+    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  });
+  expect(painted).toBeGreaterThan(100);
+  // Click the biggest term: its links open; a source drives the details.
+  const term = await nodeOnPage(page, "t:running");
+  await page.mouse.click(term.x, term.y);
+  const list = page.getByRole("region", { name: "Links using running" });
+  await expect(list).toContainText("9 links");
+  await list.getByRole("listitem").first().getByRole("button").click();
+  await expect(details).toContainText("example.com");
+  await page.getByRole("radio", { name: "Whole site" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.focus)).toBeNull();
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();

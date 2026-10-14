@@ -153,6 +153,18 @@ test("link_list_switches_between_in_out_and_images", async () => {
   expect(within(switcher).getByRole("radio", { name: "Images 1" }).getAttribute("aria-checked")).toBe("true");
 });
 
+test("inlinks_offer_the_anchor_text_cloud", async () => {
+  const t = withDetail({ inlinks: 1, outlinks: 2, images: 0 });
+  const open = vi.fn();
+  render(<Inspector transport={t} path={PATH} id={2} onAnchorCloud={open} />);
+  await loaded();
+  fireEvent.click(await within(details()).findByRole("button", { name: "Anchor text cloud" }));
+  expect(open).toHaveBeenCalledTimes(1);
+  // Only beside the inlinks.
+  fireEvent.click(within(details()).getByRole("radio", { name: "Out 2" }));
+  expect(within(details()).queryByRole("button", { name: "Anchor text cloud" })).toBeNull();
+});
+
 test("empty_link_list_says_none", async () => {
   const t = withDetail({ inlinks: 1, outlinks: 0 });
   render(<Inspector transport={t} path={PATH} id={2} />);

@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -29,6 +29,7 @@ export const vizTabs: NavItem[] = [
   { id: "crawl-tree", title: "Crawl tree", icon: GitFork },
   { id: "directory-tree", title: "Directory tree", icon: FolderTree },
   { id: "link-graph", title: "Link graph", icon: Waypoints },
+  { id: "anchor-text", title: "Anchor text", icon: TextQuote },
 ];
 
 const later: NavItem[] = [

@@ -2,6 +2,7 @@
 import type { ColourBy } from "./ColourBy";
 import type { Layout } from "./Layout";
 import type { SizeBy } from "./SizeBy";
+import type { Terms } from "./Terms";
 import type { ViewKind } from "./ViewKind";
 
 /**
@@ -24,10 +25,16 @@ pages: { [key in string]: number },
 budget: number | null, 
 /**
  * Link graph: the page to centre on (`u:<id>`), with its neighbours
- * up to `distance` links away (1 or 2). None: the whole site.
+ * up to `distance` links away (1 or 2). Anchor text: the page whose
+ * inlinks make the cloud. None: the whole site.
  */
 focus: string | null, distance: number, 
 /**
  * Link graph: nodes the user dragged, by key, and where to.
  */
-pinned: Record<string, [number, number]>, };
+pinned: Record<string, [number, number]>, 
+/**
+ * Anchor text: words or whole anchors, stop words left out, and
+ * followed links only (FR-016, FR-017).
+ */
+terms: Terms, stop_words: boolean, followed_only: boolean, };

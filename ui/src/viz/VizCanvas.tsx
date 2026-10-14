@@ -34,7 +34,8 @@ export const categoryShape: Record<Category, Shape> = {
 };
 
 /** Colour of a node when colouring by depth: the accent fading with depth. */
-const depthColour = (depth: number) => `color-mix(in oklch, var(--accent) ${Math.max(20, 100 - depth * 16)}%, var(--fg-3))`;
+// The canvas cannot read CSS variables, so these mix the resolved token values.
+const depthColour = (c: Record<string, string>, depth: number) => `color-mix(in oklch, ${c["--accent"]} ${Math.max(20, 100 - depth * 16)}%, ${c["--fg-3"]})`;
 
 function shapePath(p: Path2D, shape: Shape, x: number, y: number, r: number) {
   switch (shape) {
@@ -86,7 +87,11 @@ interface Props {
   onPin?: (key: string, x: number, y: number, at: { sx: number; sy: number }) => void;
 }
 
-const viewName: Record<Scene["view"], string> = { crawl_tree: "Crawl tree", directory_tree: "Directory tree", link_graph: "Link graph" };
+const viewName: Record<Scene["view"], string> = { crawl_tree: "Crawl tree", directory_tree: "Directory tree", link_graph: "Link graph", anchors: "Anchor text" };
+
+/** A term's colour: the accent for the most used, fading to the secondary text colour. */
+const termColour = (c: Record<string, string>, rank: number, of: number) =>
+  `color-mix(in oklch, ${c["--accent-text"]} ${Math.round(100 - (70 * rank) / Math.max(of - 1, 1))}%, ${c["--fg-2"]})`;
 
 export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({ scene, colour, selected, onSelect, onActivate, anchor, onHover, colours, onPin }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -154,6 +159,37 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
     ctx.translate(cam.x, cam.y);
     ctx.scale(cam.k, cam.k);
     const nodes = held ? scene.nodes.map((n, i) => (i === held.i ? { ...n, x: held.x, y: held.y } : n)) : scene.nodes;
+    if (scene.layout === "cloud") {
+      // Words in screen space, squeezed to the width Rust laid out (plan D6).
+      ctx.restore();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const family = colours["--font-ui"] || "system-ui";
+      nodes.forEach((n, i) => {
+        const s = toScreen(cam, n.x, n.y);
+        const font = n.r * 2 * cam.k / 1.15;
+        if (font < 3) return;
+        ctx.font = `${i < 10 ? 600 : 500} ${font}px ${family}`;
+        ctx.fillStyle = termColour(colours, i, nodes.length);
+        ctx.fillText(n.label, s.x, s.y, Math.max(1, ((n.width ?? 0) - 6) * cam.k));
+      });
+      for (const [i, w] of [
+        [hover, 1.5],
+        [sel, 2.5],
+      ] as const) {
+        if (i === null) continue;
+        const n = nodes[i];
+        const s = toScreen(cam, n.x, n.y);
+        const hw = ((n.width ?? 0) / 2) * cam.k;
+        const hh = n.r * cam.k;
+        ctx.strokeStyle = colours["--accent"];
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.roundRect(s.x - hw - 2, s.y - hh - 1, hw * 2 + 4, hh * 2 + 2, 4);
+        ctx.stroke();
+      }
+      return;
+    }
     const radial = scene.layout === "radial";
     // Lines, one path.
     const lines = new Path2D();
@@ -198,7 +234,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
     const batches = new Map<string, { shape: Shape; fill: string; path: Path2D }>();
     for (const n of nodes) {
       const shape = categoryShape[n.category];
-      const fill = colour === "depth" && n.url_id !== null ? depthColour(n.depth) : colours[categoryToken[n.category]];
+      const fill = colour === "depth" && n.url_id !== null ? depthColour(colours, n.depth) : colours[categoryToken[n.category]];
       const key = `${shape}|${fill}`;
       let b = batches.get(key);
       if (!b) batches.set(key, (b = { shape, fill, path: new Path2D() }));
@@ -289,7 +325,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
       <canvas
         ref={canvasRef}
         role="application"
-        aria-label={`${viewName[scene.view]}: ${scene.nodes.length.toLocaleString()} nodes${scene.view === "link_graph" ? `, ${scene.edges.length.toLocaleString()} links` : ""}. Arrow keys move, Enter ${scene.view === "link_graph" ? "centres on a page" : "opens or closes a branch"}, plus and minus zoom, 0 fits.`}
+        aria-label={`${viewName[scene.view]}: ${scene.nodes.length.toLocaleString()} nodes${scene.view === "link_graph" ? `, ${scene.edges.length.toLocaleString()} links` : ""}. Arrow keys move, Enter ${scene.view === "link_graph" ? "centres on a page" : scene.view === "anchors" ? "lists the links using a term" : "opens or closes a branch"}, plus and minus zoom, 0 fits.`}
         aria-activedescendant={undefined}
         tabIndex={0}
         className="block h-full w-full cursor-grab touch-none outline-none focus-visible:ring-2 focus-visible:ring-accent active:cursor-grabbing"

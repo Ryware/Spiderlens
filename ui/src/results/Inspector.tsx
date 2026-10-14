@@ -165,7 +165,18 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
   );
 }
 
-export function Inspector({ transport, path, id }: { transport: Transport; path: string | null; id: number | null }) {
+export function Inspector({
+  transport,
+  path,
+  id,
+  onAnchorCloud,
+}: {
+  transport: Transport;
+  path: string | null;
+  id: number | null;
+  /** Opens the anchor text cloud of this URL's inlinks (spec 022 US4). */
+  onAnchorCloud?: () => void;
+}) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [list, setList] = useState<ListKind>("inlinks");
@@ -293,6 +304,11 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
         }
       >
         <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} />
+        {list === "inlinks" && d.inlinks > 0 && onAnchorCloud && (
+          <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={onAnchorCloud}>
+            Anchor text cloud
+          </Button>
+        )}
       </Section>
 
       {d.headers.length > 0 && (

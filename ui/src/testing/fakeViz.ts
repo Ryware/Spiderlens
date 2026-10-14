@@ -3,6 +3,7 @@
 // Like the real one it opens nodes breadth first within a budget, honours
 // the expanded keys, and lays leaves out in slots.
 import type { Scene } from "../generated/Scene";
+import type { TermLinks } from "../generated/TermLinks";
 import type { SceneNode } from "../generated/SceneNode";
 import type { ViewState } from "../generated/ViewState";
 import type { FakeUrl } from "./fakeResults";
@@ -12,6 +13,7 @@ export const FAKE_VIZ_BUDGET = 20;
 
 export function fakeScene(urls: FakeUrl[], state: ViewState): Scene {
   if (state.view === "link_graph") return fakeGraph(urls, state);
+  if (state.view === "anchors") return fakeAnchors(urls, state);
   const tree = state.view === "directory_tree";
   const n = Math.min(urls.length, 400);
   const kids: number[][] = Array.from({ length: n }, () => []);
@@ -68,6 +70,7 @@ export function fakeScene(urls: FakeUrl[], state: ViewState): Scene {
       x,
       y,
       r: 5,
+      width: null,
       category: folder ? "folder" : u.status === 404 ? "client_error" : "ok",
       depth: level,
       score: null,
@@ -90,6 +93,8 @@ export function fakeScene(urls: FakeUrl[], state: ViewState): Scene {
     edges: [],
     directed: false,
     settled: true,
+    note: null,
+    language: null,
     legend: [
       { category: "ok", label: "Success (2xx)", count: ok },
       { category: "client_error", label: "Client error (4xx)", count: n - ok },
@@ -137,6 +142,7 @@ function fakeGraph(urls: FakeUrl[], state: ViewState): Scene {
       x,
       y,
       r: 5,
+      width: null,
       category: u.status === 404 ? "client_error" : "ok",
       depth: i === 0 ? 0 : Math.floor(Math.log(i * 3 + 1) / Math.log(4)),
       score: null,
@@ -159,6 +165,8 @@ function fakeGraph(urls: FakeUrl[], state: ViewState): Scene {
     edges,
     directed: focus >= 0,
     settled: true,
+    note: null,
+    language: null,
     legend: [
       { category: "ok", label: "Success (2xx)", count: ok },
       { category: "client_error", label: "Client error (4xx)", count: keep.length - ok },
@@ -168,5 +176,94 @@ function fakeGraph(urls: FakeUrl[], state: ViewState): Scene {
     bounds: { x: Math.min(...xs) - 5, y: Math.min(...ys) - 5, width: Math.max(...xs) - Math.min(...xs) + 10, height: Math.max(...ys) - Math.min(...ys) + 10 },
     total: n,
     snapshot_at: 1_760_000_000_000,
+  };
+}
+
+/** Fake anchor terms and their counts: the start page has no inlinks. */
+function fakeTerms(urls: FakeUrl[], state: ViewState): [string, number][] {
+  if (state.focus === `u:${urls[0]?.id}`) return [];
+  const words: [string, number][] = [
+    ["running", 9],
+    ["shoes", 8],
+    ["sale", 5],
+    ["guide", 4],
+    ["blog", 3],
+    ["women", 2],
+    ["men", 2],
+    ["click", 1],
+  ];
+  const terms: [string, number][] =
+    state.terms === "whole"
+      ? [
+          ["running shoes", 6],
+          ["click here", 3],
+          ["sale", 2],
+        ]
+      : state.stop_words
+        ? words
+        : [...words.slice(0, 2), ["the", 7], ...words.slice(2), ["here", 1]];
+  return terms.map(([t, c]) => [t, state.followed_only ? Math.max(1, c - 1) : c] as [string, number]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function fakeAnchors(urls: FakeUrl[], state: ViewState): Scene {
+  const terms = fakeTerms(urls, state);
+  // In rows of three, biggest first.
+  const nodes: SceneNode[] = terms.map(([t, c], i) => {
+    const font = 12 + c * 3;
+    return {
+      key: `t:${t}`,
+      label: t,
+      url: null,
+      url_id: null,
+      x: (i % 3) * 160 - 160,
+      y: Math.floor(i / 3) * 50,
+      r: font / 2,
+      width: t.length * font * 0.55 + 6,
+      category: "other",
+      depth: i,
+      score: null,
+      inlinks: null,
+      count: c,
+      hidden: 0,
+      expandable: false,
+      expanded: false,
+      parent: null,
+    };
+  });
+  const links = terms.reduce((a, [, c]) => a + c, 0);
+  return {
+    view: "anchors",
+    layout: "cloud",
+    nodes,
+    edges: [],
+    directed: false,
+    settled: true,
+    legend: [],
+    size_legend: `Size: links that use the term (${links} with anchor text)`,
+    omitted: null,
+    bounds: nodes.length ? { x: -260, y: -20, width: 520, height: Math.ceil(nodes.length / 3) * 50 + 20 } : { x: 0, y: 0, width: 0, height: 0 },
+    total: links,
+    snapshot_at: 1_760_000_000_000,
+    note: nodes.length ? null : "No internal links point to this page.",
+    language: "en",
+  };
+}
+
+/** The links behind a fake term: as many as its count, from the first URLs. */
+export function fakeTermLinks(urls: FakeUrl[], state: ViewState, term: string, limit: number): TermLinks {
+  const count = fakeTerms(urls, state).find(([t]) => t === term)?.[1] ?? 0;
+  const to = urls.find((u) => `u:${u.id}` === state.focus) ?? urls[0];
+  return {
+    total: count,
+    links: urls.slice(0, Math.min(count, limit)).map((u, i) => ({
+      from_id: u.id,
+      from_url: u.url,
+      to_id: to.id,
+      to_url: to.url,
+      text: i === 1 ? `Best ${term}` : `${term[0].toUpperCase()}${term.slice(1)} today`,
+      image: false,
+      rel: i === 2 ? "nofollow" : null,
+      nofollow: i === 2,
+    })),
   };
 }
