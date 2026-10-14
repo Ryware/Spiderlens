@@ -133,3 +133,20 @@ fn export_writes_one_csv_per_issue_with_the_desktop_rows() {
         assert_eq!(csv.lines().count() as u64, i.count.unwrap() + 1, "{}", i.id);
     }
 }
+
+#[test]
+fn analyse_runs_the_phase_and_reports_what_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = crawl_file(&dir);
+    let out = run(&["analyse", path.to_str().unwrap(), "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report = json(&out);
+    assert_eq!(report["saved"], true);
+    // This spec ships the runner; the passes come with specs 010-023.
+    assert_eq!(
+        report["ran"].as_array().unwrap().len(),
+        spiderlens_results::analysis::PASSES.len()
+    );
+    let missing = run(&["analyse", "/nonexistent.spiderlens"]);
+    assert_eq!(missing.status.code(), Some(3));
+}

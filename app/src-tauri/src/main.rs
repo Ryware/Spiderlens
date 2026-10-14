@@ -96,6 +96,7 @@ fn main() {
             results::export_cancel,
             results::rule_catalogue,
             results::issues_apply,
+            results::analysis_run,
             results::issues_summary,
             results::url_issues,
         ])

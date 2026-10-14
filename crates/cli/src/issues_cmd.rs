@@ -264,3 +264,59 @@ fn export(
     }
     Ok(())
 }
+
+#[derive(Args)]
+pub struct AnalyseArgs {
+    /// The crawl file.
+    file: PathBuf,
+    /// Print what ran as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+/// `spiderlens analyse`: runs the Crawl Analysis passes that have not run on
+/// this crawl's data (spec 009 plan D12).
+pub fn run_analyse(a: AnalyseArgs) -> ExitCode {
+    match analyse(&a.file, !a.json) {
+        Ok(report) => {
+            if a.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).expect("report serializes")
+                );
+            } else {
+                for (id, reason) in &report.skipped {
+                    println!("skipped {id}: {reason}");
+                }
+                for (id, ms) in &report.ran {
+                    println!("analysed {id} in {ms} ms");
+                }
+                if report.ran.is_empty() && report.skipped.is_empty() {
+                    println!("nothing to analyse");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(UNREADABLE)
+        }
+    }
+}
+
+/// Runs the stale analysis passes on `file`, printing "Analysing: Link
+/// Score 40%" lines to stderr when `show`.
+pub(crate) fn analyse(
+    file: &Path,
+    show: bool,
+) -> spiderlens_results::Result<spiderlens_results::analysis::AnalysisReport> {
+    let mut last = (String::new(), u64::MAX);
+    let mut progress = |p: spiderlens_results::analysis::AnalysisProgress| {
+        let pct = (p.done * 100).checked_div(p.total).unwrap_or(0);
+        if show && (p.label != last.0 || pct != last.1) {
+            eprintln!("Analysing: {} {pct}%", p.label);
+            last = (p.label, pct);
+        }
+    };
+    spiderlens_results::analysis::analyse_file(file, &mut progress, &AtomicBool::new(false))
+}

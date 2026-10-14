@@ -49,8 +49,8 @@ Code in one draft PR on branch `009-issue-rules-engine`. [P] = can run in parall
 
 ## Crawl Analysis phase (plan D12)
 
-- [ ] T024c `analysis/` module: `Pass` trait, `PASSES`, runner with topological order, staleness from `analysis` meta, main or temp schema, progress and cancel; tests with two fake passes
-- [ ] T024d Run the phase at crawl end in the app and CLI before releasing the writer lock; on demand for opened files; `spiderlens analyse`; status bar progress; rules that read pass outputs report "available when the crawl ends"
+- [x] T024c `analysis/` module: `Pass` trait, `PASSES`, runner with topological order, staleness from `analysis` meta, main or temp schema, progress and cancel; tests with two fake passes
+- [x] T024d Run the phase at crawl end in the app and CLI before releasing the writer lock; on demand for opened files; `spiderlens analyse`; status bar progress; rules that read pass outputs report "available when the crawl ends"
 
 ## Readability (FR-031)
 

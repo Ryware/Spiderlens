@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
 use spiderlens_config::IssueSettings;
+use spiderlens_results::analysis::{AnalysisProgress, AnalysisReport};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
@@ -397,6 +398,24 @@ pub async fn issues_summary(
     state
         .with(&path, move |r| r.issues_summary(running).map_err(err))
         .await
+}
+
+/// Runs the Crawl Analysis passes that have not run on `path` (spec 009
+/// plan D12), sending `analysis-progress` events. `cancel` stops it between
+/// batches; finished passes stay.
+pub fn analyse(app: &AppHandle, path: &Path, cancel: &AtomicBool) -> Result<AnalysisReport, String> {
+    let mut progress = |p: AnalysisProgress| {
+        let _ = app.emit("analysis-progress", p);
+    };
+    spiderlens_results::analysis::analyse_file(path, &mut progress, cancel).map_err(|e| e.to_string())
+}
+
+/// Analyses an opened file whose passes are missing or stale.
+#[tauri::command]
+pub async fn analysis_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
+    tauri::async_runtime::spawn_blocking(move || analyse(&app, &path, &AtomicBool::new(false)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// The issues of one URL with evidence (FR-016).

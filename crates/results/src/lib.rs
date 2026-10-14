@@ -8,6 +8,7 @@
 //! temporary table on disk and hand out one page of rows at a time (plan D4,
 //! constitution principle VI).
 
+pub mod analysis;
 mod counts;
 mod detail;
 mod export;
@@ -40,6 +41,8 @@ pub enum Error {
     Invalid(String),
     #[error("{0}")]
     Unavailable(String),
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl Error {

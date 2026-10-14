@@ -76,6 +76,23 @@ pub(crate) fn connect(
     Ok((conn, features, thresholds))
 }
 
+/// Opens a crawl file to record results in it (issue settings, analysis
+/// outputs), waiting up to 5 s for a writer.
+pub(crate) fn connect_writable(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let format: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
+        .optional()?;
+    if format.as_deref() != Some(spiderlens_engine::crawl::store::FORMAT) {
+        return Err(Error::invalid("not a crawl file this version writes"));
+    }
+    Ok(conn)
+}
+
 impl Reader {
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with(path, ResolvedSettings::default())

@@ -1,6 +1,7 @@
 // In-memory Transport for UI tests. Validation here is a small stand-in; the
 // real rules are tested in Rust (spiderlens-config).
 
+import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
@@ -102,6 +103,9 @@ export interface FakeCrawls {
   controls: string[];
   progress(p: Partial<CrawlProgress>): void;
   warn(message: string): void;
+  analyse(p: Partial<AnalysisProgress>): void;
+  /** Files `analysisRun` was called for. */
+  analysed: string[];
   finish(f: Partial<CrawlFinished>): void;
 }
 
@@ -114,6 +118,7 @@ export function fakeTransport(
   const onProgress: Listeners<CrawlProgress> = new Set();
   const onWarning: Listeners<{ id: number; message: string }> = new Set();
   const onFinished: Listeners<CrawlFinished> = new Set();
+  const onAnalysis: Listeners<AnalysisProgress> = new Set();
   const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
     return () => void set.delete(cb);
@@ -124,6 +129,8 @@ export function fakeTransport(
     controls: [],
     progress: (p) => onProgress.forEach((cb) => cb({ id: nextId - 1, discovered: 0, crawled: 0, in_flight: 0, queued: 0, not_crawled: 0, errors: 0, urls_per_sec: 0, avg_urls_per_sec: 0, eta_secs: null, active_ms: 0, ...p })),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
+    analyse: (p) => onAnalysis.forEach((cb) => cb({ pass: "link_score", label: "Link Score", done: 0, total: 100, ...p })),
+    analysed: [],
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
@@ -239,6 +246,11 @@ export function fakeTransport(
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
+    onAnalysisProgress: (cb) => subscribe(onAnalysis, cb),
+    analysisRun: async (path) => {
+      crawls.analysed.push(path);
+      return { ran: [], skipped: [], saved: true };
+    },
     onCrawlFinished: (cb) => subscribe(onFinished, cb),
     // Crawl files (spec 006), including pickCrawlFile, crawlResume and crawlSummary.
     ...filesApi,

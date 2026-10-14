@@ -2,6 +2,8 @@
 // uses Tauri commands; a future web version replaces this file with HTTP calls
 // and leaves every component untouched (constitution principle III).
 
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
+import type { AnalysisReport } from "./generated/AnalysisReport";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -314,6 +316,10 @@ export interface Transport {
   crawlSummary(path: string): Promise<CrawlReport>;
   onCrawlProgress(cb: (p: CrawlProgress) => void): Promise<() => void>;
   onCrawlWarning(cb: (w: { id: number; message: string }) => void): Promise<() => void>;
+  /** The Crawl Analysis phase at crawl end or on open (spec 009 plan D12). */
+  onAnalysisProgress(cb: (p: AnalysisProgress) => void): Promise<() => void>;
+  /** Runs the analysis passes missing or stale on an opened file. */
+  analysisRun(path: string): Promise<AnalysisReport>;
   onCrawlFinished(cb: (f: CrawlFinished) => void): Promise<() => void>;
   pickCrawlFile(): Promise<string | null>;
   pickCsvPath(name: string): Promise<string | null>;
@@ -398,6 +404,8 @@ export const tauriTransport: Transport = {
   crawlSummary: (path) => invoke("crawl_summary", { path }),
   onCrawlProgress: (cb) => listen<CrawlProgress>("crawl-progress", (e) => cb(e.payload)),
   onCrawlWarning: (cb) => listen<{ id: number; message: string }>("crawl-warning", (e) => cb(e.payload)),
+  onAnalysisProgress: (cb) => listen<AnalysisProgress>("analysis-progress", (e) => cb(e.payload)),
+  analysisRun: (path) => invoke("analysis_run", { path }),
   onCrawlFinished: (cb) => listen<CrawlFinished>("crawl-finished", (e) => cb(e.payload)),
   pickCrawlFile: async () => asPath(await open({ filters: [{ name: "SpiderLens crawl", extensions: ["spiderlens"] }] })),
   pickCsvPath: (name) => save({ defaultPath: `${name}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] }),

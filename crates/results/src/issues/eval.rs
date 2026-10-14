@@ -355,17 +355,7 @@ impl Reader {
 /// key/value, so no migration is needed. A file this version cannot write
 /// (another format, or not writable) is left alone and the error returned.
 pub fn record_issue_settings(path: &std::path::Path, s: &spiderlens_config::IssueSettings) -> Result<()> {
-    let conn = Connection::open_with_flags(
-        path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    let format: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
-        .optional()?;
-    if format.as_deref() != Some(spiderlens_engine::crawl::store::FORMAT) {
-        return Err(crate::Error::invalid("not a crawl file this version writes"));
-    }
+    let conn = crate::reader::connect_writable(path)?;
     let json = serde_json::to_string(s).expect("settings serialize");
     let mut set = conn
         .prepare("INSERT INTO meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2")?;

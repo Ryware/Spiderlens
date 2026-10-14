@@ -316,6 +316,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     };
     print_summary(&summary, cmd.json, &file);
     record_issue_settings(&file);
+    // The Crawl Analysis phase, while this process still owns the file
+    // (spec 009 plan D12).
+    if let Err(e) = crate::issues_cmd::analyse(&file, !cmd.json && !quiet) {
+        eprintln!(
+            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+            file.display()
+        );
+    }
     if !cmd.json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",

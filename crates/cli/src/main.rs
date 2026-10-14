@@ -72,6 +72,8 @@ enum Command {
     Rules(issues_cmd::RulesArgs),
     /// List the issues found in a crawl file, or export them as CSV.
     Issues(Box<issues_cmd::IssuesArgs>),
+    /// Run the crawl analysis passes that have not run on a crawl file yet.
+    Analyse(issues_cmd::AnalyseArgs),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -166,6 +168,7 @@ fn main() -> ExitCode {
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Rules(args) => issues_cmd::run_rules(args),
         Command::Issues(args) => issues_cmd::run_issues(*args),
+        Command::Analyse(args) => issues_cmd::run_analyse(args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }
