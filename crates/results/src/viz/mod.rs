@@ -284,7 +284,7 @@ impl Reader {
             ViewKind::CrawlTree => Derived::VizCrawlTree,
             ViewKind::DirectoryTree => Derived::VizDirs,
             ViewKind::LinkGraph => {
-                let scores = self.has_current(Derived::LinkMetrics)?;
+                let scores = self.has_derived(Derived::LinkMetrics)?;
                 return graph::scene(&self.conn, state, scores);
             }
         };
