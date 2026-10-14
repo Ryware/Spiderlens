@@ -6,6 +6,7 @@
 
 mod crawl;
 mod files;
+mod integrations;
 mod results;
 mod settings;
 
@@ -36,6 +37,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(integrations::State::open()?);
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
             for arg in std::env::args_os().skip(1) {
@@ -94,6 +96,25 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            integrations::integrations_status,
+            integrations::integrations_settings_save,
+            integrations::integrations_connect_google,
+            integrations::integrations_connect_cancel,
+            integrations::integrations_save_key,
+            integrations::integrations_forget,
+            integrations::integrations_properties,
+            integrations::integrations_default_request,
+            integrations::integrations_run_search_console,
+            integrations::integrations_run_resume,
+            integrations::integrations_run_pause,
+            integrations::integrations_run_cancel,
+            integrations::integrations_runs,
+            integrations::integrations_queries,
+            integrations::integrations_orphans,
+            integrations::integrations_remove,
+            integrations::integrations_cache_info,
+            integrations::integrations_cache_clear,
+            integrations::integrations_open_terms,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

@@ -15,6 +15,7 @@
 //! - `gsc`: Search Console (D10).
 //! - `hub`: the one entry point the app and the CLI share.
 
+pub mod browser;
 pub mod cache;
 pub mod credentials;
 mod error;

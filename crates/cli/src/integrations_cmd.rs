@@ -487,15 +487,7 @@ fn on_ctrl_c(f: impl FnOnce() + Send + 'static) {
 }
 
 fn open_browser(url: &str) {
-    #[cfg(target_os = "macos")]
-    let r = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let r = std::process::Command::new("xdg-open").arg(url).spawn();
-    if r.is_err() {
+    if !spiderlens_integrations::browser::open(url) {
         eprintln!("Could not open a browser; open the link above yourself.");
     }
 }
