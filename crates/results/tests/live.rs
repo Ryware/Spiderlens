@@ -94,6 +94,7 @@ fn tab_counts_follow_the_crawl_and_stay_cheap() {
         urls: 100_000,
         links_per_page: 3,
         seed: 5,
+        html: false,
     }
     .write(&path)
     .unwrap();
