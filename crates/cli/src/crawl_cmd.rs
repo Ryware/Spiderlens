@@ -213,6 +213,9 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if summary.crawled > 0 {
+        analyse_after_crawl(&file, quiet || cmd.json);
+    }
     print_summary(&summary, cmd.json, &file);
     if !cmd.json && !quiet {
         eprintln!(
@@ -578,5 +581,25 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Runs the post-crawl analysis (spec 020 near duplicates) into the file,
+/// as the process that wrote it. A failure is a warning: the crawl itself
+/// succeeded and `spiderlens duplicates` can run it again.
+fn analyse_after_crawl(file: &Path, quiet: bool) {
+    use spiderlens_results::near_dup;
+    let settings = near_dup::open_read_only(file)
+        .ok()
+        .and_then(|c| near_dup::stored_settings(&c).ok())
+        .unwrap_or_default();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match near_dup::analyse_file(file, &settings, true, &cancel, |_, _, _| {}) {
+        Ok((_, s)) if !quiet => eprintln!(
+            "near duplicates: {} pages compared, {} clusters ({} ms)",
+            s.compared, s.clusters, s.ms
+        ),
+        Ok(_) | Err(spiderlens_results::Error::Unavailable(_)) => {}
+        Err(e) => eprintln!("warning: near duplicate analysis did not finish: {e}"),
     }
 }

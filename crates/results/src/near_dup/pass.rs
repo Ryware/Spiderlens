@@ -333,3 +333,51 @@ pub fn run_pass(
         ms,
     })
 }
+
+/// The content settings stored with the crawl (defaults when absent).
+pub fn stored_settings(conn: &Connection) -> rusqlite::Result<ContentSettings> {
+    let config: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'config'", [], |r| r.get(0))
+        .optional()?;
+    Ok(config
+        .and_then(|c| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&c).ok())
+        .map(|s| s.config.content)
+        .unwrap_or_default())
+}
+
+/// Runs the pass on a crawl file. Writes into the file when it can be
+/// opened for writing and `write` is set; otherwise into a temporary
+/// schema of the returned connection, which keeps the results readable
+/// for as long as it is open.
+pub fn analyse_file(
+    path: &std::path::Path,
+    settings: &ContentSettings,
+    write: bool,
+    cancel: &AtomicBool,
+    progress: impl FnMut(usize, usize, &str),
+) -> Result<(Connection, PassSummary)> {
+    use rusqlite::OpenFlags;
+    let writable = if write {
+        Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()
+    } else {
+        None
+    };
+    let (conn, schema) = match writable {
+        Some(c) => (c, Schema::Main),
+        None => (
+            Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?,
+            Schema::Temp,
+        ),
+    };
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.pragma_update(None, "temp_store", "FILE")?;
+    let summary = run_pass(&conn, schema, settings, cancel, progress)?;
+    Ok((conn, summary))
+}

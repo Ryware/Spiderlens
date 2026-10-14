@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod crawl_cmd;
+mod duplicates_cmd;
 mod export_cmd;
 mod options;
 
@@ -60,6 +61,8 @@ enum Command {
     Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Near duplicate content of a crawl file: pages, pairs or clusters.
+    Duplicates(Box<duplicates_cmd::DuplicatesArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -151,6 +154,7 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Duplicates(args) => duplicates_cmd::run_duplicates(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }
