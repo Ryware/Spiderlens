@@ -1,7 +1,7 @@
 //! Security.
 
 use crate::issues::{Category::Security as C, Priority::*, Rule, Scope, rule};
-use crate::tabs::Need;
+use crate::tabs::{Derived, Need};
 
 pub const RULES: &[Rule] = &[
     rule("security.http_page", "Page served over HTTP", C, High, Scope::Pages, "u.url LIKE 'http:%'")
@@ -16,9 +16,9 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        "u.url LIKE 'https:%' AND EXISTS (SELECT 1 FROM links l LEFT JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id \
-         AND l.kind = 'image' AND COALESCE(t.url, l.target) LIKE 'http:%')",
+        concat!("u.url LIKE 'https:%' AND ", super::links::has_link!("32")),
     )
+    .reads(&[Derived::LinkStats])
     .evidence(
         "(SELECT COUNT(*) || ' HTTP images, first: ' || MIN(COALESCE(t.url, l.target)) FROM links l LEFT JOIN urls t ON t.id = l.to_id \
          WHERE l.from_id = u.id AND l.kind = 'image' AND COALESCE(t.url, l.target) LIKE 'http:%')",

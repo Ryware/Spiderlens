@@ -104,6 +104,10 @@ pub enum Derived {
     /// `temp.occ_text(v, n)`: each visible text fingerprint and how many
     /// pages share it (spec 009).
     OccText,
+    /// `temp.link_stats(url_id, flags)`: per linking page, which kinds of
+    /// links it has ([`link_flag`] bits), from one pass over `links`
+    /// (spec 009).
+    LinkStats,
     /// `temp.issue_hits(rule, url_id)` for the issue settings in force
     /// (spec 009 plan D4).
     IssueHits,
@@ -888,9 +892,113 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
              INSERT INTO temp.occ_text SELECT p.text_hash, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
                WHERE {HTML_OK} AND p.text_hash IS NOT NULL AND p.word_count > 0 GROUP BY 1;"
         )),
+        Derived::LinkStats => link_stats(conn),
         // Built by the reader or export, which know the issue settings.
         Derived::IssueHits => Ok(()),
     }
+}
+
+/// Bits of `temp.link_stats.flags`.
+pub(crate) mod link_flag {
+    /// An anchor to an internal URL that failed or returned 4xx/5xx.
+    pub const BROKEN_INTERNAL: u8 = 1;
+    /// An anchor to an external URL that failed or returned 4xx/5xx.
+    pub const BROKEN_EXTERNAL: u8 = 2;
+    /// An anchor to an internal 3xx.
+    pub const TO_REDIRECT: u8 = 4;
+    /// A nofollow anchor to an internal URL.
+    pub const NOFOLLOW_INTERNAL: u8 = 8;
+    /// Any anchor to an internal URL.
+    pub const INTERNAL_OUT: u8 = 16;
+    /// An image whose address is http:.
+    pub const HTTP_IMAGE: u8 = 32;
+}
+
+/// Builds `temp.link_stats` in Rust: one sequential scan of `links` with
+/// each target's class looked up in an array by URL id. A SQL join probes
+/// the urls b-tree once per link, which on 10 million links takes tens of
+/// seconds; this takes a few (spec 009 SC-003).
+fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    use link_flag::*;
+    // Target classes, by URL id: bit 0 internal, 1 broken, 2 redirect, 3 http.
+    let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
+    let len = usize::try_from(max_id).unwrap_or(0) + 1;
+    let mut class = vec![0u8; len];
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, (internal = 1)
+               | (COALESCE(error_class IS NOT NULL OR status >= 400, 0) << 1)
+               | (COALESCE(error_class IS NULL AND status BETWEEN 300 AND 399, 0) << 2)
+               | ((url LIKE 'http:%') << 3)
+             FROM urls",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            if let Some(c) = usize::try_from(id).ok().and_then(|i| class.get_mut(i)) {
+                *c = r.get(1)?;
+            }
+        }
+    }
+    let mut flags = vec![0u8; len];
+    {
+        // kind: 1 anchor, 2 image. An image without a URL row is judged by
+        // its written address.
+        let mut stmt = conn.prepare(
+            "SELECT from_id, to_id, CASE kind WHEN 'anchor' THEN 1 WHEN 'image' THEN 2 ELSE 0 END, nofollow,
+               to_id IS NULL AND kind = 'image' AND target LIKE 'http:%'
+             FROM links NOT INDEXED WHERE kind IN ('anchor', 'image')",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let Some(from) = usize::try_from(r.get::<_, i64>(0)?).ok().filter(|&i| i < len) else {
+                continue;
+            };
+            let to: Option<i64> = r.get(1)?;
+            let t = to
+                .and_then(|t| usize::try_from(t).ok())
+                .and_then(|t| class.get(t).copied());
+            let kind: i64 = r.get(2)?;
+            let mut f = 0u8;
+            match (kind, t) {
+                (1, Some(c)) => {
+                    let internal = c & 1 != 0;
+                    if c & 2 != 0 {
+                        f |= if internal {
+                            BROKEN_INTERNAL
+                        } else {
+                            BROKEN_EXTERNAL
+                        };
+                    }
+                    if internal {
+                        f |= INTERNAL_OUT;
+                        if c & 4 != 0 {
+                            f |= TO_REDIRECT;
+                        }
+                        if r.get::<_, i64>(3)? == 1 {
+                            f |= NOFOLLOW_INTERNAL;
+                        }
+                    }
+                }
+                (2, Some(c)) if c & 8 != 0 => f |= HTTP_IMAGE,
+                (2, None) if r.get::<_, bool>(4)? => f |= HTTP_IMAGE,
+                _ => {}
+            }
+            flags[from] |= f;
+        }
+    }
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS temp.link_stats;
+         CREATE TEMP TABLE link_stats(url_id INTEGER PRIMARY KEY, flags INTEGER NOT NULL);
+         SAVEPOINT link_stats;",
+    )?;
+    {
+        let mut ins = conn.prepare("INSERT INTO temp.link_stats VALUES (?1, ?2)")?;
+        for (id, f) in flags.iter().enumerate().filter(|(_, f)| **f != 0) {
+            ins.execute((id as i64, *f))?;
+        }
+    }
+    conn.execute_batch("RELEASE link_stats;")
 }
 
 /// `temp.<table>(v, n)`: each non-empty value of `pages.<field>` on the

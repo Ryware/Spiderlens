@@ -381,6 +381,23 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
+    fn link_rules_test_the_link_stats_bit_they_mean() {
+        use crate::tabs::link_flag::*;
+        for (id, bit) in [
+            ("links.broken_internal", BROKEN_INTERNAL),
+            ("links.broken_external", BROKEN_EXTERNAL),
+            ("links.to_redirect", TO_REDIRECT),
+            ("links.nofollow_internal", NOFOLLOW_INTERNAL),
+            ("links.no_internal_outlinks", INTERNAL_OUT),
+            ("security.mixed_content", HTTP_IMAGE),
+        ] {
+            let r = get(id).unwrap();
+            assert!(r.cond.contains(&format!("& {bit})")), "{id}: {}", r.cond);
+            assert_eq!(r.derived, &[Derived::LinkStats], "{id}");
+        }
+    }
+
+    #[test]
     fn catalogue_is_complete_and_consistent() {
         // FR-001, FR-003, FR-004, SC-008.
         let all = catalogue();
