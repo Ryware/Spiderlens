@@ -4374,12 +4374,33 @@ dependencies = [
  "predicates",
  "serde",
  "serde_json",
+ "spiderlens-compare",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",
  "spiderlens-test-fixtures",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "spiderlens-compare"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "spiderlens-results",
+ "spiderlens-test-fixtures",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "ts-rs",
+ "url",
+ "xxhash-rust",
 ]
 
 [[package]]

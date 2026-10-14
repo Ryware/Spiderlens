@@ -36,6 +36,45 @@ pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
     )?;
+    setup(conn, path)
+}
+
+/// Opens a crawl file read-only as `main` on a connection that can still
+/// write to databases it attaches (spec 012 plan D1): the crawl is opened
+/// through a `mode=ro` URI, so SQLite refuses any write to it, while a
+/// scratch file attached later stays writable.
+pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
+    if !path.exists() {
+        return Err(Error::invalid(format!("{} does not exist", path.display())));
+    }
+    let conn = Connection::open_with_flags(
+        read_only_uri(path),
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    setup(conn, path)
+}
+
+/// `file:<path>?mode=ro`, percent-encoding what SQLite's URI parser would
+/// otherwise read as syntax, and every non-ASCII byte.
+fn read_only_uri(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file:");
+    if raw.as_bytes().get(1) == Some(&b':') {
+        // A Windows drive letter: file:/C:/...
+        out.push('/');
+    }
+    for b in raw.bytes() {
+        if b.is_ascii() && !matches!(b, b'%' | b'?' | b'#') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out.push_str("?mode=ro");
+    out
+}
+
+fn setup(conn: Connection, path: &Path) -> Result<(Connection, Features)> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let format: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))

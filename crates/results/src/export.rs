@@ -39,7 +39,9 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+/// One CSV field: formula-like values neutralised, quoted when needed
+/// (FR-029). Shared with the comparison exports (spec 012).
+pub fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))

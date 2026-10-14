@@ -232,7 +232,7 @@ impl FilterDef {
 }
 
 /// Columns many tabs share.
-mod c {
+pub mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
@@ -846,7 +846,7 @@ fn build() -> Vec<TabDef> {
 }
 
 /// Builds a derived table on `conn` (dropping an older copy).
-pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite::Result<()> {
+pub fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite::Result<()> {
     match d {
         Derived::OccTitle => conn.execute_batch(&format!(
             "DROP TABLE IF EXISTS temp.occ_title;

@@ -1,0 +1,30 @@
+[package]
+name = "spiderlens-compare"
+description = "SpiderLens crawl comparison: what changed between two crawl files (spec 012)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-config.workspace = true
+spiderlens-engine.workspace = true
+spiderlens-results.workspace = true
+rusqlite = { workspace = true, features = ["functions"] }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+url.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+spiderlens-test-fixtures.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
