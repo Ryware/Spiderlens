@@ -11,7 +11,7 @@ pub const RULES: &[Rule] = &[
         Category::Pagination,
         Medium,
         Scope::Pages,
-        super::links::has_link!("16384"),
+        super::has_flag!("16384"),
     )
     .site_wide()
     .needs(Need::Extraction)

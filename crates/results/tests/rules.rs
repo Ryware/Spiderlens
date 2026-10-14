@@ -84,6 +84,10 @@ fn site() -> Site {
     add("/no-h1", &|x| x.h1 = None);
     add("/two-h1", &|x| x.body = "<h1>Another top heading</h1>".into());
     add("/skip-heading", &|x| x.body = "<h4>Jumped from H2</h4>".into());
+    add("/title-in-body", &|x| {
+        x.title = None;
+        x.body = "<title>/title-in-body page about testing the rules</title>".into();
+    });
     add("/thin", &|x| x.words = 8);
     add("/nolang", &|x| x.lang = false);
     add("/nodesc", &|x| x.desc = None);
@@ -247,6 +251,7 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         ("h1.duplicate", &["/dup-a", "/dup-b"]),
         ("h1.multiple", &["/two-h1"]),
         ("headings.non_sequential", &["/skip-heading"]),
+        ("title.outside_head", &["/title-in-body"]),
         ("content.thin", &["/thin"]),
         ("content.missing_lang", &["/nolang"]),
         ("canonical.canonicalised", &["/canon-other", "/canon-bad"]),

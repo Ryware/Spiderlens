@@ -222,12 +222,12 @@ pub const fn rule(
 
 impl Rule {
     /// Derived tables the condition reads: those declared, plus
-    /// `temp.link_stats` when the condition tests its bits.
+    /// `temp.page_flags` when the condition tests its bits.
     pub fn derived_tables(&self) -> impl Iterator<Item = Derived> + '_ {
         let stats = self
             .cond
-            .contains("temp.link_stats")
-            .then_some(Derived::LinkStats);
+            .contains("temp.page_flags")
+            .then_some(Derived::PageFlags);
         self.derived.iter().copied().chain(stats)
     }
 
@@ -415,8 +415,8 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn link_rules_test_the_link_stats_bit_they_mean() {
-        use crate::tabs::link_flag::*;
+    fn flag_rules_test_the_page_flags_bit_they_mean() {
+        use crate::tabs::page_flag::*;
         for (id, bits) in [
             ("links.broken_internal", vec![BROKEN_INTERNAL]),
             ("links.broken_external", vec![BROKEN_EXTERNAL]),
@@ -432,12 +432,15 @@ mod tests {
             ("hreflang.invalid_code", vec![HREFLANG_BAD_CODE]),
             ("hreflang.bad_target", vec![HREFLANG_BAD_TARGET]),
             ("pagination.bad_target", vec![PAGINATION_BAD_TARGET]),
+            ("hreflang.no_return", vec![HREFLANG]),
+            ("title.outside_head", vec![TITLE_IN_BODY]),
+            ("headings.non_sequential", vec![HEADING_SKIP]),
         ] {
             let r = get(id).unwrap_or_else(|| panic!("{id}"));
             for bit in bits {
                 assert!(r.cond.contains(&format!("& {bit})")), "{id}: {}", r.cond);
             }
-            assert!(r.derived_tables().any(|d| d == Derived::LinkStats), "{id}");
+            assert!(r.derived_tables().any(|d| d == Derived::PageFlags), "{id}");
         }
     }
 

@@ -137,7 +137,8 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
             ins.execute((i as i64, scope as i64, settings.rules[i].priority as i64))?;
         }
     }
-    for (si, scope) in Scope::ALL.iter().enumerate() {
+    let mut hits: Vec<(i64, i64)> = Vec::new();
+    for scope in Scope::ALL.iter() {
         let mine: Vec<usize> = rules
             .iter()
             .copied()
@@ -147,7 +148,9 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
             continue;
         }
         let pages = *scope == Scope::Pages;
-        let mut case = String::from("CASE r.idx");
+        // One pass per scope: each URL (and its pages row) is read once and
+        // every rule is a column, so no rule rescans the table.
+        let mut cols = String::from("u.id");
         for i in &mine {
             let cond = catalogue()[*i].cond;
             let cond = if pages {
@@ -155,22 +158,34 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
             } else {
                 cond.to_string()
             };
-            case.push_str(&format!(" WHEN {i} THEN ({cond})"));
+            cols.push_str(&format!(", CASE WHEN ({cond}) THEN 1 END"));
         }
-        case.push_str(" ELSE 0 END");
-        // CROSS JOIN keeps the URL scan outermost: each URL (and its pages
-        // row) is read once and tested against every rule of the scope.
         let from = if pages {
-            "urls u NOT INDEXED LEFT JOIN pages pj ON pj.url_id = u.id CROSS JOIN temp.issue_rules r"
+            "urls u NOT INDEXED LEFT JOIN pages pj ON pj.url_id = u.id"
         } else {
-            "urls u NOT INDEXED CROSS JOIN temp.issue_rules r"
+            "urls u NOT INDEXED"
         };
-        let sql = format!(
-            "INSERT INTO temp.issue_hits SELECT r.idx, u.id FROM {from} WHERE r.scope = {si} AND ({}) AND {case}",
-            scope.sql()
-        );
-        conn.execute(&sql, [])?;
+        let mut stmt = conn.prepare(&format!("SELECT {cols} FROM {from} WHERE {}", scope.sql()))?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            for (c, i) in mine.iter().enumerate() {
+                if r.get_ref(c + 1)? != rusqlite::types::ValueRef::Null {
+                    hits.push((*i as i64, id));
+                }
+            }
+        }
     }
+    // Sorted by the primary key, the insert appends to the b-tree.
+    hits.sort_unstable();
+    conn.execute_batch("SAVEPOINT issue_hits")?;
+    {
+        let mut ins = conn.prepare("INSERT INTO temp.issue_hits VALUES (?1, ?2)")?;
+        for (rule, id) in hits {
+            ins.execute((rule, id))?;
+        }
+    }
+    conn.execute_batch("RELEASE issue_hits")?;
     conn.execute_batch("CREATE INDEX temp.issue_hits_url ON issue_hits(url_id);")?;
     Ok(())
 }

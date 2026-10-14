@@ -1,20 +1,8 @@
 //! Links between pages.
 
+use super::has_flag;
 use crate::issues::{Category::Links as C, Priority::*, Rule, Scope, Unit, rule};
 use crate::tabs::Need;
-
-/// True when this page has a link of the kind given by a
-/// `tabs::link_flag` bit (as a number literal).
-macro_rules! has_link {
-    ($bit:literal) => {
-        concat!(
-            "(COALESCE((SELECT s.flags FROM temp.link_stats s WHERE s.url_id = u.id), 0) & ",
-            $bit,
-            ") <> 0"
-        )
-    };
-}
-pub(crate) use has_link;
 
 macro_rules! broken_evidence {
     ($internal:literal) => {
@@ -32,14 +20,14 @@ macro_rules! broken_evidence {
 }
 
 pub const RULES: &[Rule] = &[
-    rule("links.broken_internal", "Pages with broken internal links", C, High, Scope::Pages, has_link!("1"))
+    rule("links.broken_internal", "Pages with broken internal links", C, High, Scope::Pages, has_flag!("1"))
         .site_wide()
         .evidence(broken_evidence!("1"))
         .explain(
             "This page links to internal URLs that return an error, so visitors hit dead ends and crawlers waste time.",
             "Fix or remove each broken link on this page; the Outlinks section shows every target and its state.",
         ),
-    rule("links.broken_external", "Pages with broken external links", C, Medium, Scope::Pages, has_link!("2"))
+    rule("links.broken_external", "Pages with broken external links", C, Medium, Scope::Pages, has_flag!("2"))
         .site_wide()
         .evidence(broken_evidence!("0"))
         .explain(
@@ -52,7 +40,7 @@ pub const RULES: &[Rule] = &[
         C,
         Low,
         Scope::Pages,
-        has_link!("4"),
+        has_flag!("4"),
     )
     .site_wide()
     .evidence(
@@ -69,7 +57,7 @@ pub const RULES: &[Rule] = &[
         C,
         Low,
         Scope::Pages,
-        has_link!("8"),
+        has_flag!("8"),
     )
     .evidence(
         "(SELECT COUNT(*) || ' nofollow links to this site' FROM links l JOIN urls t ON t.id = l.to_id \
@@ -85,7 +73,7 @@ pub const RULES: &[Rule] = &[
         C,
         Low,
         Scope::Pages,
-        concat!("NOT ", has_link!("16")),
+        concat!("NOT ", has_flag!("16")),
     )
     .evidence("'No links to other pages of the site'")
     .explain(
@@ -98,7 +86,7 @@ pub const RULES: &[Rule] = &[
         C,
         Opportunity,
         Scope::Pages,
-        has_link!("64"),
+        has_flag!("64"),
     )
     .needs(Need::Extraction)
     .evidence(

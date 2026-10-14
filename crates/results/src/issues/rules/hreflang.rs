@@ -11,9 +11,13 @@ pub const RULES: &[Rule] = &[
         C,
         High,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id AND l.kind = 'hreflang' \
-         AND t.id <> u.id AND t.fetched_at IS NOT NULL AND t.error_class IS NULL AND t.status BETWEEN 200 AND 299 \
-         AND NOT EXISTS (SELECT 1 FROM links r WHERE r.from_id = t.id AND r.kind = 'hreflang' AND r.to_id = u.id))",
+        // The flag skips the link lookups on pages with no hreflang.
+        concat!(
+            super::has_flag!("256"),
+            " AND EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id AND l.kind = 'hreflang' \
+             AND t.id <> u.id AND t.fetched_at IS NOT NULL AND t.error_class IS NULL AND t.status BETWEEN 200 AND 299 \
+             AND NOT EXISTS (SELECT 1 FROM links r WHERE r.from_id = t.id AND r.kind = 'hreflang' AND r.to_id = u.id))"
+        ),
     )
     .site_wide()
     .needs(Need::Extraction)
@@ -32,7 +36,7 @@ pub const RULES: &[Rule] = &[
         C,
         High,
         Scope::Pages,
-        super::links::has_link!("8192"),
+        super::has_flag!("8192"),
     )
     .site_wide()
     .needs(Need::Extraction)
@@ -47,7 +51,7 @@ pub const RULES: &[Rule] = &[
         C,
         Low,
         Scope::Pages,
-        concat!(super::links::has_link!("256"), " AND NOT ", super::links::has_link!("512")),
+        concat!(super::has_flag!("256"), " AND NOT ", super::has_flag!("512")),
     )
     .needs(Need::Extraction)
     .evidence("'Lists other languages but not itself'")
@@ -61,7 +65,7 @@ pub const RULES: &[Rule] = &[
         C,
         Opportunity,
         Scope::Pages,
-        concat!(super::links::has_link!("256"), " AND NOT ", super::links::has_link!("1024")),
+        concat!(super::has_flag!("256"), " AND NOT ", super::has_flag!("1024")),
     )
     .needs(Need::Extraction)
     .evidence("'No x-default alternate'")
@@ -75,7 +79,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        super::links::has_link!("2048"),
+        super::has_flag!("2048"),
     )
     .needs(Need::Extraction)
     .evidence("(SELECT 'Code \"' || COALESCE(l.lang, '') || '\"' FROM links l WHERE l.from_id = u.id AND l.kind = 'hreflang' AND NOT lang_code_ok(l.lang) ORDER BY l.pos LIMIT 1)")

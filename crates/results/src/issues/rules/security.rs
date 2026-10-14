@@ -16,7 +16,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        concat!("u.url LIKE 'https:%' AND ", super::links::has_link!("32")),
+        concat!("u.url LIKE 'https:%' AND ", super::has_flag!("32")),
     )
     .evidence(
         "(SELECT COUNT(*) || ' HTTP images, first: ' || MIN(COALESCE(t.url, l.target)) FROM links l LEFT JOIN urls t ON t.id = l.to_id \

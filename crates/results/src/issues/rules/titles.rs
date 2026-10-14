@@ -63,7 +63,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        "EXISTS (SELECT 1 FROM page_text t WHERE t.url_id = u.id AND t.kind = 'title' AND t.in_head = 0)",
+        super::has_flag!("32768"),
     )
     .needs(Need::Extraction)
     .evidence("'A <title> sits in the body'")

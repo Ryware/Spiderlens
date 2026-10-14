@@ -81,11 +81,7 @@ pub const RULES: &[Rule] = &[
         Category::Headings,
         Low,
         Scope::Pages,
-        concat!(
-            "EXISTS (SELECT 1 FROM ",
-            "(SELECT t.level AS level, LAG(t.level) OVER (ORDER BY t.pos) AS prev FROM page_text t WHERE t.url_id = u.id AND t.kind = 'heading')",
-            " WHERE prev IS NOT NULL AND level > prev + 1)"
-        ),
+        super::has_flag!("65536"),
     )
     .needs(Need::Extraction)
     .evidence(concat!(

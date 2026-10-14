@@ -37,7 +37,7 @@ pub const RULES: &[Rule] = &[
         C,
         Medium,
         Scope::Pages,
-        super::links::has_link!("128"),
+        super::has_flag!("128"),
     )
     .needs(Need::Extraction)
     .evidence("'A canonical link sits in the body'")
@@ -51,7 +51,7 @@ pub const RULES: &[Rule] = &[
         C,
         High,
         Scope::Pages,
-        super::links::has_link!("4096"),
+        super::has_flag!("4096"),
     )
     .site_wide()
     .needs(Need::Extraction)

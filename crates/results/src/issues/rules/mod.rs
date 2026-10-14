@@ -15,10 +15,22 @@ pub mod security;
 pub mod titles;
 pub mod url;
 
+/// True when this page has the `tabs::page_flag` bit given (as a number
+/// literal).
+macro_rules! has_flag {
+    ($bit:literal) => {
+        concat!(
+            "(COALESCE((SELECT s.flags FROM temp.page_flags s WHERE s.url_id = u.id), 0) & ",
+            $bit,
+            ") <> 0"
+        )
+    };
+}
+
 /// The first link of `kind` from this page to a URL that was fetched and
 /// failed or did not return 2xx, with its state, as evidence. Targets never
 /// fetched are "not checked" (FR-011); the matching condition is a
-/// `temp.link_stats` bit.
+/// `temp.page_flags` bit.
 macro_rules! target_not_ok_evidence {
     ($kind:literal) => {
         concat!(
@@ -33,4 +45,4 @@ macro_rules! target_not_ok_evidence {
     };
 }
 
-pub(crate) use target_not_ok_evidence;
+pub(crate) use {has_flag, target_not_ok_evidence};

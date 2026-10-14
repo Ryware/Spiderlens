@@ -114,10 +114,10 @@ pub enum Derived {
     /// `temp.occ_text(v, n)`: each visible text fingerprint and how many
     /// pages share it (spec 009).
     OccText,
-    /// `temp.link_stats(url_id, flags)`: per linking page, which kinds of
-    /// links it has ([`link_flag`] bits), from one pass over `links`
+    /// `temp.page_flags(url_id, flags)`: per linking page, which kinds of
+    /// links it has ([`page_flag`] bits), from one pass over `links`
     /// (spec 009).
-    LinkStats,
+    PageFlags,
     /// `temp.issue_hits(rule, url_id)` for the issue settings in force
     /// (spec 009 plan D4).
     IssueHits,
@@ -919,14 +919,14 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
              INSERT INTO temp.occ_text SELECT p.text_hash, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
                WHERE {HTML_OK} AND p.text_hash IS NOT NULL AND p.word_count > 0 GROUP BY 1;"
         )),
-        Derived::LinkStats => link_stats(conn),
+        Derived::PageFlags => page_flags(conn),
         // Built by the reader or export, which know the issue settings.
         Derived::IssueHits => Ok(()),
     }
 }
 
-/// Bits of `temp.link_stats.flags`.
-pub(crate) mod link_flag {
+/// Bits of `temp.page_flags.flags`.
+pub(crate) mod page_flag {
     /// An anchor to an internal URL that failed or returned 4xx/5xx.
     pub const BROKEN_INTERNAL: u32 = 1;
     /// An anchor to an external URL that failed or returned 4xx/5xx.
@@ -957,15 +957,20 @@ pub(crate) mod link_flag {
     pub const CANONICAL_BAD_TARGET: u32 = 4096;
     pub const HREFLANG_BAD_TARGET: u32 = 8192;
     pub const PAGINATION_BAD_TARGET: u32 = 16384;
+    /// A <title> in the body (from `page_text`).
+    pub const TITLE_IN_BODY: u32 = 32768;
+    /// A heading more than one level below the one before it.
+    pub const HEADING_SKIP: u32 = 65536;
 }
 
-/// Builds `temp.link_stats` in Rust: one sequential scan of `links` with
+/// Builds `temp.page_flags` in Rust: one sequential scan of `links` (and
+/// one of `page_text`) with
 /// each target's class looked up in an array by URL id. A SQL join probes
 /// the urls b-tree once per link, and a rule per page reads that page's
 /// links again; on 10 million links either takes tens of seconds, this a
 /// few (spec 009 SC-003).
-fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
-    use link_flag::*;
+fn page_flags(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    use page_flag::*;
     // Target classes, by URL id.
     const INTERNAL: u8 = 1;
     const BROKEN: u8 = 2;
@@ -1089,18 +1094,54 @@ fn link_stats(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             flags[from] |= f;
         }
     }
+    // Titles and headings, in page order (the page_text_url index).
+    let has_text = conn
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'page_text'")?
+        .exists([])?;
+    if has_text {
+        let mut stmt = conn.prepare(
+            "SELECT url_id, kind = 'title', level, in_head FROM page_text \
+             WHERE kind IN ('heading', 'title') ORDER BY url_id, kind, pos",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut page = -1i64;
+        let mut prev: Option<i64> = None;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let Some(f) = usize::try_from(id).ok().and_then(|i| flags.get_mut(i)) else {
+                continue;
+            };
+            if r.get::<_, bool>(1)? {
+                if r.get::<_, Option<i64>>(3)? == Some(0) {
+                    *f |= TITLE_IN_BODY;
+                }
+                continue;
+            }
+            if id != page {
+                page = id;
+                prev = None;
+            }
+            let level: Option<i64> = r.get(2)?;
+            if let (Some(p), Some(l)) = (prev, level)
+                && l > p + 1
+            {
+                *f |= HEADING_SKIP;
+            }
+            prev = level;
+        }
+    }
     conn.execute_batch(
-        "DROP TABLE IF EXISTS temp.link_stats;
-         CREATE TEMP TABLE link_stats(url_id INTEGER PRIMARY KEY, flags INTEGER NOT NULL);
-         SAVEPOINT link_stats;",
+        "DROP TABLE IF EXISTS temp.page_flags;
+         CREATE TEMP TABLE page_flags(url_id INTEGER PRIMARY KEY, flags INTEGER NOT NULL);
+         SAVEPOINT page_flags;",
     )?;
     {
-        let mut ins = conn.prepare("INSERT INTO temp.link_stats VALUES (?1, ?2)")?;
+        let mut ins = conn.prepare("INSERT INTO temp.page_flags VALUES (?1, ?2)")?;
         for (id, f) in flags.iter().enumerate().filter(|(_, f)| **f != 0) {
             ins.execute((id as i64, *f))?;
         }
     }
-    conn.execute_batch("RELEASE link_stats;")
+    conn.execute_batch("RELEASE page_flags;")
 }
 
 /// `temp.<table>(v, n)`: each non-empty value of `pages.<field>` on the
