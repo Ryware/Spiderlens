@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft, waiting for owner approval
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all owner decisions
 
 **Input**: User description: "Crawl comparison and change detection: compare two crawl files of the same site and show which URLs were added, removed or changed; per-column differences for titles, meta descriptions, headings, status codes, canonicals and indexability; how issues from the rule catalogue (009) grew or shrank; URL mapping for site migrations and staging versus production, where the old and new crawls use different hostnames or paths; a comparison view in the desktop app and a command-line command; computed from stored data only, without fetching anything."
 
