@@ -1,5 +1,5 @@
 // How cell values read (plan D8).
-import { cellTone, formatBytes, formatCell, needReason, numeric } from "./format";
+import { cellTone, formatBytes, formatCell, formatCompact, needReason, numeric } from "./format";
 
 test("format_bytes_picks_a_unit", () => {
   expect(formatBytes(0)).toBe("0 B");
@@ -48,4 +48,17 @@ describe("needReason", () => {
     expect(needReason.rendered_html).toMatch(/rendered HTML/);
     expect(needReason.screenshots).toMatch(/screenshots/);
   });
+});
+
+test("format_compact_keeps_counts_short", () => {
+  expect(formatCompact(0)).toBe("0");
+  expect(formatCompact(950)).toBe("950");
+  expect(formatCompact(1000)).toBe("1k");
+  expect(formatCompact(1234)).toBe("1.2k");
+  expect(formatCompact(9_960)).toBe("10k");
+  expect(formatCompact(34_499)).toBe("34k");
+  expect(formatCompact(999_499)).toBe("999k");
+  expect(formatCompact(999_950)).toBe("1M");
+  expect(formatCompact(1_500_000)).toBe("1.5M");
+  expect(formatCompact(12_345_678)).toBe("12M");
 });

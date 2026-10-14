@@ -120,6 +120,9 @@ fn main() {
             r.counts_with(tab, UrlScope::All, values()).expect("counts")
         });
     }
+    time("tab counts (sidebar, every tab)", || {
+        r.tab_counts().expect("tab counts")
+    });
     time("detail of URL 1 (most inlinks)", || r.detail(1).expect("detail"));
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let out = std::env::temp_dir().join("bench-export.csv");

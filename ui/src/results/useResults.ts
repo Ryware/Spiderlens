@@ -66,7 +66,40 @@ export function useResults(transport: Transport, path: string | null, live: bool
     if (path) setValuesByPath((m) => ({ ...m, [path]: v }));
   }, [path]);
 
-  return { tabs, features, session, update, focusId, setFocusId, values, setValues };
+  const counts = useTabCounts(transport, features ? path : null, live);
+
+  return { tabs, features, session, update, focusId, setFocusId, values, setValues, counts };
+}
+
+/**
+ * URLs per result tab for the sidebar (T014). Asked once when a file
+ * opens, then on its own timer while the crawl runs: each answer is one
+ * query, never two at once, and never in the way of the table's refresh.
+ * Null while unknown.
+ */
+export function useTabCounts(transport: Transport, path: string | null, live: boolean) {
+  const [counts, setCounts] = useState<Record<string, number> | null>(null);
+  useEffect(() => setCounts(null), [path]);
+  useEffect(() => {
+    if (!path) return;
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async () => {
+      const t = Date.now();
+      const c = await transport.tabCounts(path).catch(() => null);
+      if (stop) return;
+      if (c) setCounts(c.counts);
+      // Slow files are asked less often, like the table's own refresh.
+      if (live) timer = setTimeout(ask, Math.max(1000, 3 * (Date.now() - t)));
+    };
+    // Also asked once more when the crawl ends, so the last rows are counted.
+    void ask();
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [transport, path, live]);
+  return counts;
 }
 
 export type Results = ReturnType<typeof useResults>;

@@ -217,6 +217,14 @@ async fn us2_filters_list_exactly_the_seeded_urls_and_counts_agree() {
     assert_eq!(external.len(), 1);
     assert!(external.iter().next().unwrap().contains("other.test"));
 
+    // The sidebar's one-pass count of each tab equals the rows its All view lists (T014).
+    let sidebar = r.tab_counts().unwrap();
+    assert_eq!(sidebar.counts.len(), tabs().len());
+    for tab in tabs() {
+        let listed = paths(&mut r, &c, &q(tab.id, "all")).len() as u64;
+        assert_eq!(sidebar.counts[tab.id], listed, "{}", tab.id);
+    }
+
     // Every available filter's count equals the rows it lists (FR-009, SC-002).
     for tab in tabs() {
         let counts = r.counts(tab.id, UrlScope::All).unwrap();

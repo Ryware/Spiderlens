@@ -234,3 +234,63 @@ test("values_switch_reopens_the_view_with_the_chosen_values", async () => {
   const again = screen.getByRole("radiogroup", { name: "Which values" });
   expect(within(again).getByRole("radio", { name: "Raw values" }).getAttribute("aria-checked")).toBe("true");
 });
+
+// Sidebar counts (T014) ---------------------------------------------------------
+
+const sidebarCount = (tab: string) => {
+  const b = screen.getByRole("button", { name: tab });
+  const id = b.getAttribute("aria-describedby");
+  return id ? document.getElementById(id)?.textContent : null;
+};
+
+test("sidebar_shows_how_many_urls_each_tab_lists", async () => {
+  const t = fakeTransport(fakeUrls(1234));
+  await openInternal(t);
+  await waitFor(() => expect(sidebarCount("Internal")).toBe("1,234 URLs"));
+  const internal = screen.getByRole("button", { name: "Internal" });
+  expect(internal.textContent).toBe("Internal1.2k");
+  expect(sidebarCount("Response codes")).toBe("1,234 URLs");
+  // A tab the file has no count for shows nothing, not 0.
+  expect(sidebarCount("External")).toBeNull();
+  expect(screen.getByRole("button", { name: "External" }).textContent).toBe("External");
+});
+
+test("sidebar_counts_are_blank_while_unknown", async () => {
+  const t = fakeTransport();
+  t.tabCounts = () => new Promise(() => {});
+  await openInternal(t);
+  expect(sidebarCount("Internal")).toBeNull();
+  expect(screen.getByRole("button", { name: "Internal" }).textContent).toBe("Internal");
+});
+
+test("sidebar_counts_follow_a_live_crawl_one_query_at_a_time", async () => {
+  const t = fakeTransport();
+  let inFlight = 0;
+  let overlapped = false;
+  const ask = t.tabCounts;
+  t.tabCounts = async (p) => {
+    overlapped ||= inFlight > 0;
+    inFlight++;
+    try {
+      return await ask(p);
+    } finally {
+      inFlight--;
+    }
+  };
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect((screen.getByRole("button", { name: /Start$/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: /Start$/ }));
+  await screen.findByRole("button", { name: /Pause/ });
+  await waitFor(() => expect(sidebarCount("Internal")).toBe("30 URLs"));
+  act(() => t.results.add(fakeUrls(5).map((u, i) => ({ ...u, id: 100 + i }))));
+  await waitFor(() => expect(sidebarCount("Internal")).toBe("35 URLs"), { timeout: 3000 });
+  // The crawl ends: asked once more, then no longer polled.
+  act(() => t.results.add(fakeUrls(1).map((u) => ({ ...u, id: 200 }))));
+  act(() => t.crawls.finish({ report: fakeReport("completed", 36) }));
+  await waitFor(() => expect(sidebarCount("Internal")).toBe("36 URLs"));
+  const calls = t.results.tabCountCalls;
+  await new Promise((r) => setTimeout(r, 1200));
+  expect(t.results.tabCountCalls).toBe(calls);
+  expect(overlapped).toBe(false);
+});

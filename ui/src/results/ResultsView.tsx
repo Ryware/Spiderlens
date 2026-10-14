@@ -71,6 +71,7 @@ export function ResultsView({
   onFocusId,
   values = null,
   onValues,
+  onInspect,
 }: {
   transport: Transport;
   path: string;
@@ -83,6 +84,8 @@ export function ResultsView({
   /** Raw or rendered values; null when the crawl was not rendered (spec 014). */
   values?: Values | null;
   onValues?: (v: Values) => void;
+  /** Enter on a row: bring the inspector up and move focus into it. */
+  onInspect?: () => void;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -301,6 +304,7 @@ export function ResultsView({
             sort={session.sort}
             onSort={(sort) => onSession({ sort })}
             onCopy={() => void copy()}
+            onOpen={onInspect}
             empty={
               !view.loading && (
                 <EmptyState icon={<SearchX className="size-6" />} title={session.search ? "No URLs match the search" : `No ${filterLabel === "All" ? "" : `${filterLabel} `}URLs`}>

@@ -17,6 +17,23 @@ export function formatBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[u]}`;
 }
 
+/** A count in a few characters: 950, 1.2k, 34k, 1.5M. */
+export function formatCompact(n: number): string {
+  const units: [number, string][] = [
+    [1e6, "M"],
+    [1e3, "k"],
+  ];
+  for (const [size, unit] of units) {
+    const v = n / size;
+    if (v < 1) continue;
+    const r = v < 10 ? Math.round(v * 10) / 10 : Math.round(v);
+    // 999,950 rounds to 1000k: say 1M instead.
+    if (r >= 1000 && unit === "k") return "1M";
+    return `${r}${unit}`;
+  }
+  return String(n);
+}
+
 /** The text a cell shows; empty for no value. */
 export function formatCell(kind: ValueKind, v: JsonValue): string {
   if (v === null || v === undefined) return "";
