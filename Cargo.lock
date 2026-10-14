@@ -4409,6 +4409,7 @@ dependencies = [
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",
+ "spiderlens-schedule",
  "spiderlens-test-fixtures",
  "tempfile",
  "thiserror 2.0.21",
@@ -4501,6 +4502,26 @@ dependencies = [
  "tokio",
  "ts-rs",
  "url",
+]
+
+[[package]]
+name = "spiderlens-schedule"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "jiff",
+ "proptest",
+ "serde",
+ "serde_json",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "spiderlens-results",
+ "spiderlens-test-fixtures",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "ts-rs",
+ "xxhash-rust",
 ]
 
 [[package]]

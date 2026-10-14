@@ -851,6 +851,12 @@ impl Crawler {
         Ok(self)
     }
 
+    /// Stores a key in the crawl file's `meta` table, for callers that add
+    /// their own context, such as the schedule that started a run (spec 021).
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CrawlError> {
+        Ok(self.store.set_meta(key, value)?)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
