@@ -6,6 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { CookieFilter } from "./generated/CookieFilter";
+import type { CookiePage } from "./generated/CookiePage";
+import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
@@ -345,6 +348,11 @@ export interface Transport {
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  // Cookie audit (spec 025, contracts/desktop-commands.md).
+  /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
+  cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
+  /** The URLs that set one cookie, in crawl order. */
+  cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
@@ -420,6 +428,8 @@ export const tauriTransport: Transport = {
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
+  cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),

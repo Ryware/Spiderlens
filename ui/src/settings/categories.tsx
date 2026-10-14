@@ -7,12 +7,13 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
+import { CookiesEditor, hostOf } from "./CookiesEditor";
 import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -33,6 +34,7 @@ export const categories: Category[] = [
   { id: "speed", title: "Speed", description: "How hard SpiderLens works the site. Polite is right for sites you don't own.", prefixes: ["speed"] },
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
+  { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
   {
     id: "appearance",
@@ -312,6 +314,49 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
             </Row>
             <Row label="Retry rate limiting (429)">
               {(_, l) => <Switch labelledBy={l} checked={config.retry.retry_429} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, retry_429: v } }))} />}
+            </Row>
+          </Group>
+        </>
+      );
+
+    case "access":
+      return (
+        <>
+          <Group title="Cookies">
+            <Row
+              label="Cookies sent with every request"
+              stacked
+              help="Sent only to this crawl's own site. Paste the Cookie line from a signed-in browser to crawl as that user."
+              issues={at("access.cookies")}
+            >
+              {() => (
+                <CookiesEditor
+                  cookies={config.access.cookies}
+                  defaultDomain={hostOf(setup.startUrl)}
+                  onChange={(cookies) => set((c) => ({ ...c, access: { ...c.access, cookies } }))}
+                />
+              )}
+            </Row>
+            <Row
+              label="Cookies the site sets"
+              help={
+                config.access.cookie_policy === "keep"
+                  ? "Sent back for the rest of the crawl, like a browser. They are recorded in the Cookies report either way."
+                  : "Recorded in the Cookies report but not sent back, so every page is seen as a first visit."
+              }
+              issues={at("access.cookie_policy")}
+            >
+              {() => (
+                <Segmented
+                  label="Cookies the site sets"
+                  value={config.access.cookie_policy}
+                  options={[
+                    { value: "ignore", label: "Ignore" },
+                    { value: "keep", label: "Keep" },
+                  ]}
+                  onChange={(cookie_policy) => set((c) => ({ ...c, access: { ...c.access, cookie_policy } }))}
+                />
+              )}
             </Row>
           </Group>
         </>

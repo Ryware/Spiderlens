@@ -6,7 +6,7 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { resultTabs, Sidebar } from "./Sidebar";
+import { reportTabs, resultTabs, Sidebar } from "./Sidebar";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -15,6 +15,7 @@ import { useAppearance, useUiState } from "./useUiState";
 import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
+import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
@@ -89,6 +90,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
@@ -181,7 +183,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
-      ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...[...resultTabs, ...reportTabs].map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
       { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
@@ -261,6 +263,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onSession={onSession}
               onFocusId={onFocusId}
             />
+          ) : cookiesOpen && crawl.path ? (
+            <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
           ) : (
@@ -271,7 +275,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab || cookiesOpen ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
             </div>
           </>
         )}

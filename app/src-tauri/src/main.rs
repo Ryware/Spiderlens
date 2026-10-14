@@ -91,6 +91,8 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::cookies_list,
+            results::cookie_urls,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

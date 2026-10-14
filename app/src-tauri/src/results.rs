@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
-    UrlScope, ViewQuery, export_file, tabs,
+    CookieFilter, CookiePage, CookieUrlPage, ExportError, Features, FilterCounts, ListKind, ListPage, Reader,
+    Refresh, RowPage, TabDef, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -250,6 +250,44 @@ pub async fn url_list(
 ) -> Cmd<ListPage> {
     state
         .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
+        .await
+}
+
+/// Distinct cookies the crawl saw, without values (spec 025 FR-027).
+#[tauri::command]
+pub async fn cookies_list(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    filter: CookieFilter,
+    sort: Option<String>,
+    descending: bool,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookiePage> {
+    state
+        .with(&path, move |r| {
+            r.cookies(filter, sort.as_deref(), descending, offset, limit)
+                .map_err(err)
+        })
+        .await
+}
+
+/// The URLs that set one cookie (spec 025 FR-028).
+#[tauri::command]
+pub async fn cookie_urls(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    name: String,
+    domain: String,
+    cookie_path: String,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookieUrlPage> {
+    state
+        .with(&path, move |r| {
+            r.cookie_urls(&name, &domain, &cookie_path, offset, limit)
+                .map_err(err)
+        })
         .await
 }
 

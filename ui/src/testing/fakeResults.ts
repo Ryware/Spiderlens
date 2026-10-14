@@ -3,6 +3,8 @@
 // (crates/results/tests).
 
 import type { ColumnDef } from "../generated/ColumnDef";
+import type { CookieFilter } from "../generated/CookieFilter";
+import type { CookieRow } from "../generated/CookieRow";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
@@ -56,8 +58,31 @@ export const fakeTabs: TabDef[] = [
 
 const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
 
+/** A cookie the fake crawl saw, and the URLs that set it. */
+export interface FakeCookie extends Omit<CookieRow, "urls"> {
+  setBy: number[];
+}
+
+const cookieMatches: Record<CookieFilter, (c: FakeCookie) => boolean> = {
+  all: () => true,
+  session: (c) => c.session,
+  persistent: (c) => !c.session,
+  third_party: (c) => c.third_party,
+  missing_secure: (c) => !c.secure,
+  missing_http_only: (c) => !c.http_only,
+  same_site_none: (c) => c.same_site === "none",
+};
+
+const cookieRow = ({ setBy, ...c }: FakeCookie): CookieRow => ({ ...c, urls: setBy.length });
+
+export function fakeCookie(name: string, setBy: number[], c: Partial<FakeCookie> = {}): FakeCookie {
+  return { name, domain: "example.com", path: "/", session: true, expires: null, secure: true, http_only: true, same_site: "lax", third_party: false, source: "response", size: name.length + 20, setBy, ...c };
+}
+
 export interface FakeResults {
   urls: FakeUrl[];
+  /** Cookies the crawl recorded; seen only when features include "cookies". */
+  cookies: FakeCookie[];
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
@@ -82,6 +107,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "cookiesList"
+  | "cookieUrls"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -95,6 +122,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const progressCbs = new Set<(p: ExportProgress) => void>();
   const results: FakeResults = {
     urls: [...initial],
+    cookies: [],
     copied: [],
     exports: [],
     opened: [],
@@ -214,7 +242,11 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: true,
-        unavailable: { attempts: "Request attempts are not recorded in this crawl yet." },
+        cookies: results.features.includes("cookies") ? results.cookies.filter((c) => c.setBy.includes(id)).map((c) => ({ ...cookieRow(c), urls: 1 })) : [],
+        unavailable: {
+          attempts: "Request attempts are not recorded in this crawl yet.",
+          ...(results.features.includes("cookies") ? {} : { cookies: "This crawl was made before SpiderLens recorded the cookies each page sets." }),
+        },
       };
       return d;
     },
@@ -240,6 +272,28 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const text = lines.join("\n");
       results.copied.push(text);
       return text;
+    },
+    cookiesList: async (_p, filter, sort, descending, offset, limit) => {
+      if (!results.features.includes("cookies")) throw new Error("This crawl file has no cookie data.");
+      const rows = results.cookies.filter(cookieMatches[filter]).map(cookieRow);
+      const key = (sort ?? "urls") as keyof CookieRow;
+      const down = descending || sort === null;
+      rows.sort((a, b) => {
+        const x = a[key] ?? "";
+        const y = b[key] ?? "";
+        return (x < y ? -1 : x > y ? 1 : 0) * (down ? -1 : 1) || a.name.localeCompare(b.name);
+      });
+      const counts = Object.fromEntries(Object.entries(cookieMatches).map(([f, m]) => [f, results.cookies.filter(m).length]));
+      return { rows: rows.slice(offset, offset + limit), total: rows.length, counts };
+    },
+    cookieUrls: async (_p, name, domain, cookiePath, offset, limit) => {
+      const c = results.cookies.find((x) => x.name === name && x.domain === domain && x.path === cookiePath);
+      const ids = c?.setBy ?? [];
+      const rows = ids.slice(offset, offset + limit).map((id) => {
+        const u = results.urls.find((x) => x.id === id)!;
+        return { id, url: u.url, status: u.status };
+      });
+      return { rows, total: ids.length };
     },
     exportStart: async (_p, _q, columns, ranges, dest) => {
       results.exports.push({ columns, ranges, dest });
