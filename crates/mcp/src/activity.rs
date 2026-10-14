@@ -9,7 +9,8 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub const FILE: &str = "assistant-activity.jsonl";
 /// The log keeps at most about this many lines.
@@ -18,7 +19,9 @@ const KEEP_LINES: usize = 1_000;
 /// Lines are short; only a file this large can be over the line cap.
 const CHECK_ABOVE: u64 = 200 * 1024;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// One tool call, as the activity list in Settings shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export, rename = "ActivityEntry")]
 pub struct Entry {
     pub at: String,
     pub client: Option<String>,
@@ -58,6 +61,25 @@ impl Log {
             self.rotate()?;
         }
         Ok(())
+    }
+
+    /// The newest `limit` entries, newest first. Damaged lines are skipped.
+    pub fn read(&self, limit: usize) -> Vec<Entry> {
+        let Ok(text) = fs::read_to_string(&self.file) else {
+            return Vec::new();
+        };
+        text.lines()
+            .rev()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .take(limit)
+            .collect()
+    }
+
+    pub fn clear(&self) -> std::io::Result<()> {
+        match fs::remove_file(&self.file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
     }
 
     fn rotate(&self) -> std::io::Result<()> {
@@ -101,17 +123,11 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines.len() <= MAX_LINES);
         assert!(lines.last().unwrap().contains("tool_2099_"));
-        let first: Entry = serde_json::from_str::<serde_json::Value>(lines[0])
-            .map(|v| Entry {
-                at: v["at"].as_str().unwrap().into(),
-                client: v["client"].as_str().map(Into::into),
-                tool: v["tool"].as_str().unwrap().into(),
-                crawl: v["crawl"].as_str().map(Into::into),
-                bytes: v["bytes"].as_u64().unwrap() as usize,
-                refused: v["refused"].as_bool().unwrap(),
-                error: None,
-            })
-            .unwrap();
-        assert!(first.tool.starts_with("tool_"));
+        let newest = log.read(3);
+        assert_eq!(newest.len(), 3);
+        assert!(newest[0].tool.starts_with("tool_2099_"));
+        log.clear().unwrap();
+        assert!(log.read(10).is_empty());
+        log.clear().unwrap();
     }
 }

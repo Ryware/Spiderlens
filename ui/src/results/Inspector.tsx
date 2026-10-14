@@ -4,6 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CornerDownRight, MousePointerClick } from "lucide-react";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { AgentField } from "../generated/AgentField";
+import type { PageAgentFindings } from "../generated/PageAgentFindings";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
@@ -135,6 +137,112 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
   );
 }
 
+const actionKinds: Record<string, string> = {
+  anchor_no_href: "Link without an address",
+  anchor_hash: "Link to #",
+  anchor_js: "javascript: link",
+  onclick: "Click handler",
+  role_button: "Button role",
+  role_link: "Link role",
+};
+
+const linkKinds: Record<string, string> = {
+  markdown_alternate: "Markdown version",
+  service_desc: "API description",
+  service_doc: "API documentation",
+  api_catalog: "API catalog",
+};
+
+/** A field's accessible name, or why an agent cannot tell what it is for. */
+function FieldName({ f }: { f: AgentField }) {
+  if (f.name_source === "none") return <span className="text-warn">No label</span>;
+  return (
+    <span className="min-w-0 truncate text-fg" title={f.accessible_name ?? undefined}>
+      {f.accessible_name}
+      {f.name_source === "placeholder" && <span className="ml-1.5 text-xs text-warn">placeholder only</span>}
+    </span>
+  );
+}
+
+/** How an AI agent would see this page's forms and actions (spec 016 FR-019). */
+function AgentsSection({ transport, path, id }: { transport: Transport; path: string; id: number }) {
+  const [f, setF] = useState<PageAgentFindings | null>(null);
+  useEffect(() => {
+    let off = false;
+    setF(null);
+    transport.agentsPage(path, id).then(
+      (x) => !off && setF(x),
+      () => !off && setF(null),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id]);
+  if (!f || f.id !== id || !f.available || !f.checked) return null;
+  const empty = f.forms.length === 0 && f.actions_total === 0 && f.nameless_buttons === 0 && f.links.length === 0;
+  const count = (n: number) => <span className={n > 0 ? "text-warn" : undefined}>{n.toLocaleString()}</span>;
+  return (
+    <Section title="AI agents">
+      {empty ? (
+        <p className="m-0 text-sm text-fg-3">No forms or actions on this page.</p>
+      ) : (
+        <>
+          <Facts
+            rows={[
+              ["Forms", f.forms.length.toLocaleString()],
+              ["Fields without a label", count(f.unlabelled_fields)],
+              ["Buttons without a name", count(f.nameless_buttons)],
+              ["Actions without a link", count(f.actions_total)],
+            ]}
+          />
+          {f.forms.map((form, i) => (
+            <div key={i} aria-label={`Form ${i + 1}`} role="group" className="mt-1 flex flex-col gap-1 rounded-md border border-line p-2">
+              <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                <span className="font-medium text-fg uppercase">{form.method}</span>
+                <span className="min-w-0 flex-1 truncate text-fg-2" title={form.action ?? undefined} data-selectable>
+                  {form.action ?? "this page"}
+                </span>
+                {form.source === "rendered" && <Badge tone="info">After JavaScript</Badge>}
+                {form.is_search && <Badge>Search</Badge>}
+                {form.tool_name && <Badge tone="ok">Agent tool: {form.tool_name}</Badge>}
+                {form.challenge && <Badge tone="warn">CAPTCHA: {form.challenge}</Badge>}
+                {!form.has_submit && <Badge tone="warn">No submit button</Badge>}
+              </div>
+              {form.fields.length > 0 && (
+                <ul className="m-0 flex list-none flex-col p-0" data-selectable>
+                  {form.fields.map((fl, j) => (
+                    <li key={j} className="flex items-baseline gap-2 border-t border-line py-0.5 text-sm">
+                      <span className="w-20 shrink-0 truncate font-mono text-xs text-fg-3" title={fl.name ?? undefined}>
+                        {fl.name ?? "–"}
+                      </span>
+                      <span className="w-16 shrink-0 text-xs text-fg-3">{fl.kind}</span>
+                      <FieldName f={fl} />
+                      {fl.required && <span className="ml-auto shrink-0 text-xs text-fg-3">required</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+          {f.actions.length > 0 && (
+            <ul aria-label="Actions without a link" className="m-0 mt-1 flex list-none flex-col p-0" data-selectable>
+              {f.actions.map((a, i) => (
+                <li key={i} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
+                  <span className="min-w-0 flex-1 truncate text-fg">{a.text || <span className="text-fg-3">(no text)</span>}</span>
+                  <span className="shrink-0 text-xs text-fg-3">{actionKinds[a.kind] ?? a.kind}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {f.links.length > 0 && (
+            <Facts rows={f.links.map((l) => [linkKinds[l.kind] ?? l.kind, <span className="break-all">{l.href}</span>] as [string, ReactNode])} />
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
 export function Inspector({ transport, path, id }: { transport: Transport; path: string | null; id: number | null }) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -262,6 +370,8 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
       >
         <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} />
       </Section>
+
+      <AgentsSection transport={transport} path={path} id={d.id} />
 
       {d.headers.length > 0 && (
         <Section title={`Response headers (${d.headers.length})`}>

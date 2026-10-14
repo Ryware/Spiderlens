@@ -34,6 +34,27 @@ pub struct AssistantSettings {
     pub allowed_profiles: Vec<String>,
 }
 
+impl AssistantSettings {
+    /// The settings as they are saved: allowed folders must be existing
+    /// folders, listed once. Starting crawls is not offered yet (spec 016
+    /// P3), so it stays off.
+    pub fn checked(mut self) -> Result<Self, String> {
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for f in self.allowed_folders {
+            if !f.is_dir() {
+                return Err(format!("{} is not a folder on this computer.", f.display()));
+            }
+            if !folders.contains(&f) {
+                folders.push(f);
+            }
+        }
+        self.allowed_folders = folders;
+        self.allow_crawl = false;
+        self.allowed_profiles.clear();
+        Ok(self)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SettingsFile {
     version: u32,
@@ -136,6 +157,26 @@ mod tests {
             serde_json::from_slice(&fs::read(dir.path().join(FILE)).unwrap()).unwrap();
         assert_eq!(raw["version"], 1);
         assert_eq!(raw["allow_read"], true);
+    }
+
+    #[test]
+    fn checked_keeps_existing_folders_once_and_crawling_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let ok = AssistantSettings {
+            allow_read: true,
+            allowed_folders: vec![dir.path().into(), dir.path().into()],
+            allow_crawl: true,
+            allowed_profiles: vec!["Fast".into()],
+        }
+        .checked()
+        .unwrap();
+        assert_eq!(ok.allowed_folders, vec![dir.path().to_path_buf()]);
+        assert!(!ok.allow_crawl && ok.allowed_profiles.is_empty());
+        let missing = AssistantSettings {
+            allowed_folders: vec![dir.path().join("nope")],
+            ..AssistantSettings::default()
+        };
+        assert!(missing.checked().unwrap_err().contains("not a folder"));
     }
 
     #[test]

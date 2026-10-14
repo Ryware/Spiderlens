@@ -13,6 +13,7 @@ mod access;
 pub mod activity;
 mod calls;
 mod envelope;
+pub mod snippets;
 mod tools;
 
 use std::sync::Arc;

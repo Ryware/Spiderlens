@@ -228,3 +228,44 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+test("ai_assistants_settings_from_the_palette_fit_and_save", async ({ page }) => {
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Settings: AI assistants");
+  const panel = page.getByRole("tabpanel", { name: "AI assistants" });
+  const read = panel.getByRole("switch", { name: "Allow AI assistants to read my crawls" });
+  await expect(read).toHaveAttribute("aria-checked", "false");
+  await read.click();
+  await expect(read).toHaveAttribute("aria-checked", "true");
+  expect(await page.evaluate(() => window.spiderlens.assistants.settings.allow_read)).toBe(true);
+  // The snippet wraps inside the sheet instead of widening it.
+  const snippet = panel.getByLabel("Claude Desktop configuration");
+  await expect(snippet).toContainText('"mcp"');
+  const dialog = (await page.getByRole("dialog").boundingBox())!;
+  const box = (await snippet.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(dialog.x + dialog.width);
+  const overflow = await snippet.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  await panel.getByRole("radio", { name: "Claude Code" }).click();
+  await expect(panel.getByLabel("Claude Code configuration")).toContainText("claude mcp add spiderlens --");
+  await panel.getByRole("button", { name: "Test" }).click();
+  await expect(panel.getByRole("status")).toContainText("The server works: 8 tools");
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+});
+
+test("details_show_a_pages_forms_for_ai_agents", async ({ page }) => {
+  await page.evaluate(() => window.spiderlens.results.features.push("extraction", "agents"));
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(2).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-1");
+  const form = details.getByRole("group", { name: "Form 1" });
+  await form.scrollIntoViewIfNeeded();
+  await expect(form).toBeVisible();
+  await expect(form.getByText("No label")).toBeVisible();
+  await expect(form.getByText("CAPTCHA: recaptcha")).toBeVisible();
+  const pane = (await details.boundingBox())!;
+  const fb = (await form.boundingBox())!;
+  expect(fb.x + fb.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
+});

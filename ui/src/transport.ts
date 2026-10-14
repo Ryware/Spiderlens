@@ -24,6 +24,10 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantSettings } from "./generated/AssistantSettings";
+import type { AssistantSnippet } from "./generated/AssistantSnippet";
+import type { PageAgentFindings } from "./generated/PageAgentFindings";
 
 export interface BuildInfo {
   product: string;
@@ -276,6 +280,24 @@ export interface ExportProgress {
   path: string;
 }
 
+/** Settings › AI assistants (spec 016): the saved switches, this app's
+ * program file and the configuration snippets that start it as an MCP server. */
+export interface AssistantsView {
+  settings: AssistantSettings;
+  executable: string;
+  snippets: AssistantSnippet[];
+}
+
+/** What `<app> mcp --self-test` printed: the tools an assistant would see. */
+export interface McpSelfTest {
+  server: string;
+  version: string;
+  protocol: string;
+  read_access: boolean;
+  crawl_access: boolean;
+  tools: string[];
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -351,6 +373,16 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // AI agents (spec 016, contracts/desktop-commands.md).
+  agentsPage(path: string, id: number): Promise<PageAgentFindings>;
+  assistantsGet(): Promise<AssistantsView>;
+  /** Rejects with a sentence when a folder does not exist. */
+  assistantsSet(settings: AssistantSettings): Promise<AssistantSettings>;
+  /** Rejects with a sentence when the server does not start or answer. */
+  assistantsTest(): Promise<McpSelfTest>;
+  assistantsActivity(limit: number): Promise<ActivityEntry[]>;
+  assistantsActivityClear(): Promise<void>;
+  pickFolder(): Promise<string | null>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -425,4 +457,11 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  agentsPage: (path, id) => invoke("agents_page", { path, id }),
+  assistantsGet: () => invoke("assistants_get"),
+  assistantsSet: (settings) => invoke("assistants_set", { settings }),
+  assistantsTest: () => invoke("assistants_test"),
+  assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
+  assistantsActivityClear: () => invoke("assistants_activity_clear"),
+  pickFolder: async () => asPath(await open({ directory: true })),
 };

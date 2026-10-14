@@ -6,6 +6,7 @@ import { categories, CategoryBody, type CategoryId, issuesFor } from "./categori
 import { IssueList } from "./fields";
 import { ProfilePicker } from "./ProfilePicker";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { AssistantsSettings } from "./AssistantsSettings";
 import type { Appearance, Level } from "../shell/appearance";
 
 /**
@@ -94,6 +95,8 @@ export function SettingsSheet({
             <IssueList issues={general} />
             {current.id === "appearance" ? (
               <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
+            ) : current.id === "assistants" ? (
+              <AssistantsSettings transport={transport} />
             ) : (
               <CategoryBody id={current.id} setup={setup} transport={transport} />
             )}

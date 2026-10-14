@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod assistants;
 mod crawl;
 mod files;
 mod results;
@@ -49,6 +50,10 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(assistants::State::new(spiderlens_config::AppDirs {
+                config: app.path().app_config_dir()?,
+                data: app.path().app_data_dir()?,
+            }));
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
             for arg in std::env::args_os().skip(1) {
@@ -104,6 +109,12 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::agents_page,
+            assistants::assistants_get,
+            assistants::assistants_set,
+            assistants::assistants_test,
+            assistants::assistants_activity,
+            assistants::assistants_activity_clear,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

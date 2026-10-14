@@ -12,7 +12,7 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance" | "assistants";
 
 export interface Category {
   id: CategoryId;
@@ -38,6 +38,13 @@ export const categories: Category[] = [
     id: "appearance",
     title: "Appearance",
     description: "Brightness and accent colour. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
+  {
+    id: "assistants",
+    title: "AI assistants",
+    description: "Let assistants such as Claude read your crawls through SpiderLens's local MCP server. Saved on this computer.",
     prefixes: [],
     app: true,
   },

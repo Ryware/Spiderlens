@@ -5,6 +5,7 @@ import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeAgentsTransport, type FakeAssistants } from "./fakeAgents";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -105,7 +106,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -127,8 +128,13 @@ export function fakeTransport(
   };
   const resultsApi = fakeResultsTransport(urls);
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const agentsApi = fakeAgentsTransport(
+    () => resultsApi.results.urls,
+    () => resultsApi.results.features,
+  );
   return {
     ...resultsApi,
+    ...agentsApi,
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
