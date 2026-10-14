@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use serde::Serialize;
 use spiderlens_config::SitemapGenerateOptions;
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
-    UrlScope, ViewQuery, export_file, tabs,
+    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabCounts, TabDef,
+    UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter};
@@ -229,6 +229,13 @@ pub async fn view_counts(
     state
         .with(&path, move |r| r.counts(&tab, scope).map_err(err))
         .await
+}
+
+/// URLs per result tab for the sidebar (T014): one pass over the file,
+/// answered from memory while the crawl has not written since.
+#[tauri::command]
+pub async fn tab_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<TabCounts> {
+    state.with(&path, |r| r.tab_counts().map_err(err)).await
 }
 
 #[tauri::command]

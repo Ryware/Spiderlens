@@ -44,7 +44,7 @@
 - [ ] T018 [US6] Upgrade on resume with backup copy `<stem> (format N backup).spiderlens`; CLI `--no-backup`; tests on the committed v2 reference files
 - [ ] T019 [US6] Newer-format file (format 99, additive) opens read-only for viewing and is refused for resume with the version needed; non-additive newer refused
 - [ ] T020 [US6] `file::salvage(src, dest)`: table-by-table copy skipping unreadable rows; test with a file whose pages are overwritten with garbage
-- [ ] T021 [P] [US6] Reference-file test reading `expected.json` on all OSes (SC-007); CI portability job: each OS writes a crawl, the others open it (SC-008)
+- [x] T021 [P] [US6] Reference-file test reading `expected.json` on all OSes (SC-007); CI portability job: each OS writes a crawl, the others open it (SC-008)
 - [ ] T022 [P] [US6] `results` reader: `immutable=1` fallback for read-only media; test on a read-only copy
 
 ## Phase 8: US4 recent crawls and the app (P2)
