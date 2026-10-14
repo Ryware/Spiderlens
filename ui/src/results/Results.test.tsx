@@ -49,6 +49,14 @@ test("filters_show_counts_and_explain_unavailable_ones", async () => {
   await waitFor(() => expect(rowCount()).toContain("27 URLs"));
 });
 
+test("error_class_filters_show_only_when_they_match", async () => {
+  await openInternal();
+  fireEvent.click(screen.getByRole("button", { name: "Response codes" }));
+  const notFound = await screen.findByRole("button", { name: /Not found \(404\)/ });
+  await waitFor(() => expect(notFound.textContent).toBe("Not found (404)3"));
+  expect(screen.queryByRole("button", { name: /Timed out/ })).toBeNull();
+});
+
 test("header_click_sorts_then_reverses_then_clears", async () => {
   const t = await openInternal();
   const header = () => within(grid()).getByRole("columnheader", { name: /Title/ });
