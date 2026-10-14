@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft, awaiting owner approval
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: Owner approval of the feature gap report (rows 20 and 21, "Accessibility auditing (axe rules, WCAG)" and "Mobile usability"), 2026-10-13: run an accessibility rule engine on each rendered page during the JavaScript rendering phase (spec 014), store the violations of each page with their WCAG level and user impact, add them to the issue rule catalogue (spec 009), add mobile usability checks measured on the rendered layout (viewport, tap targets, font sizes, content wider than the screen), and offer a subset that works without rendering from the HTML that spec 005 already parses (alternative text, language, heading order, form labels). The checks must not cost crawl speed when they are off, and each page gets a time budget.
 

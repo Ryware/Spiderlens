@@ -77,7 +77,7 @@ Results tabs (spec 007) and rules (spec 009) are SQL over these tables, as for o
 
 ## Decisions for the owner
 
-Each has a default the spec already assumes.
+Each has a default the spec already assumes. **Approved 2026-10-13 (Ryware, "מאושר בכל"): all defaults (a).**
 
 1. **Default level**: (a) "Static checks" on by default, falling back to "Off" if the benchmark shows more than 3% cost *(default)*; (b) "Off" by default.
 2. **Engine**: (a) axe-core, pinned per release *(default)*; (b) IBM Equal Access.
