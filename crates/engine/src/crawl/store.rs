@@ -1991,6 +1991,8 @@ pub struct RenderEntry {
     pub host_key: String,
     pub seq: i64,
     pub attempts: u32,
+    /// The page's depth; references found by rendering are one deeper.
+    pub depth: u32,
 }
 
 /// One `render_resources` row.
@@ -2133,7 +2135,7 @@ impl CrawlStore {
     /// Up to `limit` queued renders after `after`, in queue order.
     pub fn renders_after(&self, after: Option<i64>, limit: usize) -> Result<Vec<RenderEntry>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT r.url_id, u.url, u.host_key, r.queue_seq, r.attempts FROM renders r
+            "SELECT r.url_id, u.url, u.host_key, r.queue_seq, r.attempts, u.depth FROM renders r
              JOIN urls u ON u.id = r.url_id
              WHERE r.state = 'queued' AND r.queue_seq > ?1 ORDER BY r.queue_seq LIMIT ?2",
         )?;
@@ -2144,6 +2146,7 @@ impl CrawlStore {
                 host_key: r.get(2)?,
                 seq: r.get(3)?,
                 attempts: r.get(4)?,
+                depth: r.get(5)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)

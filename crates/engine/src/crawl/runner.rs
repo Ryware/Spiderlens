@@ -38,6 +38,7 @@ use super::store::{
     StoreError,
 };
 use super::window::QueueWindow;
+use crate::extract::compare::Origin;
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
@@ -939,6 +940,9 @@ struct Run {
     window_cap: usize,
     /// Set while a redirect past the hop limit is being recorded.
     redirect_over_limit: bool,
+    /// Set while a reference found only after rendering is discovered: its
+    /// position in the rendered page; its link row goes to `rendered_links`.
+    rendered_rpos: Option<u32>,
     /// A disk problem that is pausing the crawl (spec 006 FR-027).
     local: Option<LocalError>,
     next_disk_check: Instant,
@@ -1054,6 +1058,7 @@ impl Run {
             net_hosts: HashSet::new(),
             window_cap: WINDOW,
             redirect_over_limit: false,
+            rendered_rpos: None,
             local: None,
             next_disk_check: Instant::now(),
         })
@@ -1804,8 +1809,10 @@ impl Run {
     }
 
     /// Records the result of one render, or queues it again once after a
-    /// crash (FR-042). Rendered-only references are discovered in T022.
-    fn on_rendered(&mut self, r: Rendered) -> Result<(), CrawlError> {
+    /// crash (FR-042). References found only after rendering, and a script
+    /// navigation, are discovered like raw ones (FR-013, FR-022). Raw rows
+    /// are never updated (FR-020).
+    fn on_rendered(&mut self, mut r: Rendered) -> Result<(), CrawlError> {
         use spiderlens_render::{ConsoleLevel, FailReason, FailedReason, RenderState};
         let Some(stage) = &mut self.render else {
             return Ok(());
@@ -1836,7 +1843,7 @@ impl Run {
 
         // Each resource's outcome: what the browser saw, plus what only the
         // engine knows (cache, robots.txt, error class).
-        let mut notes: VecDeque<(Url, Note)> = r.notes.into_iter().collect();
+        let mut notes: VecDeque<(Url, Note)> = std::mem::take(&mut r.notes).into();
         let mut take_note = |url: &Url| {
             let i = notes.iter().position(|(u, _)| u == url)?;
             notes.remove(i).map(|(_, n)| n)
@@ -1963,6 +1970,8 @@ impl Run {
             html: r.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
             raw_only_links: &raw_only_links,
         });
+        let js_redirect_id = self.discover_rendered(&r, &page_url, nofollow)?;
+        let o = &r.outcome;
         let js_redirect = o.js_redirect.as_ref().map(Url::as_str);
         self.c.store.record_render(
             id,
@@ -1973,7 +1982,7 @@ impl Run {
                 render_ms: Some(o.render_ms),
                 window: Some((o.window.width, o.window.height)),
                 js_redirect,
-                js_redirect_id: None,
+                js_redirect_id,
                 console_totals: o.console_totals,
                 resources_failed: failed,
                 resources_blocked: blocked,
@@ -1990,6 +1999,75 @@ impl Run {
         )?;
         self.finished += 1;
         Ok(())
+    }
+
+    /// Discovers the references of a rendered page that its raw HTML does
+    /// not have, with the page's depth plus one and the rendered page's own
+    /// nofollow (FR-022), then its script navigation, like a redirect
+    /// (FR-013). Returns the navigation target's row id.
+    fn discover_rendered(
+        &mut self,
+        r: &Rendered,
+        page_url: &Url,
+        page_nofollow: bool,
+    ) -> Result<Option<i64>, CrawlError> {
+        let id = r.entry.url_id;
+        let depth = r.entry.depth + 1;
+        let rendered = r.rendered.as_ref().and_then(|d| d.as_ref().ok());
+        // Rendered-only link rows count on from the page's last raw
+        // position: HTML references, then header ones (as in `on_page`).
+        let mut pos = r.raw.as_ref().map_or(0, |d| d.refs.len()) + r.header_facts.refs.len();
+        if let (Some(d), Some(c)) = (rendered, &r.comparison) {
+            for (rpos, (x, origin)) in d.refs.iter().zip(&c.origins.refs.rendered).enumerate() {
+                if *origin != Origin::Rendered {
+                    continue;
+                }
+                let nofollow = match x.kind {
+                    LinkKind::Anchor if x.nofollow => Some(Nofollow::Link),
+                    LinkKind::Anchor if page_nofollow => Some(Nofollow::Page),
+                    _ => None,
+                };
+                let parsed = self.c.rules.normalize(&d.base, &x.raw);
+                self.rendered_rpos = Some(rpos as u32);
+                let found = self.discover(
+                    Some(id),
+                    &x.raw,
+                    x.kind,
+                    parsed,
+                    depth,
+                    nofollow,
+                    false,
+                    false,
+                    Some((pos as u32, x)),
+                );
+                self.rendered_rpos = None;
+                found?;
+                pos += 1;
+            }
+        }
+        let mut target_id = None;
+        if let Some(target) = &r.outcome.js_redirect {
+            let parsed = self.c.rules.normalize(page_url, target.as_str());
+            self.rendered_rpos = Some(rendered.map_or(0, |d| d.refs.len()) as u32);
+            let found = self.discover(
+                Some(id),
+                target.as_str(),
+                LinkKind::JsRedirect,
+                parsed,
+                depth,
+                None,
+                false,
+                false,
+                None,
+            );
+            self.rendered_rpos = None;
+            target_id = found?;
+        }
+        // New URLs to fetch: the fetch stage is not done after all.
+        if self.fetch_completed && !self.window.is_empty() {
+            self.fetch_completed = false;
+        }
+        Ok(target_id)
     }
 
     fn block(&mut self, e: QueueEntry, reason: NotCrawledReason, detail: String) -> Result<(), CrawlError> {
@@ -2745,6 +2823,16 @@ impl Run {
         Ok(())
     }
 
+    /// A link row: `links`, or `rendered_links` while references found
+    /// only after rendering are discovered (spec 014 data-model.md).
+    fn put_link(&self, link: &NewLink) -> Result<(), CrawlError> {
+        match self.rendered_rpos {
+            Some(rpos) => self.c.store.add_rendered_link(link, rpos)?,
+            None => self.c.store.add_link(link)?,
+        }
+        Ok(())
+    }
+
     /// Records one discovered reference and its link row. Returns the target
     /// row id, or None for a self reference.
     #[allow(clippy::too_many_arguments)]
@@ -2797,7 +2885,7 @@ impl Run {
                     // Empty, fragment-only or self links: stored on the
                     // page with a reason, never queued (FR-024).
                     if let Some(from) = from {
-                        self.c.store.add_link(&NewLink {
+                        self.put_link(&NewLink {
                             from,
                             to: Some(from),
                             raw,
@@ -2868,7 +2956,7 @@ impl Run {
         if let Some(from) = from {
             let link_nofollow = nofollow == Some(Nofollow::Link);
             let page_nofollow = nofollow == Some(Nofollow::Page);
-            self.c.store.add_link(&NewLink {
+            self.put_link(&NewLink {
                 from,
                 to: Some(id),
                 raw,

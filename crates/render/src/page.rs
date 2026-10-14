@@ -348,6 +348,10 @@ async fn render_in(
                         // followed (FR-013). The crawl discovers the target.
                         if js_redirect.is_none() {
                             js_redirect = Url::parse(&ev.request.url).ok();
+                            // A navigation started before `load` (a
+                            // `location.replace` in the head) means `load`
+                            // never comes: the page settles from here.
+                            settle.on(now, Event::Load);
                         }
                         let page = page.clone();
                         tasks.spawn(async move {

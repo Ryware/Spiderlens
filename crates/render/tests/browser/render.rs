@@ -121,6 +121,11 @@ fn site() -> JsSite {
         )
         .page("/next", "<html><body>next</body></html>")
         .page(
+            "/redirect-now",
+            "<html><head><title>Moved</title><script>location.replace('/next');</script></head>\
+             <body><p>stay</p></body></html>",
+        )
+        .page(
             "/console",
             "<html><body><script>console.error('bad', 'thing'); console.warn('careful'); console.log('fine');\
              </script><script src=/broken.js></script></body></html>",
@@ -337,7 +342,19 @@ async fn js_redirect(c: &Ctx) -> Result<(), String> {
     check(c.site.count(JS_HOST, "/next") == 0, || {
         "the redirect was followed".into()
     })?;
-    check(html(&out).contains("stay"), || "page content lost".into())
+    check(html(&out).contains("stay"), || "page content lost".into())?;
+    // A navigation before `load` still settles, well before the cap.
+    let out = c.render(c.job("/redirect-now").await).await;
+    check(out.state == RenderState::Rendered, || {
+        format!("state {:?} after {} ms", out.state, out.render_ms)
+    })?;
+    check(
+        out.js_redirect.as_ref().map(|u| u.path()) == Some("/next"),
+        || format!("js_redirect {:?}", out.js_redirect),
+    )?;
+    check(c.site.count(JS_HOST, "/next") == 0, || {
+        "the redirect was followed".into()
+    })
 }
 
 async fn console(c: &Ctx) -> Result<(), String> {
