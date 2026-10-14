@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control, Crawler};
-use spiderlens_results::{ListKind, Need, Reader, UrlScope, ViewQuery, tabs};
+use spiderlens_results::{HtmlMissing, ListKind, Need, Reader, UrlScope, ViewQuery, tabs};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
 
@@ -449,6 +449,29 @@ async fn detail_shows_headers_headings_and_link_text() {
 }
 
 #[tokio::test]
+async fn page_html_reads_the_stored_source() {
+    let c = crawl(true).await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let home = id_of(&mut r, &c, "/");
+    let h = r.page_html(home).unwrap();
+    assert_eq!(h.missing, None);
+    let html = h.html.unwrap();
+    assert!(html.starts_with("<!doctype html><html><head><title>"), "{html}");
+    assert!(html.contains("<img src=\"/a.png\" alt=\"A photo\">"));
+    assert!(html.ends_with("</body></html>"));
+    assert_eq!(h.bytes, html.len() as u64);
+    assert_eq!(h.encoding.as_deref(), Some("UTF-8"));
+    assert!(!h.encoding_errors);
+
+    // An image has no stored body.
+    let img = id_of(&mut r, &c, "/a.png");
+    let h = r.page_html(img).unwrap();
+    assert_eq!((h.html, h.missing), (None, Some(HtmlMissing::NoBody)));
+
+    assert!(r.page_html(999_999).is_err());
+}
+
+#[tokio::test]
 async fn crawl_without_stored_html_says_so() {
     let c = crawl(false).await;
     let r = Reader::open(&c.path).unwrap();
@@ -459,4 +482,6 @@ async fn crawl_without_stored_html_says_so() {
     let d = r.detail(home).unwrap();
     assert!(!d.html_stored);
     assert!(d.unavailable.contains_key("raw_html"));
+    let h = r.page_html(home).unwrap();
+    assert_eq!((h.html, h.missing), (None, Some(HtmlMissing::NotStored)));
 }

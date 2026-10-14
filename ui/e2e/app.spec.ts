@@ -291,3 +291,79 @@ test("custom_rule_is_tested_run_on_the_crawl_and_gets_its_tab", async ({ page })
   await page.evaluate(() => window.spiderlens.results.ready());
   await expect(page.getByTestId("row-count")).toHaveText("1,250 URLs");
 });
+
+test("columns_reorder_from_the_keyboard_in_the_columns_menu", async ({ page }) => {
+  const grid = await openInternal(page);
+  const headers = () => grid.getByRole("columnheader").allTextContents();
+  await page.getByRole("button", { name: "Columns" }).click();
+  const menu = page.getByRole("menu");
+  // Arrow down to Title, then move it up twice. Where the first arrow lands
+  // after a click-open differs by platform (macOS Chromium starts one item
+  // earlier), so step until Title has focus rather than counting presses.
+  const title = menu.getByRole("menuitemcheckbox", { name: /^Title/ });
+  await expect(menu).toBeVisible();
+  for (let i = 0; i < 6 && !(await title.evaluate((el) => el === document.activeElement)); i++) {
+    await page.keyboard.press("ArrowDown");
+  }
+  await expect(title).toBeFocused();
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(page.getByRole("status").filter({ hasText: "Title moved to position 2 of 4" })).toHaveCount(1);
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect.poll(headers).toEqual(["Title", "Address", "Status code", "H1"]);
+  await expect(menu.getByRole("menuitemcheckbox", { name: /^Title/ })).toBeFocused();
+  // The menu's own arrows carry on from the moved item's new place.
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemcheckbox", { name: /^Address/ })).toBeFocused();
+  await expect(menu.getByRole("menuitemcheckbox", { name: /^Address/ })).toHaveAttribute("data-highlighted", "");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(page.getByLabel("Start URL")).toBeFocused();
+  const again = await openInternal(page);
+  await expect.poll(() => again.getByRole("columnheader").allTextContents()).toEqual(["Title", "Address", "Status code", "H1"]);
+});
+
+test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) => {
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(3).click();
+  await page.keyboard.press("Enter");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-2");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.contains(document.querySelector('aside[aria-label="Details"]')))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(grid).toBeFocused();
+  await page.keyboard.press("Control+3");
+  await expect(page.getByRole("region", { name: "Response codes" })).toBeVisible();
+  await page.keyboard.press("Control+1");
+  await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
+});
+
+test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => {
+    window.spiderlens.results.features = ["base", "extraction", "timing", "raw_html"];
+  });
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(2).click();
+  await page.getByRole("complementary", { name: "Details" }).getByRole("button", { name: "View source" }).click();
+  const dialog = page.getByRole("dialog");
+  const source = dialog.getByRole("region", { name: "Page source" });
+  await expect(source).toContainText("<!doctype html>");
+  await expect(dialog.getByLabel("Find in source")).toBeFocused();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  // 2,008 lines, but only those on screen exist in the page.
+  expect(await source.locator("[data-row]").count()).toBeLessThan(80);
+  await page.keyboard.type("paragraph 1999");
+  await expect(dialog.getByTestId("match-count")).toHaveText("1 of 1");
+  await expect(source.locator("mark[data-current]")).toBeInViewport();
+  await dialog.getByRole("button", { name: "Copy" }).click();
+  await expect(dialog.getByText("Copied.")).toBeVisible();
+  // The Windows clipboard hands text back with CRLF line ends.
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  expect(copied.startsWith("<!doctype html>\n")).toBe(true);
+  expect(copied.split("\n").length).toBe(2009);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});

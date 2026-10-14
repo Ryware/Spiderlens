@@ -65,6 +65,8 @@ export interface FakeResults {
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
+  /** How often the sidebar asked for its tab counts. */
+  tabCountCalls: number;
   /** What the open crawl file holds; base only unless a test adds more. */
   features: Need[];
   /** Announces that the open view's full order is ready. */
@@ -87,9 +89,11 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewLocate"
   | "viewRefresh"
   | "viewCounts"
+  | "tabCounts"
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "urlHtml"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -106,6 +110,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     copied: [],
     exports: [],
     opened: [],
+    tabCountCalls: 0,
     features: ["base"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
@@ -193,6 +198,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       }
       return { tab, counts, unavailable, version };
     },
+    tabCounts: async () => {
+      results.tabCountCalls++;
+      return { counts: Object.fromEntries(fakeTabs.map((t) => [t.id, select({ tab: t.id, filter: "all", scope: "all", search: "", sort: null }).ids.length])), version };
+    },
     viewClose: async (_p, view) => {
       views.delete(view);
     },
@@ -232,11 +241,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           ["x-robots-tag", "noarchive"],
         ],
         headings: 2,
-        html_stored: true,
+        html_stored: results.features.includes("raw_html") && u.title !== null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
-        unavailable: results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." },
+        unavailable: {
+          ...(results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." }),
+          ...(results.features.includes("raw_html") ? {} : { raw_html: "This crawl does not store page HTML." }),
+        },
       };
       return d;
     },
@@ -254,6 +266,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
                 unavailable: null,
               }
             : { total: 0, from, rows: [], headings: [], unavailable: null },
+    urlHtml: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id)!;
+      const none = { html: null, bytes: 0, encoding: null, encoding_errors: false };
+      if (!results.features.includes("raw_html")) return { ...none, missing: "not_stored" };
+      if (u.title === null) return { ...none, missing: "no_body" };
+      const html = fakePageHtml(u);
+      return { html, missing: null, bytes: new TextEncoder().encode(html).length, encoding: "UTF-8", encoding_errors: false };
+    },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;
       const cols = columns.map((c) => v.tab.columns.findIndex((x) => x.id === c));
@@ -288,4 +308,10 @@ export function fakeUrls(n: number): FakeUrl[] {
     depth: i === 0 ? 0 : 1,
     internal: true,
   }));
+}
+
+/** The stored source of a fake page: long enough to need windowing. */
+export function fakePageHtml(u: FakeUrl, paragraphs = 2000): string {
+  const body = Array.from({ length: paragraphs }, (_, i) => `    <p>Paragraph ${i + 1} of ${u.url}</p>`);
+  return ["<!doctype html>", "<html>", "  <head>", `    <title>${u.title}</title>`, "  </head>", "  <body>", ...body, "  </body>", "</html>", ""].join("\n");
 }

@@ -162,6 +162,7 @@ test("detail_pane_has_no_custom_section_without_rules", async () => {
 test("settings_rules_can_be_tried_on_a_crawled_page", async () => {
   // US4: the rules in the settings, on this page's stored HTML, without saving anything.
   const t = fakeTransport();
+  t.results.features = ["base", "raw_html"];
   t.custom.html.set(2, `<span class="price">$99</span>`);
   const rules = { extractors: [{ name: "Price", kind: "css" as const, expr: ".price", mode: "text" as const }], searches: [] };
   render(<Inspector transport={t} path={PATH} id={2} rules={rules} />);
@@ -175,6 +176,7 @@ test("settings_rules_can_be_tried_on_a_crawled_page", async () => {
 
 test("trying_rules_on_a_page_without_stored_html_says_why", async () => {
   const t = fakeTransport();
+  t.results.features = ["base", "raw_html"];
   const rules = { extractors: [], searches: [{ name: "Consent", term: "x", regex: false, condition: "contains" as const, target: "html" as const, ignore_case: false }] };
   render(<Inspector transport={t} path={PATH} id={3} rules={rules} />);
   fireEvent.click(await screen.findByRole("button", { name: "Test settings rules" }));

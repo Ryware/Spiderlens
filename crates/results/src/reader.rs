@@ -25,6 +25,8 @@ pub struct Reader {
     pub(crate) derived: HashMap<Derived, u64>,
     /// The file's custom tabs and the data version they were built at.
     custom_tabs: Option<(u64, Vec<TabDef>)>,
+    /// The sidebar counts of the last data version asked for.
+    pub(crate) tab_counts: Option<crate::counts::TabCounts>,
     version: u64,
     data_version: i64,
 }
@@ -80,6 +82,7 @@ impl Reader {
             next_view: 1,
             derived: HashMap::new(),
             custom_tabs: None,
+            tab_counts: None,
             version: 1,
             data_version,
         })
