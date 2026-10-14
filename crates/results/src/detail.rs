@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+use spiderlens_engine::extract::body;
 use ts_rs::TS;
 
 use crate::reader::Reader;
@@ -156,6 +157,33 @@ pub struct ListPage {
     pub headings: Vec<HeadingRow>,
     /// Set when this file cannot list this section.
     pub unavailable: Option<String>,
+}
+
+/// Why a page has no HTML to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HtmlMissing {
+    /// The crawl ran with "Store page HTML" off.
+    NotStored,
+    /// Not an HTML page, or no body was received.
+    NoBody,
+}
+
+/// A page's stored HTML, for the source viewer (T029, spec 005 FR-030).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct PageHtml {
+    /// The source as text; null when `missing` says why there is none.
+    pub html: Option<String>,
+    pub missing: Option<HtmlMissing>,
+    /// Size of the stored body, in bytes.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The encoding the text was decoded with.
+    pub encoding: Option<String>,
+    /// Some bytes were not valid in that encoding and show as U+FFFD.
+    pub encoding_errors: bool,
 }
 
 const FINAL_STATE: &str =
@@ -364,6 +392,57 @@ impl Reader {
             error_reason,
             manual_retry,
             unavailable,
+        })
+    }
+
+    /// The stored HTML of one page, decoded as extraction read it. Errors
+    /// when the URL is not in the file or the stored bytes are damaged.
+    pub fn page_html(&mut self, id: i64) -> Result<PageHtml> {
+        let exists: bool =
+            self.conn
+                .query_row("SELECT EXISTS (SELECT 1 FROM urls WHERE id = ?1)", [id], |r| {
+                    r.get(0)
+                })?;
+        if !exists {
+            return Err(Error::invalid(format!("URL {id} is not in this crawl")));
+        }
+        let none = |missing| PageHtml {
+            html: None,
+            missing: Some(missing),
+            bytes: 0,
+            encoding: None,
+            encoding_errors: false,
+        };
+        if !self.features.has(Need::RawHtml) {
+            return Ok(none(HtmlMissing::NotStored));
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT b.codec, b.size, b.body, p.encoding
+                 FROM bodies b LEFT JOIN pages p ON p.url_id = b.url_id WHERE b.url_id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((codec, size, packed, encoding)) = row else {
+            return Ok(none(HtmlMissing::NoBody));
+        };
+        let raw = body::unpack(&codec, size, &packed).map_err(Error::Unavailable)?;
+        let (text, used, encoding_errors) = body::to_text(&raw, encoding.as_deref());
+        Ok(PageHtml {
+            html: Some(text),
+            missing: None,
+            bytes: raw.len() as u64,
+            encoding: Some(used.to_string()),
+            encoding_errors,
         })
     }
 
