@@ -388,18 +388,52 @@ impl Reader {
 
     /// A page of one of the URL's lists (FR-022, FR-023, FR-025).
     pub fn list(&mut self, id: i64, kind: ListKind, from: u32, count: u32) -> Result<ListPage> {
+        self.list_at(id, kind, None, from, count)
+    }
+
+    /// [`Reader::list`] keeping only the links at one position (spec 023
+    /// FR-024): a `Position` name or "unknown". Needs the positions worked
+    /// out, and applies to the Inlinks and Outlinks lists only.
+    pub fn list_at(
+        &mut self,
+        id: i64,
+        kind: ListKind,
+        position: Option<&str>,
+        from: u32,
+        count: u32,
+    ) -> Result<ListPage> {
         let count = count.min(1000);
+        if let Some(p) = position {
+            if p != "unknown" && !spiderlens_config::Position::ALL.iter().any(|x| x.as_str() == p) {
+                return Err(Error::invalid(format!("unknown position {p}")));
+            }
+            if !matches!(kind, ListKind::Inlinks | ListKind::Outlinks) {
+                return Err(Error::invalid("only inlinks and outlinks have positions"));
+            }
+            if !self.has_derived(Derived::LinkPositions)? {
+                return Err(Error::Unavailable(
+                    "Link positions are not worked out yet.".into(),
+                ));
+            }
+        }
         let (cond, join) = match kind {
             ListKind::Inlinks => ("l.to_id = ?1", "l.from_id"),
             ListKind::Outlinks => ("l.from_id = ?1", "l.to_id"),
             ListKind::Images => ("l.from_id = ?1 AND l.kind = 'image'", "l.to_id"),
             ListKind::Headings => return self.headings(id, from, count),
         };
-        let total: i64 =
-            self.conn
-                .query_row(&format!("SELECT COUNT(*) FROM links l WHERE {cond}"), [id], |r| {
-                    r.get(0)
-                })?;
+        let position_of = "CASE WHEN l.kind = 'anchor' THEN COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' \
+             WHEN 2 THEN 'header' WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
+             FROM link_positions p WHERE p.from_id = l.from_id AND p.pos = l.pos), 'unknown') END";
+        let cond = match position {
+            Some(_) => format!("{cond} AND {position_of} = ?4"),
+            None => format!("{cond} AND ?4 IS NULL"),
+        };
+        let total: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM links l WHERE {cond}"),
+            rusqlite::params![id, None::<i64>, None::<i64>, position],
+            |r| r.get(0),
+        )?;
         let text = if !self.features.has(Need::Extraction) {
             "NULL, 0, 0"
         } else if kind == ListKind::Images {
@@ -407,22 +441,20 @@ impl Reader {
         } else {
             "COALESCE(NULLIF(l.text, ''), l.alt), l.sponsored, l.ugc"
         };
-        let position = if kind != ListKind::Images && self.has_derived(Derived::LinkPositions)? {
-            "CASE WHEN l.kind = 'anchor' THEN COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' \
-             WHEN 2 THEN 'header' WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
-             FROM link_positions p WHERE p.from_id = l.from_id AND p.pos = l.pos), 'unknown') END"
+        let position_col = if kind != ListKind::Images && self.has_derived(Derived::LinkPositions)? {
+            position_of
         } else {
             "NULL"
         };
         let sql = format!(
             "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text},
-                    {position}
+                    {position_col}
              FROM links l JOIN urls x ON x.id = {join}
              WHERE {cond} ORDER BY l.rowid LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(rusqlite::params![id, count, from], |r| {
+            .query_map(rusqlite::params![id, count, from, position], |r| {
                 Ok(LinkRow {
                     id: r.get(0)?,
                     url: r.get(1)?,
