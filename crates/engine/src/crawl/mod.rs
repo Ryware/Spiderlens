@@ -4,8 +4,10 @@
 //! - `store` keeps the frontier on disk in the crawl file.
 //! - `runner` schedules requests breadth-first and politely.
 //! - `speed` adapts how many requests each site gets at once (spec 008).
+//! - `pace` explains what limits the crawl's speed, per site (spec 008).
 
 mod health;
+pub mod pace;
 pub mod reason;
 pub mod retry;
 mod runner;
@@ -18,7 +20,7 @@ mod window;
 pub use reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 pub use runner::{
     Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, PausedHost, Progress,
-    RunCommand, SitemapSummary, default_file_name, host_key, retry_preview,
+    RunCommand, SitemapSummary, SpeedNote, default_file_name, host_key, retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
 pub use store::{CrawlStore, LogEntry, UrlRow};

@@ -275,8 +275,13 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
                             } else {
                                 String::new()
                             };
+                            // What keeps it from going faster (spec 008 FR-028).
+                            let limit = match &p.limit {
+                                Some(l) if !p.waiting_for_host => format!("  ({})", l.message),
+                                _ => String::new(),
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
                         }
@@ -409,6 +414,10 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
             .unwrap_or_default();
         let err = h.error.as_deref().map(|e| format!(" ({e})")).unwrap_or_default();
         let _ = writeln!(out, "robots.txt       {}  {}{delay}{err}", h.host, h.robots);
+    }
+    // Why parts of the crawl were slow (spec 008 FR-021).
+    for e in &s.speed_events {
+        let _ = writeln!(out, "speed            {}", e.summary);
     }
     for m in &s.sitemaps {
         let err = m

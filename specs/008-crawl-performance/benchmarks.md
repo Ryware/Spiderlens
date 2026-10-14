@@ -28,3 +28,12 @@ Notes:
   starts at 2 requests and climbs; it reaches 32 after about 500 answers.
 - SC-002 measured 438/s over a 10,000 page run that includes the first
   seconds; the steady state on the server was 500/s.
+
+## Round 3: speed reasons and per-site breakdown (2026-10-14)
+
+Same machine; base is the spec 004 branch this builds on. 100,000 pages,
+Fast, two runs each, alternating: base 39.3 s and 35.3 s, this branch
+38.1 s and 35.7 s, so no measurable cost. Working out the limit and the
+per-site rows happens four times a second from counters already in memory
+(the queue window's per-site index, a per-site crawled count read once when
+a run starts), never from the crawl file.

@@ -226,3 +226,33 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {
+  // Spec 008 FR-028, FR-029: the reason in the status bar, every site's pace on click.
+  await page.keyboard.type("example.com");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() =>
+    window.spiderlens.crawls.progress({
+      crawled: 1200,
+      queued: 3800,
+      limit: { kind: "site_overload", host: "https://example.com:443", seconds_left: null, message: "https://example.com:443 answered 429 or 503 (overloaded), so it gets 4 at once." },
+      sites: [
+        { host: "https://example.com:443", state: "slowed_down", allowance: 4, max: 32, in_flight: 4, response_ms: 240, crawled: 1100, waiting: 3700, waiting_more: false, reason: "Answered 429 or 503 (overloaded), so cut to 4 at once.", seconds_left: null },
+        { host: "https://cdn.example.com:443", state: "speeding_up", allowance: 6, max: 32, in_flight: 6, response_ms: 35, crawled: 100, waiting: 100, waiting_more: false, reason: "6 of 32 at once, one more each time a round of answers comes back steady.", seconds_left: null },
+      ],
+      sites_total: 2,
+    }),
+  );
+  const trigger = page.getByRole("contentinfo", { name: "Crawl status" }).locator('[data-figure="speed"]');
+  await expect(trigger).toHaveText("Site overloaded · example.com");
+  await trigger.click();
+  const table = page.getByRole("table", { name: "Sites" });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  const box = (await page.getByRole("dialog").boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(1400);
+  await page.keyboard.press("Escape");
+  await expect(table).toBeHidden();
+});
