@@ -147,6 +147,7 @@ pub fn write_csv(
 ) -> Result<u64, ExportError> {
     let (conn, features) = connect(crawl)?;
     let c = compile(q, &features)?;
+    crate::values::apply(&conn, c.values)?;
     let cols = pick_columns(c.tab, columns)?;
     for d in &c.derived {
         crate::tabs::build_derived(&conn, *d)?;
@@ -174,7 +175,13 @@ pub fn write_csv(
     )?;
     let select: String = cols
         .iter()
-        .map(|(_, col)| if features.has(col.need) { col.expr } else { "NULL" })
+        .map(|(_, col)| {
+            if features.has(col.need) {
+                col.sql(c.values)
+            } else {
+                "NULL"
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let full = vec![(0u32, u32::try_from(total).unwrap_or(u32::MAX))];

@@ -22,6 +22,7 @@ url.workspace = true
 tempfile.workspace = true
 spiderlens-config.workspace = true
 spiderlens-test-fixtures.workspace = true
+spiderlens-render.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 proptest.workspace = true

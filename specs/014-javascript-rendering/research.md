@@ -138,6 +138,8 @@ The tabs of spec 007 are static SQL over `urls u`, `pages p`, `links l`, `direct
 
 **Risk**: a view over `urls` may stop SQLite from using the `urls_state` index in some tab conditions. The results benchmark (`crates/results/examples/bench.rs`) is run with and without the views; the fallback is to rewrite only the affected expressions with a `{pages}` placeholder.
 
+**Found during implementation (T028)**: the `urls` and `pages` views are plain LEFT JOINs of `rendered_pages`, which SQLite flattens, so lookups by key stay index lookups. The list tables cannot be shadowed the same way: `links`, `page_text`, `directives` and `structured_data` would need a UNION ALL of raw and rendered rows, and SQLite (3.53) does not push a correlated subquery's key into a compound view, so every row scanned the whole view. Those tables are not shadowed. The few tab expressions that read them (Inlinks, Outlinks, image alt and "Found on", second title, HTML canonical, meta robots and the directive filters) carry a written-out rendered variant (`ColumnDef::with_rendered`) that reads `links` minus `raw_only_links` plus `rendered_links`, or `rendered_text` and `rendered_directives`, each through its own index.
+
 ## R12. Closing the browser when SpiderLens dies (FR-046, SC-009)
 
 Normal exits (completion, pause, stop, Ctrl-C, window close) close the browser from Rust. A crash or a kill of SpiderLens is harder: the workspace forbids `unsafe` code (`Cargo.toml:57`), which rules out `prctl(PR_SET_PDEATHSIG)` on Linux and Job Objects on Windows through raw system calls.

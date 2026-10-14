@@ -7,6 +7,7 @@ use ts_rs::TS;
 
 use crate::reader::Reader;
 use crate::tabs::{self, Derived};
+use crate::values::Values;
 use crate::view::UrlScope;
 use crate::{Error, Result};
 
@@ -25,7 +26,20 @@ pub struct FilterCounts {
 
 impl Reader {
     pub fn counts(&mut self, tab: &str, scope: UrlScope) -> Result<FilterCounts> {
+        self.counts_with(tab, scope, None)
+    }
+
+    /// [`Self::counts`] for raw or rendered values (spec 014 FR-021);
+    /// None means rendered when the crawl has rendering.
+    pub fn counts_with(
+        &mut self,
+        tab: &str,
+        scope: UrlScope,
+        values: Option<Values>,
+    ) -> Result<FilterCounts> {
         let t = tabs::tab(tab).ok_or_else(|| Error::invalid(format!("unknown tab {tab:?}")))?;
+        let values = Values::resolve(values, &self.features);
+        self.use_values(values)?;
         let available: Vec<_> = t.filters.iter().filter(|f| self.features.has(f.need)).collect();
         let derived: Vec<Derived> = available.iter().filter_map(|f| f.derived).collect();
         self.ensure_derived(derived)?;
@@ -37,7 +51,7 @@ impl Reader {
             }
             sql.push_str(&format!(
                 "COALESCE(SUM(CASE WHEN ({}) THEN 1 ELSE 0 END), 0)",
-                f.cond
+                f.sql(values)
             ));
         }
         sql.push_str(&format!(" FROM urls u NOT INDEXED WHERE ({})", t.eligible));

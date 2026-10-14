@@ -17,6 +17,7 @@ mod sql;
 #[doc(hidden)]
 pub mod synth;
 mod tabs;
+mod values;
 mod view;
 
 pub use counts::FilterCounts;
@@ -27,6 +28,7 @@ pub use reader::Reader;
 pub use rusqlite::InterruptHandle;
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
 pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, tab, tabs};
+pub use values::Values;
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
 
 #[derive(Debug, thiserror::Error)]

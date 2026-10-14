@@ -11,6 +11,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::features::Features;
 use crate::tabs::Derived;
+use crate::values::{self, Values};
 use crate::view::View;
 use crate::{Error, Result, sql};
 
@@ -22,6 +23,8 @@ pub struct Reader {
     pub(crate) next_view: u32,
     /// Data version each derived table was built from.
     pub(crate) derived: HashMap<Derived, u64>,
+    /// The values the connection's temporary views show now.
+    values: Values,
     version: u64,
     data_version: i64,
 }
@@ -76,6 +79,7 @@ impl Reader {
             views: HashMap::new(),
             next_view: 1,
             derived: HashMap::new(),
+            values: Values::Raw,
             version: 1,
             data_version,
         })
@@ -97,6 +101,18 @@ impl Reader {
             self.version += 1;
         }
         Ok(self.version)
+    }
+
+    /// Switches the connection to raw or rendered values (spec 014). The
+    /// derived tables were built from the other values, so they are built
+    /// again when next needed.
+    pub(crate) fn use_values(&mut self, values: Values) -> Result<()> {
+        if values != self.values {
+            values::apply(&self.conn, values)?;
+            self.values = values;
+            self.derived.clear();
+        }
+        Ok(())
     }
 
     /// Makes sure each derived table is current for this data version.

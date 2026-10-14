@@ -63,4 +63,7 @@ export const needReason: Record<Need, string> = {
   attempts: "Not collected yet: retry attempts are recorded from spec 004.",
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
+  rendering: "This crawl was not rendered.",
+  rendered_html: "This crawl does not store rendered HTML.",
+  screenshots: "This crawl did not take screenshots.",
 };

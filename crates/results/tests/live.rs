@@ -10,6 +10,7 @@ fn view(sort: Option<&str>) -> ViewQuery {
         filter: "all".into(),
         scope: UrlScope::All,
         search: String::new(),
+        values: None,
         sort: sort.map(|c| Sort {
             column: c.into(),
             desc: false,

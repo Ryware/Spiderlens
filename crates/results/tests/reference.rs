@@ -20,6 +20,7 @@ fn reference_files_show_every_crawled_url() {
             filter: "all".into(),
             scope: UrlScope::All,
             search: String::new(),
+            values: None,
             sort: None,
         };
         let page = r.open_view(&query, 50).unwrap();

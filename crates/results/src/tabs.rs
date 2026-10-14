@@ -14,6 +14,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::values::Values;
+
 /// Data a column or filter needs from the crawl file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +32,13 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// The crawl rendered pages (spec 014): rendered values, the
+    /// JavaScript tab.
+    Rendering,
+    /// The rendered HTML is stored (spec 014 FR-032).
+    RenderedHtml,
+    /// Screenshots are stored (spec 014 FR-033).
+    Screenshots,
 }
 
 impl Need {
@@ -44,6 +53,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Rendering => "This crawl was not rendered.",
+            Self::RenderedHtml => "This crawl does not store rendered HTML.",
+            Self::Screenshots => "This crawl did not take screenshots.",
         }
     }
 
@@ -55,6 +67,9 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Rendering => "rendering",
+            Self::RenderedHtml => "rendered_html",
+            Self::Screenshots => "screenshots",
         }
     }
 }
@@ -111,6 +126,12 @@ pub struct ColumnDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// The expression in rendered mode, when `expr` reads a table the
+    /// rendered values do not shadow (links, page text, directives; spec
+    /// 014 research R11 fallback).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub rendered: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -125,6 +146,10 @@ pub struct FilterDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// The condition in rendered mode, see [`ColumnDef::rendered`].
+    #[serde(skip)]
+    #[ts(skip)]
+    pub rendered: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -141,6 +166,26 @@ pub struct TabDef {
     pub search_column: Option<&'static str>,
     /// Offers the internal / external switch (Response codes).
     pub scoped: bool,
+}
+
+impl ColumnDef {
+    /// The SQL expression for these values.
+    pub(crate) fn sql(&self, values: Values) -> &'static str {
+        match (values, self.rendered) {
+            (Values::Rendered, Some(r)) => r,
+            _ => self.expr,
+        }
+    }
+}
+
+impl FilterDef {
+    /// The SQL condition for these values.
+    pub(crate) fn sql(&self, values: Values) -> &'static str {
+        match (values, self.rendered) {
+            (Values::Rendered, Some(r)) => r,
+            _ => self.cond,
+        }
+    }
 }
 
 impl TabDef {
@@ -190,6 +235,54 @@ const H1_1: &str = "(SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id)";
 const IMG_ALT: &str =
     "(SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1)";
 
+/// The page has a rendered version (spec 014): its rendered values replace
+/// the raw ones in rendered mode.
+macro_rules! rendered_page {
+    () => {
+        "EXISTS (SELECT 1 FROM main.rendered_pages rp WHERE rp.url_id = u.id)"
+    };
+}
+
+/// A raw link row of `l` that is still in its page after rendering.
+macro_rules! live_raw {
+    () => {
+        "NOT EXISTS (SELECT 1 FROM main.raw_only_links g WHERE g.from_id = l.from_id AND g.pos = l.pos)"
+    };
+}
+
+/// Links in rendered mode: raw links still there after rendering plus
+/// links found only after rendering. Each side is an indexed lookup, so
+/// these are written out per expression rather than as a UNION view,
+/// which SQLite cannot search by index from a correlated subquery
+/// (research R11 fallback, measured in T030).
+macro_rules! rendered_links_count {
+    ($key:literal) => {
+        concat!(
+            "((SELECT COUNT(*) FROM links l WHERE l.",
+            $key,
+            " = u.id AND ",
+            live_raw!(),
+            ") + (SELECT COUNT(*) FROM rendered_links l WHERE l.",
+            $key,
+            " = u.id))"
+        )
+    };
+}
+
+const IMG_ALT_RENDERED: &str = concat!(
+    "(SELECT a FROM (SELECT l.alt AS a, l.rowid AS k FROM links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
+    live_raw!(),
+    " UNION ALL SELECT l.alt, 1099511627776 + l.rowid FROM rendered_links l \
+     WHERE l.to_id = u.id AND l.kind = 'image') ORDER BY k LIMIT 1)"
+);
+
+const IMG_ALT_LENGTH_RENDERED: &str = concat!(
+    "length((SELECT a FROM (SELECT l.alt AS a, l.rowid AS k FROM links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
+    live_raw!(),
+    " UNION ALL SELECT l.alt, 1099511627776 + l.rowid FROM rendered_links l \
+     WHERE l.to_id = u.id AND l.kind = 'image') ORDER BY k LIMIT 1))"
+);
+
 const fn col(
     id: &'static str,
     label: &'static str,
@@ -206,10 +299,15 @@ const fn col(
         default_visible: true,
         need: Need::Base,
         derived: None,
+        rendered: None,
     }
 }
 
 impl ColumnDef {
+    const fn with_rendered(mut self, expr: &'static str) -> Self {
+        self.rendered = Some(expr);
+        self
+    }
     const fn hidden(mut self) -> Self {
         self.default_visible = false;
         self
@@ -231,10 +329,15 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         cond,
         need: Need::Base,
         derived: None,
+        rendered: None,
     }
 }
 
 impl FilterDef {
+    const fn with_rendered(mut self, cond: &'static str) -> Self {
+        self.rendered = Some(cond);
+        self
+    }
     const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
@@ -302,14 +405,24 @@ mod c {
         "(SELECT COUNT(*) FROM links l WHERE l.to_id = u.id)",
         ValueKind::Int,
         80,
-    );
+    )
+    .with_rendered(rendered_links_count!("to_id"));
     pub const OUTLINKS: ColumnDef = col(
         "outlinks",
         "Outlinks",
         "(SELECT COUNT(*) FROM links l WHERE l.from_id = u.id)",
         ValueKind::Int,
         80,
-    );
+    )
+    .with_rendered(rendered_links_count!("from_id"));
+    /// Whether a row shows rendered or raw values (spec 014 FR-021).
+    pub const VALUES: ColumnDef = col("values", "Values", "'Raw'", ValueKind::Text, 90)
+        .hidden()
+        .with_rendered(concat!(
+            "CASE WHEN ",
+            rendered_page!(),
+            " THEN 'Rendered' ELSE 'Raw' END"
+        ));
     pub const REDIRECT_TARGET: ColumnDef = col(
         "redirect_target",
         "Redirect target",
@@ -380,6 +493,8 @@ fn content_tab(
 ) -> TabDef {
     let mut fs = vec![filter("all", "All", "1")];
     fs.extend(filters.into_iter().map(|f| f.needs(Need::Extraction)));
+    let mut columns = columns;
+    columns.push(c::VALUES);
     TabDef {
         id,
         title,
@@ -408,6 +523,23 @@ macro_rules! directive {
     };
 }
 
+/// [`directive!`] in rendered mode: the rendered page's meta directives,
+/// with the header ones, which rendering does not change (FR-019).
+macro_rules! directive_rendered {
+    ($names:literal) => {
+        concat!(
+            "(EXISTS (SELECT 1 FROM directives d WHERE d.url_id = u.id AND (d.source = 'header' OR NOT ",
+            rendered_page!(),
+            ") AND (d.crawler = 'all' OR d.crawler = robots_token()) AND d.directive IN (",
+            $names,
+            ")) OR EXISTS (SELECT 1 FROM rendered_directives d WHERE d.url_id = u.id AND d.origin <> 'raw' \
+             AND (d.crawler = 'all' OR d.crawler = robots_token()) AND d.directive IN (",
+            $names,
+            ")))"
+        )
+    };
+}
+
 /// The directives from one source, as written: `noindex, max-snippet:50`,
 /// with the crawler named when it is not all of them.
 macro_rules! directives_from {
@@ -430,6 +562,50 @@ macro_rules! canonical_from {
              WHERE l.from_id = u.id AND l.kind = 'canonical' AND l.source = '",
             $source,
             "' ORDER BY l.pos LIMIT 1)"
+        )
+    };
+}
+
+/// The rendered page's meta directives as written, else the raw ones.
+const META_DIRECTIVES_RENDERED: &str = concat!(
+    "CASE WHEN ",
+    rendered_page!(),
+    " THEN (SELECT group_concat(v, ', ') FROM (SELECT CASE WHEN d.crawler = 'all' THEN '' ELSE d.crawler || ': ' END \
+     || d.directive || COALESCE(':' || d.value, '') AS v FROM rendered_directives d \
+     WHERE d.url_id = u.id AND d.origin <> 'raw' ORDER BY d.pos)) ELSE ",
+    directives_from!("meta"),
+    " END"
+);
+
+/// [`canonical_from!`] in rendered mode: raw canonicals still there, then
+/// those found only after rendering.
+macro_rules! canonical_from_rendered {
+    ($source:literal) => {
+        concat!(
+            "(SELECT x FROM (SELECT COALESCE(t.url, l.target) AS x, l.pos AS p FROM links l \
+             LEFT JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id AND l.kind = 'canonical' AND l.source = '",
+            $source,
+            "' AND ",
+            live_raw!(),
+            " UNION ALL SELECT COALESCE(t.url, l.target), l.pos FROM rendered_links l \
+             LEFT JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id AND l.kind = 'canonical' AND l.source = '",
+            $source,
+            "') ORDER BY p LIMIT 1)"
+        )
+    };
+}
+
+/// [`image_use!`] in rendered mode.
+macro_rules! image_use_rendered {
+    ($cond:literal) => {
+        concat!(
+            "(EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
+            live_raw!(),
+            " AND ",
+            $cond,
+            ") OR EXISTS (SELECT 1 FROM rendered_links l WHERE l.to_id = u.id AND l.kind = 'image' AND ",
+            $cond,
+            "))"
         )
     };
 }
@@ -577,6 +753,7 @@ fn build() -> Vec<TabDef> {
                 c::FOUND_ON,
                 c::SOURCE,
                 c::IN_SITEMAP,
+                c::VALUES,
             ],
             filters: TYPE_FILTERS.to_vec(),
             search_column: Some("title"),
@@ -701,9 +878,17 @@ fn build() -> Vec<TabDef> {
                     Text,
                     260,
                 )
+                .with_rendered(concat!(
+                    "CASE WHEN ",
+                    rendered_page!(),
+                    " THEN (SELECT t.text FROM rendered_text t WHERE t.url_id = u.id AND t.kind = 'title' \
+                     AND t.pos = 1 AND t.origin <> 'raw') \
+                     ELSE (SELECT t.text FROM page_text t WHERE t.url_id = u.id AND t.kind = 'title' AND t.pos = 1) END"
+                ))
                 .hidden(),
                 c::H1.hidden(),
                 c::INDEXABILITY.hidden(),
+                c::VALUES,
             ],
             filters: vec![
                 filter("all", "All", "1"),
@@ -787,14 +972,15 @@ fn build() -> Vec<TabDef> {
             eligible: "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')",
             columns: vec![
                 c::ADDRESS,
-                ext("alt", "Alt text", IMG_ALT, Text, 280),
+                ext("alt", "Alt text", IMG_ALT, Text, 280).with_rendered(IMG_ALT_RENDERED),
                 ext(
                     "alt_length",
                     "Alt length",
                     "length((SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1))",
                     Int,
                     90,
-                ),
+                )
+                .with_rendered(IMG_ALT_LENGTH_RENDERED),
                 c::STATUS_CODE,
                 c::SIZE,
                 col(
@@ -803,14 +989,23 @@ fn build() -> Vec<TabDef> {
                     "(SELECT COUNT(DISTINCT l.from_id) FROM links l WHERE l.to_id = u.id AND l.kind = 'image')",
                     Int,
                     90,
-                ),
+                )
+                .with_rendered(concat!(
+                    "(SELECT COUNT(DISTINCT f) FROM (SELECT l.from_id AS f FROM links l WHERE l.to_id = u.id \
+                     AND l.kind = 'image' AND ",
+                    live_raw!(),
+                    " UNION ALL SELECT l.from_id FROM rendered_links l WHERE l.to_id = u.id AND l.kind = 'image'))"
+                )),
                 c::FINAL_STATE.hidden(),
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing_alt", "Missing alt attribute", image_use!("l.alt IS NULL")).needs(Need::Extraction),
-                filter("empty_alt", "Empty alt text", image_use!("l.alt = ''")).needs(Need::Extraction),
+                filter("missing_alt", "Missing alt attribute", image_use!("l.alt IS NULL"))
+                    .with_rendered(image_use_rendered!("l.alt IS NULL")).needs(Need::Extraction),
+                filter("empty_alt", "Empty alt text", image_use!("l.alt = ''"))
+                    .with_rendered(image_use_rendered!("l.alt = ''")).needs(Need::Extraction),
                 filter("alt_over_100", "Alt text over 100 characters", image_use!("length(l.alt) > 100"))
+                    .with_rendered(image_use_rendered!("length(l.alt) > 100"))
                     .needs(Need::Extraction),
                 filter("over_100kb", "Over 100 KB", "u.size_bytes > 102400").needs(Need::Timing),
             ],
@@ -822,7 +1017,8 @@ fn build() -> Vec<TabDef> {
             "Canonicals",
             vec![
                 c::ADDRESS,
-                ext("canonical_html", "Canonical (HTML)", canonical_from!("html"), Url, 320),
+                ext("canonical_html", "Canonical (HTML)", canonical_from!("html"), Url, 320)
+                    .with_rendered(canonical_from_rendered!("html")),
                 ext("canonical_http", "Canonical (HTTP header)", canonical_from!("header"), Url, 320),
                 c::INDEXABILITY,
             ],
@@ -840,7 +1036,8 @@ fn build() -> Vec<TabDef> {
             "Directives",
             vec![
                 c::ADDRESS,
-                ext("meta_robots", "Meta robots", directives_from!("meta"), Text, 220),
+                ext("meta_robots", "Meta robots", directives_from!("meta"), Text, 220)
+                    .with_rendered(META_DIRECTIVES_RENDERED),
                 ext("x_robots_tag", "X-Robots-Tag", directives_from!("header"), Text, 220),
                 c::INDEXABILITY,
             ],
@@ -849,15 +1046,22 @@ fn build() -> Vec<TabDef> {
                 filter("noindex", "Noindex", "u.noindex = 1"),
                 filter("follow", "Follow", "COALESCE(u.nofollow, 0) = 0"),
                 filter("nofollow", "Nofollow", "u.nofollow = 1"),
-                filter("none", "None", directive!("'none'")),
-                filter("noarchive", "Noarchive", directive!("'noarchive'")),
-                filter("nosnippet", "Nosnippet", directive!("'nosnippet'")),
+                filter("none", "None", directive!("'none'"))
+                    .with_rendered(directive_rendered!("'none'")),
+                filter("noarchive", "Noarchive", directive!("'noarchive'"))
+                    .with_rendered(directive_rendered!("'noarchive'")),
+                filter("nosnippet", "Nosnippet", directive!("'nosnippet'"))
+                    .with_rendered(directive_rendered!("'nosnippet'")),
                 filter(
                     "max_preview",
                     "Max-snippet / max-image-preview / max-video-preview",
                     directive!("'max-snippet', 'max-image-preview', 'max-video-preview'"),
-                ),
-                filter("unavailable_after", "Unavailable_after", directive!("'unavailable_after'")),
+                )
+                .with_rendered(directive_rendered!(
+                    "'max-snippet', 'max-image-preview', 'max-video-preview'"
+                )),
+                filter("unavailable_after", "Unavailable_after", directive!("'unavailable_after'"))
+                    .with_rendered(directive_rendered!("'unavailable_after'")),
             ],
             "meta_robots",
         ),

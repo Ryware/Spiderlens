@@ -18,6 +18,7 @@ fn q(tab: &str, filter: &str, search: &str, sort: Option<(&str, bool)>) -> ViewQ
         filter: filter.into(),
         scope: UrlScope::All,
         search: search.into(),
+        values: None,
         sort: sort.map(|(c, d)| Sort {
             column: c.into(),
             desc: d,

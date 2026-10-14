@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 use crate::reader::Reader;
 use crate::tabs::{self, ColumnDef, Derived, TabDef};
+use crate::values::Values;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -46,6 +47,11 @@ pub struct ViewQuery {
     pub search: String,
     #[serde(default)]
     pub sort: Option<Sort>,
+    /// Raw or rendered values of a rendered crawl (spec 014 FR-021);
+    /// omitted means rendered when the crawl has rendering.
+    #[serde(default)]
+    #[ts(optional)]
+    pub values: Option<Values>,
 }
 
 /// A page of rows. Each row is `[id, value of each tab column…]` in the
@@ -82,6 +88,8 @@ pub(crate) struct View {
     pub search: Option<String>,
     pub derived: Vec<Derived>,
     pub version: u64,
+    /// The values the view shows; its rows are read in this mode.
+    pub values: Values,
     pub total: Option<u32>,
     /// `temp.view_<id>_<generation>` once materialised.
     pub table: Option<String>,
@@ -95,11 +103,13 @@ pub(crate) struct Compiled {
     pub order_sql: String,
     pub search: Option<String>,
     pub derived: Vec<Derived>,
+    pub values: Values,
 }
 
 /// Turns a view query into SQL fragments, checking every id against the
 /// tab definitions (ids never reach SQL as text).
 pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compiled> {
+    let values = Values::resolve(q.values, features);
     let tab = tabs::tab(&q.tab).ok_or_else(|| Error::invalid(format!("unknown tab {:?}", q.tab)))?;
     let filter = tab
         .filter(&q.filter)
@@ -121,7 +131,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
         }
     };
     add(filter.derived);
-    let mut where_sql = format!("({}) AND ({})", tab.eligible, filter.cond);
+    let mut where_sql = format!("({}) AND ({})", tab.eligible, filter.sql(values));
     match (tab.scoped, q.scope) {
         (true, UrlScope::Internal) => where_sql.push_str(" AND u.internal = 1"),
         (true, UrlScope::External) => where_sql.push_str(" AND u.internal = 0"),
@@ -134,7 +144,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
             .search_column
             .and_then(|c| tab.column(c))
             .filter(|c| features.has(c.need))
-            .map(|c| format!(" OR ci_contains({}, ?1)", c.expr))
+            .map(|c| format!(" OR ci_contains({}, ?1)", c.sql(values)))
             .unwrap_or_default();
         where_sql.push_str(&format!(" AND (ci_contains(u.url, ?1){main})"));
     }
@@ -145,7 +155,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
                 .column(&s.column)
                 .ok_or_else(|| Error::invalid(format!("unknown column {:?} on {}", s.column, tab.id)))?;
             add(c.derived);
-            sort_sql(c, s.desc, features)
+            sort_sql(c, s.desc, features, values)
         }
     };
     // Columns read derived tables too.
@@ -160,17 +170,18 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
         order_sql,
         search,
         derived,
+        values,
     })
 }
 
 /// FR-015: numbers numerically, text naturally and case-insensitively,
 /// empty values last in both directions, ties by discovery order.
-fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features) -> String {
+fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features, values: Values) -> String {
     if !features.has(c.need) {
         return "u.id".into();
     }
     let dir = if desc { "DESC" } else { "ASC" };
-    let e = c.expr;
+    let e = c.sql(values);
     if c.kind.is_text() {
         format!("(({e}) IS NULL OR ({e}) = '') ASC, natkey({e}) {dir}, u.id ASC")
     } else {
@@ -179,12 +190,12 @@ fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features) -> String {
 }
 
 /// `u.id, <col>, <col>…`: unavailable columns read as NULL.
-pub(crate) fn select_list(tab: &TabDef, features: &crate::Features) -> String {
+pub(crate) fn select_list(tab: &TabDef, features: &crate::Features, values: Values) -> String {
     let mut s = String::from("u.id");
     for c in &tab.columns {
         s.push_str(", ");
         if features.has(c.need) {
-            s.push_str(c.expr);
+            s.push_str(c.sql(values));
         } else {
             s.push_str("NULL");
         }
@@ -236,6 +247,7 @@ impl Reader {
     /// Opens a view and returns its first `count` rows (plan D4 step 1).
     pub fn open_view(&mut self, q: &ViewQuery, count: u32) -> Result<RowPage> {
         let c = compile(q, &self.features)?;
+        self.use_values(c.values)?;
         self.ensure_derived(c.derived.iter().copied())?;
         let version = self.version()?;
         let id = self.next_view;
@@ -248,6 +260,7 @@ impl Reader {
             search: c.search,
             derived: c.derived,
             version,
+            values: c.values,
             total: None,
             table: None,
             generation: 0,
@@ -269,6 +282,7 @@ impl Reader {
     }
 
     fn rebuild(&mut self, view: u32) -> Result<u32> {
+        self.use_values(self.views[&view].values)?;
         let derived = self.views[&view].derived.clone();
         self.ensure_derived(derived)?;
         let version = self.version()?;
@@ -304,11 +318,14 @@ impl Reader {
     /// `count` rows from position `from` (plan D4).
     pub fn rows(&mut self, view: u32, from: u32, count: u32) -> Result<RowPage> {
         let count = count.min(1000);
-        let v = self
+        let values = self
             .views
             .get(&view)
-            .ok_or_else(|| Error::invalid("view closed"))?;
-        let select = select_list(v.tab, &self.features);
+            .ok_or_else(|| Error::invalid("view closed"))?
+            .values;
+        self.use_values(values)?;
+        let v = &self.views[&view];
+        let select = select_list(v.tab, &self.features, values);
         let width = v.tab.columns.len() + 1;
         let rows = if let Some(table) = &v.table {
             let sql = format!(
