@@ -432,4 +432,18 @@ async fn us4_settings_change_thresholds_priorities_and_switch_rules_off() {
     );
     assert!(r.set_issue_settings(&bad).iter().any(|n| n.error));
     assert_eq!(count(&mut r, "title.over").name, "Page title: over 70 characters");
+
+    // SC-004: the change updated the built hits in place; a fresh
+    // evaluation with the same settings gives the same issues.
+    let mut fresh = Reader::open(&c.path).unwrap();
+    assert!(fresh.set_issue_settings(&s).is_empty());
+    let key = |r: &mut Reader| {
+        r.issues_summary(false)
+            .unwrap()
+            .issues
+            .into_iter()
+            .map(|i| (i.id, i.count, i.priority, i.name))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(key(&mut fresh), key(&mut r));
 }

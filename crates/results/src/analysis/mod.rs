@@ -300,6 +300,7 @@ impl crate::Reader {
     ) -> Result<AnalysisReport> {
         let report = run(&self.conn, "temp", PASSES, progress, cancel)?;
         if !report.ran.is_empty() {
+            self.derived.remove(&crate::tabs::Derived::IssueHits);
             self.bump_version();
         }
         Ok(report)

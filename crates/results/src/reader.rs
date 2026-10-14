@@ -23,12 +23,15 @@ pub struct Reader {
     pub(crate) features: Features,
     pub(crate) views: HashMap<u32, View>,
     pub(crate) next_view: u32,
-    /// Data version each derived table was built from.
+    /// Crawl data generation each derived table was built from. A settings
+    /// change removes the issue hits itself; the other tables stay.
     pub(crate) derived: HashMap<Derived, u64>,
     /// Issue settings in force, and the values `thr()` reads (spec 009).
     pub(crate) issue_settings: ResolvedSettings,
     pub(crate) thresholds: Arc<RwLock<Thresholds>>,
     version: u64,
+    /// Counts crawl data changes only (not settings changes).
+    pub(crate) data_gen: u64,
     data_version: i64,
 }
 
@@ -113,6 +116,7 @@ impl Reader {
             issue_settings,
             thresholds,
             version: 1,
+            data_gen: 1,
             data_version,
         })
     }
@@ -131,6 +135,7 @@ impl Reader {
         if dv != self.data_version {
             self.data_version = dv;
             self.version += 1;
+            self.data_gen += 1;
         }
         Ok(self.version)
     }
@@ -143,15 +148,16 @@ impl Reader {
 
     /// Makes sure each derived table is current for this data version.
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
-        let v = self.version()?;
+        self.version()?;
+        let g = self.data_gen;
         for d in needed {
-            if self.derived.get(&d) != Some(&v) {
+            if self.derived.get(&d) != Some(&g) {
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
                 } else {
                     crate::tabs::build_derived(&self.conn, d)?;
                 }
-                self.derived.insert(d, self.version);
+                self.derived.insert(d, g);
             }
         }
         Ok(())

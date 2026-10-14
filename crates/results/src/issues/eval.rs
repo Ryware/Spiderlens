@@ -127,16 +127,59 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
          CREATE TEMP TABLE issue_rules(idx INTEGER PRIMARY KEY, scope INTEGER NOT NULL, prio INTEGER NOT NULL);
          CREATE TEMP TABLE issue_hits(rule INTEGER NOT NULL, url_id INTEGER NOT NULL, PRIMARY KEY (rule, url_id)) WITHOUT ROWID;",
     )?;
-    {
-        let mut ins = conn.prepare("INSERT INTO temp.issue_rules VALUES (?1, ?2, ?3)")?;
-        for &i in &rules {
-            let scope = Scope::ALL
-                .iter()
-                .position(|s| *s == catalogue()[i].scope)
-                .unwrap_or(0);
-            ins.execute((i as i64, scope as i64, settings.rules[i].priority as i64))?;
+    fill_rules(conn, &rules, settings)?;
+    eval_rules(conn, &rules)?;
+    conn.execute_batch("CREATE INDEX temp.issue_hits_url ON issue_hits(url_id);")?;
+    Ok(())
+}
+
+/// Brings built hits from `old` settings to `new` (SC-004): priorities
+/// are a table update, and only rules switched on or off or given another
+/// threshold are evaluated again. Each rule reads only its own threshold.
+fn update_hits(
+    conn: &Connection,
+    features: &Features,
+    old: &ResolvedSettings,
+    new: &ResolvedSettings,
+) -> Result<()> {
+    let rules = runnable(features, new);
+    let changed: Vec<usize> = (0..catalogue().len())
+        .filter(|&i| {
+            old.rules[i].enabled != new.rules[i].enabled || old.rules[i].threshold != new.rules[i].threshold
+        })
+        .collect();
+    conn.execute_batch("SAVEPOINT issue_update")?;
+    let result = (|| {
+        conn.execute("DELETE FROM temp.issue_rules", [])?;
+        fill_rules(conn, &rules, new)?;
+        let mut del = conn.prepare("DELETE FROM temp.issue_hits WHERE rule = ?1")?;
+        for &i in &changed {
+            del.execute([i as i64])?;
         }
+        let again: Vec<usize> = changed.iter().copied().filter(|i| rules.contains(i)).collect();
+        eval_rules(conn, &again)
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("RELEASE issue_update")?,
+        Err(_) => conn.execute_batch("ROLLBACK TO issue_update; RELEASE issue_update")?,
     }
+    result
+}
+
+fn fill_rules(conn: &Connection, rules: &[usize], settings: &ResolvedSettings) -> Result<()> {
+    let mut ins = conn.prepare("INSERT INTO temp.issue_rules VALUES (?1, ?2, ?3)")?;
+    for &i in rules {
+        let scope = Scope::ALL
+            .iter()
+            .position(|s| *s == catalogue()[i].scope)
+            .unwrap_or(0);
+        ins.execute((i as i64, scope as i64, settings.rules[i].priority as i64))?;
+    }
+    Ok(())
+}
+
+/// Adds the hits of `rules` to `temp.issue_hits`.
+fn eval_rules(conn: &Connection, rules: &[usize]) -> Result<()> {
     let mut hits: Vec<(i64, i64)> = Vec::new();
     for scope in Scope::ALL.iter() {
         let mine: Vec<usize> = rules
@@ -186,7 +229,6 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
         }
     }
     conn.execute_batch("RELEASE issue_hits")?;
-    conn.execute_batch("CREATE INDEX temp.issue_hits_url ON issue_hits(url_id);")?;
     Ok(())
 }
 
@@ -335,9 +377,21 @@ impl Reader {
         }
         if resolved != self.issue_settings {
             *self.thresholds.write().unwrap_or_else(|e| e.into_inner()) = resolved.thresholds();
-            self.issue_settings = resolved;
-            // Everything reading thresholds or hits is stale now.
-            self.derived.remove(&Derived::IssueHits);
+            let old = std::mem::replace(&mut self.issue_settings, resolved);
+            // Hits built on current data are updated in place; a newly
+            // enabled rule's derived tables are built first.
+            let current = self.derived.contains_key(&Derived::IssueHits)
+                && self.version().is_ok()
+                && self.derived.get(&Derived::IssueHits) == Some(&self.data_gen);
+            let updated = current
+                && self
+                    .ensure_derived(dependencies(&self.features, &self.issue_settings))
+                    .and_then(|()| update_hits(&self.conn, &self.features, &old, &self.issue_settings))
+                    .is_ok();
+            if !updated {
+                self.derived.remove(&Derived::IssueHits);
+            }
+            // Views and counts reading thresholds or hits refresh.
             self.bump_version();
         }
         notices
