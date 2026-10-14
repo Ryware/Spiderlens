@@ -60,5 +60,5 @@ Code in one draft PR on branch `009-issue-rules-engine`. [P] = can run in parall
 ## Polish
 
 - [x] T025 Benchmarks in `benchmarks.md`: 100k crawl with live evaluation (SC-002), final pass 100k and 1M (SC-003), setting change (SC-004), memory (SC-006); extraction speed with readability against the 005 benchmark
-- [ ] T026 Screenshots of the Issues sidebar, header, inspector and settings in light and dark, `screenshots/`
+- [x] T026 Screenshots of the Issues sidebar, header, inspector and settings in light and dark, `screenshots/`
 - [ ] T027 `/speckit-converge` reports Converged
