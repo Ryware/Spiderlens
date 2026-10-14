@@ -25,7 +25,7 @@ pub use find::{
     should_offer_download,
 };
 pub use guard::{GUARD_ARG, parse_guard_args, run_guard};
-pub use launch::{launch_count, sweep_stale_profiles};
+pub use launch::{default_concurrency, launch_count, sweep_stale_profiles};
 pub use types::*;
 
 /// The pinned download for this platform, or `None` where Chrome for

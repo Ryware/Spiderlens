@@ -1,0 +1,376 @@
+//! The render stage of a running crawl (spec 014 plan D2, D8).
+//!
+//! The coordinator owns one [`RenderStage`] when the crawl renders. Pages
+//! wait in the `renders` table (the queue lives in the file, not in
+//! memory); the stage keeps a small window of the next ones, starts up to
+//! `limit` render tasks, and each task renders, extracts both versions and
+//! compares them off the coordinator, then reports a [`Rendered`].
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use spiderlens_config::{CrawlConfig, UaPreset, WindowPreset};
+use spiderlens_render::{
+    BlockSet, Browser, BrowserInfo, InternalHosts, LaunchError, LaunchOptions, MainResponse, Network,
+    RenderJob, RenderOutcome, ScreenshotOptions, Window,
+};
+use tokio::sync::{RwLock, Semaphore};
+use url::Url;
+
+use super::net::{EngineNet, NetShared, Note};
+use crate::crawl::store::{CrawlStore, RenderEntry, Result as StoreResult};
+use crate::extract::compare::{Comparison, compare};
+use crate::extract::{self, HeaderFacts, PageData, PageInput, body, challenge};
+
+/// Queued renders held in memory at once.
+const WINDOW: usize = 64;
+/// Tries per page: the first and one retry after a crash (FR-042).
+pub(crate) const MAX_ATTEMPTS: u32 = 2;
+
+/// What one render task reports to the coordinator.
+pub(crate) struct Rendered {
+    /// `attempts` counts this try.
+    pub entry: RenderEntry,
+    pub outcome: RenderOutcome,
+    /// What the engine alone knows about each request, in request order.
+    pub notes: Vec<(Url, Note)>,
+    pub raw: Option<PageData>,
+    /// None when the render produced no HTML.
+    pub rendered: Option<Result<PageData, String>>,
+    pub comparison: Option<Comparison>,
+    pub bot_challenge: bool,
+    /// From the stored response headers; the same for both versions.
+    pub header_facts: HeaderFacts,
+    /// Compressed serialised DOM and its size, when HTML is kept.
+    pub html: Option<(Vec<u8>, usize)>,
+}
+
+/// The parts of every page's job that come from the settings.
+struct JobTemplate {
+    user_agent: String,
+    window: Window,
+    max_time: Duration,
+    min_wait: Duration,
+    block: BlockSet,
+    internal: InternalHosts,
+    screenshot: bool,
+}
+
+pub(crate) struct RenderStage {
+    browser: Arc<RwLock<Browser>>,
+    restarting: Arc<AtomicBool>,
+    net: Arc<NetShared>,
+    template: JobTemplate,
+    queue: VecDeque<RenderEntry>,
+    last_seq: Option<i64>,
+    /// The last refill found every queued row: refill again only after
+    /// [`Self::on_enqueued`].
+    exhausted: bool,
+    /// Render tasks running.
+    pub open: u32,
+    /// Renders allowed at once.
+    pub limit: u32,
+}
+
+/// The rendering window the settings ask for (FR-008): `auto` follows the
+/// user agent, mobile for a mobile one.
+pub(crate) fn window_for(config: &CrawlConfig) -> Window {
+    const MOBILE: Window = Window {
+        width: 411,
+        height: 731,
+        mobile: true,
+    };
+    const DESKTOP: Window = Window {
+        width: 1024,
+        height: 768,
+        mobile: false,
+    };
+    let w = &config.rendering.window;
+    match w.preset {
+        WindowPreset::Mobile => MOBILE,
+        WindowPreset::Desktop => DESKTOP,
+        WindowPreset::Custom => Window {
+            width: w.width.unwrap_or(DESKTOP.width),
+            height: w.height.unwrap_or(DESKTOP.height),
+            mobile: false,
+        },
+        WindowPreset::Auto => {
+            let ua = &config.identity.user_agent;
+            let mobile = match ua.preset {
+                UaPreset::GooglebotSmartphone | UaPreset::ChromeMobile => true,
+                UaPreset::Custom => ua.string().is_some_and(|s| s.contains("Mobile")),
+                _ => false,
+            };
+            if mobile { MOBILE } else { DESKTOP }
+        }
+    }
+}
+
+/// The charset label of a stored `Content-Type` header.
+fn charset_of(headers: &[(String, String)]) -> Option<String> {
+    let ct = headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))?;
+    ct.1.split(';').skip(1).find_map(|p| {
+        let (k, v) = p.split_once('=')?;
+        k.trim()
+            .eq_ignore_ascii_case("charset")
+            .then(|| v.trim().trim_matches('"').to_string())
+    })
+}
+
+fn header_values(headers: &[(String, String)], name: &str) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
+        .collect()
+}
+
+impl RenderStage {
+    /// Launches the browser. Rendering off never gets here, so a raw crawl
+    /// starts no browser.
+    pub(crate) async fn start(
+        config: &CrawlConfig,
+        user_agent: String,
+        info: &BrowserInfo,
+        launch: LaunchOptions,
+        net: Arc<NetShared>,
+        internal: InternalHosts,
+    ) -> Result<Self, LaunchError> {
+        let browser = Browser::launch(info, launch).await?;
+        let r = &config.rendering;
+        Ok(Self {
+            browser: Arc::new(RwLock::new(browser)),
+            restarting: Arc::new(AtomicBool::new(false)),
+            net,
+            template: JobTemplate {
+                user_agent,
+                window: window_for(config),
+                max_time: Duration::from_secs_f64(r.max_render_secs),
+                min_wait: Duration::from_secs_f64(r.min_wait_secs),
+                block: BlockSet {
+                    images: r.block.images,
+                    media: r.block.media,
+                    fonts: r.block.fonts,
+                    stylesheets: r.block.stylesheets,
+                    third_party: r.block.third_party,
+                },
+                internal,
+                screenshot: r.screenshots,
+            },
+            queue: VecDeque::new(),
+            last_seq: None,
+            exhausted: false,
+            open: 0,
+            limit: r
+                .concurrency
+                .unwrap_or_else(spiderlens_render::default_concurrency)
+                .max(1),
+        })
+    }
+
+    /// A page was queued for rendering after the last refill.
+    #[expect(dead_code, reason = "called when pages are queued (T021)")]
+    pub(crate) fn on_enqueued(&mut self) {
+        self.exhausted = false;
+    }
+
+    /// The next queued render, in queue order.
+    pub(crate) fn next(&mut self, store: &CrawlStore) -> StoreResult<Option<RenderEntry>> {
+        if self.queue.is_empty() && !self.exhausted {
+            let batch = store.renders_after(self.last_seq, WINDOW)?;
+            self.exhausted = batch.len() < WINDOW;
+            if let Some(last) = batch.last() {
+                self.last_seq = Some(last.seq);
+            }
+            self.queue.extend(batch);
+        }
+        Ok(self.queue.pop_front())
+    }
+
+    /// Whether any render is waiting or running.
+    pub(crate) fn busy(&mut self, store: &CrawlStore) -> StoreResult<bool> {
+        if self.open > 0 || !self.queue.is_empty() {
+            return Ok(true);
+        }
+        match self.next(store)? {
+            Some(e) => {
+                self.queue.push_front(e);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// A render to try again goes back to the head of the window (its queue
+    /// place is earlier than anything refilled since).
+    pub(crate) fn retry(&mut self, entry: RenderEntry) {
+        self.queue.push_front(entry);
+    }
+
+    /// Restarts the browser between pages when a render had to be abandoned.
+    /// Renders started meanwhile wait for the new process.
+    pub(crate) fn restart_if_needed(&self) {
+        let needs = self.browser.try_read().is_ok_and(|b| b.needs_restart());
+        if needs && !self.restarting.swap(true, Ordering::AcqRel) {
+            let browser = self.browser.clone();
+            let flag = self.restarting.clone();
+            tokio::spawn(async move {
+                let _ = browser.write().await.restart().await;
+                flag.store(false, Ordering::Release);
+            });
+        }
+    }
+
+    /// Starts one render task.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn spawn(
+        &mut self,
+        entry: RenderEntry,
+        status: u16,
+        headers: Vec<(String, String)>,
+        raw_body: Vec<u8>,
+        token: String,
+        store_html: bool,
+        budget: Arc<Semaphore>,
+        report: impl FnOnce(Rendered) + Send + 'static,
+    ) {
+        let Ok(url) = Url::parse(&entry.url) else {
+            return;
+        };
+        let t = &self.template;
+        let main = MainResponse {
+            status,
+            headers: headers.clone(),
+            body: raw_body.clone(),
+        };
+        let mut job = RenderJob::new(url.clone(), main, t.user_agent.clone(), t.window);
+        job.max_time = t.max_time;
+        job.min_wait = t.min_wait;
+        job.block = t.block;
+        job.internal_hosts = t.internal.clone();
+        job.screenshot = t.screenshot.then(ScreenshotOptions::default);
+        let internal = t.internal.clone();
+        let net = Arc::new(EngineNet::new(self.net.clone()));
+        let browser = self.browser.clone();
+        self.open += 1;
+        tokio::spawn(async move {
+            let outcome = {
+                let b = browser.read().await;
+                b.render(job, net.clone() as Arc<dyn Network>).await
+            };
+            let notes = net.take_notes();
+            let header_facts = extract::header_facts(
+                &header_values(&headers, "x-robots-tag"),
+                &header_values(&headers, "link"),
+            );
+            let html = outcome.html.clone();
+            let kib =
+                ((raw_body.len() + html.as_ref().map_or(0, String::len)) / 1024 + 1).min(64 * 1024) as u32;
+            let permit = budget.acquire_many(kib).await;
+            let charset = charset_of(&headers);
+            let page_url = url.clone();
+            let work = tokio::task::spawn_blocking(move || {
+                let input = |body: &[u8], charset: Option<&str>| {
+                    extract::extract_page_caught(&PageInput {
+                        url: &page_url,
+                        charset,
+                        body,
+                        truncated: false,
+                        robots_token: &token,
+                        keep_text: true,
+                    })
+                };
+                let raw = input(&raw_body, charset.as_deref()).ok();
+                let rendered = html.as_deref().map(|h| input(h.as_bytes(), Some("utf-8")));
+                let comparison = match (&raw, &rendered) {
+                    (Some(raw), Some(Ok(r))) => Some(compare(raw, r, &token, &*internal)),
+                    _ => None,
+                };
+                let bot_challenge = match (&raw, &rendered, &html) {
+                    (Some(raw), Some(Ok(r)), Some(h)) => challenge::is_bot_challenge(h, r, raw),
+                    _ => false,
+                };
+                let packed = if store_html {
+                    html.as_deref()
+                        .and_then(|h| body::compress(h.as_bytes()).ok().map(|p| (p, h.len())))
+                } else {
+                    None
+                };
+                (raw, rendered, comparison, bot_challenge, packed)
+            });
+            let (raw, rendered, comparison, bot_challenge, html) = work.await.unwrap_or_else(|e| {
+                (
+                    None,
+                    Some(Err(format!("Page extraction failed: {e}"))),
+                    None,
+                    false,
+                    None,
+                )
+            });
+            drop(permit);
+            report(Rendered {
+                entry,
+                outcome,
+                notes,
+                raw,
+                rendered,
+                comparison,
+                bot_challenge,
+                header_facts,
+                html,
+            });
+        });
+    }
+
+    /// Closes the browser and deletes its profile. Open tasks (none at the
+    /// end of a run) would keep it alive until they end; it is then closed
+    /// on drop.
+    pub(crate) async fn close(self) {
+        if let Ok(lock) = Arc::try_unwrap(self.browser) {
+            lock.into_inner().close().await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spiderlens_config::RenderWindow;
+
+    #[test]
+    fn the_window_follows_the_settings_and_the_user_agent() {
+        let mut c = CrawlConfig::default();
+        assert!(!window_for(&c).mobile, "SpiderLens is a desktop agent");
+        c.identity.user_agent.preset = UaPreset::GooglebotSmartphone;
+        assert_eq!(window_for(&c).width, 411);
+        assert!(window_for(&c).mobile);
+        c.rendering.window = RenderWindow {
+            preset: WindowPreset::Custom,
+            width: Some(1440),
+            height: Some(900),
+        };
+        let w = window_for(&c);
+        assert_eq!((w.width, w.height, w.mobile), (1440, 900, false));
+        c.rendering.window.preset = WindowPreset::Desktop;
+        assert_eq!(window_for(&c).width, 1024);
+    }
+
+    #[test]
+    fn charset_and_header_values_come_from_the_stored_headers() {
+        let h = vec![
+            (
+                "Content-Type".to_string(),
+                "text/html; charset=\"ISO-8859-1\"".to_string(),
+            ),
+            ("link".to_string(), "<a>; rel=canonical".to_string()),
+            ("Link".to_string(), "<b>; rel=next".to_string()),
+        ];
+        assert_eq!(charset_of(&h).as_deref(), Some("ISO-8859-1"));
+        assert_eq!(header_values(&h, "link").len(), 2);
+        assert!(charset_of(&[]).is_none());
+    }
+}

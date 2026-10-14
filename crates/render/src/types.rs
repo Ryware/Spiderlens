@@ -17,6 +17,18 @@ pub enum BrowserName {
     Chromium,
 }
 
+impl BrowserName {
+    /// The name shown to users and stored in `meta.renderer`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ChromeHeadlessShell => "Chrome Headless Shell",
+            Self::GoogleChrome => "Google Chrome",
+            Self::MicrosoftEdge => "Microsoft Edge",
+            Self::Chromium => "Chromium",
+        }
+    }
+}
+
 /// Where the browser came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrowserSource {

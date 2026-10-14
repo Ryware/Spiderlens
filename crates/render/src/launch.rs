@@ -377,3 +377,33 @@ mod tests {
         assert!(mine.exists() && other.exists());
     }
 }
+
+/// Total memory of this machine in bytes (0 when unknown).
+fn total_memory() -> u64 {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    sys.total_memory()
+}
+
+/// Default number of pages rendered at once: total memory in GB divided by
+/// 4, between 1 and 16 (spec 014 plan D10).
+pub fn default_concurrency() -> u32 {
+    concurrency_for(total_memory())
+}
+
+fn concurrency_for(total_bytes: u64) -> u32 {
+    ((total_bytes / (1 << 30)) / 4).clamp(1, 16) as u32
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::concurrency_for;
+
+    #[test]
+    fn default_concurrency_follows_memory() {
+        const GB: u64 = 1 << 30;
+        assert_eq!(concurrency_for(0), 1);
+        assert_eq!(concurrency_for(16 * GB), 4);
+        assert_eq!(concurrency_for(256 * GB), 16);
+    }
+}

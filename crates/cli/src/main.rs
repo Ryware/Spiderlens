@@ -134,6 +134,7 @@ struct ConfigArgs {
 }
 
 fn main() -> ExitCode {
+    spiderlens_engine::run_render_guard_if_asked();
     let matches = Cli::command().version(BuildInfo::VERSION_LINE).get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     match cli.command {

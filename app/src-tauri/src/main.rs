@@ -24,6 +24,8 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // The browser guard of a rendering crawl is this executable too (R12).
+    spiderlens_engine::run_render_guard_if_asked();
     let smoke_file = std::env::var_os(SMOKE_TEST_ENV);
 
     tauri::Builder::default()

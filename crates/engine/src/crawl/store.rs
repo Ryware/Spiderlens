@@ -1570,6 +1570,9 @@ impl CrawlStore {
     }
 }
 
+/// Response headers as stored: names and values in received order.
+pub type Headers = Vec<(String, String)>;
+
 /// Written to `meta.render_version` when a crawl renders (spec 014).
 pub const RENDER_VERSION: &str = "1";
 
@@ -1867,6 +1870,24 @@ impl CrawlStore {
             Some((codec, size, packed)) => unpack(&codec, size, &packed).map(Some),
             None => self.page_html(url_id),
         }
+    }
+
+    /// The stored status and response headers of a page, which a render
+    /// replays as the main document (plan D3).
+    pub fn render_main(&self, url_id: i64) -> Result<Option<(u16, Headers)>> {
+        let row: Option<(Option<u16>, Option<String>)> = self
+            .conn
+            .prepare_cached(
+                "SELECT u.status, h.headers FROM urls u LEFT JOIN headers h ON h.url_id = u.id WHERE u.id = ?1",
+            )?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        Ok(row.and_then(|(status, headers)| {
+            let headers = headers
+                .and_then(|h| serde_json::from_str(&h).ok())
+                .unwrap_or_default();
+            status.map(|s| (s, headers))
+        }))
     }
 
     /// The serialised DOM of a rendered page, when HTML was kept (FR-032).
