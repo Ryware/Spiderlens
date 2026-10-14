@@ -589,7 +589,7 @@ fn render(conn: &Connection, id: i64) -> Result<Option<RenderFacts>> {
 }
 
 /// What the writer stores for one page.
-struct PageResult {
+struct PageRow {
     id: i64,
     eval: checks::PageEval,
     score: score::PageScore,
@@ -624,7 +624,7 @@ fn page(
     today: Date,
     th: &Thresholds,
     weights: &Weights,
-) -> PageResult {
+) -> PageRow {
     let p = row.page.expect("only pages are evaluated");
     let extracted = p.h1_count != u32::MAX;
     let content: Option<ContentFacts> = p.html.as_deref().and_then(|bytes| {
@@ -679,7 +679,7 @@ fn page(
         .map(|(r, _)| score::scaled_points(r, weights))
         .sum();
     let snippet_limits = snippet_summary(&p.directives, content.as_ref());
-    PageResult {
+    PageRow {
         id: row.id,
         counts: content.as_ref().map(|c| Counts {
             question_headings: c.questions.len() as u32,
@@ -753,7 +753,7 @@ fn run_parallel<I: Send, O: Send>(items: Vec<I>, workers: usize, f: impl Fn(I) -
     })
 }
 
-fn write_pages(conn: &Connection, rows: &[PageResult]) -> Result<()> {
+fn write_pages(conn: &Connection, rows: &[PageRow]) -> Result<()> {
     let mut page = conn.prepare_cached(
         "INSERT INTO aeo_pages (url_id, page_type, page_type_reason, score, access, readable, answer, trust,
              structured, checks_used, checks_total, provisional, blocked_bots, flags, version_used, js_dependence,
@@ -841,7 +841,7 @@ struct Aggregate {
 }
 
 impl Aggregate {
-    fn add(&mut self, r: &PageResult) {
+    fn add(&mut self, r: &PageRow) {
         let s = r.score.score;
         self.scores.push(s);
         self.distribution[match s {
@@ -1102,4 +1102,136 @@ fn sorted(v: Value) -> Value {
         Value::Array(a) => Value::Array(a.into_iter().map(sorted).collect()),
         other => other,
     }
+}
+
+/// One check's result on a page, for the explanation (FR-043).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, rename = "AiPageCheck")]
+pub struct PageCheck {
+    pub rule_id: String,
+    /// `fail` or `not_available`; checks that passed are not stored row by row.
+    pub outcome: String,
+    /// Points lost, in hundredths.
+    pub points_lost: i64,
+    pub evidence: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, rename = "AiPageResult")]
+pub struct PageResult {
+    pub url: String,
+    pub page_type: String,
+    pub page_type_reason: Option<String>,
+    pub score: Option<i64>,
+    pub provisional: bool,
+    pub version_used: String,
+    pub published: Option<String>,
+    pub modified: Option<String>,
+    pub author: Option<String>,
+    /// Built-in crawlers that may not fetch the page, by name.
+    pub blocked_crawlers: Vec<String>,
+    pub checks: Vec<PageCheck>,
+}
+
+/// The stored result for one URL; `None` when the URL has no AI result.
+pub fn page_result(conn: &Connection, url: &str) -> Result<Option<PageResult>> {
+    if !store::has_table(conn, "aeo_pages")? {
+        return Ok(None);
+    }
+    let row = conn
+        .query_row(
+            "SELECT u.id, u.url, a.page_type, a.page_type_reason, a.score, a.provisional, a.version_used,
+                    a.published, a.modified, a.author, a.blocked_bots
+             FROM urls u JOIN aeo_pages a ON a.url_id = u.id WHERE u.url = ?1",
+            [url],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    PageResult {
+                        url: r.get(1)?,
+                        page_type: r.get(2)?,
+                        page_type_reason: r.get(3)?,
+                        score: r.get(4)?,
+                        provisional: r.get(5)?,
+                        version_used: r.get(6)?,
+                        published: r.get(7)?,
+                        modified: r.get(8)?,
+                        author: r.get(9)?,
+                        blocked_crawlers: names_of(r.get::<_, i64>(10)? as u64),
+                        checks: vec![],
+                    },
+                ))
+            },
+        )
+        .optional()?;
+    let Some((id, mut page)) = row else {
+        return Ok(None);
+    };
+    let mut st = conn.prepare(
+        "SELECT rule_id, outcome, points_lost, evidence FROM aeo_findings WHERE url_id = ?1
+         ORDER BY points_lost DESC, rule_id",
+    )?;
+    page.checks = st
+        .query_map([id], |r| {
+            Ok(PageCheck {
+                rule_id: r.get(0)?,
+                outcome: r.get(1)?,
+                points_lost: r.get(2)?,
+                evidence: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(Some(page))
+}
+
+fn names_of(mask: u64) -> Vec<String> {
+    ai_bots::all()
+        .iter()
+        .filter(|b| b.index < 64 && mask & (1 << b.index) != 0)
+        .map(|b| b.name.clone())
+        .collect()
+}
+
+/// A draft llms.txt from the crawl's indexable pages (FR-047). Never uploaded.
+pub fn draft_llms_txt(conn: &Connection, max_links: usize) -> Result<String> {
+    let start = store::meta(conn, "start_url")?.and_then(|u| Url::parse(&u).ok());
+    let host = start.as_ref().map(spiderlens_engine::crawl::host_key);
+    let site_name = start
+        .as_ref()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "Site".into());
+    let mut st = conn.prepare(
+        "SELECT u.url, COALESCE(u.title, ''), p.meta_description,
+                (SELECT COUNT(*) FROM links l WHERE l.to_id = u.id)
+         FROM urls u LEFT JOIN pages p ON p.url_id = u.id
+         WHERE u.internal = 1 AND u.state = 'crawled' AND u.resource_type = 'html'
+           AND u.status BETWEEN 200 AND 299 AND COALESCE(u.noindex, 0) = 0
+           AND (u.canonical IS NULL OR u.canonical = u.url)
+           AND (?1 IS NULL OR u.host_key = ?1)
+         ORDER BY u.id",
+    )?;
+    let pages: Vec<llms::DraftPage> = st
+        .query_map([host], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?
+        .filter_map(|row| {
+            let (url, title, description, inlinks) = row.ok()?;
+            Some(llms::DraftPage {
+                url: Url::parse(&url).ok()?,
+                title,
+                description,
+                inlinks: inlinks as u64,
+            })
+        })
+        .collect();
+    let summary = pages
+        .iter()
+        .find(|p| p.url.path() == "/")
+        .and_then(|p| p.description.clone());
+    Ok(llms::draft(&site_name, summary.as_deref(), &pages, max_links))
 }

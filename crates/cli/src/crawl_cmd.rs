@@ -322,6 +322,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         Ok(rt) => rt,
         Err(code) => return code,
     };
+    let ai_auto = crawler.config().ai_checks.auto;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -399,6 +400,9 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         }
     };
     print_summary(&summary, json, &file);
+    if ai_auto && summary.status == "completed" {
+        crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
     if !json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",
