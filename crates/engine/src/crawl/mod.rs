@@ -13,6 +13,7 @@ pub mod redact;
 pub mod retry;
 mod runner;
 pub mod scope;
+mod spelling;
 mod sitemap;
 mod speed;
 pub mod store;
@@ -25,6 +26,7 @@ pub use runner::{
     Progress, ResumeOptions, RunCommand, SitemapSummary, Upgrade, default_file_name, host_key, retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
+pub use spelling::{SpellFindingRow, SpellPage, SpellPageRow, open_for_spelling};
 pub use store::{CrawlStore, LogEntry, UrlRow};
 
 /// The scope tester (spec 003 FR-016): what the crawler would do with each

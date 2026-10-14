@@ -368,6 +368,19 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Spelling
+    let lang = c.spelling.default_lang.trim();
+    if lang.is_empty()
+        || lang.len() > 35
+        || !lang.split('-').all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_alphanumeric()))
+    {
+        i.error(
+            "spelling.default_lang",
+            "invalid_language",
+            "Use a language code such as en, en-GB or he.",
+        );
+    }
+
     // Retry
     if !(1..=10).contains(&c.retry.attempts) {
         i.error(

@@ -1,0 +1,32 @@
+[package]
+name = "spiderlens-spell"
+description = "SpiderLens spelling checks over a crawl file: tokenizer, Hunspell dictionaries and the spelling pass (spec 027 part D)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-engine.workspace = true
+spiderlens-config.workspace = true
+spellbook = "0.4"
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+sha2 = "0.10"
+xxhash-rust.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+spiderlens-test-fixtures.workspace = true
+rusqlite.workspace = true
+axum.workspace = true
+
+[lints]
+workspace = true
