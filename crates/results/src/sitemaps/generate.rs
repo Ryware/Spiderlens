@@ -435,7 +435,7 @@ fn host_allowed(u: &str, hosts: &[String]) -> bool {
         && Url::parse(u)
             .ok()
             .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
-            .is_some_and(|h| hosts.iter().any(|x| *x == h))
+            .is_some_and(|h| hosts.contains(&h))
 }
 
 /// The folder URL the files will live at, ending in `/`. Blank means the

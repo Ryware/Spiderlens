@@ -6,6 +6,7 @@
 mod crawl_cmd;
 mod export_cmd;
 mod options;
+mod sitemap_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,6 +64,9 @@ enum Command {
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Generate XML sitemaps from a crawl file.
+    #[command(subcommand)]
+    Sitemap(sitemap_cmd::SitemapCommand),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -152,6 +156,7 @@ fn main() -> ExitCode {
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
     }
 }
 
