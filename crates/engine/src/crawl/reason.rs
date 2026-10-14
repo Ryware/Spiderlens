@@ -44,6 +44,7 @@ string_enum! {
         NotIncluded = "not_included",
         OverDepthLimit = "over_depth_limit",
         Nofollow = "nofollow",
+        RedirectLimit = "redirect_limit",
         BlockedByRobots = "blocked_by_robots",
         RobotsUnavailable = "robots_unavailable",
         OverUrlLimit = "over_url_limit",
@@ -63,6 +64,7 @@ impl NotCrawledReason {
             Self::NotIncluded => "Not matching include rules",
             Self::OverDepthLimit => "Over depth limit",
             Self::Nofollow => "Nofollow",
+            Self::RedirectLimit => "Redirect chain over limit",
             Self::BlockedByRobots => "Blocked by robots.txt",
             Self::RobotsUnavailable => "Blocked: robots.txt unavailable",
             Self::OverUrlLimit => "Over URL limit",
@@ -74,7 +76,7 @@ impl NotCrawledReason {
     /// A URL holding one of these is crawled if a better path turns up
     /// (FR-039, research R3).
     pub fn can_upgrade(self) -> bool {
-        matches!(self, Self::OverDepthLimit | Self::Nofollow)
+        matches!(self, Self::OverDepthLimit | Self::Nofollow | Self::RedirectLimit)
     }
 }
 
@@ -125,6 +127,7 @@ string_enum! {
     UrlState {
         Queued = "queued",
         InFlight = "in_flight",
+        Waiting = "waiting",
         Crawled = "crawled",
         NotCrawled = "not_crawled",
     }
@@ -148,6 +151,7 @@ mod tests {
                 "not_included",
                 "over_depth_limit",
                 "nofollow",
+                "redirect_limit",
                 "blocked_by_robots",
                 "robots_unavailable",
                 "over_url_limit",

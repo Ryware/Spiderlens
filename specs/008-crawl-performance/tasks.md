@@ -38,6 +38,6 @@
 - [ ] T015 [US2] Global slowdown detection (FR-019)
 - [ ] T016 [US3] Limiting-factor reasons and per-site breakdown (FR-028, FR-029), desktop status bar
 - [ ] T017 [US2] Speed events recorded in the crawl file (FR-021)
-- [ ] T018 [US4] Saving backpressure (FR-023) and the 1,000,000 URL memory run (SC-007)
-- [ ] T019 [US5] Reduced benchmark in CI with a stored baseline (FR-034)
+- [x] T018 [US4] Saving backpressure (FR-023) and the 1,000,000 URL memory run (SC-007); fixed the write-ahead log growing without limit
+- [x] T019 [US5] Reduced benchmark in CI (FR-034): `bench-check`, against a build of the base branch
 - [ ] T020 [US2] Retry the URL that got 429/503 (needs spec 004 retries)

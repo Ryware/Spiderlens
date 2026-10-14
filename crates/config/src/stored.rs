@@ -9,14 +9,17 @@ use crate::{CrawlConfig, ModeInput, RetrySettings, SpeedSettings};
 
 pub const STORED_FORMAT_VERSION: u32 = 1;
 
-/// Only speed and retry settings may change during a crawl. The type cannot
-/// express any other change.
+/// Only speed, retry and the URL limit may change during or between runs of
+/// a crawl (spec 006 FR-011). The type cannot express any other change, so a
+/// resumed crawl can never change which URLs are in scope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Change {
     Speed(SpeedSettings),
     Retry(RetrySettings),
+    /// Blank (null) means no limit.
+    MaxUrls(#[ts(type = "number | null")] Option<u64>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -73,6 +76,7 @@ impl StoredCrawlConfig {
             match &change.change {
                 Change::Speed(s) => c.speed = *s,
                 Change::Retry(r) => c.retry = *r,
+                Change::MaxUrls(m) => c.limits.max_urls = *m,
             }
         }
         c
@@ -127,6 +131,14 @@ mod tests {
             vec!["a.test".into()],
             "2026-10-11T10:00:00Z".parse().unwrap(),
         )
+    }
+
+    #[test]
+    fn url_limit_can_change() {
+        let mut s = stored();
+        s.record("2026-10-11T10:05:00Z".parse().unwrap(), Change::MaxUrls(Some(10)));
+        assert_eq!(s.effective().limits.max_urls, Some(10));
+        assert_eq!(s.config.limits.max_urls, None, "the original is never edited");
     }
 
     #[test]

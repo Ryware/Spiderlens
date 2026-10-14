@@ -139,6 +139,21 @@ pub struct CrawlArgs {
     pub no_retry_5xx: bool,
     #[arg(long, help_heading = "Retry")]
     pub no_retry_429: bool,
+    /// Wait before the first retry, in seconds; doubles for each next one.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub retry_base_wait: Option<f64>,
+    /// Temporary failures in a row that pause a host.
+    #[arg(long, value_name = "N", help_heading = "Retry")]
+    pub host_pause_after: Option<u32>,
+    /// First pause of a failing host, in seconds.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub host_pause: Option<f64>,
+    /// Longest pause of a failing host, in seconds.
+    #[arg(long, value_name = "SECONDS", help_heading = "Retry")]
+    pub host_pause_max: Option<f64>,
+    /// Failed checks in a row after which a host is given up.
+    #[arg(long, value_name = "N", help_heading = "Retry")]
+    pub host_give_up_after: Option<u32>,
 
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
@@ -286,6 +301,37 @@ impl NetworkArgs {
 }
 
 impl CrawlArgs {
+    /// The speed options given on the command line applied to `speed`, or
+    /// None when none was given (`crawl --resume`, spec 006 FR-011).
+    pub fn speed_change(&self, speed: SpeedSettings) -> Option<SpeedSettings> {
+        let given = self.speed.is_some()
+            || self.concurrency.is_some()
+            || self.per_host.is_some()
+            || self.rate.is_some()
+            || self.no_adaptive;
+        if !given {
+            return None;
+        }
+        let mut s = match self.speed {
+            Some(SpeedArg::Polite) => SpeedSettings::POLITE,
+            Some(SpeedArg::Fast) => SpeedSettings::FAST,
+            None => speed,
+        };
+        if let Some(v) = self.concurrency {
+            s.max_concurrent = v;
+        }
+        if let Some(v) = self.per_host {
+            s.max_per_host = v;
+        }
+        if let Some(RateArg(v)) = self.rate {
+            s.max_urls_per_sec = v;
+        }
+        if self.no_adaptive {
+            s.adaptive = false;
+        }
+        Some(s)
+    }
+
     pub fn resolve(&self, mode: Mode) -> Result<Resolved, String> {
         let mut notices = Vec::new();
         let mut c = match &self.profile {
@@ -402,6 +448,21 @@ impl CrawlArgs {
         }
         if self.no_retry_429 {
             c.retry.retry_429 = false;
+        }
+        if let Some(v) = self.retry_base_wait {
+            c.retry.base_wait_secs = v;
+        }
+        if let Some(v) = self.host_pause_after {
+            c.retry.host_pause_after = v;
+        }
+        if let Some(v) = self.host_pause {
+            c.retry.host_pause_secs = v;
+        }
+        if let Some(v) = self.host_pause_max {
+            c.retry.host_pause_max_secs = v;
+        }
+        if let Some(v) = self.host_give_up_after {
+            c.retry.host_give_up_after = v;
         }
         if self.no_store_html {
             c.extraction.store_html = false;

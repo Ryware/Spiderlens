@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
-use crawl_cmd::{CrawlCmd, HtmlArgs, PageArgs, ReportArgs, ScopeTestArgs};
+use crawl_cmd::{CrawlCmd, HtmlArgs, InfoArgs, PageArgs, ReportArgs, RetryArgs, ScopeTestArgs};
 use options::{CrawlArgs, IdentityArgs, NetworkArgs};
 use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
@@ -30,6 +30,8 @@ pub(crate) mod exit {
     pub const FAILED: u8 = 4;
     /// The crawl was paused (Ctrl-C) and can be resumed.
     pub const PAUSED: u8 = 5;
+    /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
+    pub const LOCAL: u8 = 6;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -52,8 +54,12 @@ enum Command {
     Config(Box<ConfigCommand>),
     /// Crawl a site (Spider mode) or a URL list (List mode) into a crawl file.
     Crawl(Box<CrawlCmd>),
-    /// List the URLs in a crawl file, or its summary.
+    /// List the URLs in a crawl file, its summary or its log.
     Report(ReportArgs),
+    /// Retry the URLs of a crawl that failed for temporary reasons.
+    Retry(RetryArgs),
+    /// Show a crawl file's configuration, status, versions and history.
+    Info(InfoArgs),
     /// Show everything extracted for one URL of a crawl file.
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
@@ -148,6 +154,8 @@ fn main() -> ExitCode {
             crawl_cmd::run_crawl(*cmd, sub)
         }
         Command::Report(args) => crawl_cmd::run_report(args),
+        Command::Retry(args) => crawl_cmd::run_retry(args),
+        Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),

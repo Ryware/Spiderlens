@@ -33,6 +33,14 @@ test("apply_sets_level_tone_and_accent_on_the_root", () => {
   expect({ ...el.dataset }).toEqual({ level: "island", tone: "light", accent: "orchid" });
 });
 
+test("apply_marks_and_unmarks_the_material", () => {
+  const el = document.createElement("html");
+  applyAppearance(el, "dark", "teal", true);
+  expect(el.dataset.material).toBe("on");
+  applyAppearance(el, "dark", "teal", false);
+  expect(el.dataset.material).toBeUndefined();
+});
+
 test("version_1_theme_is_carried_across", () => {
   // Users keep their spec 017 choice after the update.
   localStorage.setItem("spiderlens.ui", JSON.stringify({ v: 1, theme: "dark", sidebarWidth: 260 }));

@@ -10,6 +10,7 @@ mod model;
 mod patterns;
 mod presets;
 mod profile;
+mod recent;
 mod secret;
 mod site;
 mod store;
@@ -27,6 +28,7 @@ pub use model::{
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
 pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile, import_profile};
+pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
 pub use secret::HeaderValue;
 pub use site::{InternalHosts, registrable_domain};
 pub use store::{ProfileEntry, ProfileStore, StoreError};
