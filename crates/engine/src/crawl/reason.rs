@@ -91,6 +91,7 @@ string_enum! {
         Hreflang = "hreflang",
         Image = "image",
         Sitemap = "sitemap",
+        AmpHtml = "amphtml",
     }
 }
 
@@ -103,6 +104,7 @@ string_enum! {
         Hreflang = "hreflang",
         Image = "image",
         MetaRefresh = "meta_refresh",
+        AmpHtml = "amphtml",
         Next = "next",
         Prev = "prev",
     }
@@ -115,6 +117,7 @@ impl LinkKind {
             Self::Redirect => DiscoverySource::Redirect,
             Self::Canonical => DiscoverySource::Canonical,
             Self::Hreflang => DiscoverySource::Hreflang,
+            Self::AmpHtml => DiscoverySource::AmpHtml,
             Self::Image => DiscoverySource::Image,
             Self::MetaRefresh => DiscoverySource::Redirect,
             Self::Next | Self::Prev => DiscoverySource::Link,

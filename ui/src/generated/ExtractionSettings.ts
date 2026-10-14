@@ -8,4 +8,8 @@ export type ExtractionSettings = {
  * Keep each page's raw HTML, compressed, in the crawl file (FR-030,
  * FR-031).
  */
-store_html: boolean, };
+store_html: boolean, 
+/**
+ * Follow `amphtml` links and check AMP pages (spec 027 part E).
+ */
+check_amp: boolean, };

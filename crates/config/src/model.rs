@@ -400,11 +400,16 @@ pub struct ExtractionSettings {
     /// Keep each page's raw HTML, compressed, in the crawl file (FR-030,
     /// FR-031).
     pub store_html: bool,
+    /// Follow `amphtml` links and check AMP pages (spec 027 part E).
+    pub check_amp: bool,
 }
 
 impl Default for ExtractionSettings {
     fn default() -> Self {
-        Self { store_html: true }
+        Self {
+            store_html: true,
+            check_amp: false,
+        }
     }
 }
 

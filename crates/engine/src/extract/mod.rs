@@ -2,6 +2,7 @@
 //! (plan D1). Everything here is a pure function of the response: bytes and
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
+pub mod amp;
 pub mod body;
 pub mod directives;
 mod link_header;
@@ -160,6 +161,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// AMP checks, for pages marked as AMP (spec 027 part E).
+    pub amp: Option<amp::AmpReport>,
 }
 
 impl PageData {
@@ -195,6 +198,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            amp: None,
         }
     }
 }

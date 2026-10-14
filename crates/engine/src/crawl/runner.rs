@@ -574,11 +574,15 @@ impl Crawler {
         // What readers will find in this file (spec 007 plan D3).
         store.set_meta(
             "data_features",
-            if config.extraction.store_html {
-                "extraction,timing,attempts,raw_html"
-            } else {
-                "extraction,timing,attempts"
-            },
+            &[
+                Some("extraction,timing,attempts"),
+                config.extraction.store_html.then_some("raw_html"),
+                config.extraction.check_amp.then_some("amp"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(","),
         )?;
 
         store.begin()?;
@@ -2222,6 +2226,9 @@ impl Run {
                     .iter()
                     .map(|r| (r, &base))
                     .chain(o.header_facts.refs.iter().map(|r| (r, &url)))
+                    // amphtml links are followed only with AMP checks on
+                    // (spec 027 FR-E01); otherwise the crawl is unchanged.
+                    .filter(|(r, _)| r.kind != LinkKind::AmpHtml || self.c.config.extraction.check_amp)
                     .collect();
 
                 let canonicals: Vec<String> = refs
@@ -2290,6 +2297,11 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
+                    if self.c.config.extraction.check_amp
+                        && let Some(amp) = p.data.as_ref().ok().and_then(|d| d.amp.as_ref())
+                    {
+                        store.record_amp(entry.id, amp)?;
+                    }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }
                 None => 0,

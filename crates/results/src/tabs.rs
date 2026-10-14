@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// AMP checks (spec 027 part E).
+    Amp,
 }
 
 impl Need {
@@ -44,6 +46,7 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Amp => "This crawl did not check AMP. Turn on Check AMP in the crawl settings to check it.",
         }
     }
 
@@ -55,6 +58,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Amp => "amp",
         }
     }
 }
@@ -222,6 +226,41 @@ impl ColumnDef {
         self.derived = Some(d);
         self
     }
+}
+
+/// AMP pages whose `check` failed (spec 027 part E).
+macro_rules! amp_failed {
+    ($check:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM amp_checks a WHERE a.url_id = u.id AND a.check_id = '",
+            $check,
+            "')"
+        )
+    };
+}
+
+/// An AMP page whose canonical page has no `amphtml` link back to it.
+const AMP_UNPAIRED: &str = "EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id AND ap.format = 'website') \
+     AND u.canonical IS NOT NULL AND u.canonical <> u.url \
+     AND NOT EXISTS (SELECT 1 FROM urls c JOIN links l ON l.from_id = c.id \
+         WHERE c.url = u.canonical AND l.kind = 'amphtml' AND l.to_id = u.id)";
+
+/// Reached through an `amphtml` link but not marked as AMP.
+const AMP_UNMARKED: &str = "NOT EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
+     AND EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml')";
+
+const fn amp_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::Amp)
+}
+
+const fn amp_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::Amp)
 }
 
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -817,6 +856,70 @@ fn build() -> Vec<TabDef> {
             search_column: Some("alt"),
             scoped: false,
         },
+        TabDef {
+            id: "amp",
+            title: "AMP",
+            // AMP pages, and pages an amphtml link points to.
+            eligible: "u.internal = 1 AND u.state = 'crawled' AND (\
+                EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
+                OR EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml'))",
+            columns: vec![
+                c::ADDRESS,
+                amp_col(
+                    "amp_failures",
+                    "Failed checks",
+                    "(SELECT COUNT(*) FROM amp_checks a WHERE a.url_id = u.id)",
+                    Int,
+                    110,
+                ),
+                amp_col(
+                    "amp_checks",
+                    "Checks failed",
+                    "(SELECT group_concat(DISTINCT a.check_id) FROM amp_checks a WHERE a.url_id = u.id)",
+                    Text,
+                    260,
+                ),
+                col("amp_canonical", "Canonical", "u.canonical", Url, 320),
+                amp_col(
+                    "amp_format",
+                    "Format",
+                    "(SELECT CASE ap.format WHEN 'email' THEN 'AMP for email' ELSE 'AMP' END \
+                     FROM amp_pages ap WHERE ap.url_id = u.id)",
+                    Text,
+                    110,
+                ),
+                c::STATUS_CODE,
+                amp_col(
+                    "amp_style_bytes",
+                    "Custom CSS",
+                    "(SELECT ap.style_bytes FROM amp_pages ap WHERE ap.url_id = u.id)",
+                    Bytes,
+                    100,
+                )
+                .hidden(),
+                c::INDEXABILITY.hidden(),
+            ],
+            filters: vec![
+                // Even All needs AMP data: older files have no AMP tables.
+                amp_filter("all", "All", "1"),
+                amp_filter(
+                    "failing",
+                    "Failing a check",
+                    "EXISTS (SELECT 1 FROM amp_checks a WHERE a.url_id = u.id)",
+                ),
+                amp_filter("missing_marker", "Not marked as AMP", AMP_UNMARKED),
+                amp_filter("runtime", "Missing runtime script", amp_failed!("runtime")),
+                amp_filter("boilerplate", "Missing boilerplate", amp_failed!("boilerplate")),
+                amp_filter("viewport", "Missing viewport", amp_failed!("viewport")),
+                amp_filter("canonical", "Missing canonical", amp_failed!("canonical")),
+                amp_filter("unpaired", "Canonical does not link back", AMP_UNPAIRED),
+                amp_filter("author_script", "Author scripts", amp_failed!("author_script")),
+                amp_filter("style_size", "Custom CSS over 75,000 bytes", amp_failed!("style_size")),
+                amp_filter("disallowed", "Disallowed elements", amp_failed!("disallowed")),
+            ],
+            search_column: None,
+            scoped: false,
+        },
         content_tab(
             "canonicals",
             "Canonicals",
@@ -923,7 +1026,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 11);
+        assert_eq!(tab_ids.len(), 12);
     }
 
     #[test]
