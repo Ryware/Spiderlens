@@ -18,6 +18,7 @@ issue_bench -- FILE` and `time spiderlens issues --all --json FILE`.
 | Measure | Target | 100k real | 1M synthetic |
 |---|---|---|---|
 | Final issues after the crawl ends (SC-003) | 3 s / 30 s | **3.0 s** (`spiderlens issues`), 3.4 s with opening the file | **12.1 s** |
+| First partial counts while the final pass runs (SC-003) | 2 s on 1M | - (pass under 2 s) | **1.0 s** |
 | Threshold change, count and list updated (SC-004) | 2 s | **0.08 s** | 0.8 s |
 | First screen of the largest issue (SC-005) | 1 s | 0.08 s (100,000 URLs) | 0.07 s (484,034 URLs) |
 | Peak memory of the evaluating process (SC-006) | 1M at most +20% | 91 MB | 101 MB (+11%) |
@@ -53,11 +54,13 @@ Every step was checked against the first version's full output
 (`spiderlens issues --all --json`) on the 100k file and the summary on the
 1M file: identical.
 
-## Not met or not measured
+Partial counts: rules that read only the crawl are evaluated first, while
+the tables the other rules read (`page_flags`, redirects) wait; before
+that split the first counts came at 5.0 s on 1M. The 100k final pass is
+unchanged by it (3.1 and 3.2 s against 2.9 and 3.2 s before, same file).
 
-- **SC-003 partial counts within 2 s on 1M**: counts appear when the whole
-  evaluation ends (12 s). The interface stays responsive because evaluation
-  runs on the reader thread, but there is no early partial count yet.
+## Not measured
+
 - **Memory** is the process peak (VmHWM), including SQLite's page cache
   (bounded at 32 MB per connection) and the hit list; not measured on macOS
   or Windows.

@@ -1,7 +1,7 @@
 //! Canonicals. The 007 Canonicals filters use these same conditions
 //! (FR-005).
 
-use super::target_not_ok_evidence;
+use super::{target_not_ok_evidence, target_not_ok_targets};
 use crate::issues::{Category::Canonicals as C, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -56,6 +56,7 @@ pub const RULES: &[Rule] = &[
     .site_wide()
     .needs(Need::Extraction)
     .evidence(target_not_ok_evidence!("'canonical'"))
+    .targets(target_not_ok_targets!("'canonical'"))
     .explain(
         "The canonical names a URL that redirects, fails, is noindexed or canonicalises elsewhere, so search engines cannot follow it and may ignore it.",
         "Point the canonical at the final, indexable URL that returns 200.",

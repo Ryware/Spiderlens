@@ -61,7 +61,27 @@ pub struct UrlIssue {
     pub name: String,
     pub priority: Priority,
     pub evidence: Option<String>,
+    /// For link rules, the targets causing it, in page order (at most
+    /// [`TARGETS_SHOWN`]), each openable in the table (US2 scenario 2).
+    pub targets: Vec<IssueTarget>,
+    /// All such targets, when more than are listed.
+    pub targets_total: u32,
 }
+
+/// One linked URL behind a page's issue.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct IssueTarget {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub url: String,
+    #[ts(type = "number | null")]
+    pub status: Option<i64>,
+}
+
+/// Targets listed per issue in the detail pane; a page linking to 5,000
+/// broken URLs shows the count and the first ones (edge case).
+pub const TARGETS_SHOWN: usize = 200;
 
 /// The rules that run on this file with these settings, by catalogue index.
 fn runnable(features: &Features, settings: &ResolvedSettings) -> Vec<usize> {
@@ -117,9 +137,80 @@ fn inline_pages(cond: &str) -> String {
     out
 }
 
+/// The summary for `counts` by catalogue index. `running` marks site-wide
+/// counts provisional (FR-019); `partial` marks every count (FR-008).
+fn summarize(
+    counts: &[u64],
+    settings: &ResolvedSettings,
+    features: &Features,
+    running: bool,
+    version: u32,
+) -> IssuesSummary {
+    summarize_with(counts, settings, features, running, false, version)
+}
+
+fn summarize_with(
+    counts: &[u64],
+    settings: &ResolvedSettings,
+    features: &Features,
+    running: bool,
+    partial: bool,
+    version: u32,
+) -> IssuesSummary {
+    let mut issues: Vec<IssueCount> = catalogue()
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let s = settings.rules[i];
+            let available = features.has(r.need);
+            IssueCount {
+                id: r.id.into(),
+                name: display_name(r, s.threshold),
+                category: r.category,
+                priority: s.priority,
+                enabled: s.enabled,
+                count: (s.enabled && available).then_some(counts[i]),
+                provisional: partial || (running && r.kind == RuleKind::SiteWide),
+                unavailable: (!available).then(|| r.need.unavailable_reason().to_string()),
+            }
+        })
+        .collect();
+    issues.sort_by(|a, b| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)))
+    });
+    let by_priority = Priority::ALL
+        .into_iter()
+        .map(|p| {
+            let at: Vec<_> = issues
+                .iter()
+                .filter(|c| c.priority == p && c.count.unwrap_or(0) > 0)
+                .collect();
+            PriorityTotal {
+                priority: p,
+                issues: at.len() as u32,
+                urls: at.iter().map(|c| c.count.unwrap_or(0)).sum(),
+            }
+        })
+        .collect();
+    IssuesSummary {
+        version,
+        rules_version: super::RULES_VERSION,
+        by_priority,
+        issues,
+    }
+}
+
 /// Builds `temp.issue_rules` and `temp.issue_hits` on `conn`. The derived
 /// tables in [`dependencies`] must be current.
-pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &ResolvedSettings) -> Result<()> {
+pub(crate) fn build_hits(
+    conn: &Connection,
+    features: &Features,
+    settings: &ResolvedSettings,
+    progress: &mut dyn FnMut(&[u64]),
+    missing: &[Derived],
+) -> Result<()> {
     let rules = runnable(features, settings);
     conn.execute_batch(
         "DROP TABLE IF EXISTS temp.issue_hits;
@@ -128,7 +219,19 @@ pub(crate) fn build_hits(conn: &Connection, features: &Features, settings: &Reso
          CREATE TEMP TABLE issue_hits(rule INTEGER NOT NULL, url_id INTEGER NOT NULL, PRIMARY KEY (rule, url_id)) WITHOUT ROWID;",
     )?;
     fill_rules(conn, &rules, settings)?;
-    eval_rules(conn, &rules)?;
+    // Rules that read only the crawl run first, so partial counts show
+    // while the derived tables the others read (`missing`) are built.
+    let (ready, waiting): (Vec<usize>, Vec<usize>) = rules
+        .iter()
+        .partition(|&&i| catalogue()[i].derived_tables().all(|d| !missing.contains(&d)));
+    let mut counts = vec![0u64; catalogue().len()];
+    eval_rules(conn, &ready, &mut counts, progress)?;
+    if !waiting.is_empty() {
+        for d in missing {
+            crate::tabs::build_derived(conn, *d)?;
+        }
+        eval_rules(conn, &waiting, &mut counts, progress)?;
+    }
     conn.execute_batch("CREATE INDEX temp.issue_hits_url ON issue_hits(url_id);")?;
     Ok(())
 }
@@ -157,7 +260,7 @@ fn update_hits(
             del.execute([i as i64])?;
         }
         let again: Vec<usize> = changed.iter().copied().filter(|i| rules.contains(i)).collect();
-        eval_rules(conn, &again)
+        eval_rules(conn, &again, &mut vec![0; catalogue().len()], &mut |_| {})
     })();
     match result {
         Ok(()) => conn.execute_batch("RELEASE issue_update")?,
@@ -178,9 +281,24 @@ fn fill_rules(conn: &Connection, rules: &[usize], settings: &ResolvedSettings) -
     Ok(())
 }
 
-/// Adds the hits of `rules` to `temp.issue_hits`.
-fn eval_rules(conn: &Connection, rules: &[usize]) -> Result<()> {
+/// How often partial counts are reported during a long evaluation (FR-008).
+const PARTIAL_EVERY: std::time::Duration = if cfg!(test) {
+    std::time::Duration::ZERO
+} else {
+    std::time::Duration::from_secs(1)
+};
+
+/// Adds the hits of `rules` to `temp.issue_hits` and to `counts` (by
+/// catalogue index). `progress` gets the counts so far about once a second.
+fn eval_rules(
+    conn: &Connection,
+    rules: &[usize],
+    counts: &mut [u64],
+    progress: &mut dyn FnMut(&[u64]),
+) -> Result<()> {
     let mut hits: Vec<(i64, i64)> = Vec::new();
+    let mut last = std::time::Instant::now();
+    let mut read = 0u64;
     for scope in Scope::ALL.iter() {
         let mine: Vec<usize> = rules
             .iter()
@@ -215,7 +333,13 @@ fn eval_rules(conn: &Connection, rules: &[usize]) -> Result<()> {
             for (c, i) in mine.iter().enumerate() {
                 if r.get_ref(c + 1)? != rusqlite::types::ValueRef::Null {
                     hits.push((*i as i64, id));
+                    counts[*i] += 1;
                 }
+            }
+            read += 1;
+            if read.is_multiple_of(4096) && last.elapsed() >= PARTIAL_EVERY {
+                progress(counts);
+                last = std::time::Instant::now();
             }
         }
     }
@@ -252,50 +376,13 @@ impl Reader {
                 }
             }
         }
-        let settings = &self.issue_settings;
-        let mut issues: Vec<IssueCount> = catalogue()
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let s = settings.rules[i];
-                let available = self.features.has(r.need);
-                IssueCount {
-                    id: r.id.into(),
-                    name: display_name(r, s.threshold),
-                    category: r.category,
-                    priority: s.priority,
-                    enabled: s.enabled,
-                    count: (s.enabled && available).then_some(counts[i]),
-                    provisional: running && r.kind == RuleKind::SiteWide,
-                    unavailable: (!available).then(|| r.need.unavailable_reason().to_string()),
-                }
-            })
-            .collect();
-        issues.sort_by(|a, b| {
-            a.priority
-                .cmp(&b.priority)
-                .then_with(|| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)))
-        });
-        let by_priority = Priority::ALL
-            .into_iter()
-            .map(|p| {
-                let at: Vec<_> = issues
-                    .iter()
-                    .filter(|c| c.priority == p && c.count.unwrap_or(0) > 0)
-                    .collect();
-                PriorityTotal {
-                    priority: p,
-                    issues: at.len() as u32,
-                    urls: at.iter().map(|c| c.count.unwrap_or(0)).sum(),
-                }
-            })
-            .collect();
-        Ok(IssuesSummary {
+        Ok(summarize(
+            &counts,
+            &self.issue_settings,
+            &self.features,
+            running,
             version,
-            rules_version: super::RULES_VERSION,
-            by_priority,
-            issues,
-        })
+        ))
     }
 
     /// The issues of one URL with their evidence (FR-012, FR-017).
@@ -326,15 +413,43 @@ impl Reader {
                     rusqlite::types::Value::Real(f) => Some(f.to_string()),
                     _ => None,
                 })?;
+            let (targets, targets_total) = match r.targets {
+                Some(cond) => self.issue_targets(url_id, cond)?,
+                None => (Vec::new(), 0),
+            };
             out.push(UrlIssue {
                 id: r.id.into(),
                 name: display_name(r, s.threshold),
                 priority: s.priority,
                 evidence,
+                targets,
+                targets_total,
             });
         }
         out.sort_by_key(|u| u.priority);
         Ok(out)
+    }
+
+    fn issue_targets(&self, url_id: i64, cond: &str) -> Result<(Vec<IssueTarget>, u32)> {
+        let from = format!("FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = ?1 AND {cond}");
+        let total: i64 =
+            self.conn
+                .query_row(&format!("SELECT COUNT(DISTINCT t.id) {from}"), [url_id], |r| {
+                    r.get(0)
+                })?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT t.id, t.url, t.status {from} GROUP BY t.id ORDER BY MIN(l.pos) LIMIT {TARGETS_SHOWN}"
+        ))?;
+        let targets = stmt
+            .query_map([url_id], |r| {
+                Ok(IssueTarget {
+                    id: r.get(0)?,
+                    url: r.get(1)?,
+                    status: r.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok((targets, total as u32))
     }
 
     /// The issue settings saved in the crawl file (plan D8): the last ones
@@ -398,9 +513,33 @@ impl Reader {
     }
 
     pub(crate) fn build_issue_hits(&mut self) -> Result<()> {
-        let deps = dependencies(&self.features, &self.issue_settings);
-        self.ensure_derived(deps)?;
-        build_hits(&self.conn, &self.features, &self.issue_settings)
+        let version = self.version()? as u32;
+        let g = self.data_gen;
+        // Built inside build_hits, after the rules that do not read them.
+        let missing: Vec<Derived> = dependencies(&self.features, &self.issue_settings)
+            .into_iter()
+            .filter(|d| self.derived.get(d) != Some(&g))
+            .collect();
+        let (settings, features) = (&self.issue_settings, &self.features);
+        let mut sink = self.partial.take();
+        let mut progress = |counts: &[u64]| {
+            if let Some(f) = sink.as_mut() {
+                f(summarize_with(counts, settings, features, false, true, version));
+            }
+        };
+        let result = build_hits(&self.conn, features, settings, &mut progress, &missing);
+        self.partial = sink;
+        result?;
+        for d in missing {
+            self.derived.insert(d, g);
+        }
+        Ok(())
+    }
+
+    /// Receives partial summaries while the issues are being evaluated, so
+    /// a long first evaluation shows counts as they grow (FR-008).
+    pub fn set_partial_sink(&mut self, sink: Option<Box<dyn FnMut(IssuesSummary) + Send>>) {
+        self.partial = sink;
     }
 }
 
@@ -442,7 +581,7 @@ pub(crate) fn build_derived_with(
         crate::tabs::build_derived(conn, d)?;
     }
     if hits {
-        build_hits(conn, features, settings)?;
+        build_hits(conn, features, settings, &mut |_| {}, &[])?;
     }
     Ok(())
 }

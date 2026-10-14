@@ -47,6 +47,24 @@ test("issues_group_shows_priorities_with_counts", async () => {
   expect(within(issuesNav()).getByRole("button", { name: /Page title: below 30 characters/ }).textContent).toContain("27");
 });
 
+test("partial_counts_show_while_a_long_evaluation_runs", async () => {
+  const t = fakeTransport();
+  t.issues.hold = true;
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect((screen.getByRole("button", { name: /Start$/ }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: /Start$/ }));
+  await screen.findByRole("button", { name: /Pause/ });
+  act(() => t.crawls.finish({ report: fakeReport("completed", 30) }));
+  await waitFor(() => expect(t.results.urls.length).toBeGreaterThan(0));
+  await act(async () => t.issues.partial("/crawls/example.com.spiderlens"));
+  await waitFor(() => expect(within(issuesNav()).getByRole("button", { name: /Internal client error/ }).textContent).toContain("3*"));
+  expect(issuesNav().parentElement?.textContent).toContain("counting…");
+  await act(async () => t.issues.release());
+  await waitFor(() => expect(issuesNav().parentElement?.textContent).toContain("Rule set v1"));
+  expect(within(issuesNav()).getByRole("button", { name: /Internal client error/ }).textContent).not.toContain("*");
+});
+
 test("selecting_an_issue_lists_its_urls_with_why_and_how_to_fix", async () => {
   await crawled();
   fireEvent.click(await within(issuesNav()).findByRole("button", { name: /Internal client error/ }));
@@ -128,4 +146,62 @@ test("overrides_keep_only_values_that_differ_from_the_catalogue", () => {
   expect(withOverride(off, rule, { enabled: true })).toEqual({ rules: {} });
   expect(withOverride({ rules: {} }, rule, { threshold: 30 })).toEqual({ rules: {} });
   expect(withOverride({ rules: {} }, rule, { priority: "high" }).rules["title.below"]?.priority).toBe("high");
+});
+
+test("show_all_rules_says_why_a_rule_cannot_run_and_names_the_rule_set", async () => {
+  const t = fakeTransport();
+  const summary = t.issuesSummary;
+  t.issuesSummary = async (p, r) => {
+    const s = await summary(p, r);
+    return { ...s, issues: s.issues.map((i) => (i.id === "title.below" ? { ...i, count: null, unavailable: "Page content was not collected in this crawl file." } : i)) };
+  };
+  await crawled(t);
+  await waitFor(() => expect(within(issuesNav()).getByRole("button", { name: /Internal client error/ }).textContent).toContain("3"));
+  expect(screen.getByText("Rule set v1")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Show all rules" }));
+  fireEvent.click(within(issuesNav()).getByRole("button", { name: /^Medium/ }));
+  const rule = within(issuesNav()).getByRole("button", { name: /Page title: below 30 characters/ });
+  expect(rule.textContent).toContain("n/a");
+  expect(rule.getAttribute("aria-describedby")).toBe("why-title.below");
+  expect(screen.getByText("Page content was not collected in this crawl file.")).toBeTruthy();
+});
+
+test("a_link_issue_lists_its_targets_and_one_opens_in_the_internal_table", async () => {
+  // US2 scenario 2.
+  const t = fakeTransport();
+  const own = t.urlIssues;
+  t.urlIssues = async (p, id) => [
+    ...(await own(p, id)),
+    {
+      id: "links.broken_internal",
+      name: "Pages with broken internal links",
+      priority: "high",
+      evidence: "2 broken links",
+      targets: [
+        { id: 3, url: "https://example.com/page-3", status: 404 },
+        { id: 9, url: "https://example.com/page-9", status: 500 },
+      ],
+      targets_total: 5,
+    },
+  ];
+  await crawled(t);
+  fireEvent.click(screen.getByRole("button", { name: "Internal" }));
+  await waitFor(() => expect(rows().length).toBeGreaterThan(1));
+  fireEvent.click(rows()[1]);
+  const list = await screen.findByRole("list", { name: "Pages with broken internal links: targets" });
+  expect(list.textContent).toContain("404");
+  expect(list.textContent).toContain("and 3 more");
+  fireEvent.click(within(list).getByRole("button", { name: "https://example.com/page-9" }));
+  await waitFor(() => expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("https://example.com/page-9"));
+});
+
+test("a_url_without_issues_names_the_rule_set", async () => {
+  // US2 scenario 3.
+  const t = fakeTransport();
+  t.urlIssues = async () => [];
+  await crawled(t);
+  fireEvent.click(screen.getByRole("button", { name: "Internal" }));
+  await waitFor(() => expect(rows().length).toBeGreaterThan(1));
+  fireEvent.click(rows()[1]);
+  expect(await screen.findByText("No issues found (rule set v1).")).toBeTruthy();
 });

@@ -252,7 +252,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
-          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} issues={issues.summary} />
+          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} issues={issues.summary} counting={issues.counting} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
@@ -285,7 +285,18 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} issuesVersion={issues.changed} onIssue={(id) => setSection(issueTab(id))} /> : <DetailPanel />}
+              {resultTab ? <Inspector
+                  transport={transport}
+                  path={crawl.path}
+                  id={results.focusId}
+                  issuesVersion={issues.changed}
+                  rulesVersion={issues.summary?.rules_version}
+                  onIssue={(id) => setSection(issueTab(id))}
+                  onOpenUrl={(url) => {
+                    results.update("internal", { search: url, filter: "all" });
+                    setSection("internal");
+                  }}
+                /> : <DetailPanel />}
             </div>
           </>
         )}

@@ -1,6 +1,6 @@
 //! Pagination and structured data.
 
-use super::target_not_ok_evidence;
+use super::{target_not_ok_evidence, target_not_ok_targets};
 use crate::issues::{Category, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -16,6 +16,7 @@ pub const RULES: &[Rule] = &[
     .site_wide()
     .needs(Need::Extraction)
     .evidence(target_not_ok_evidence!("'next', 'prev'"))
+    .targets(target_not_ok_targets!("'next', 'prev'"))
     .explain(
         "A rel=\"next\" or rel=\"prev\" link points at a URL that fails, redirects or is not indexable, which breaks the series for crawlers.",
         "Point next and prev at the final URLs of the neighbouring pages.",

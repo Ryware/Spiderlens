@@ -17,5 +17,8 @@ Events:
 - `analysis-progress` (`AnalysisProgress { pass, label, done, total }`):
   the Crawl Analysis phase at crawl end (before `crawl-finished`) and on
   opening a writable file. The status bar shows "Analysing: <label> N%".
+- `issues-partial` (`{ path, summary: IssuesSummary }`, every count
+  provisional): counts so far, about once a second, while `issues_summary`
+  evaluates a file for the first time (FR-008).
 - The sidebar refetches the summary on new crawl data (the 007 refresh)
   and after each applied settings change.

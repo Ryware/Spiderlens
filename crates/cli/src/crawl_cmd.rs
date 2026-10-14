@@ -232,6 +232,16 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         if print_issues(&validate(&resolved.config, &input)) {
             return ExitCode::from(exit::USAGE);
         }
+        // The profile's issue settings get the app's validation before the
+        // crawl starts (spec 009 FR-028).
+        let (_, notices) = spiderlens_results::issues::resolve(&resolved.config.issues);
+        for n in &notices {
+            let level = if n.error { "error" } else { "notice" };
+            eprintln!("{level}: issues: {}: {}", n.rule, n.message);
+        }
+        if notices.iter().any(|n| n.error) {
+            return ExitCode::from(exit::USAGE);
+        }
         let out = cmd.out.clone().unwrap_or_else(|| default_out(&input));
         match Crawler::create(&out, resolved.config, &input) {
             Ok(c) => {

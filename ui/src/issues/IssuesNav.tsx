@@ -20,11 +20,13 @@ const shownCount = (i: IssueCount) => (i.enabled && i.count ? i.count : 0);
  */
 export function IssuesNav({
   summary,
+  counting = false,
   active,
   collapsed,
   onSelect,
 }: {
   summary: IssuesSummary | null;
+  counting?: boolean;
   active: string;
   collapsed: boolean;
   onSelect: (tab: string) => void;
@@ -105,6 +107,7 @@ export function IssuesNav({
                         <button
                           type="button"
                           aria-current={on ? "page" : undefined}
+                          aria-describedby={i.unavailable ? `why-${i.id}` : undefined}
                           title={i.unavailable ?? undefined}
                           onClick={() => onSelect(tab)}
                           className={cn(
@@ -118,6 +121,12 @@ export function IssuesNav({
                             {i.provisional && shownCount(i) > 0 ? "*" : ""}
                           </span>
                         </button>
+                        {/* Why it cannot run on this file, for every reader (US3, FR-020). */}
+                        {i.unavailable && (
+                          <p id={`why-${i.id}`} className="m-0 px-2 pb-1 text-2xs text-fg-3">
+                            {i.unavailable}
+                          </p>
+                        )}
                       </li>
                     );
                   })}
@@ -131,7 +140,10 @@ export function IssuesNav({
         <button type="button" onClick={() => setAll((a) => !a)} aria-pressed={all} className="text-xs text-fg-3 hover:text-fg-2">
           {all ? "Hide rules without issues" : "Show all rules"}
         </button>
-        {provisional && <span className="text-2xs text-fg-3">* until the crawl ends</span>}
+        {counting && <span className="text-2xs text-fg-3">* counting…</span>}
+        {provisional && !counting && <span className="text-2xs text-fg-3">* until the crawl ends</span>}
+        {/* FR-013: which rule set these issues come from. */}
+        {!provisional && <span className="text-2xs text-fg-3">Rule set v{summary.rules_version}</span>}
       </div>
     </div>
   );

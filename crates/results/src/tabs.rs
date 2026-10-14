@@ -564,13 +564,23 @@ macro_rules! heading_tab {
     };
 }
 
+/// URLs with at least one issue under the settings in force.
+const WITH_ISSUES: FilterDef = filter(
+    "with_issues",
+    "With issues",
+    "EXISTS (SELECT 1 FROM temp.issue_hits h WHERE h.url_id = u.id)",
+)
+.reads(Derived::IssueHits);
+
 /// Every tab in display order (FR-007, FR-009).
 pub fn tabs() -> &'static [TabDef] {
     static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(|| {
         let mut tabs = build();
-        // Every tab can show each URL's issues (spec 009 FR-018).
+        // Every tab can show each URL's issues and keep the URLs that have
+        // some (spec 009 FR-018).
         for t in &mut tabs {
             t.columns.push(c::ISSUES);
+            t.filters.push(WITH_ISSUES);
         }
         tabs
     });
@@ -589,6 +599,23 @@ pub fn issue_tabs() -> &'static [TabDef] {
     &TABS
 }
 
+/// The 007 tab that shows what a category's rules test.
+fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
+    use crate::issues::Category::*;
+    Some(match c {
+        ResponseCodes => "response-codes",
+        PageTitles => "page-titles",
+        MetaDescription => "meta-description",
+        H1 => "h1",
+        H2 => "h2",
+        Images => "images",
+        Canonicals => "canonicals",
+        Directives => "directives",
+        Url => "url",
+        _ => return None,
+    })
+}
+
 fn build_issue_tabs() -> Vec<TabDef> {
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     crate::issues::catalogue()
@@ -599,15 +626,29 @@ fn build_issue_tabs() -> Vec<TabDef> {
             evidence.derived = r.derived.first().copied();
             let mut all = filter("all", "All", "1").needs(r.need);
             all.derived = Some(Derived::IssueHits);
-            let mut columns = vec![c::ADDRESS, evidence, c::STATUS_CODE];
-            if r.scope == crate::issues::Scope::Pages {
-                columns.push(c::TITLE);
-                columns.push(c::INDEXABILITY);
-            } else {
-                columns.push(c::CONTENT_TYPE);
-                columns.push(c::FINAL_STATE);
+            let mut columns = vec![c::ADDRESS, evidence];
+            // The columns of the rule's own 007 tab, such as the title and
+            // its length for title rules (FR-015), then the common ones.
+            if let Some(home) = home_tab(r.category).and_then(|id| tabs().iter().find(|t| t.id == id)) {
+                columns.extend(
+                    home.columns
+                        .iter()
+                        .filter(|c| c.id != "address" && c.id != "issues")
+                        .cloned(),
+                );
             }
-            columns.extend([c::INLINKS, c::DEPTH.hidden(), c::FOUND_ON]);
+            let mut common = vec![c::STATUS_CODE];
+            if r.scope == crate::issues::Scope::Pages {
+                common.extend([c::TITLE, c::INDEXABILITY]);
+            } else {
+                common.extend([c::CONTENT_TYPE, c::FINAL_STATE]);
+            }
+            common.extend([c::INLINKS, c::DEPTH.hidden(), c::FOUND_ON]);
+            for col in common {
+                if !columns.iter().any(|c| c.id == col.id) {
+                    columns.push(col);
+                }
+            }
             TabDef {
                 id: leak(format!("issue:{}", r.id)),
                 title: r.name,
@@ -1294,6 +1335,18 @@ mod tests {
         let one = read(i64::MAX);
         assert!(one.len() > 100);
         assert_eq!(read(0), one);
+    }
+
+    #[test]
+    fn issue_tabs_show_their_categorys_columns() {
+        // FR-015: a title rule shows the title and its length.
+        let t = tab("issue:title.over").unwrap();
+        let ids: Vec<_> = t.columns.iter().map(|c| c.id).collect();
+        assert_eq!(&ids[..4], ["address", "evidence", "title", "title_length"]);
+        for t in issue_tabs() {
+            let unique: HashSet<_> = t.columns.iter().map(|c| c.id).collect();
+            assert_eq!(unique.len(), t.columns.len(), "duplicate column in {}", t.id);
+        }
     }
 
     #[test]

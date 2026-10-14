@@ -29,6 +29,8 @@ pub struct Reader {
     /// Issue settings in force, and the values `thr()` reads (spec 009).
     pub(crate) issue_settings: ResolvedSettings,
     pub(crate) thresholds: Arc<RwLock<Thresholds>>,
+    /// See [`Reader::set_partial_sink`].
+    pub(crate) partial: Option<Box<dyn FnMut(crate::issues::IssuesSummary) + Send>>,
     version: u64,
     /// Counts crawl data changes only (not settings changes).
     pub(crate) data_gen: u64,
@@ -115,6 +117,7 @@ impl Reader {
             derived: HashMap::new(),
             issue_settings,
             thresholds,
+            partial: None,
             version: 1,
             data_gen: 1,
             data_version,

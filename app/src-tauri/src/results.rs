@@ -40,7 +40,7 @@ pub struct State {
     next_export: AtomicU32,
     /// Issue settings of the profile in use (spec 009 plan D9), applied to
     /// every reader and export.
-    issues: Mutex<IssueSettings>,
+    pub issues: Mutex<IssueSettings>,
 }
 
 #[derive(Serialize, Clone)]
@@ -379,25 +379,59 @@ pub async fn issues_apply(
     *state.issues.lock().expect("issues lock") = settings.clone();
     match path {
         Some(path) => {
-            state
+            let recorded = settings.clone();
+            let notices = state
                 .with(&path, move |r| Ok(r.set_issue_settings(&settings)))
-                .await
+                .await?;
+            // FR-013: a writable file records the settings its issues now
+            // use; a read-only or newer file is left alone.
+            std::thread::spawn(move || record_issues(&path, &recorded));
+            Ok(notices)
         }
         None => Ok(notices),
     }
+}
+
+/// Records the rule set version and issue settings in `path` (FR-013),
+/// when the file can be written.
+pub fn record_issues(path: &Path, settings: &IssueSettings) {
+    let _ = spiderlens_results::issues::record_issue_settings(path, settings);
 }
 
 /// Every rule with its count for the open crawl (FR-014); site-wide counts
 /// are provisional while `running` (FR-019).
 #[tauri::command]
 pub async fn issues_summary(
+    app: AppHandle,
     state: tauri::State<'_, State>,
     path: PathBuf,
     running: bool,
 ) -> Cmd<IssuesSummary> {
+    let key = path.clone();
     state
-        .with(&path, move |r| r.issues_summary(running).map_err(err))
+        .with(&path, move |r| {
+            // Counts so far, about once a second, while a long evaluation runs (FR-008).
+            r.set_partial_sink(Some(Box::new(move |summary| {
+                let _ = app.emit(
+                    "issues-partial",
+                    IssuesPartial {
+                        path: key.clone(),
+                        summary,
+                    },
+                );
+            })));
+            let out = r.issues_summary(running).map_err(err);
+            r.set_partial_sink(None);
+            out
+        })
         .await
+}
+
+/// The `issues-partial` event.
+#[derive(Clone, Serialize)]
+struct IssuesPartial {
+    path: PathBuf,
+    summary: IssuesSummary,
 }
 
 /// Runs the Crawl Analysis passes that have not run on `path` (spec 009

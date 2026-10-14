@@ -137,10 +137,23 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
   );
 }
 
-/** The URL's issues, highest priority first; a click opens that issue (spec 009 FR-017). */
-function IssueList({ issues, onIssue }: { issues: UrlIssue[] | null; onIssue?: (id: string) => void }) {
+/**
+ * The URL's issues, highest priority first; a click opens that issue (spec
+ * 009 FR-017). Link issues list their targets, each openable in the table.
+ */
+function IssueList({
+  issues,
+  rulesVersion,
+  onIssue,
+  onOpenUrl,
+}: {
+  issues: UrlIssue[] | null;
+  rulesVersion?: number;
+  onIssue?: (id: string) => void;
+  onOpenUrl?: (url: string) => void;
+}) {
   if (!issues) return <div className="text-sm text-fg-3">Loading…</div>;
-  if (issues.length === 0) return <div className="text-sm text-fg-3">No issues.</div>;
+  if (issues.length === 0) return <div className="text-sm text-fg-3">No issues found{rulesVersion ? ` (rule set v${rulesVersion})` : ""}.</div>;
   return (
     <ul className="m-0 flex list-none flex-col p-0">
       {issues.map((i) => (
@@ -152,6 +165,21 @@ function IssueList({ issues, onIssue }: { issues: UrlIssue[] | null; onIssue?: (
               {i.evidence && <span className="block break-words text-fg-3" data-selectable>{i.evidence}</span>}
             </span>
           </button>
+          {i.targets.length > 0 && (
+            <ul aria-label={`${i.name}: targets`} className="m-0 mt-1 flex max-h-40 list-none flex-col overflow-y-auto p-0 pl-6">
+              {i.targets.map((t) => (
+                <li key={t.id} className="flex items-baseline gap-2 text-sm">
+                  <span className={cn("w-8 shrink-0 tabular", toneText[cellTone("status", t.status) as keyof typeof toneText] ?? "text-fg-3")}>{t.status ?? "–"}</span>
+                  <button type="button" onClick={() => onOpenUrl?.(t.url)} className="min-w-0 flex-1 truncate text-left text-fg-2 hover:text-accent-text" title={`Show ${t.url} in the table`}>
+                    {t.url}
+                  </button>
+                </li>
+              ))}
+              {i.targets_total > i.targets.length && (
+                <li className="text-xs text-fg-3">and {(i.targets_total - i.targets.length).toLocaleString()} more</li>
+              )}
+            </ul>
+          )}
         </li>
       ))}
     </ul>
@@ -163,7 +191,9 @@ export function Inspector({
   path,
   id,
   issuesVersion = 0,
+  rulesVersion,
   onIssue,
+  onOpenUrl,
 }: {
   transport: Transport;
   path: string | null;
@@ -171,6 +201,10 @@ export function Inspector({
   /** Changes when issue settings change, so the list is fetched again. */
   issuesVersion?: number;
   onIssue?: (ruleId: string) => void;
+  /** The issue rule set version, named when a URL has no issues (FR-013). */
+  rulesVersion?: number;
+  /** Shows a URL in the Internal table (an issue's link target). */
+  onOpenUrl?: (url: string) => void;
 }) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -271,7 +305,7 @@ export function Inspector({
       )}
 
       <Section title={issues && issues.length > 0 ? `Issues (${issues.length})` : "Issues"}>
-        <IssueList issues={issues} onIssue={onIssue} />
+        <IssueList issues={issues} rulesVersion={rulesVersion} onIssue={onIssue} onOpenUrl={onOpenUrl} />
       </Section>
 
       <Section title="Response">

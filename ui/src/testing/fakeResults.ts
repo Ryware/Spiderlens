@@ -91,6 +91,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "ruleCatalogue"
   | "issuesApply"
   | "issuesSummary"
+  | "onIssuesPartial"
   | "urlIssues"
 > & { results: FakeResults; issues: FakeIssues } {
   let version = 1;

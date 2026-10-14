@@ -55,3 +55,44 @@ fn issues_column_shows_highest_priority_and_count_per_url() {
     }
     assert!(flagged > 0, "the synthetic crawl has issues");
 }
+
+#[test]
+fn with_issues_filter_keeps_exactly_the_urls_that_have_issues() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.spiderlens");
+    Synth {
+        urls: 300,
+        links_per_page: 2,
+        seed: 4,
+    }
+    .write(&path)
+    .unwrap();
+    let mut r = Reader::open(&path).unwrap();
+    let q = ViewQuery {
+        tab: "internal".into(),
+        filter: "with_issues".into(),
+        scope: UrlScope::All,
+        search: String::new(),
+        sort: None,
+    };
+    let rows = r.open_view(&q, 1000).unwrap().rows;
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert!(!r.url_issues(row[0].as_i64().unwrap()).unwrap().is_empty());
+    }
+    let all = r
+        .open_view(
+            &ViewQuery {
+                filter: "all".into(),
+                ..q.clone()
+            },
+            1000,
+        )
+        .unwrap()
+        .rows;
+    let without = all
+        .iter()
+        .filter(|row| r.url_issues(row[0].as_i64().unwrap()).unwrap().is_empty())
+        .count();
+    assert_eq!(rows.len() + without, all.len());
+}

@@ -1,5 +1,5 @@
-//! Issue evaluation figures for spec 009 benchmarks.md: final pass
-//! (SC-003), a threshold change (SC-004), the first screen of the largest
+//! Issue evaluation figures for spec 009 benchmarks.md: final pass and
+//! first partial counts (SC-003), a threshold change (SC-004), the first screen of the largest
 //! issue (SC-005) and peak memory (SC-006, Linux only).
 //!
 //! `cargo run --release -p spiderlens-results --example issue_bench -- <file>`
@@ -13,8 +13,15 @@ fn main() {
     let path = std::path::PathBuf::from(std::env::args().nth(1).expect("crawl file"));
     let t = Instant::now();
     let mut r = Reader::open(&path).expect("open");
+    let first = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let seen = first.clone();
+    r.set_partial_sink(Some(Box::new(move |_| {
+        seen.lock().unwrap().get_or_insert(t.elapsed());
+    })));
     let s = r.issues_summary(false).expect("summary");
     println!("final pass: {:?}", t.elapsed());
+    println!("first partial counts: {:?}", first.lock().unwrap());
+    r.set_partial_sink(None);
 
     let mut s2 = IssueSettings::default();
     s2.rules.insert(

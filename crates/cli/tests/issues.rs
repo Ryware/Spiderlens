@@ -150,3 +150,31 @@ fn analyse_runs_the_phase_and_reports_what_ran() {
     let missing = run(&["analyse", "/nonexistent.spiderlens"]);
     assert_eq!(missing.status.code(), Some(3));
 }
+
+#[test]
+fn crawl_refuses_a_profile_with_invalid_issue_settings() {
+    // FR-028: the same validation as the app, before anything is crawled.
+    let dir = tempfile::tempdir().unwrap();
+    let defaults = run(&["config", "defaults"]);
+    let mut profile: serde_json::Value = serde_json::from_slice(&defaults.stdout).unwrap();
+    profile["config"]["issues"] = serde_json::json!({ "rules": { "title.over": { "threshold": -1 } } });
+    let path = dir.path().join("p.json");
+    std::fs::write(&path, profile.to_string()).unwrap();
+    let out_file = dir.path().join("c.spiderlens");
+    let out = run(&[
+        "crawl",
+        "http://127.0.0.1:9/",
+        "--profile",
+        path.to_str().unwrap(),
+        "--out",
+        out_file.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("title.over"));
+    assert!(!out_file.exists());
+}

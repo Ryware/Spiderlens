@@ -96,11 +96,24 @@ export function ResultsView({
   useEffect(() => {
     setPrefs(loadPrefs(tab));
     setSearchText(session.search);
+    sent.current = session.search;
     setSelection(emptySelection);
     // Only when the tab changes; the session is the tab's own.
   }, [tab]);
+  // The search this view last sent; any other value came from outside (an
+  // issue target opened from the inspector) and replaces the typed text.
+  const sent = useRef(session.search);
   useEffect(() => {
-    if (search !== session.search) onSession({ search });
+    if (session.search !== sent.current) {
+      sent.current = session.search;
+      setSearchText(session.search);
+    }
+  }, [session.search]);
+  useEffect(() => {
+    if (search !== session.search && search !== sent.current) {
+      sent.current = search;
+      onSession({ search });
+    }
   }, [search, session.search, onSession]);
 
   const updatePrefs = (p: ColumnPrefs) => {

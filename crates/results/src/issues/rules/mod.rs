@@ -27,6 +27,20 @@ macro_rules! has_flag {
     };
 }
 
+/// The targets of `kind` links that [`target_not_ok_evidence`] describes, as
+/// a [`crate::issues::Rule::targets`] condition.
+macro_rules! target_not_ok_targets {
+    ($kind:literal) => {
+        concat!(
+            "l.kind IN (",
+            $kind,
+            ") AND t.id <> l.from_id AND t.fetched_at IS NOT NULL \
+             AND (t.error_class IS NOT NULL OR t.status IS NULL OR t.status NOT BETWEEN 200 AND 299 OR t.noindex = 1 \
+             OR (t.canonical IS NOT NULL AND t.canonical <> t.url))"
+        )
+    };
+}
+
 /// The first link of `kind` from this page to a URL that was fetched and
 /// failed or did not return 2xx, with its state, as evidence. Targets never
 /// fetched are "not checked" (FR-011); the matching condition is a
@@ -45,4 +59,4 @@ macro_rules! target_not_ok_evidence {
     };
 }
 
-pub(crate) use {has_flag, target_not_ok_evidence};
+pub(crate) use {has_flag, target_not_ok_evidence, target_not_ok_targets};

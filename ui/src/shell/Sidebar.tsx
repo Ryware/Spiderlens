@@ -38,6 +38,7 @@ export function Sidebar({
   onAbout,
   results,
   issues = null,
+  counting = false,
 }: {
   active: string;
   onSelect: (id: string) => void;
@@ -46,6 +47,8 @@ export function Sidebar({
   results: boolean;
   /** The open crawl's issues (spec 009); the group shows once a crawl exists. */
   issues?: IssuesSummary | null;
+  /** The counts are partial: the issues are still being evaluated. */
+  counting?: boolean;
 }) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
@@ -78,7 +81,7 @@ export function Sidebar({
       {results && (
         <>
           {heading("Issues")}
-          <IssuesNav summary={issues} active={active} collapsed={collapsed} onSelect={onSelect} />
+          <IssuesNav summary={issues} counting={counting} active={active} collapsed={collapsed} onSelect={onSelect} />
         </>
       )}
       {heading("Crawl results")}

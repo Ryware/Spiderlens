@@ -89,11 +89,55 @@ export interface FakeIssues {
   /** Settings last applied. */
   settings: IssueSettings;
   rules(): RuleInfo[];
+  /** While true, issuesSummary waits for release(), as a long evaluation does. */
+  hold: boolean;
+  release(): void;
+  /** Sends the issues-partial event with the current counts marked provisional. */
+  partial(path: string): void;
 }
 
-export function fakeIssuesTransport(urls: () => FakeUrl[]): Pick<Transport, "ruleCatalogue" | "issuesApply" | "issuesSummary" | "urlIssues"> & { issues: FakeIssues } {
+export function fakeIssuesTransport(urls: () => FakeUrl[]): Pick<Transport, "ruleCatalogue" | "issuesApply" | "issuesSummary" | "onIssuesPartial" | "urlIssues"> & { issues: FakeIssues } {
   let version = 1;
-  const issues: FakeIssues = { settings: { rules: {} }, rules: () => applySettings(issues.settings).rules };
+  const listeners = new Set<(p: { path: string; summary: IssuesSummary }) => void>();
+  let waiting: (() => void)[] = [];
+  const issues: FakeIssues = {
+    settings: { rules: {} },
+    rules: () => applySettings(issues.settings).rules,
+    hold: false,
+    release: () => {
+      issues.hold = false;
+      waiting.forEach((go) => go());
+      waiting = [];
+    },
+    partial: (path) => {
+      const s = summarize(false);
+      const summary = { ...s, issues: s.issues.map((i) => ({ ...i, provisional: true })) };
+      listeners.forEach((cb) => cb({ path, summary }));
+    },
+  };
+  const summarize = (running: boolean): IssuesSummary => {
+    const rules = issues.rules();
+    const counts = rules.map((r) => ({
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      priority: r.priority,
+      enabled: r.enabled,
+      count: r.enabled ? hits(r, urls()).length : null,
+      provisional: running && r.kind === "site_wide",
+      unavailable: null,
+    }));
+    const order: Priority[] = ["high", "medium", "low", "opportunity"];
+    return {
+      version,
+      rules_version: 1,
+      by_priority: order.map((p) => {
+        const at = counts.filter((c) => c.priority === p && (c.count ?? 0) > 0);
+        return { priority: p, issues: at.length, urls: at.reduce((n, c) => n + (c.count ?? 0), 0) };
+      }),
+      issues: counts,
+    };
+  };
   return {
     issues,
     ruleCatalogue: async (s) => applySettings(s),
@@ -106,27 +150,12 @@ export function fakeIssuesTransport(urls: () => FakeUrl[]): Pick<Transport, "rul
       return notices;
     },
     issuesSummary: async (_path, running): Promise<IssuesSummary> => {
-      const rules = issues.rules();
-      const counts = rules.map((r) => ({
-        id: r.id,
-        name: r.name,
-        category: r.category,
-        priority: r.priority,
-        enabled: r.enabled,
-        count: r.enabled ? hits(r, urls()).length : null,
-        provisional: running && r.kind === "site_wide",
-        unavailable: null,
-      }));
-      const order: Priority[] = ["high", "medium", "low", "opportunity"];
-      return {
-        version,
-        rules_version: 1,
-        by_priority: order.map((p) => {
-          const at = counts.filter((c) => c.priority === p && (c.count ?? 0) > 0);
-          return { priority: p, issues: at.length, urls: at.reduce((n, c) => n + (c.count ?? 0), 0) };
-        }),
-        issues: counts,
-      };
+      if (issues.hold) await new Promise<void>((go) => waiting.push(go));
+      return summarize(running);
+    },
+    onIssuesPartial: async (cb) => {
+      listeners.add(cb);
+      return () => void listeners.delete(cb);
     },
     urlIssues: async (_path, id) => {
       const u = urls().find((x) => x.id === id);
@@ -134,7 +163,7 @@ export function fakeIssuesTransport(urls: () => FakeUrl[]): Pick<Transport, "rul
       return issues
         .rules()
         .filter((r) => hits(r, [u]).length > 0)
-        .map((r) => ({ id: r.id, name: r.name, priority: r.priority, evidence: r.id === "title.below" ? `${u.title?.length} characters` : `${u.status}` }));
+        .map((r) => ({ id: r.id, name: r.name, priority: r.priority, evidence: r.id === "title.below" ? `${u.title?.length} characters` : `${u.status}`, targets: [], targets_total: 0 }));
     },
   };
 }

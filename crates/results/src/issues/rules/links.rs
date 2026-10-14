@@ -23,6 +23,7 @@ pub const RULES: &[Rule] = &[
     rule("links.broken_internal", "Pages with broken internal links", C, High, Scope::Pages, has_flag!("1"))
         .site_wide()
         .evidence(broken_evidence!("1"))
+        .targets("l.kind = 'anchor' AND t.internal = 1 AND (t.error_class IS NOT NULL OR t.status >= 400)")
         .explain(
             "This page links to internal URLs that return an error, so visitors hit dead ends and crawlers waste time.",
             "Fix or remove each broken link on this page; the Outlinks section shows every target and its state.",
@@ -30,6 +31,7 @@ pub const RULES: &[Rule] = &[
     rule("links.broken_external", "Pages with broken external links", C, Medium, Scope::Pages, has_flag!("2"))
         .site_wide()
         .evidence(broken_evidence!("0"))
+        .targets("l.kind = 'anchor' AND t.internal = 0 AND (t.error_class IS NOT NULL OR t.status >= 400)")
         .explain(
             "This page links to outside pages that return an error, which hurts visitors' trust in the page.",
             "Replace each broken link with a working source, or remove it.",
@@ -47,6 +49,7 @@ pub const RULES: &[Rule] = &[
         "(SELECT COUNT(DISTINCT t.id) || ' links to redirects' FROM links l JOIN urls t ON t.id = l.to_id \
          WHERE l.from_id = u.id AND l.kind = 'anchor' AND t.internal = 1 AND t.error_class IS NULL AND t.status BETWEEN 300 AND 399)",
     )
+    .targets("l.kind = 'anchor' AND t.internal = 1 AND t.error_class IS NULL AND t.status BETWEEN 300 AND 399")
     .explain(
         "Links that go through a redirect cost visitors an extra round trip and pass less value than a direct link.",
         "Change each link to point at the redirect's final destination.",

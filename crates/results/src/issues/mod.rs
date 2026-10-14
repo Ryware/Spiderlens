@@ -18,7 +18,9 @@ use serde::Serialize;
 use ts_rs::TS;
 
 pub(crate) use eval::build_derived_with;
-pub use eval::{IssueCount, IssuesSummary, PriorityTotal, UrlIssue, record_issue_settings};
+pub use eval::{
+    IssueCount, IssueTarget, IssuesSummary, PriorityTotal, TARGETS_SHOWN, UrlIssue, record_issue_settings,
+};
 pub use settings::{ResolvedRule, ResolvedSettings, SettingsNotice, resolve};
 pub use spiderlens_config::Priority;
 
@@ -186,6 +188,10 @@ pub struct Rule {
     pub derived: &'static [Derived],
     /// SQL text expression: why this URL has the issue ("74 characters").
     pub evidence: &'static str,
+    /// For link rules: SQL condition over `links l JOIN urls t ON t.id =
+    /// l.to_id` with `l.from_id` the page, selecting the targets that cause
+    /// the issue, listed in the detail pane (US2 scenario 2).
+    pub targets: Option<&'static str>,
     /// Standards references, such as a WCAG 2.2 success criterion.
     pub standards: &'static [&'static str],
     pub why: &'static str,
@@ -214,6 +220,7 @@ pub const fn rule(
         need: Need::Base,
         derived: &[],
         evidence: "NULL",
+        targets: None,
         standards: &[],
         why: "",
         fix: "",
@@ -254,6 +261,10 @@ impl Rule {
     }
     pub const fn evidence(mut self, sql: &'static str) -> Self {
         self.evidence = sql;
+        self
+    }
+    pub const fn targets(mut self, cond: &'static str) -> Self {
+        self.targets = Some(cond);
         self
     }
     pub const fn standards(mut self, refs: &'static [&'static str]) -> Self {
@@ -497,5 +508,50 @@ mod tests {
         assert_eq!(display_name(r, Some(70.0)), "Page title: over 70 characters");
         assert_eq!(fmt_num(1_048_576.0), "1,048,576");
         assert_eq!(fmt_num(2.5), "2.5");
+    }
+
+    #[test]
+    fn partial_counts_grow_to_the_final_ones() {
+        use std::sync::{Arc, Mutex};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.spiderlens");
+        crate::synth::Synth {
+            urls: 20_000,
+            links_per_page: 3,
+            seed: 9,
+        }
+        .write(&path)
+        .unwrap();
+        let mut r = crate::Reader::open(&path).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        r.set_partial_sink(Some(Box::new(move |s| sink.lock().unwrap().push(s))));
+        let last = r.issues_summary(false).unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty(), "partial counts were reported");
+        let count = |s: &IssuesSummary, id: &str| s.issues.iter().find(|i| i.id == id).unwrap().count;
+        for p in seen.iter() {
+            assert!(p.issues.iter().all(|i| i.provisional));
+            for i in &last.issues {
+                assert!(count(p, &i.id).unwrap_or(0) <= i.count.unwrap_or(0), "{}", i.id);
+            }
+        }
+        assert!(last.issues.iter().all(|i| !i.provisional));
+        // The same hits as the export path, which builds every table first.
+        let settings = ResolvedSettings::default();
+        let (conn, features, _) = crate::reader::connect(&path, &settings).unwrap();
+        eval::build_derived_with(&conn, &features, &settings, &[crate::tabs::Derived::IssueHits]).unwrap();
+        for i in &last.issues {
+            let Some(n) = i.count else { continue };
+            let idx = catalogue().iter().position(|r| r.id == i.id).unwrap();
+            let m: u64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM temp.issue_hits WHERE rule = ?1",
+                    [idx as i64],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap() as u64;
+            assert_eq!(n, m, "{}", i.id);
+        }
     }
 }

@@ -367,6 +367,8 @@ export interface Transport {
   /** Makes these settings the ones in force; errors reject the whole change. */
   issuesApply(path: string | null, settings: IssueSettings): Promise<SettingsNotice[]>;
   issuesSummary(path: string, running: boolean): Promise<IssuesSummary>;
+  /** Counts so far while a long issuesSummary evaluation runs (FR-008). */
+  onIssuesPartial(cb: (p: { path: string; summary: IssuesSummary }) => void): Promise<() => void>;
   urlIssues(path: string, id: number): Promise<UrlIssue[]>;
 }
 
@@ -447,5 +449,6 @@ export const tauriTransport: Transport = {
   ruleCatalogue: (settings) => invoke("rule_catalogue", { settings }),
   issuesApply: (path, settings) => invoke("issues_apply", { path, settings }),
   issuesSummary: (path, running) => invoke("issues_summary", { path, running }),
+  onIssuesPartial: (cb) => listen<{ path: string; summary: IssuesSummary }>("issues-partial", (e) => cb(e.payload)),
   urlIssues: (path, id) => invoke("url_issues", { path, id }),
 };

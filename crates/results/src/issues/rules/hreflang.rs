@@ -1,6 +1,6 @@
 //! Hreflang annotations.
 
-use super::target_not_ok_evidence;
+use super::{target_not_ok_evidence, target_not_ok_targets};
 use crate::issues::{Category::Hreflang as C, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
@@ -41,6 +41,7 @@ pub const RULES: &[Rule] = &[
     .site_wide()
     .needs(Need::Extraction)
     .evidence(target_not_ok_evidence!("'hreflang'"))
+    .targets(target_not_ok_targets!("'hreflang'"))
     .explain(
         "An alternate language URL redirects, fails, is noindexed or canonicalises elsewhere, so search engines discard it.",
         "Point each hreflang link at the final, indexable URL of that language version.",

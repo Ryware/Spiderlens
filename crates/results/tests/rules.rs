@@ -447,3 +447,37 @@ async fn us4_settings_change_thresholds_priorities_and_switch_rules_off() {
     };
     assert_eq!(key(&mut fresh), key(&mut r));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn us2_broken_links_list_their_targets() {
+    // US2 scenario 2: the two broken targets, in page order, with status.
+    let c = crawl().await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let q = ViewQuery {
+        tab: "issue:links.broken_internal".into(),
+        filter: "all".into(),
+        scope: Default::default(),
+        search: String::new(),
+        sort: None,
+    };
+    let id = r.open_view(&q, 10).unwrap().rows[0][0].as_i64().unwrap();
+    let issue = r
+        .url_issues(id)
+        .unwrap()
+        .into_iter()
+        .find(|i| i.id == "links.broken_internal")
+        .unwrap();
+    assert_eq!(issue.targets_total, 2);
+    let got: Vec<_> = issue
+        .targets
+        .iter()
+        .map(|t| (t.url.rsplit('/').next().unwrap().to_string(), t.status))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("missing".to_string(), Some(404)),
+            ("error".to_string(), Some(500))
+        ]
+    );
+}

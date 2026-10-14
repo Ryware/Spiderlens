@@ -24,6 +24,7 @@ export function useIssues(transport: Transport, path: string | null, running: bo
   const [summary, setSummary] = useState<IssuesSummary | null>(null);
   const [applied, setApplied] = useState(0);
   const [changed, setChanged] = useState(0);
+  const [counting, setCounting] = useState(false);
   const lastKey = useRef<string | null>(null);
 
   useEffect(() => {
@@ -48,12 +49,37 @@ export function useIssues(transport: Transport, path: string | null, running: bo
     setSummary(null);
   }, [path]);
 
+  // Counts so far while the first evaluation of a large crawl runs (FR-008);
+  // later refreshes keep the last full counts on screen instead.
+  const shown = useRef<"none" | "partial" | "full">("none");
+  useEffect(() => {
+    shown.current = "none";
+    setCounting(false);
+    if (!path) return;
+    let off = false;
+    const stop = transport.onIssuesPartial((p) => {
+      if (off || p.path !== path || shown.current === "full") return;
+      shown.current = "partial";
+      setCounting(true);
+      setSummary(p.summary);
+    });
+    return () => {
+      off = true;
+      stop.then((f) => f(), () => {});
+    };
+  }, [transport, path]);
+
   useEffect(() => {
     if (!path || applied === 0) return;
     let off = false;
     const load = () =>
       transport.issuesSummary(path, running).then(
-        (r) => !off && setSummary(r),
+        (r) => {
+          if (off) return;
+          shown.current = "full";
+          setCounting(false);
+          setSummary(r);
+        },
         () => {},
       );
     load();
@@ -65,7 +91,8 @@ export function useIssues(transport: Transport, path: string | null, running: bo
   }, [transport, path, running, applied]);
 
   const byId = useMemo(() => new Map(rules.map((r) => [r.id, r])), [rules]);
-  return { rules, byId, summary, applied, changed };
+  /** `counting`: the summary holds partial counts of an evaluation still running. */
+  return { rules, byId, summary, counting, applied, changed };
 }
 
 export type Issues = ReturnType<typeof useIssues>;
