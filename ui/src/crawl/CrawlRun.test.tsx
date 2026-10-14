@@ -49,7 +49,7 @@ test("pause_then_resume_continues_the_same_file", async () => {
   expect(t.crawls.controls).toEqual(["pause 1"]);
   expect(button(/Pausing/).disabled).toBe(true);
 
-  act(() => t.crawls.finish({ report: fakeReport("paused", 5) }));
+  await act(async () => t.crawls.finish({ report: fakeReport("paused", 5) }));
   expect(within(status()).getByRole("status").textContent).toBe("Paused example.com");
   fireEvent.click(button(/Resume/));
   await screen.findByRole("button", { name: /Pause/ });
@@ -59,10 +59,10 @@ test("pause_then_resume_continues_the_same_file", async () => {
 test("stop_on_a_paused_crawl_reopens_and_stops_it", async () => {
   const t = await startCrawl();
   fireEvent.click(button(/Pause/));
-  act(() => t.crawls.finish({ report: fakeReport("paused", 5) }));
+  await act(async () => t.crawls.finish({ report: fakeReport("paused", 5) }));
   fireEvent.click(button(/Stop/));
   await waitFor(() => expect(t.crawls.controls).toEqual(["pause 1", "stop 2"]));
-  act(() => t.crawls.finish({ report: fakeReport("stopped", 5) }));
+  await act(async () => t.crawls.finish({ report: fakeReport("stopped", 5) }));
   expect(within(status()).getByRole("status").textContent).toBe("Stopped example.com");
   // A finished crawl gives the window back.
   expect((screen.getByLabelText("Start URL") as HTMLInputElement).readOnly).toBe(false);
@@ -70,7 +70,7 @@ test("stop_on_a_paused_crawl_reopens_and_stops_it", async () => {
 
 test("finished_crawl_explains_what_was_not_crawled", async () => {
   const t = await startCrawl();
-  act(() => t.crawls.finish({ report: fakeReport("completed", 7) }));
+  await act(async () => t.crawls.finish({ report: fakeReport("completed", 7) }));
   const overview = screen.getByRole("region", { name: "Overview" });
   expect(within(overview).getByText("Completed")).toBeTruthy();
   expect(within(overview).getByText("Blocked by robots.txt").nextSibling?.textContent).toBe("1");
@@ -80,7 +80,7 @@ test("finished_crawl_explains_what_was_not_crawled", async () => {
 
 test("failed_crawl_shows_the_engine_message", async () => {
   const t = await startCrawl();
-  act(() => t.crawls.finish({ error: "Could not create the crawl file" }));
+  await act(async () => t.crawls.finish({ error: "Could not create the crawl file" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Could not create the crawl file");
   expect(within(status()).getByRole("status").textContent).toBe("Failed example.com");
 });

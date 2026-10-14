@@ -110,6 +110,7 @@ export function ProfilePicker({ transport, setup }: { transport: Transport; setu
   const askName = (a: NameAction) => {
     setName(a === "save" ? "" : (loaded?.name ?? ""));
     setConfirmOverwrite(null);
+    setMessage(null);
     setNaming(a);
   };
 
@@ -170,11 +171,7 @@ export function ProfilePicker({ transport, setup }: { transport: Transport; setu
           </Button>
         </div>
       )}
-      {message && (
-        <Notice kind={message.kind} role={message.kind === "bad" ? "alert" : "status"}>
-          {message.text}
-        </Notice>
-      )}
+      {message && !naming && <ProfileMessage message={message} />}
 
       <Modal open={naming !== null} onOpenChange={(o) => !o && setNaming(null)} title={naming ? actionText[naming].title : ""}>
         <form
@@ -191,6 +188,9 @@ export function ProfilePicker({ transport, setup }: { transport: Transport; setu
               Include the start URL
             </label>
           )}
+          {/* Errors from the dialog's own action show inside it: the modal
+              hides the rest of the page from screen readers. */}
+          {message && <ProfileMessage message={message} />}
           {confirmOverwrite && (
             <Notice kind="warn" role="alert">
               A profile named "{confirmOverwrite}" already exists.
@@ -216,5 +216,13 @@ export function ProfilePicker({ transport, setup }: { transport: Transport; setu
         </form>
       </Modal>
     </div>
+  );
+}
+
+function ProfileMessage({ message }: { message: { kind: "info" | "bad"; text: string } }) {
+  return (
+    <Notice kind={message.kind} role={message.kind === "bad" ? "alert" : "status"}>
+      {message.text}
+    </Notice>
   );
 }

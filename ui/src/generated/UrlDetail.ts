@@ -46,6 +46,19 @@ html_stored: boolean,
  */
 link_metrics: LinkMetrics | null, 
 /**
+ * Requests made for this URL across the crawl, retries included
+ * (spec 004 FR-020).
+ */
+attempts: number | null, 
+/**
+ * The error's sub-reason, such as "refused" or "expired" (FR-013).
+ */
+error_reason: string | null, 
+/**
+ * The result came from "Retry failed URLs" (US5.3).
+ */
+manual_retry: boolean, 
+/**
  * Fields and sections this file has no data for, with the reason.
  */
 unavailable: Record<string, string>, };
