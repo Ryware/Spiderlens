@@ -347,7 +347,7 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     // "Show in table": the tabs that list a URL, in display order.
     assert_eq!(
         &r.tabs_of(home).unwrap()[..4],
-        ["internal", "response-codes", "url", "page-titles"]
+        ["internal", "links", "response-codes", "url"]
     );
     assert_eq!(r.tabs_of(missing).unwrap(), ["internal", "response-codes", "url"]);
     let private = out
