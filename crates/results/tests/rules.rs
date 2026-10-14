@@ -308,7 +308,6 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         .map(|i| i.id)
         .collect();
     assert_eq!(ids, set(&["security.http_page", "security.no_nosniff"]));
-
 }
 
 #[tokio::test(flavor = "multi_thread")]
