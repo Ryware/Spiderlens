@@ -99,6 +99,7 @@ impl Settle {
     }
 
     /// Requests that count and are still open.
+    #[cfg(test)]
     pub fn open_requests(&self) -> usize {
         self.open.len()
     }

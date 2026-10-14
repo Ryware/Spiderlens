@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 use spiderlens_render::{Browser, BrowserInfo, GuardCommand, LaunchOptions, browser_for_tests, launch_count};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+mod render;
+
 type TestFn = fn(&BrowserInfo) -> Result<(), String>;
 
 fn main() {
@@ -41,6 +43,10 @@ fn main() {
         (
             "guard_closes_the_browser_when_the_parent_is_killed",
             guard_closes_the_browser_when_the_parent_is_killed,
+        ),
+        (
+            "render_pages_of_the_js_fixture",
+            render::render_pages_of_the_js_fixture,
         ),
     ];
     let info = match browser_for_tests() {

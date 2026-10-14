@@ -6,14 +6,15 @@
 //! about crawls, crawl files or the UI, and depends on nothing in this
 //! workspace. The public API is `contracts/render-crate.md`.
 //!
-//! This is the skeleton from task T003: the types are final, the functions
-//! report "no browser" until browser discovery (T009), launch (T010) and
-//! rendering (T016) land.
+//! Not yet here: the `chrome-headless-shell` download (no pins yet, so
+//! [`download_plan`] is `None`) and running probes (each probe is reported
+//! as failed until specs 025 and 026 need them).
 
 mod find;
 mod guard;
 mod launch;
-pub mod settle;
+mod page;
+mod settle;
 mod types;
 
 use std::path::Path;
@@ -60,7 +61,8 @@ pub struct Browser {
     info: BrowserInfo,
     opts: LaunchOptions,
     running: Option<launch::Running>,
-    window: Window,
+    /// Set when a render hit the hard stop: the browser may be stuck.
+    stuck: std::sync::atomic::AtomicBool,
 }
 
 impl Browser {
@@ -72,11 +74,7 @@ impl Browser {
             info: info.clone(),
             opts,
             running: Some(running),
-            window: Window {
-                width: 1024,
-                height: 768,
-                mobile: false,
-            },
+            stuck: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -87,10 +85,24 @@ impl Browser {
 
     /// Renders one page in a fresh browser context. Never panics; every
     /// problem is a [`RenderOutcome`] state.
+    ///
+    /// Returns within `job.max_time` plus 2 s even when the browser hangs
+    /// (SC-007); the browser then reports [`Browser::needs_restart`].
     pub async fn render(&self, job: RenderJob, net: Arc<dyn Network>) -> RenderOutcome {
-        let _ = net;
-        let _ = self.window;
-        RenderOutcome::failed(FailedReason::RendererError, false, job.window)
+        let Some(running) = &self.running else {
+            return RenderOutcome::failed(FailedReason::RendererError, true, job.window);
+        };
+        let (out, stuck) = page::render(&running.cdp, job, net, self.opts.heap_limit_mb).await;
+        if stuck {
+            self.stuck.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        out
+    }
+
+    /// Whether a render had to be abandoned at the hard stop, so the browser
+    /// should be restarted before the next page.
+    pub fn needs_restart(&self) -> bool {
+        self.stuck.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Resident memory of the browser process tree, in bytes.
@@ -104,6 +116,7 @@ impl Browser {
             r.close().await;
         }
         self.running = Some(launch::Running::start(&self.info, &self.opts).await?);
+        self.stuck.store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

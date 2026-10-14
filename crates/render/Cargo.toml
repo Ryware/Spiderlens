@@ -14,7 +14,6 @@ spike = [
     "dep:cdp_oxide",
     "dep:cdp_chromey",
     "dep:reqwest",
-    "dep:base64",
 ]
 
 [dependencies]
@@ -23,13 +22,16 @@ futures-util.workspace = true
 chromiumoxide.workspace = true
 sysinfo.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "fs"] }
+serde_json.workspace = true
+# Bodies cross the DevTools connection base64-encoded. Already in the tree
+# through chromiumoxide, so no new crate is compiled.
+base64 = "0.22"
 
 # Spike only. Both crates name their library `chromiumoxide`, so they are
 # renamed here.
 cdp_oxide = { package = "chromiumoxide", version = "0.9.1", default-features = false, optional = true }
 cdp_chromey = { package = "chromey", version = "2.58", default-features = false, optional = true }
 reqwest = { workspace = true, optional = true }
-base64 = { version = "0.22", optional = true }
 
 [dev-dependencies]
 spiderlens-test-fixtures.workspace = true
