@@ -1087,10 +1087,19 @@ impl CrawlStore {
         header_links: &[AgentLink],
     ) -> Result<()> {
         let src = source.as_str();
-        for table in ["page_forms", "form_fields", "page_actions", "agent_links"] {
-            self.conn
-                .prepare_cached(&format!("DELETE FROM {table} WHERE url_id = ?1 AND source = ?2"))?
-                .execute(params![id, src])?;
+        // Most pages are stored once; four deletes on every page halved crawl
+        // speed (spec 008 benchmark), so they run only when an earlier
+        // record exists.
+        let earlier = self
+            .conn
+            .prepare_cached("SELECT 1 FROM page_agent WHERE url_id = ?1 AND source = ?2")?
+            .exists(params![id, src])?;
+        if earlier {
+            for table in ["page_forms", "form_fields", "page_actions", "agent_links"] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} WHERE url_id = ?1 AND source = ?2"))?
+                    .execute(params![id, src])?;
+            }
         }
         let links: Vec<&AgentLink> = a.links.iter().chain(header_links).collect();
         let md = links
