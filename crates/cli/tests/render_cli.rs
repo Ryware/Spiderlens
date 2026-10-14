@@ -143,6 +143,97 @@ fn page_json(file: &std::path::Path, url: &str) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
+/// Crawled URLs of a file, from `spiderlens report --crawled --json`.
+fn crawled_urls(file: &std::path::Path) -> Vec<String> {
+    let out = spiderlens()
+        .arg("report")
+        .arg(file)
+        .args(["--crawled", "--json"])
+        .output()
+        .unwrap();
+    let mut urls: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["url"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    urls.sort();
+    urls
+}
+
+/// Removes what differs between two runs: timings and the `Date` header.
+fn without_timings(v: &mut Value) {
+    const TIMINGS: [&str; 4] = ["response_ms", "fetched_at", "render_ms", "rendered_at"];
+    match v {
+        Value::Object(m) => {
+            for k in TIMINGS {
+                m.remove(k);
+            }
+            if let Some(Value::Array(h)) = m.get_mut("headers") {
+                h.retain(|pair| !pair[0].as_str().is_some_and(|n| n.eq_ignore_ascii_case("date")));
+            }
+            m.values_mut().for_each(without_timings);
+        }
+        Value::Array(a) => a.iter_mut().for_each(without_timings),
+        _ => {}
+    }
+}
+
+/// US1 scenario 7 (T025): the CLI and the engine API with the same
+/// settings store the same data for every page, and the CLI needs no
+/// window.
+#[test]
+fn cli_and_engine_render_the_same() {
+    use spiderlens_config::{CrawlConfig, ModeInput, RenderMode, SpeedSettings};
+    use spiderlens_engine::crawl::{Control, Crawler};
+    let Some(info) = spiderlens_render::browser_for_tests().unwrap() else {
+        return;
+    };
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let by_cli = dir.path().join("cli.spiderlens");
+    crawl_with_cli(&site, &info.path.display().to_string(), &by_cli);
+
+    let by_api = dir.path().join("api.spiderlens");
+    let mut config = CrawlConfig {
+        speed: SpeedSettings::FAST,
+        ..CrawlConfig::default()
+    };
+    config.rendering.mode = RenderMode::Javascript;
+    let crawler = Crawler::create(
+        &by_api,
+        config,
+        &ModeInput::Spider {
+            start_url: site.local_url("/"),
+        },
+    )
+    .unwrap()
+    .with_browser(info)
+    .with_render_launch(spiderlens_render::LaunchOptions::default());
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_tx, rx) = tokio::sync::watch::channel(Control::Run);
+    let summary = rt.block_on(crawler.run(rx, None)).unwrap();
+    assert_eq!(summary.status, "completed");
+
+    let urls = crawled_urls(&by_cli);
+    assert_eq!(urls.len(), 10, "{urls:?}");
+    assert_eq!(urls, crawled_urls(&by_api));
+    for url in &urls {
+        let mut a = page_json(&by_cli, url);
+        let mut b = page_json(&by_api, url);
+        assert!(a["render"].is_object(), "{url} was rendered");
+        without_timings(&mut a);
+        without_timings(&mut b);
+        assert_eq!(a, b, "{url}");
+    }
+}
+
 /// `spiderlens page` for a rendered page (T026, contracts/cli.md).
 #[test]
 fn page_shows_the_rendered_version_with_origins() {
