@@ -939,9 +939,10 @@ impl CrawlStore {
                 "INSERT OR REPLACE INTO pages (url_id, title_count, meta_description, meta_description_count,
                  h1_1, h1_2, h1_count, h2_1, h2_2, h2_count, heading_counts, word_count, lang, text_hash,
                  title_hash, meta_description_hash, meta_refresh_delay, meta_refresh_url, partial,
-                 encoding_errors, encoding, extract_error, no_content, html_stored)
+                 encoding_errors, encoding, extract_error, no_content, html_stored, sentence_count,
+                 syllable_count)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                 ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             )?
             .execute(params![
                 id,
@@ -968,6 +969,8 @@ impl CrawlStore {
                 page.extract_error,
                 d.no_content,
                 page.html.is_some(),
+                d.sentence_count,
+                d.syllable_count,
             ])?;
         let mut text_row = self.conn.prepare_cached(
             "INSERT INTO page_text (url_id, kind, level, pos, text, in_head) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

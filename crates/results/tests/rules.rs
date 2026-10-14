@@ -84,6 +84,14 @@ fn site() -> Site {
     add("/no-h1", &|x| x.h1 = None);
     add("/two-h1", &|x| x.body = "<h1>Another top heading</h1>".into());
     add("/skip-heading", &|x| x.body = "<h4>Jumped from H2</h4>".into());
+    add("/hard-read", &|x| {
+        x.body = format!(
+            "<p>{}</p>",
+            "Notwithstanding considerable methodological heterogeneity, investigators characterised \
+             organisational interdependencies comprehensively "
+                .repeat(12)
+        );
+    });
     add("/title-in-body", &|x| {
         x.title = None;
         x.body = "<title>/title-in-body page about testing the rules</title>".into();
@@ -252,6 +260,7 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         ("h1.multiple", &["/two-h1"]),
         ("headings.non_sequential", &["/skip-heading"]),
         ("title.outside_head", &["/title-in-body"]),
+        ("content.readability", &["/hard-read"]),
         ("content.thin", &["/thin"]),
         ("content.missing_lang", &["/nolang"]),
         ("canonical.canonicalised", &["/canon-other", "/canon-bad"]),
@@ -300,14 +309,6 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         .collect();
     assert_eq!(ids, set(&["security.http_page", "security.no_nosniff"]));
 
-    // Readability needs data this build does not collect yet (FR-010).
-    let rd = summary
-        .issues
-        .iter()
-        .find(|i| i.id == "content.readability")
-        .unwrap();
-    assert_eq!(rd.count, None);
-    assert!(rd.unavailable.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]

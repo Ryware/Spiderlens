@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,7 +34,15 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}];
+    },
+    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    Step {
+        version: 4,
+        additive: true,
+        sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
+        ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
+    },
+];
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();

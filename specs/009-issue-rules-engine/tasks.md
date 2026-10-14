@@ -54,8 +54,8 @@ Code in one draft PR on branch `009-issue-rules-engine`. [P] = can run in parall
 
 ## Readability (FR-031)
 
-- [ ] T024a Sentence and syllable counting in the extraction walk for English or undeclared pages, unit tests on known passages
-- [ ] T024b Migration step for `pages.sentence_count` and `pages.syllable_count` (number at merge), `Need::Readability`, Readability column on Internal, "Difficult to read" rule, unavailable on older files
+- [x] T024a Sentence and syllable counting in the extraction walk for English or undeclared pages, unit tests on known passages
+- [x] T024b Migration step for `pages.sentence_count` and `pages.syllable_count` (number at merge), `Need::Readability`, Readability column on Internal, "Difficult to read" rule, unavailable on older files
 
 ## Polish
 

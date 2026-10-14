@@ -485,9 +485,9 @@ impl Crawler {
         store.set_meta(
             "data_features",
             if config.extraction.store_html {
-                "extraction,timing,raw_html"
+                "extraction,timing,raw_html,readability"
             } else {
-                "extraction,timing"
+                "extraction,timing,readability"
             },
         )?;
 

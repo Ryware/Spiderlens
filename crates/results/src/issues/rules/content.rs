@@ -13,6 +13,8 @@ macro_rules! readability {
     };
 }
 
+pub(crate) use readability;
+
 pub const READABILITY: &str = readability!();
 
 pub const RULES: &[Rule] = &[

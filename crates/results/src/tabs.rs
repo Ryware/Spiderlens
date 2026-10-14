@@ -332,6 +332,20 @@ mod c {
         100,
     )
     .needs(Need::Extraction);
+    /// Flesch reading ease, 0 to 100 (spec 009 FR-031).
+    pub const READABILITY: ColumnDef = col(
+        "readability",
+        "Readability",
+        concat!(
+            "CAST(round(",
+            crate::issues::rules::content::readability!(),
+            ") AS INTEGER)"
+        ),
+        ValueKind::Int,
+        100,
+    )
+    .hidden()
+    .needs(Need::Readability);
     pub const SIZE: ColumnDef = col("size", "Size", "u.size_bytes", ValueKind::Bytes, 90).needs(Need::Timing);
     pub const RESPONSE_TIME: ColumnDef = col(
         "response_time",
@@ -632,6 +646,7 @@ fn build() -> Vec<TabDef> {
                 c::META_DESCRIPTION,
                 c::H1,
                 c::WORD_COUNT,
+                c::READABILITY,
                 c::SIZE,
                 c::RESPONSE_TIME,
                 c::DEPTH,
