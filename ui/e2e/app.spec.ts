@@ -16,8 +16,11 @@ declare global {
 const errors: string[] = [];
 
 /** Types into the open palette and runs the top match once the palette has
- * caught up with the typing; Enter before that runs nothing. */
+ * caught up with the typing; Enter before that runs nothing. Keys sent before
+ * the input has focus are lost, which left the search empty on the macOS
+ * runner, so the top match was the most recent command. */
 async function runInPalette(page: Page, text: string, expected = text) {
+  await expect(page.getByPlaceholder("Type a command or a tab name")).toBeFocused();
   await page.keyboard.type(text);
   await expect(page.locator("[cmdk-item][data-selected=true]")).toContainText(expected);
   await page.keyboard.press("Enter");
