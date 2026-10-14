@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,7 +34,58 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}];
+    },
+    // Spec 011: every sitemap file and entry the crawl read
+    // (specs/011-sitemaps-orphan-pages/data-model.md).
+    Step {
+        version: 4,
+        additive: true,
+        sql: "CREATE TABLE sitemap_files (
+        id INTEGER PRIMARY KEY,
+        location TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER NOT NULL,
+        base_url TEXT,
+        kind TEXT,
+        http_status INTEGER,
+        final_url TEXT,
+        redirected INTEGER,
+        compressed INTEGER,
+        bytes INTEGER,
+        entry_count INTEGER NOT NULL DEFAULT 0,
+        over_limit INTEGER,
+        error_class TEXT,
+        error TEXT,
+        error_line INTEGER,
+        read_at INTEGER
+    );
+    CREATE TABLE sitemap_entries (
+        id INTEGER PRIMARY KEY,
+        file_id INTEGER NOT NULL,
+        pos INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        loc TEXT NOT NULL,
+        url_id INTEGER,
+        invalid TEXT,
+        lastmod_raw TEXT,
+        lastmod INTEGER,
+        changefreq TEXT,
+        priority TEXT
+    );
+    CREATE INDEX sitemap_entries_url ON sitemap_entries(url_id);
+    CREATE INDEX sitemap_entries_file ON sitemap_entries(file_id, pos);
+    CREATE TABLE sitemap_refs (
+        entry_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        raw TEXT NOT NULL,
+        url TEXT,
+        url_id INTEGER,
+        lang TEXT
+    );
+    CREATE INDEX sitemap_refs_entry ON sitemap_refs(entry_id);",
+    },
+];
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();

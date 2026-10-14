@@ -669,6 +669,186 @@ async fn sitemap_only_urls_are_not_crawled_when_asked() {
     assert_eq!(site.count(E, "/linked"), 1);
 }
 
+/// Rows of a query on the finished crawl file, as text.
+fn query(d: &Done, sql: &str) -> Vec<Vec<Option<String>>> {
+    let store = CrawlStore::open(&d.path).unwrap();
+    let conn = store.conn_for_tests();
+    let mut stmt = conn.prepare(sql).unwrap();
+    let n = stmt.column_count();
+    stmt.query_map([], |r| {
+        (0..n)
+            .map(|i| {
+                Ok(match r.get_ref(i)? {
+                    rusqlite::types::ValueRef::Null => None,
+                    rusqlite::types::ValueRef::Integer(v) => Some(v.to_string()),
+                    rusqlite::types::ValueRef::Real(v) => Some(v.to_string()),
+                    rusqlite::types::ValueRef::Text(t) => Some(String::from_utf8_lossy(t).into_owned()),
+                    rusqlite::types::ValueRef::Blob(_) => Some("blob".into()),
+                })
+            })
+            .collect()
+    })
+    .unwrap()
+    .map(Result::unwrap)
+    .collect()
+}
+
+fn texts(rows: Vec<Vec<Option<String>>>) -> Vec<Vec<String>> {
+    rows.into_iter()
+        .map(|r| r.into_iter().map(|v| v.unwrap_or_else(|| "-".into())).collect())
+        .collect()
+}
+
+#[tokio::test]
+async fn spec_011_every_sitemap_file_and_entry_is_stored() {
+    let index = "<sitemapindex><sitemap><loc>{base:example.test}/s1.xml</loc><lastmod>2024-05-01</lastmod></sitemap>\
+                 <sitemap><loc>{base:example.test}/broken.xml</loc></sitemap></sitemapindex>";
+    let s1 = "<urlset xmlns:image=\"http://www.google.com/schemas/sitemap-image/1.1\" \
+              xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">\
+              <url><loc>{base:example.test}/</loc><lastmod>2024-05-01T10:00:00+02:00</lastmod>\
+              <changefreq>daily</changefreq><priority>0.8</priority>\
+              <image:image><image:loc>{base:example.test}/a.png</image:loc></image:image>\
+              <xhtml:link rel=\"alternate\" hreflang=\"de\" href=\"{base:example.test}/de\"/></url>\
+              <url><loc>{base:example.test}/de</loc><lastmod>yesterday</lastmod></url>\
+              <url><loc>mailto:x@example.test</loc></url></urlset>";
+    let extra = "<urlset><url><loc>{base:example.test}/extra</loc></url></urlset>";
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("draft.xml");
+    std::fs::write(
+        &local,
+        "<urlset><url><loc>https://example.test/draft</loc></url></urlset>",
+    )
+    .unwrap();
+    let site = SiteBuilder::new()
+        .robots(
+            E,
+            "User-agent: *\nAllow: /\nSitemap: {base:example.test}/index.xml\n",
+        )
+        .page(E, "/", "", &["/a.png"])
+        .page(E, "/de", "", &[])
+        .page(E, "/extra", "", &[])
+        .raw(E, "/a.png", 200, "image/png", b"png")
+        .raw(E, "/index.xml", 200, "application/xml", index.as_bytes())
+        .raw(E, "/s1.xml", 200, "application/xml", s1.as_bytes())
+        .raw(E, "/extra.xml", 200, "application/xml", extra.as_bytes())
+        .raw(E, "/broken.xml", 200, "application/xml", b"<urlset>\n<url>")
+        .start();
+    let extra_url = site.url(E, "/extra.xml");
+    let local_path = local.to_string_lossy().into_owned();
+    let d = crawl(&site, "/", |c| {
+        c.scope.sitemaps.urls = vec![extra_url.clone()];
+        c.scope.sitemaps.files = vec![spiderlens_config::LocalSitemap {
+            path: local_path.clone(),
+            base_url: "https://example.test/draft.xml".into(),
+        }];
+    })
+    .await;
+    let index_url = site.url(E, "/index.xml");
+    let files = texts(query(
+        &d,
+        "SELECT f.location, f.source, f.level, coalesce(p.location, '-'), coalesce(f.kind, '-'), f.entry_count,
+                coalesce(f.error_class, '-'), coalesce(f.error_line, '-')
+         FROM sitemap_files f LEFT JOIN sitemap_files p ON p.id = f.parent_id ORDER BY f.location",
+    ));
+    let row = |loc: &str| {
+        files
+            .iter()
+            .find(|r| r[0] == loc)
+            .unwrap_or_else(|| panic!("{loc} in {files:?}"))
+            .clone()
+    };
+    assert_eq!(row(&index_url)[1..6], ["robots", "0", "-", "index", "2"]);
+    assert_eq!(
+        row(&site.url(E, "/s1.xml"))[1..6],
+        ["robots", "1", index_url.as_str(), "urlset", "3"]
+    );
+    let broken = row(&site.url(E, "/broken.xml"));
+    assert_eq!(broken[6..8], ["invalid_xml", "2"], "{broken:?}");
+    assert_eq!(row(&extra_url)[1..6], ["user", "0", "-", "urlset", "1"]);
+    assert_eq!(
+        row(&format!("file:{local_path}"))[1..6],
+        ["local", "0", "-", "urlset", "1"]
+    );
+    assert_eq!(
+        files.len(),
+        5,
+        "no default locations when robots.txt lists one: {files:?}"
+    );
+
+    let entries = texts(query(
+        &d,
+        "SELECT e.kind, e.loc, coalesce(u.url, '-'), coalesce(e.invalid, '-'), coalesce(e.lastmod_raw, '-'),
+                coalesce(e.lastmod, '-'), coalesce(e.changefreq, '-'), coalesce(e.priority, '-')
+         FROM sitemap_entries e JOIN sitemap_files f ON f.id = e.file_id LEFT JOIN urls u ON u.id = e.url_id
+         WHERE f.location = (SELECT location FROM sitemap_files WHERE location LIKE '%/s1.xml') ORDER BY e.pos",
+    ));
+    let home = site.url(E, "/");
+    assert_eq!(entries[0][..3], ["url".to_string(), home.clone(), home.clone()]);
+    assert_eq!(
+        entries[0][4..],
+        ["2024-05-01T10:00:00+02:00", "1714550400", "daily", "0.8"]
+    );
+    assert_eq!(
+        entries[1][4..6],
+        ["yesterday", "-"],
+        "an unreadable date keeps its text only"
+    );
+    assert_ne!(entries[2][3], "-", "mailto: is not a usable address");
+
+    let refs = texts(query(
+        &d,
+        "SELECT r.kind, r.raw, coalesce(u.url, '-'), coalesce(r.lang, '-') FROM sitemap_refs r
+         LEFT JOIN urls u ON u.id = r.url_id ORDER BY r.kind",
+    ));
+    assert_eq!(
+        refs,
+        [
+            vec![
+                "hreflang".to_string(),
+                site.url(E, "/de"),
+                site.url(E, "/de"),
+                "de".into()
+            ],
+            vec![
+                "image".to_string(),
+                site.url(E, "/a.png"),
+                site.url(E, "/a.png"),
+                "-".into()
+            ],
+        ]
+    );
+    let index_entries = texts(query(
+        &d,
+        "SELECT kind, coalesce(lastmod_raw, '-') FROM sitemap_entries WHERE file_id =
+         (SELECT id FROM sitemap_files WHERE source = 'robots' AND level = 0) ORDER BY pos",
+    ));
+    assert_eq!(
+        index_entries,
+        [vec!["sitemap", "2024-05-01"], vec!["sitemap", "-"]]
+    );
+    assert_eq!(d.row(&site.url(E, "/extra")).state, UrlState::Crawled);
+    assert!(d.row("https://example.test/draft").in_sitemap);
+}
+
+#[tokio::test]
+async fn spec_011_default_sitemap_locations_when_robots_lists_none() {
+    let s = "<urlset><url><loc>{base:example.test}/orphan</loc></url></urlset>";
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &[])
+        .page(E, "/orphan", "", &[])
+        .raw(E, "/sitemap_index.xml", 200, "application/xml", s.as_bytes())
+        .start();
+    let d = crawl(&site, "/", |_| {}).await;
+    assert!(d.row(&site.url(E, "/orphan")).in_sitemap);
+    let files = texts(query(&d, "SELECT location, source FROM sitemap_files"));
+    assert_eq!(
+        files,
+        [vec![site.url(E, "/sitemap_index.xml"), "default".into()]],
+        "a missing /sitemap.xml is not recorded"
+    );
+    assert_eq!(site.count(E, "/sitemap.xml"), 1);
+}
+
 #[tokio::test]
 async fn list_mode_depth_zero_and_hosts_internal() {
     let site = SiteBuilder::new()

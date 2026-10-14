@@ -328,11 +328,17 @@ impl Site {
             .count()
     }
 
-    /// Requests other than robots.txt.
+    /// Requests other than robots.txt and the default sitemap locations
+    /// the crawler tries when robots.txt lists none (spec 011 FR-001).
     pub fn page_hits(&self) -> Vec<Hit> {
         self.hits()
             .into_iter()
-            .filter(|h| h.path != "/robots.txt")
+            .filter(|h| {
+                !matches!(
+                    h.path.as_str(),
+                    "/robots.txt" | "/sitemap.xml" | "/sitemap_index.xml"
+                )
+            })
             .collect()
     }
 }

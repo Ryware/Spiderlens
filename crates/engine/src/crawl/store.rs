@@ -292,6 +292,45 @@ pub struct SitemapRow {
     pub error: Option<String>,
 }
 
+/// One sitemap file as read (spec 011 `sitemap_files`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SitemapFileRecord {
+    /// The URL, or `file:` and the path for a file on this computer.
+    pub location: String,
+    /// `robots`, `default`, `user`, `local` or `list`.
+    pub source: &'static str,
+    pub parent_id: Option<i64>,
+    pub level: u32,
+    pub base_url: Option<String>,
+    /// `urlset` or `index`; None when the file could not be read.
+    pub kind: Option<&'static str>,
+    pub http_status: Option<u16>,
+    pub final_url: Option<String>,
+    pub redirected: bool,
+    pub compressed: bool,
+    pub bytes: u64,
+    pub entry_count: u32,
+    pub over_limit: bool,
+    pub error_class: Option<String>,
+    pub error: Option<String>,
+    pub error_line: Option<u32>,
+    pub read_at: i64,
+}
+
+/// One `<url>` or `<sitemap>` entry ready to store, with the URL it matched.
+pub struct SitemapEntryRecord<'a> {
+    pub entry: &'a super::sitemap::Entry,
+    /// `url` or `sitemap`.
+    pub kind: &'static str,
+    pub url_id: Option<i64>,
+    /// Why `loc` is not a usable address.
+    pub invalid: Option<&'a str>,
+    /// The entry's images and hreflang alternates normalized, in order;
+    /// matched to `urls` when the crawl ends ([`CrawlStore::link_sitemap_refs`]).
+    pub image_urls: &'a [Option<String>],
+    pub alternate_urls: &'a [Option<String>],
+}
+
 /// One row of `spiderlens report`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct UrlRow {
@@ -1423,6 +1462,106 @@ impl CrawlStore {
                  ON CONFLICT(url) DO UPDATE SET url_count = ?3, error = ?4",
             )?
             .execute(params![s.url, s.parent, s.url_count, s.error])?;
+        Ok(())
+    }
+
+    /// Stores one sitemap file and returns its id; reading the same location
+    /// again (a resumed crawl) replaces its row and entries.
+    pub fn insert_sitemap_file(&self, f: &SitemapFileRecord) -> Result<i64> {
+        if let Some(old) = self
+            .conn
+            .prepare_cached("SELECT id FROM sitemap_files WHERE location = ?1")?
+            .query_row([&f.location], |r| r.get::<_, i64>(0))
+            .optional()?
+        {
+            self.conn
+                .prepare_cached(
+                    "DELETE FROM sitemap_refs WHERE entry_id IN (SELECT id FROM sitemap_entries WHERE file_id = ?1)",
+                )?
+                .execute([old])?;
+            self.conn
+                .prepare_cached("DELETE FROM sitemap_entries WHERE file_id = ?1")?
+                .execute([old])?;
+            self.conn
+                .prepare_cached("DELETE FROM sitemap_files WHERE id = ?1")?
+                .execute([old])?;
+        }
+        self.conn
+            .prepare_cached(
+                "INSERT INTO sitemap_files (location, source, parent_id, level, base_url, kind, http_status,
+                     final_url, redirected, compressed, bytes, entry_count, over_limit, error_class, error,
+                     error_line, read_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            )?
+            .execute(params![
+                f.location,
+                f.source,
+                f.parent_id,
+                f.level,
+                f.base_url,
+                f.kind,
+                f.http_status,
+                f.final_url,
+                f.redirected,
+                f.compressed,
+                f.bytes as i64,
+                f.entry_count,
+                f.over_limit,
+                f.error_class,
+                f.error,
+                f.error_line,
+                f.read_at,
+            ])?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn insert_sitemap_entry(&self, file_id: i64, e: &SitemapEntryRecord<'_>) -> Result<()> {
+        let x = e.entry;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO sitemap_entries (file_id, pos, kind, loc, url_id, invalid, lastmod_raw, lastmod,
+                     changefreq, priority)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                file_id,
+                x.pos,
+                e.kind,
+                x.loc,
+                e.url_id,
+                e.invalid,
+                x.lastmod,
+                x.lastmod.as_deref().and_then(super::sitemap::parse_lastmod),
+                x.changefreq,
+                x.priority,
+            ])?;
+        if x.images.is_empty() && x.alternates.is_empty() {
+            return Ok(());
+        }
+        let entry_id = self.conn.last_insert_rowid();
+        let mut refs = self.conn.prepare_cached(
+            "INSERT INTO sitemap_refs (entry_id, kind, raw, url, lang) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (i, raw) in x.images.iter().enumerate() {
+            let url = e.image_urls.get(i).and_then(Option::as_deref);
+            refs.execute(params![entry_id, "image", raw, url, Option::<&str>::None])?;
+        }
+        for (i, a) in x.alternates.iter().enumerate() {
+            let url = e.alternate_urls.get(i).and_then(Option::as_deref);
+            refs.execute(params![entry_id, "hreflang", a.href, url, a.lang])?;
+        }
+        Ok(())
+    }
+
+    /// Matches sitemap image and hreflang references to the URLs the crawl
+    /// found, once, when it ends: they may be discovered after the sitemap
+    /// was read.
+    pub fn link_sitemap_refs(&self) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sitemap_refs SET url_id = (SELECT id FROM urls WHERE urls.url = sitemap_refs.url)
+             WHERE url IS NOT NULL",
+            [],
+        )?;
         Ok(())
     }
 
