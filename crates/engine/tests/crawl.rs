@@ -643,7 +643,10 @@ async fn sitemap_only_urls_are_not_crawled_when_asked() {
     let s1 = "<urlset><url><loc>{base:example.test}/linked</loc></url>\
               <url><loc>{base:example.test}/orphan</loc></url></urlset>";
     let site = SiteBuilder::new()
-        .robots(E, "User-agent: *\nAllow: /\nSitemap: {base:example.test}/s1.xml\n")
+        .robots(
+            E,
+            "User-agent: *\nAllow: /\nSitemap: {base:example.test}/s1.xml\n",
+        )
         .page(E, "/", "", &["/later"])
         .page(E, "/later", "", &["/linked"])
         .page(E, "/linked", "", &[])

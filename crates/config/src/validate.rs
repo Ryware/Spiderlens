@@ -226,6 +226,63 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Sitemap generation (spec 011 FR-021)
+    let g = &c.sitemap_generate;
+    if !(1..=50_000).contains(&g.max_urls_per_file) {
+        i.error(
+            "sitemap_generate.max_urls_per_file",
+            "out_of_range",
+            "URLs per sitemap file must be between 1 and 50,000.",
+        );
+    }
+    if let crate::PrioritySource::Fixed(p) = g.priority
+        && !(0.0..=1.0).contains(&p)
+    {
+        i.error(
+            "sitemap_generate.priority",
+            "out_of_range",
+            "Priority must be between 0.0 and 1.0.",
+        );
+    }
+    if let crate::LastmodSource::Fixed(d) = &g.lastmod
+        && jiff::civil::Date::strptime("%Y-%m-%d", d.trim()).is_err()
+    {
+        i.error(
+            "sitemap_generate.lastmod",
+            "lastmod_invalid",
+            "Enter the date as YYYY-MM-DD.",
+        );
+    }
+    if !g.base_url.trim().is_empty() && http_url(&g.base_url).is_none() {
+        i.error(
+            "sitemap_generate.base_url",
+            "sitemap_base_invalid",
+            "Enter the address the sitemap files will be published at, starting with http:// or https://.",
+        );
+    }
+    for (group, list) in [("include", &g.include), ("exclude", &g.exclude)] {
+        for (index, p) in list.iter().enumerate() {
+            if let Err(message) = check_pattern(p) {
+                i.error(
+                    format!("sitemap_generate.{group}[{index}]"),
+                    "pattern_syntax",
+                    message,
+                );
+            }
+        }
+    }
+    let prefix_ok = !g.file_prefix.is_empty()
+        && g.file_prefix
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if !prefix_ok {
+        i.error(
+            "sitemap_generate.file_prefix",
+            "file_prefix_invalid",
+            "Use letters, digits, dots, hyphens and underscores for the file name.",
+        );
+    }
+
     // Identity
     let ua = &c.identity.user_agent;
     if ua.preset == UaPreset::Custom {

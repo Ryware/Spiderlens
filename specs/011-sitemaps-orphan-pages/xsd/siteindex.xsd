@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sitemap index files, written from the sitemaps.org protocol definition
+     (https://www.sitemaps.org/protocol.html#index). The official
+     siteindex.xsd declares the same structure. -->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            targetNamespace="http://www.sitemaps.org/schemas/sitemap/0.9"
+            xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+            elementFormDefault="qualified">
+  <xsd:element name="sitemapindex">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="sitemap" type="tSitemap" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:complexType name="tSitemap">
+    <xsd:sequence>
+      <xsd:element name="loc" type="tLoc"/>
+      <xsd:element name="lastmod" type="tLastmod" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+  <xsd:simpleType name="tLoc">
+    <xsd:restriction base="xsd:anyURI">
+      <xsd:minLength value="12"/>
+      <xsd:maxLength value="2048"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="tLastmod">
+    <xsd:union>
+      <xsd:simpleType><xsd:restriction base="xsd:date"/></xsd:simpleType>
+      <xsd:simpleType><xsd:restriction base="xsd:dateTime"/></xsd:simpleType>
+    </xsd:union>
+  </xsd:simpleType>
+</xsd:schema>

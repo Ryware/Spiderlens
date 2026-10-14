@@ -4448,7 +4448,10 @@ dependencies = [
 name = "spiderlens-results"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "jiff",
  "proptest",
+ "quick-xml 0.42.0",
  "rusqlite",
  "serde",
  "serde_json",

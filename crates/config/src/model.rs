@@ -24,6 +24,116 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// The last options used to generate XML sitemaps (spec 011 FR-025).
+    pub sitemap_generate: SitemapGenerateOptions,
+}
+
+/// Options for generating XML sitemaps from a crawl (spec 011 FR-020,
+/// FR-021). Defaults follow the spec's Assumptions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SitemapGenerateOptions {
+    pub include_noindex: bool,
+    pub include_canonicalised: bool,
+    /// Spec 002 patterns: when set, only matching pages are written.
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub lastmod: LastmodSource,
+    pub changefreq: Option<Changefreq>,
+    pub priority: PrioritySource,
+    pub images: ImageEntries,
+    /// Hosts besides the crawl's own whose images may be listed.
+    pub image_hosts: Vec<String>,
+    pub hreflang: bool,
+    pub max_urls_per_file: u32,
+    pub gzip: bool,
+    /// Where the files will be published; blank means the start host's root.
+    pub base_url: String,
+    pub file_prefix: String,
+}
+
+impl Default for SitemapGenerateOptions {
+    fn default() -> Self {
+        Self {
+            include_noindex: false,
+            include_canonicalised: false,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            lastmod: LastmodSource::LastModifiedHeader,
+            changefreq: None,
+            priority: PrioritySource::Off,
+            images: ImageEntries::Off,
+            image_hosts: Vec::new(),
+            hreflang: false,
+            max_urls_per_file: 50_000,
+            gzip: false,
+            base_url: String::new(),
+            file_prefix: "sitemap".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "date")]
+#[ts(export)]
+pub enum LastmodSource {
+    None,
+    /// The page's `Last-Modified` response header; entries without one get
+    /// no `lastmod`.
+    LastModifiedHeader,
+    /// The time the page was fetched.
+    CrawlDate,
+    /// One date for every entry, `YYYY-MM-DD`.
+    Fixed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Changefreq {
+    Always,
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+    Never,
+}
+
+impl Changefreq {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::Hourly => "hourly",
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+            Self::Never => "never",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+#[ts(export)]
+pub enum PrioritySource {
+    Off,
+    Fixed(f32),
+    /// 1.0 for the start page, then 0.8, 0.6, 0.4 and 0.2 by click depth.
+    ByDepth,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ImageEntries {
+    Off,
+    /// In the page sitemaps, with the image extension.
+    Inline,
+    /// In their own image sitemap files.
+    Separate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
