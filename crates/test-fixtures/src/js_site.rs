@@ -202,6 +202,118 @@ impl JsSiteBuilder {
         self
     }
 
+    /// The pages of spec 014 user story 1 (task T020), linked from `/`:
+    ///
+    /// - `/title-changed`: raw title `Loading`; a script sets
+    ///   `Red Shoes | Shop`.
+    /// - `/js-nav`: every navigation link is inserted by a script and points
+    ///   to `/only-js-1` and `/only-js-2`, which nothing else links to.
+    /// - `/jsonld-added`: a script adds a JSON-LD `Product` block.
+    /// - `/noindex-added`: a script adds `<meta name="robots"
+    ///   content="noindex">`.
+    /// - `/js-redirect`: `location.replace('/redirect-target')`; nothing
+    ///   else links to the target.
+    /// - `/server-rendered`: fully server-rendered, no script.
+    pub fn us1_pages(self) -> Self {
+        let page = |title: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!("<script>{script}</script>")
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
+                 {script}</head><body>{body}</body></html>"
+            )
+        };
+        let on_ready = |js: &str| format!("document.addEventListener('DOMContentLoaded', () => {{ {js} }});");
+        self.page(
+            "/",
+            &page(
+                "Home",
+                "<h1>Home</h1><p>The shop home page.</p>\
+                 <a href=\"/title-changed\">Title</a> <a href=\"/js-nav\">Navigation</a> \
+                 <a href=\"/jsonld-added\">Product</a> <a href=\"/noindex-added\">Hidden</a> \
+                 <a href=\"/js-redirect\">Old page</a> <a href=\"/server-rendered\">About</a>",
+                "",
+            ),
+        )
+        .page(
+            "/title-changed",
+            &page(
+                "Loading",
+                "<h1>Red shoes</h1><p>Shoes for running and walking.</p>",
+                &on_ready("document.title = 'Red Shoes | Shop';"),
+            ),
+        )
+        .page(
+            "/js-nav",
+            &page(
+                "Navigation",
+                "<h1>Navigation</h1><nav id=\"nav\"></nav>",
+                &on_ready(
+                    "document.getElementById('nav').innerHTML = \
+                     '<a href=\"/only-js-1\">First</a> <a href=\"/only-js-2\">Second</a>';",
+                ),
+            ),
+        )
+        .page(
+            "/only-js-1",
+            &page("Only JS 1", "<h1>Only JS 1</h1><p>Linked by a script.</p>", ""),
+        )
+        .page(
+            "/only-js-2",
+            &page("Only JS 2", "<h1>Only JS 2</h1><p>Linked by a script.</p>", ""),
+        )
+        .page(
+            "/jsonld-added",
+            &page(
+                "Product",
+                "<h1>Product</h1><p>A product page.</p>",
+                &on_ready(
+                    "const s = document.createElement('script'); s.type = 'application/ld+json'; \
+                     s.textContent = JSON.stringify({'@context': 'https://schema.org', '@type': 'Product', \
+                     name: 'Red Shoes'}); document.head.appendChild(s);",
+                ),
+            ),
+        )
+        .page(
+            "/noindex-added",
+            &page(
+                "Hidden",
+                "<h1>Hidden</h1><p>Indexable until a script runs.</p>",
+                &on_ready(
+                    "const m = document.createElement('meta'); m.name = 'robots'; m.content = 'noindex'; \
+                     document.head.appendChild(m);",
+                ),
+            ),
+        )
+        .page(
+            "/js-redirect",
+            &page(
+                "Old page",
+                "<p>This page moved.</p>",
+                "location.replace('/redirect-target');",
+            ),
+        )
+        .page(
+            "/redirect-target",
+            &page(
+                "New page",
+                "<h1>New page</h1><p>Reached by a script redirect.</p>",
+                "",
+            ),
+        )
+        .page(
+            "/server-rendered",
+            &page(
+                "About us",
+                "<h1>About us</h1><p>Everything here is in the HTML.</p><a href=\"/\">Home</a>",
+                "",
+            ),
+        )
+    }
+
     /// Starts on a random loopback port.
     pub fn start(self) -> JsSite {
         let listener = StdListener::bind("127.0.0.1:0").expect("bind fixture port");
@@ -601,6 +713,36 @@ mod tests {
         }
         assert_eq!(site.peak_open(JS_HOST), 3);
         assert_eq!(site.peak_open(CDN_HOST), 0);
+    }
+
+    #[test]
+    fn us1_pages_keep_script_only_content_out_of_the_raw_html() {
+        let site = JsSiteBuilder::new().us1_pages().start();
+        let (_, _, home) = get(&site, JS_HOST, "/");
+        for p in [
+            "/title-changed",
+            "/js-nav",
+            "/jsonld-added",
+            "/noindex-added",
+            "/js-redirect",
+            "/server-rendered",
+        ] {
+            assert!(home.contains(&format!("href=\"{p}\"")), "{p}");
+            assert_eq!(get(&site, JS_HOST, p).0, 200, "{p}");
+        }
+        assert!(!home.contains("only-js") && !home.contains("redirect-target"));
+        let (_, _, title) = get(&site, JS_HOST, "/title-changed");
+        assert!(title.contains("<title>Loading</title>") && title.contains("Red Shoes | Shop"));
+        let (_, _, nav) = get(&site, JS_HOST, "/js-nav");
+        let body = nav.split("</head>").nth(1).unwrap();
+        assert!(!body.contains("<a "), "links only through the script");
+        let (_, _, ld) = get(&site, JS_HOST, "/jsonld-added");
+        assert!(!ld.contains("application/ld+json\""));
+        let (_, _, ni) = get(&site, JS_HOST, "/noindex-added");
+        assert!(!ni.contains("<meta name=\"robots\""));
+        assert_eq!(get(&site, JS_HOST, "/redirect-target").0, 200);
+        let (_, _, server) = get(&site, JS_HOST, "/server-rendered");
+        assert!(!server.contains("<script"));
     }
 
     #[test]
