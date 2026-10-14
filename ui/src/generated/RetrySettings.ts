@@ -4,4 +4,26 @@ export type RetrySettings = {
 /**
  * Total attempts, including the first (1 means no retry).
  */
-attempts: number, max_wait_secs: number, retry_5xx: boolean, retry_429: boolean, };
+attempts: number, max_wait_secs: number, retry_5xx: boolean, retry_429: boolean, 
+/**
+ * Wait before the second attempt; doubles for each one after (spec 004
+ * FR-017).
+ */
+base_wait_secs: number, 
+/**
+ * Transient failures in a row that pause a host (FR-024).
+ */
+host_pause_after: number, 
+/**
+ * First pause of a failing host (FR-024).
+ */
+host_pause_secs: number, 
+/**
+ * Longest pause; each failed probe doubles the pause up to this
+ * (FR-025).
+ */
+host_pause_max_secs: number, 
+/**
+ * Failed probes in a row after which the host is given up (FR-026).
+ */
+host_give_up_after: number, };

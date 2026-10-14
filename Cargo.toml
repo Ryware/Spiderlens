@@ -44,6 +44,7 @@ serde_ignored = "0.1"
 secrecy = { version = "0.10", features = ["serde"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 jiff = { version = "0.2", features = ["serde"] }
+fastrand = "2"
 proptest = "1"
 tempfile = "3"
 axum = "0.8"
