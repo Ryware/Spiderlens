@@ -30,14 +30,40 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-/// Near duplicate content (spec 020, data-model.md): main content columns
-/// and one signature per page. Additive; becomes a `migrate::STEPS` entry
+/// Near duplicate content (spec 020, data-model.md): main content columns,
+/// one signature per page, and the analysis pass's output tables (filled
+/// after the crawl by `spiderlens-results`). Additive; becomes a `migrate::STEPS` entry
 /// with the next free number when spec 006's migrations are on main.
 pub const NEAR_DUP_SCHEMA: &str = "
 ALTER TABLE pages ADD COLUMN main_words INTEGER;
 ALTER TABLE pages ADD COLUMN main_hash INTEGER;
 ALTER TABLE pages ADD COLUMN main_source TEXT;
 CREATE TABLE content_sig (url_id INTEGER PRIMARY KEY, sig BLOB NOT NULL);
+CREATE TABLE near_dup_pages (
+    url_id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL,
+    closest_id INTEGER,
+    closest_sim INTEGER,
+    near_count INTEGER NOT NULL DEFAULT 0,
+    near_count_is_min INTEGER NOT NULL DEFAULT 0,
+    cluster INTEGER
+);
+CREATE INDEX near_dup_pages_cluster ON near_dup_pages(cluster) WHERE cluster IS NOT NULL;
+CREATE TABLE near_dup_pairs (
+    url_id INTEGER NOT NULL,
+    other_id INTEGER NOT NULL,
+    sim INTEGER NOT NULL,
+    exact INTEGER NOT NULL,
+    PRIMARY KEY (url_id, other_id)
+) WITHOUT ROWID;
+CREATE TABLE near_dup_clusters (
+    id INTEGER PRIMARY KEY,
+    size INTEGER NOT NULL,
+    min_sim INTEGER NOT NULL,
+    max_sim INTEGER NOT NULL,
+    representative_id INTEGER NOT NULL,
+    exact INTEGER NOT NULL
+);
 ";
 
 const SCHEMA: &str = r#"
