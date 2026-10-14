@@ -245,6 +245,17 @@ pub async fn url_list(
         .await
 }
 
+/// One visualisation scene for the open file (spec 022): the crawl tree or
+/// the directory tree, as `state` asks.
+#[tauri::command]
+pub async fn viz_scene(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+) -> Cmd<spiderlens_results::viz::Scene> {
+    state.with(&path, move |r| r.viz_scene(&view).map_err(err)).await
+}
+
 /// Puts the selected rows on the clipboard as TSV with a header (FR-026)
 /// and returns the text; over 10,000 rows is refused. Written from here
 /// because a web view only allows clipboard writes during the click itself.

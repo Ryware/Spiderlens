@@ -6,6 +6,8 @@ import type { ColumnDef } from "../generated/ColumnDef";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
+import type { ViewState } from "../generated/ViewState";
+import { fakeScene } from "./fakeViz";
 import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
 
 export interface FakeUrl {
@@ -80,6 +82,8 @@ export interface FakeResults {
   /** Announces that the open view's full order is ready. */
   ready(): void;
   progress(p: Partial<ExportProgress>): void;
+  /** Visualisation states asked for (spec 022). */
+  viz: ViewState[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
 }
@@ -96,6 +100,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "vizScene"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -110,6 +115,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const results: FakeResults = {
     urls: [...initial],
     copied: [],
+    viz: [],
     exports: [],
     opened: [],
     features: ["base", "analysis"],
@@ -191,6 +197,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     viewClose: async (_p, view) => {
       views.delete(view);
+    },
+    vizScene: async (_p, state) => {
+      results.viz.push(state);
+      return fakeScene(results.urls, state);
     },
     urlDetail: async (_p, id) => {
       const u = results.urls.find((x) => x.id === id)!;

@@ -16,6 +16,8 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { Scene } from "./generated/Scene";
+import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
@@ -206,6 +208,8 @@ export interface Transport {
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
+  vizScene(path: string, view: ViewState): Promise<Scene>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
 }
@@ -260,6 +264,7 @@ export const tauriTransport: Transport = {
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  vizScene: (path, view) => invoke("viz_scene", { path, view }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
 };

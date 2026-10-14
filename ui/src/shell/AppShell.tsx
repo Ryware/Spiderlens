@@ -6,7 +6,8 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { resultTabs, Sidebar } from "./Sidebar";
+import { resultTabs, Sidebar, vizTabs } from "./Sidebar";
+import { VizView, vizViews } from "../viz/VizView";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -83,6 +84,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
@@ -155,6 +157,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
       ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
       { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
@@ -233,6 +236,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onSession={onSession}
               onFocusId={onFocusId}
             />
+          ) : vizView && crawl.path ? (
+            <VizView key={`${crawl.path}\n${vizView.id}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
           ) : (
@@ -243,7 +248,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab || vizView ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
             </div>
           </>
         )}

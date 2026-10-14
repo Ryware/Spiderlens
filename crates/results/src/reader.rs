@@ -115,6 +115,13 @@ impl Reader {
         Ok(())
     }
 
+    /// Whether a derived table is current for this data version, without
+    /// building it.
+    pub(crate) fn has_current(&mut self, d: Derived) -> Result<bool> {
+        let v = self.version()?;
+        Ok(self.derived.get(&d) == Some(&v))
+    }
+
     /// A handle that stops this reader's running query from another thread
     /// (a superseded sort or search).
     pub fn interrupt_handle(&self) -> rusqlite::InterruptHandle {

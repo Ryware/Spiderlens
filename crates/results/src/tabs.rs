@@ -106,6 +106,10 @@ pub enum Derived {
     /// `link_metrics`: Link Score and link counts (spec 023), built in
     /// `temp` when the file holds no current copy.
     LinkMetrics,
+    /// `temp.viz_crawl_tree`: each URL's crawl tree parent (spec 022).
+    VizCrawlTree,
+    /// `temp.viz_dirs` and `temp.viz_dir_urls`: the directory tree.
+    VizDirs,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -1005,6 +1009,8 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
         Derived::LinkMetrics => crate::analysis::link_metrics::build(conn).map(|_| ()),
+        Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
+        Derived::VizDirs => crate::viz::dirs::build(conn),
     }
 }
 

@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -22,6 +22,12 @@ export const resultTabs: NavItem[] = [
   { id: "images", title: "Images", icon: Image },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
+];
+
+/** Spec 022: pictures of the crawl, built from the same crawl file. */
+export const vizTabs: NavItem[] = [
+  { id: "crawl-tree", title: "Crawl tree", icon: GitFork },
+  { id: "directory-tree", title: "Directory tree", icon: FolderTree },
 ];
 
 const later: NavItem[] = [
@@ -61,6 +67,8 @@ export function Sidebar({ active, onSelect, collapsed, onAbout, results }: { act
       <ul className="m-0 list-none p-0">{item({ id: "overview", title: "Overview", icon: Activity }, true)}</ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
+      {heading("Visualisations")}
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{vizTabs.map((t) => item(t, results))}</ul>
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

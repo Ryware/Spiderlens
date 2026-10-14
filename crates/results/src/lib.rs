@@ -19,6 +19,7 @@ mod sql;
 pub mod synth;
 mod tabs;
 mod view;
+pub mod viz;
 
 pub use counts::FilterCounts;
 pub use detail::{HeadingRow, LinkMetrics, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
