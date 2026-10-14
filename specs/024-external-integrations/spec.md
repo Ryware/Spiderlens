@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft (awaiting owner approval)
+**Status**: Approved (2026-10-13)
 
 **Input**: User description: "External integrations: Google Search Console (clicks, impressions, index coverage per URL; orphan URLs from Search Console), Google Analytics 4 (sessions per landing page), PageSpeed Insights and the Chrome UX Report (Core Web Vitals per URL, rate limited), link-metrics providers (Ahrefs, Majestic, Moz), and export to Google Sheets and Looker Studio. Desktop only, no SpiderLens servers, secrets never stored in crawl files, every call made after the crawl from stored URLs with per-provider rate limits and caching, every integration opt-in and clearly labelled."
 
