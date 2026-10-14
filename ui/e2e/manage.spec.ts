@@ -75,9 +75,9 @@ test("select_with_keyboard_and_pointer_then_delete_to_the_trash", async ({ page 
 test("sorting_by_size_from_the_column_header", async ({ page }) => {
   const sheet = await openManager(page);
   await sheet.getByRole("button", { name: "Size" }).click();
-  await expect(sheet.getByRole("checkbox", { name: /^Select / }).first()).toHaveAccessibleName("Select quick");
+  await expect(sheet.getByRole("checkbox", { name: /^Select (?!all )/ }).first()).toHaveAccessibleName("Select quick");
   await sheet.getByRole("button", { name: "Size" }).click();
-  await expect(sheet.getByRole("checkbox", { name: /^Select / }).first()).toHaveAccessibleName("Select old");
+  await expect(sheet.getByRole("checkbox", { name: /^Select (?!all )/ }).first()).toHaveAccessibleName("Select old");
 });
 
 test("storage_settings_from_the_keyboard", async ({ page }) => {
