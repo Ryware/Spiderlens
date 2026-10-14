@@ -140,6 +140,11 @@ pub fn shingle_hashes(tokens: &[u64]) -> impl Iterator<Item = u64> + '_ {
     })
 }
 
+/// xxh3 with a seed, for keys derived from signatures (band keys).
+pub fn seeded_hash(bytes: &[u8], seed: u64) -> u64 {
+    xxhash_rust::xxh3::xxh3_64_with_seed(bytes, seed)
+}
+
 /// SplitMix64's finaliser: a fixed, well-mixed integer permutation.
 const fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

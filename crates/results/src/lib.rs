@@ -12,6 +12,7 @@ mod counts;
 mod detail;
 mod export;
 mod features;
+pub mod near_dup;
 mod reader;
 mod sql;
 #[doc(hidden)]
