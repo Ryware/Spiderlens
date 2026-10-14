@@ -64,11 +64,11 @@ ignored tests now and enabled when spec 005 lands.
 
 ## Phase 7: US5 scale (P2)
 
-- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries; thresholds not asserted yet)
+- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries, and `-- <file> page-titles` the Page titles tab before and after a commit; `gen_crawl --pages [--result-indexes]` writes page content; thresholds not asserted yet)
 - [ ] T036 [US5] UI scroll test in the real webview (Playwright on Linux CI; manual run on Ryware's Mac): drag top to bottom, frame times, row fill ≤ 200 ms
 - [ ] T037 [US5] Memory check 100k vs 1M (SC-008)
 - [ ] T038 [US5] Live: crawl the 100k bench site with the app open and a sorted view, compare to CLI speed (SC-007 ≥ 95%)
-- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget)
+- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget) (partly: Page titles reads `temp.titles`, built once and appended to per data version, 3–10× faster, see research R8; other content tabs still scan per query; open: T036–T038 findings on the Mac)
 - [ ] T040 [US5] Record the numbers in research.md, including a run on Ryware's Mac
 
 ## Phase 8: Polish
