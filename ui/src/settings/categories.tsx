@@ -11,9 +11,10 @@ import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "storage" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "segments" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -35,6 +36,7 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "segments", title: "Segments", description: "Group URLs into parts of the site. Every results tab can show and filter by them.", prefixes: ["segments"] },
   {
     id: "storage",
     title: "Storage",
@@ -381,5 +383,8 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
           </Row>
         </Group>
       );
+
+    case "segments":
+      return <SegmentsSettings segments={config.segments} issues={issuesAt(issues, "segments")} onChange={(segments) => set((c) => ({ ...c, segments }))} />;
   }
 }

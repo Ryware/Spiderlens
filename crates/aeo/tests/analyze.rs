@@ -240,6 +240,7 @@ async fn analysis_of_a_crawled_site() {
             scope: spiderlens_results::UrlScope::All,
             search: String::new(),
             sort: None,
+            segment: None,
         };
         let page = r.open_view(&q, 10).unwrap();
         r.materialize(page.view).unwrap();

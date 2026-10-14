@@ -46,6 +46,10 @@ pub struct ViewQuery {
     pub search: String,
     #[serde(default)]
     pub sort: Option<Sort>,
+    /// Spec 027 FR-B04: only URLs in this segment; 0 means in no segment.
+    #[serde(default)]
+    #[ts(optional)]
+    pub segment: Option<u32>,
 }
 
 /// A page of rows. Each row is `[id, value of each tab column…]` in the
@@ -135,6 +139,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
         (true, UrlScope::External) => where_sql.push_str(" AND u.internal = 0"),
         _ => {}
     }
+    where_sql.push_str(&segment_sql(q.segment));
     let search = q.search.trim();
     let search = (!search.is_empty()).then(|| search.to_lowercase());
     if search.is_some() {
@@ -169,6 +174,15 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
         search,
         derived,
     })
+}
+
+/// The segment filter as an `AND …` clause (the id is a number, never text).
+pub(crate) fn segment_sql(segment: Option<u32>) -> String {
+    match segment {
+        None => String::new(),
+        Some(0) => " AND u.id NOT IN (SELECT url_id FROM temp.url_segment)".into(),
+        Some(id) => format!(" AND u.id IN (SELECT url_id FROM temp.url_segment WHERE seg = {id})"),
+    }
 }
 
 /// FR-015: numbers numerically, text naturally and case-insensitively,

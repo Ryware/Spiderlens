@@ -6,6 +6,7 @@ import { Download, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
+import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlScope } from "../generated/UrlScope";
 import type { ViewQuery } from "../generated/ViewQuery";
@@ -15,6 +16,8 @@ import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
+import { SegmentFilter } from "../segments/SegmentFilter";
+import { enabledSegments } from "../segments/segments";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
@@ -33,16 +36,21 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-/** Filter counts, refreshed as the view changes but at most every 2 s. */
-function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, version: number) {
+/**
+ * Filter counts, refreshed as the view changes but at most every 2 s.
+ * `after` runs with each refresh (the segment counts follow along).
+ */
+function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, segment: number | null, version: number, rev: number, after: () => void) {
   const [counts, setCounts] = useState<FilterCounts | null>(null);
   const last = useRef(0);
   const busy = useRef(false);
   const [again, setAgain] = useState(0);
+  const afterRef = useRef(after);
+  afterRef.current = after;
   useEffect(() => {
     setCounts(null);
     last.current = 0;
-  }, [path, tab, scope]);
+  }, [path, tab, scope, segment, rev]);
   useEffect(() => {
     if (busy.current) return;
     const wait = last.current + 2000 - Date.now();
@@ -53,10 +61,11 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
     busy.current = true;
     last.current = Date.now();
     transport
-      .viewCounts(path, tab, scope)
+      .viewCounts(path, tab, scope, segment ?? undefined)
       .then(setCounts, () => {})
       .finally(() => (busy.current = false));
-  }, [transport, path, tab, scope, version, again]);
+    if (version > 0) afterRef.current();
+  }, [transport, path, tab, scope, segment, version, rev, again]);
   return counts;
 }
 
@@ -71,6 +80,11 @@ export function ResultsView({
   onFocusId,
   onInspect,
   reveal,
+  segment = null,
+  onSegment = () => {},
+  segmentCounts = null,
+  segmentsRev = 0,
+  onRefreshSegments = () => {},
 }: {
   transport: Transport;
   path: string;
@@ -84,6 +98,12 @@ export function ResultsView({
   onInspect?: () => void;
   /** A URL to select and scroll to ("show in table"); a new `n` asks again. */
   reveal?: { id: number; n: number } | null;
+  /** Spec 027 part B: the segment filter, shared by every tab. */
+  segment?: number | null;
+  onSegment?: (v: number | null) => void;
+  segmentCounts?: SegmentCounts | null;
+  segmentsRev?: number;
+  onRefreshSegments?: () => void;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -112,14 +132,22 @@ export function ResultsView({
   };
 
   const query: ViewQuery = useMemo(
-    () => ({ tab: tab.id, filter: session.filter, scope: tab.scoped ? session.scope : "all", search: session.search, sort: session.sort }),
-    [tab, session.filter, session.scope, session.search, session.sort],
+    () => ({
+      tab: tab.id,
+      filter: session.filter,
+      scope: tab.scoped ? session.scope : "all",
+      search: session.search,
+      sort: session.sort,
+      ...(segment === null ? {} : { segment }),
+    }),
+    [tab, session.filter, session.scope, session.search, session.sort, segment],
   );
 
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
   const view = useView(transport, path, query, {
     live,
+    rev: segmentsRev,
     anchors: () => {
       const top = grid.current?.topRow() ?? 0;
       const ids = [view.row(top)?.[0], selectionRef.current.focus !== null ? view.row(selectionRef.current.focus)?.[0] : undefined];
@@ -134,7 +162,7 @@ export function ResultsView({
       setSelection(shift(s, delta, total));
     },
   });
-  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", view.version);
+  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", segment, view.version, segmentsRev, onRefreshSegments);
 
   // A new query starts at the top with nothing selected, except the row
   // remembered for this tab, which is found again.
@@ -224,7 +252,10 @@ export function ResultsView({
   const startExport = async (onlySelected: boolean) => {
     const dest = await transport.pickCsvPath(`${tab.title.toLowerCase().replace(/\s+/g, "-")}${session.filter === "all" ? "" : `-${session.filter}`}`);
     if (!dest) return;
-    await exp.start(path, query, prefs.order, onlySelected ? selection.ranges : null, dest);
+    // FR-B09: with segments, the file says which segment each URL is in.
+    const grouped = enabledSegments(segmentCounts?.segments).length > 0;
+    const cols = grouped && !prefs.order.includes("segment") && tab.columns.some((c) => c.id === "segment") ? [...prefs.order, "segment"] : prefs.order;
+    await exp.start(path, query, cols, onlySelected ? selection.ranges : null, dest, segmentCounts?.segments);
   };
 
   const filterLabel = tab.filters.find((f) => f.id === session.filter)?.label ?? "";
@@ -240,6 +271,7 @@ export function ResultsView({
             {selected > 1 && ` · ${selected.toLocaleString()} selected`}
           </span>
           <div className="ml-auto flex items-center gap-1.5">
+            <SegmentFilter counts={segmentCounts} value={segment} onChange={onSegment} />
             {tab.scoped && (
               <Segmented<UrlScope>
                 size="sm"

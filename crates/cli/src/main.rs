@@ -9,6 +9,7 @@ mod export_cmd;
 mod files_cmd;
 mod options;
 mod schedule_cmd;
+mod segments_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -79,6 +80,8 @@ enum Command {
     /// AI search checks (AEO and GEO) on a crawl file.
     #[command(subcommand)]
     Aeo(aeo_cmd::AeoCommand),
+    /// URLs per segment of a crawl file.
+    Segments(segments_cmd::SegmentsArgs),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -178,6 +181,7 @@ fn main() -> ExitCode {
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
+        Command::Segments(args) => segments_cmd::run_segments(args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
     }

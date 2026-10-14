@@ -25,6 +25,9 @@ pub struct CrawlConfig {
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
     pub ai_checks: AiChecks,
+    /// URL groups shown across the results (spec 027 part B). Results-only:
+    /// they never change what is crawled.
+    pub segments: Vec<crate::segments::Segment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]

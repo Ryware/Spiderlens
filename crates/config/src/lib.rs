@@ -12,6 +12,7 @@ mod presets;
 mod profile;
 mod recent;
 mod secret;
+mod segments;
 mod site;
 mod storage;
 mod store;
@@ -30,6 +31,10 @@ pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
 pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile, import_profile};
 pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
 pub use secret::HeaderValue;
+pub use segments::{
+    Clause, Field as SegmentField, MAX_SEGMENTS, Match as SegmentMatch, Op as SegmentOp, Segment,
+    SegmentColor, SegmentMatcher, UrlFacts, validate_segments,
+};
 pub use site::{InternalHosts, registrable_domain};
 pub use storage::{
     CLEANUP_DAY_CHOICES, CleanupReason, CleanupRecord, DEFAULT_CLEANUP_DAYS, DEFAULT_RESERVE, HISTORY_LIMIT,

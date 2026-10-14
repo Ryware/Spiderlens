@@ -14,6 +14,7 @@ fn view(sort: Option<&str>) -> ViewQuery {
             column: c.into(),
             desc: false,
         }),
+        segment: None,
     }
 }
 

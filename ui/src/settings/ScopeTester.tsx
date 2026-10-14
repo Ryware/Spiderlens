@@ -49,6 +49,7 @@ export function ScopeTester({ transport, config, startUrl }: { transport: Transp
             <tr className="text-left text-xs text-fg-3">
               <th className="py-1 pr-2 font-medium">URL</th>
               <th className="py-1 font-medium">Would be</th>
+              {rows.some((r) => r.segment) && <th className="py-1 pl-2 font-medium">Segment</th>}
             </tr>
           </thead>
           <tbody>
@@ -67,6 +68,11 @@ export function ScopeTester({ transport, config, startUrl }: { transport: Transp
                     </span>
                   )}
                 </td>
+                {rows.some((r) => r.segment) && (
+                  <td className="py-1 pl-2" data-testid="scope-segment">
+                    {r.segment ?? <span className="text-fg-3">No segment</span>}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

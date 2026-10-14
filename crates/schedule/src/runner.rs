@@ -492,6 +492,7 @@ fn export_step(file: &Path, tabs: &[crate::model::ExportTab]) -> StepResult {
                 scope: UrlScope::All,
                 search: String::new(),
                 sort: None,
+                segment: None,
             };
             match export_file(file, &q, &[], None, &dest, &never, &mut |_, _| {}) {
                 Ok(_) => outputs.push(dest),

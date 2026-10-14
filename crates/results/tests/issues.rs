@@ -134,6 +134,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     }
 }
 

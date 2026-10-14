@@ -8,6 +8,12 @@ import type { NetworkSettings } from "./NetworkSettings";
 import type { RetrySettings } from "./RetrySettings";
 import type { RobotsSettings } from "./RobotsSettings";
 import type { Scope } from "./Scope";
+import type { Segment } from "./Segment";
 import type { SpeedSettings } from "./SpeedSettings";
 
-export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, ai_checks: AiChecks, };
+export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, ai_checks: AiChecks, 
+/**
+ * URL groups shown across the results (spec 027 part B). Results-only:
+ * they never change what is crawled.
+ */
+segments: Array<Segment>, };

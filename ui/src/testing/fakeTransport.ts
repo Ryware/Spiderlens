@@ -6,7 +6,7 @@ import type { Issue } from "../generated/Issue";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
-import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeResultsTransport, fakeSegmentOf, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import type {
   CrawlFinished,
@@ -69,6 +69,7 @@ export function defaultConfig(): CrawlConfig {
     },
     extraction: { store_html: true },
     ai_checks: { auto: true, site_files: true },
+    segments: [],
   };
 }
 
@@ -242,6 +243,12 @@ export function fakeTransport(
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
+      config.segments.forEach((seg, i) => {
+        if (!seg.name.trim()) issues.push({ path: `segments[${i}].name`, severity: "error", code: "segment_name_empty", message: "Give the segment a name." });
+        seg.clauses.forEach((c, j) => {
+          if (!c.value.trim()) issues.push({ path: `segments[${i}].clauses[${j}]`, severity: "error", code: "segment_value_empty", message: "Enter a value to compare with." });
+        });
+      });
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });
@@ -267,6 +274,13 @@ export function fakeTransport(
             label: excluded ? "Excluded by rule" : null,
             detail: excluded ?? null,
             robots_checked: false,
+            segment: (() => {
+              try {
+                return fakeSegmentOf(config.segments, { id: 0, url: input, status: null, title: null, depth: 0, internal: true })?.name ?? null;
+              } catch {
+                return null;
+              }
+            })(),
           };
         }),
     parseListText: async (text) => {

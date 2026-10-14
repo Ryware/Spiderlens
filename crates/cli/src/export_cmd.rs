@@ -7,7 +7,9 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use clap::{Args, ValueEnum};
-use spiderlens_results::{Error, ExportError, Sort, UrlScope, ViewQuery, export_file, tabs, write_csv};
+use spiderlens_results::{
+    Error, ExportError, Reader, Sort, UrlScope, ViewQuery, export_file, tabs, write_csv,
+};
 
 use crate::exit;
 
@@ -40,6 +42,9 @@ pub struct ExportArgs {
     /// Keep rows whose URL or main text contains this, ignoring case.
     #[arg(long, default_value = "")]
     search: String,
+    /// Only URLs in this segment of the crawl's settings ("none": in no segment).
+    #[arg(long, value_name = "NAME")]
+    segment: Option<String>,
     /// Sort column id, with :desc for descending.
     #[arg(long, value_name = "COLUMN[:desc]")]
     sort: Option<String>,
@@ -83,6 +88,13 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
             desc: false,
         },
     });
+    let segment = match &a.segment {
+        None => None,
+        Some(name) => match segment_id(&file, name) {
+            Ok(id) => Some(id),
+            Err(code) => return code,
+        },
+    };
     let q = ViewQuery {
         tab: a.tab,
         filter: a.filter,
@@ -93,6 +105,7 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
         },
         search: a.search,
         sort,
+        segment,
     };
     let never = AtomicBool::new(false);
     let result = match &a.out {
@@ -127,4 +140,29 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
             ExitCode::from(UNREADABLE)
         }
     }
+}
+
+/// Resolves `--segment NAME` against the segments stored with the crawl.
+fn segment_id(file: &std::path::Path, name: &str) -> Result<u32, ExitCode> {
+    if name.trim().eq_ignore_ascii_case("none") {
+        return Ok(0);
+    }
+    let reader = Reader::open(file).map_err(|e| {
+        eprintln!("error: {e}");
+        ExitCode::from(UNREADABLE)
+    })?;
+    reader.segment_id(name).ok_or_else(|| {
+        let names: Vec<_> = reader
+            .segments()
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.name.trim())
+            .collect();
+        if names.is_empty() {
+            eprintln!("error: this crawl has no segments");
+        } else {
+            eprintln!("error: no segment named {name:?}; segments: {}", names.join(", "));
+        }
+        ExitCode::from(exit::USAGE)
+    })
 }

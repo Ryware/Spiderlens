@@ -26,6 +26,7 @@ fn q(tab: &str, filter: &str, search: &str, sort: Option<(&str, bool)>) -> ViewQ
             column: c.into(),
             desc: d,
         }),
+        segment: None,
     }
 }
 

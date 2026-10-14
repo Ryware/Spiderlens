@@ -26,6 +26,8 @@ pub struct Reader {
     pub(crate) tab_counts: Option<crate::counts::TabCounts>,
     version: u64,
     data_version: i64,
+    /// Segment membership (spec 027 part B).
+    pub(crate) segments: crate::segments::State,
 }
 
 /// Opens a crawl file the way every reader in this crate does: read-only,
@@ -49,6 +51,7 @@ pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
     conn.pragma_update(None, "cache_size", -32_768)?;
     conn.pragma_update(None, "temp_store", "FILE")?;
     sql::register(&conn)?;
+    crate::segments::create_tables(&conn)?;
     let features = Features::detect(&conn)?;
     let limit = features.redirect_limit;
     conn.create_scalar_function(
@@ -71,7 +74,8 @@ impl Reader {
     pub fn open(path: &Path) -> Result<Self> {
         let (conn, features) = connect(path)?;
         let data_version = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
-        Ok(Self {
+        let stored = crate::segments::stored(&conn);
+        let mut reader = Self {
             conn,
             path: path.to_path_buf(),
             features,
@@ -81,7 +85,12 @@ impl Reader {
             tab_counts: None,
             version: 1,
             data_version,
-        })
+            segments: crate::segments::State::new(Vec::new()),
+        };
+        if !stored.is_empty() {
+            reader.set_segments(stored)?;
+        }
+        Ok(reader)
     }
 
     pub fn path(&self) -> &Path {
@@ -109,9 +118,16 @@ impl Reader {
         Ok(self.version)
     }
 
+    /// Marks the data as changed without a new commit (segments edited), so
+    /// views and counts rebuild on their next refresh.
+    pub(crate) fn bump_version(&mut self) {
+        self.version += 1;
+    }
+
     /// Makes sure each derived table is current for this data version,
     /// updating it in place when it can (see `tabs::update_derived`).
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
+        self.ensure_segments()?;
         let v = self.version()?;
         for d in needed {
             if self.derived.get(&d) != Some(&v) {

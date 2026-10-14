@@ -108,7 +108,8 @@ export function AppShell({ transport }: { transport: Transport }) {
   const inspectFrom = useRef<HTMLElement | null>(null);
   const inspectPending = useRef(false);
   const [inspectAsked, setInspectAsked] = useState(0);
-  const results = useResults(transport, crawl.path, crawl.running);
+  const segmentsValid = !setup.issues.some((i) => i.severity === "error" && i.path.startsWith("segments"));
+  const results = useResults(transport, crawl.path, crawl.running, setup.config?.segments, segmentsValid);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
@@ -359,6 +360,11 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
+              segment={results.segment}
+              onSegment={results.setSegment}
+              segmentCounts={results.segmentCounts}
+              segmentsRev={results.segmentsRev}
+              onRefreshSegments={results.refreshSegmentCounts}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onManageCrawls={() => setManageOpen(true)} />

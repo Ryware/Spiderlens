@@ -12,9 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
+use spiderlens_config::Segment;
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts,
-    TabDef, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage,
+    SegmentCounts, TabCounts, TabDef, UrlDetail, UrlScope, ViewQuery, export_file_in, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -232,9 +233,10 @@ pub async fn view_counts(
     path: PathBuf,
     tab: String,
     scope: UrlScope,
+    segment: Option<u32>,
 ) -> Cmd<FilterCounts> {
     state
-        .with(&path, move |r| r.counts(&tab, scope).map_err(err))
+        .with(&path, move |r| r.counts_in(&tab, scope, segment).map_err(err))
         .await
 }
 
@@ -243,6 +245,29 @@ pub async fn view_counts(
 #[tauri::command]
 pub async fn tab_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<TabCounts> {
     state.with(&path, |r| r.tab_counts().map_err(err)).await
+}
+
+/// Groups the open crawl's URLs by `segments` (spec 027 FR-B06); the crawl
+/// file is not changed. Open views and counts follow on their next refresh.
+#[tauri::command]
+pub async fn segments_set(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    segments: Vec<Segment>,
+) -> Cmd<SegmentCounts> {
+    let issues = spiderlens_config::validate_segments(&segments);
+    if let Some(i) = issues.first() {
+        return Err(format!("{}: {}", i.path, i.message));
+    }
+    state
+        .with(&path, move |r| r.set_segments(segments).map_err(err))
+        .await
+}
+
+/// URLs per segment in the open crawl (the segment filter's counts).
+#[tauri::command]
+pub async fn segments_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<SegmentCounts> {
+    state.with(&path, |r| r.segment_counts().map_err(err)).await
 }
 
 #[tauri::command]
@@ -313,6 +338,7 @@ pub async fn copy_rows(
 /// Starts a CSV export on its own thread; progress arrives as
 /// `export-progress` events (FR-030).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn export_start(
     app: AppHandle,
     state: tauri::State<'_, State>,
@@ -320,6 +346,7 @@ pub fn export_start(
     query: ViewQuery,
     columns: Vec<String>,
     ranges: Option<Vec<(u32, u32)>>,
+    segments: Option<Vec<Segment>>,
     dest: PathBuf,
 ) -> Cmd<u32> {
     let job = state.next_export.fetch_add(1, Ordering::Relaxed) + 1;
@@ -346,11 +373,12 @@ pub fn export_start(
                 );
             };
             let mut last = std::time::Instant::now();
-            let result = export_file(
+            let result = export_file_in(
                 &path,
                 &query,
                 &columns,
                 ranges.as_deref(),
+                segments.as_deref(),
                 &dest,
                 &cancel,
                 &mut |n, total| {

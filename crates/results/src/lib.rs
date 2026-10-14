@@ -13,6 +13,7 @@ mod detail;
 mod export;
 mod features;
 mod reader;
+mod segments;
 mod sql;
 #[doc(hidden)]
 pub mod synth;
@@ -21,10 +22,13 @@ mod view;
 
 pub use counts::{FilterCounts, TabCounts};
 pub use detail::{HeadingRow, HtmlMissing, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail};
-pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
+pub use export::{
+    COPY_LIMIT, ExportError, export_file, export_file_in, write_csv, write_csv_in, write_tsv_row,
+};
 pub use features::Features;
 pub use reader::Reader;
 pub use rusqlite::InterruptHandle;
+pub use segments::SegmentCounts;
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
 pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, tab, tabs};
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
