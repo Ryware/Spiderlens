@@ -222,7 +222,11 @@ async fn us2_filters_list_exactly_the_seeded_urls_and_counts_agree() {
     for tab in tabs() {
         // Tabs whose data this crawl does not have (Search Console before a
         // fetch, spec 024) list nothing to compare with.
-        if r.counts(tab.id, UrlScope::All).unwrap().unavailable.contains_key("all") {
+        if r.counts(tab.id, UrlScope::All)
+            .unwrap()
+            .unavailable
+            .contains_key("all")
+        {
             continue;
         }
         let listed = paths(&mut r, &c, &q(tab.id, "all")).len() as u64;
