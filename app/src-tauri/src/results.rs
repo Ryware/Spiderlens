@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use serde::Serialize;
 use spiderlens_results::{
     ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
-    UrlScope, ViewQuery, export_file, tabs,
+    UrlScope, Values, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -223,9 +223,10 @@ pub async fn view_counts(
     path: PathBuf,
     tab: String,
     scope: UrlScope,
+    values: Option<Values>,
 ) -> Cmd<FilterCounts> {
     state
-        .with(&path, move |r| r.counts(&tab, scope).map_err(err))
+        .with(&path, move |r| r.counts_with(&tab, scope, values).map_err(err))
         .await
 }
 

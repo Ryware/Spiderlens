@@ -3,6 +3,7 @@ import type { Features } from "../generated/Features";
 import type { Sort } from "../generated/Sort";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlScope } from "../generated/UrlScope";
+import type { Values } from "../generated/Values";
 import type { Transport } from "../transport";
 
 /** What each tab remembers while the app is open (FR-017). */
@@ -27,6 +28,8 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const [sessions, setSessions] = useState<Record<string, TabSession>>({});
   const [focusId, setFocusId] = useState<number | null>(null);
   const [retry, setRetry] = useState(0);
+  /** Raw or rendered values per crawl file, kept while the app is open (spec 014 FR-021). */
+  const [valuesByPath, setValuesByPath] = useState<Record<string, Values>>({});
 
   useEffect(() => {
     transport.resultsTabs().then(setTabs, () => {});
@@ -56,7 +59,14 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
-  return { tabs, features, session, update, focusId, setFocusId };
+  // Only a rendered crawl has a choice; it starts on rendered values.
+  const rendered = features?.available.includes("rendering") ?? false;
+  const values: Values | null = path && rendered ? (valuesByPath[path] ?? "rendered") : null;
+  const setValues = useCallback((v: Values) => {
+    if (path) setValuesByPath((m) => ({ ...m, [path]: v }));
+  }, [path]);
+
+  return { tabs, features, session, update, focusId, setFocusId, values, setValues };
 }
 
 export type Results = ReturnType<typeof useResults>;

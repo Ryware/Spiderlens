@@ -64,7 +64,9 @@ export interface FakeResults {
   urls: FakeUrl[];
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
-  opened: { tab: string; filter: string; search: string; sort: string | null }[];
+  opened: { tab: string; filter: string; search: string; sort: string | null; values?: string }[];
+  /** The `values` of each counts call, in order (spec 014). */
+  counted: (string | undefined)[];
   /** What the open crawl file holds; base only unless a test adds more. */
   features: Need[];
   /** Announces that the open view's full order is ready. */
@@ -102,6 +104,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     copied: [],
     exports: [],
     opened: [],
+    counted: [],
     features: ["base"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
@@ -149,7 +152,13 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
-      results.opened.push({ tab: q.tab, filter: q.filter, search: q.search, sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null });
+      results.opened.push({
+        tab: q.tab,
+        filter: q.filter,
+        search: q.search,
+        sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null,
+        ...(q.values ? { values: q.values } : {}),
+      });
       views.set(view, { ...select(q), version });
       queries.set(view, q);
       return { ...page(view, 0, count), total: null, ready: false };
@@ -166,7 +175,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       views.set(view, fresh);
       return { version, total: fresh.ids.length, positions: anchors.map((a) => (fresh.ids.indexOf(a) < 0 ? null : fresh.ids.indexOf(a))), build_ms: 1 };
     },
-    viewCounts: async (_p, tab, scope) => {
+    viewCounts: async (_p, tab, scope, values) => {
+      results.counted.push(values);
       const t = fakeTabs.find((x) => x.id === tab)!;
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};

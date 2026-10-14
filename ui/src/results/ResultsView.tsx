@@ -8,6 +8,7 @@ import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlScope } from "../generated/UrlScope";
+import type { Values } from "../generated/Values";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../components/ui";
@@ -33,7 +34,7 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** Filter counts, refreshed as the view changes but at most every 2 s. */
-function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, version: number) {
+function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, values: Values | null, version: number) {
   const [counts, setCounts] = useState<FilterCounts | null>(null);
   const last = useRef(0);
   const busy = useRef(false);
@@ -41,7 +42,7 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
   useEffect(() => {
     setCounts(null);
     last.current = 0;
-  }, [path, tab, scope]);
+  }, [path, tab, scope, values]);
   useEffect(() => {
     if (busy.current) return;
     const wait = last.current + 2000 - Date.now();
@@ -52,10 +53,10 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
     busy.current = true;
     last.current = Date.now();
     transport
-      .viewCounts(path, tab, scope)
+      .viewCounts(path, tab, scope, values ?? undefined)
       .then(setCounts, () => {})
       .finally(() => (busy.current = false));
-  }, [transport, path, tab, scope, version, again]);
+  }, [transport, path, tab, scope, values, version, again]);
   return counts;
 }
 
@@ -68,6 +69,8 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  values = null,
+  onValues,
 }: {
   transport: Transport;
   path: string;
@@ -77,6 +80,9 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Raw or rendered values; null when the crawl was not rendered (spec 014). */
+  values?: Values | null;
+  onValues?: (v: Values) => void;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -102,8 +108,15 @@ export function ResultsView({
   };
 
   const query: ViewQuery = useMemo(
-    () => ({ tab: tab.id, filter: session.filter, scope: tab.scoped ? session.scope : "all", search: session.search, sort: session.sort }),
-    [tab, session.filter, session.scope, session.search, session.sort],
+    () => ({
+      tab: tab.id,
+      filter: session.filter,
+      scope: tab.scoped ? session.scope : "all",
+      search: session.search,
+      sort: session.sort,
+      ...(values ? { values } : {}),
+    }),
+    [tab, session.filter, session.scope, session.search, session.sort, values],
   );
 
   const selectionRef = useRef(selection);
@@ -124,7 +137,7 @@ export function ResultsView({
       setSelection(shift(s, delta, total));
     },
   });
-  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", view.version);
+  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", values, view.version);
 
   // A new query starts at the top with nothing selected, except the row
   // remembered for this tab, which is found again.
@@ -206,6 +219,18 @@ export function ResultsView({
             {selected > 1 && ` · ${selected.toLocaleString()} selected`}
           </span>
           <div className="ml-auto flex items-center gap-1.5">
+            {values && onValues && (
+              <Segmented<Values>
+                size="sm"
+                label="Which values"
+                value={values}
+                onChange={onValues}
+                options={[
+                  { value: "rendered", label: "Rendered values" },
+                  { value: "raw", label: "Raw values" },
+                ]}
+              />
+            )}
             {tab.scoped && (
               <Segmented<UrlScope>
                 size="sm"

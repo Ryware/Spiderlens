@@ -266,6 +266,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              values={results.values}
+              onValues={results.setValues}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />

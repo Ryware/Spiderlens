@@ -17,6 +17,7 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { Values } from "./generated/Values";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
@@ -410,7 +411,8 @@ export interface Transport {
   viewRows(path: string, view: number, from: number, count: number): Promise<RowPage>;
   viewLocate(path: string, view: number, ids: number[]): Promise<(number | null)[]>;
   viewRefresh(path: string, view: number, anchors: number[]): Promise<Refresh | null>;
-  viewCounts(path: string, tab: string, scope: UrlScope): Promise<FilterCounts>;
+  /** `values`: raw or rendered values of a rendered crawl (spec 014); omitted means rendered when it has rendering. */
+  viewCounts(path: string, tab: string, scope: UrlScope, values?: Values): Promise<FilterCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
@@ -491,7 +493,7 @@ export const tauriTransport: Transport = {
   viewRows: (path, view, from, count) => invoke("view_rows", { path, view, from, count }),
   viewLocate: (path, view, ids) => invoke("view_locate", { path, view, ids }),
   viewRefresh: (path, view, anchors) => invoke("view_refresh", { path, view, anchors }),
-  viewCounts: (path, tab, scope) => invoke("view_counts", { path, tab, scope }),
+  viewCounts: (path, tab, scope, values) => invoke("view_counts", { path, tab, scope, values: values ?? null }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
