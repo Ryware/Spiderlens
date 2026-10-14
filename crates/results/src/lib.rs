@@ -8,6 +8,7 @@
 //! temporary table on disk and hand out one page of rows at a time (plan D4,
 //! constitution principle VI).
 
+mod cookies;
 mod counts;
 mod detail;
 mod export;
@@ -19,6 +20,7 @@ pub mod synth;
 mod tabs;
 mod view;
 
+pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage};
 pub use counts::FilterCounts;
 pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
 pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};

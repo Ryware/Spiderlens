@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::error::Error as _;
 
-use reqwest::{Client, Response, StatusCode, header};
+use reqwest::{Client, ClientBuilder, Response, StatusCode, header};
 use url::Url;
 
 use crate::{CheckError, CheckOptions, ErrorClass, RedirectHop, RequestHeader};
@@ -19,6 +19,15 @@ pub(crate) fn build_client_with(
     opts: &CheckOptions,
     resolve: &[(String, std::net::SocketAddr)],
 ) -> Result<Client, CheckError> {
+    finish(client_builder(opts, resolve))
+}
+
+/// The client settings every request shares; `net::NetSession` adds the
+/// cookie jar when a crawl needs one.
+pub(crate) fn client_builder(
+    opts: &CheckOptions,
+    resolve: &[(String, std::net::SocketAddr)],
+) -> ClientBuilder {
     let mut builder = Client::builder();
     for (host, addr) in resolve {
         builder = builder.resolve(host, *addr);
@@ -29,17 +38,19 @@ pub(crate) fn build_client_with(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(opts.connect_timeout)
         .read_timeout(opts.read_timeout)
-        // Proxy support arrives with crawl configuration (spec 002). Until
+        // Proxy support arrives with spec 025's proxy settings. Until
         // then, requests go direct so results do not depend on the shell's
         // environment.
         .no_proxy()
-        .build()
-        .map_err(|e| {
-            CheckError::new(
-                ErrorClass::Connection,
-                format!("Could not start the HTTP client: {e}"),
-            )
-        })
+}
+
+pub(crate) fn finish(builder: ClientBuilder) -> Result<Client, CheckError> {
+    builder.build().map_err(|e| {
+        CheckError::new(
+            ErrorClass::Connection,
+            format!("Could not start the HTTP client: {e}"),
+        )
+    })
 }
 
 /// What to do when a body reaches the size limit.

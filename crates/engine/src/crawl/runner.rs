@@ -32,7 +32,8 @@ use super::store::{
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
-use crate::fetch::{Once, build_client_with, fetch_once};
+use crate::fetch::{Once, fetch_once};
+use crate::net::NetSession;
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, RequestHeader};
@@ -69,7 +70,7 @@ pub enum CrawlError {
     )]
     NeedsUpgrade { from: i64 },
     /// Header values that are never stored must be entered again (FR-034).
-    #[error("enter the secret value of these headers to resume: {}", .0.join(", "))]
+    #[error("enter these secret values to resume: {}", .0.join(", "))]
     NeedsSecrets(Vec<String>),
     /// Read-only file or media: save a copy elsewhere to resume (FR-021).
     #[error("{} cannot be changed here (read-only); save a copy to another folder to resume it", .0.display())]
@@ -93,7 +94,8 @@ pub struct ResumeOptions {
     pub upgrade: Option<Upgrade>,
     /// Speed and URL-limit changes, recorded in the configuration history.
     pub changes: Vec<Change>,
-    /// Header name and value for secrets that were not stored.
+    /// Values for secrets that were not stored, keyed as in
+    /// `CrawlConfig::missing_secrets` (a header name, or `cookie:domain/name`).
     pub secrets: Vec<(String, String)>,
 }
 
@@ -566,19 +568,7 @@ impl Crawler {
             .and_then(|c| serde_json::from_str(&c).ok())
             .ok_or_else(|| CrawlError::Config("the crawl file has no readable configuration".into()))?;
         // Secrets are never stored (FR-034): the caller supplies them again.
-        let mut missing = Vec::new();
-        for h in &mut stored.config.identity.headers {
-            if h.value.is_secret() && h.value.expose().is_none() {
-                match options
-                    .secrets
-                    .iter()
-                    .find(|(n, _)| n.eq_ignore_ascii_case(&h.name))
-                {
-                    Some((_, v)) => h.value = HeaderValue::secret(v.clone()),
-                    None => missing.push(h.name.clone()),
-                }
-            }
-        }
+        let missing = stored.config.fill_secrets(&options.secrets);
         if !missing.is_empty() {
             return Err(CrawlError::NeedsSecrets(missing));
         }
@@ -715,8 +705,14 @@ impl Crawler {
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
-        let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, events, commands)?;
+        let net = NetSession::new(
+            &opts,
+            &self.config.access,
+            self.rules.internal().clone(),
+            &self.resolve,
+        )
+        .map_err(CrawlError::Client)?;
+        let mut run = Run::new(self, opts, net, control, events, commands)?;
         match run.main_loop().await {
             Ok(()) => {}
             // A write failed: nothing of the open batch reached the file, so
@@ -762,6 +758,7 @@ struct Run {
     c: Crawler,
     opts: CheckOptions,
     client: Client,
+    net: NetSession,
     headers: Arc<Vec<RequestHeader>>,
     control: watch::Receiver<Control>,
     control_closed: bool,
@@ -800,7 +797,7 @@ impl Run {
     fn new(
         c: Crawler,
         opts: CheckOptions,
-        client: Client,
+        net: NetSession,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -854,7 +851,8 @@ impl Run {
             headers: Arc::new(opts.headers.clone()),
             c,
             opts,
-            client,
+            client: net.client().clone(),
+            net,
             control,
             control_closed: false,
             events,
@@ -1628,6 +1626,7 @@ impl Run {
                         && self.c.rules.adopt_start_redirect(t)
                     {
                         seed = true;
+                        self.net.adopt_host(t);
                         self.c.stored.resolved_hosts = self.c.rules.internal_hosts().to_vec();
                         self.c.store.set_meta(
                             "config",
@@ -1739,6 +1738,15 @@ impl Run {
         if let Some(o) = outcome {
             let store = &self.c.store;
             store.record_headers(entry.id, &o.headers)?;
+            // The cookie audit costs nothing on responses without cookies.
+            if o.headers.iter().any(|(n, _)| n == "set-cookie")
+                && let Ok(url) = Url::parse(&entry.url)
+            {
+                store.record_cookies(
+                    entry.id,
+                    &super::cookies::from_headers(&url, &o.headers, now_ms()),
+                )?;
+            }
             let meta_count = match &o.page {
                 Some(p) => {
                     store.record_page(

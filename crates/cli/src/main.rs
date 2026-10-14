@@ -3,6 +3,7 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod options;
@@ -62,6 +63,8 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// List the cookies the site set during a crawl (no values).
+    Cookies(cookies_cmd::CookiesArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
     /// Explain crawl scope decisions.
@@ -155,6 +158,7 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Cookies(args) => cookies_cmd::run_cookies(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }

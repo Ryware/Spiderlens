@@ -1026,6 +1026,35 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// The cookies one response set (spec 025 FR-025). Values are not part
+    /// of `CookieObs`, so they cannot reach the file.
+    pub fn record_cookies(&self, id: i64, cookies: &[super::cookies::CookieObs]) -> Result<()> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO cookies (url_id, name, domain, host_only, path, expires, max_age, secure, \
+             http_only, same_site, size, party, source, extra) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )?;
+        for c in cookies {
+            stmt.execute(params![
+                id,
+                c.name,
+                c.domain,
+                c.host_only,
+                c.path,
+                c.expires,
+                c.max_age,
+                c.secure,
+                c.http_only,
+                c.same_site,
+                c.size as i64,
+                if c.third_party { "third" } else { "first" },
+                c.source,
+                c.extra,
+            ])?;
+        }
+        Ok(())
+    }
+
     /// Response headers of one fetched URL, as a JSON array of pairs, with
     /// cookie values removed (`redact`).
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {

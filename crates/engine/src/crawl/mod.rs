@@ -5,6 +5,7 @@
 //! - `runner` schedules requests breadth-first and politely.
 //! - `speed` adapts how many requests each site gets at once (spec 008).
 
+pub mod cookies;
 pub mod file;
 pub mod migrate;
 pub mod reason;

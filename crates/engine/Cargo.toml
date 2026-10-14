@@ -27,6 +27,8 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
+cookie_store.workspace = true
+cookie.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

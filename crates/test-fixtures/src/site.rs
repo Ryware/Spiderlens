@@ -42,6 +42,8 @@ pub struct Hit {
     pub path: String,
     pub at: Instant,
     pub user_agent: String,
+    /// The `Cookie` header, if sent (spec 025).
+    pub cookie: Option<String>,
 }
 
 #[derive(Default)]
@@ -256,11 +258,17 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
     state.log.lock().expect("log lock").push(Hit {
         host: host.clone(),
         path: path.clone(),
         at: Instant::now(),
         user_agent,
+        cookie,
     });
     let mut builder = Response::builder();
     match state.replies.get(&(host, path)) {
