@@ -231,7 +231,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, manageOpen, file.prompt, file.quitting]);
 
   return (
-    <div className="flex h-full flex-col bg-bg text-fg">
+    <div data-shell className="flex h-full flex-col bg-bg text-fg">
       <Toolbar
         ref={urlRef}
         setup={setup}
@@ -245,7 +245,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         systemDark={systemDark}
         onAppearance={updateUi}
       />
-      <div className="flex min-h-0 flex-1 bg-frame">
+      <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
         </div>
