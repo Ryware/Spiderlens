@@ -232,8 +232,40 @@ test("not_collected_group_lists_unavailable_fields", async () => {
   await loaded();
   expect(within(details()).getByRole("heading", { name: "Not collected" })).toBeTruthy();
   expect(within(details()).getByText("Headings, Anchor and alt text.")).toBeTruthy();
-  expect(within(details()).getByText("Page HTML.")).toBeTruthy();
-  expect(within(details()).getByText(/This crawl did not keep page HTML\./, { selector: "p" })).toBeTruthy();
+  // Page HTML is explained in its own section instead.
+  expect(within(details()).queryByText("Page HTML.")).toBeNull();
+  expect(within(details()).queryByText(/This crawl did not keep page HTML\./)).toBeNull();
+});
+
+test("page_html_not_stored_says_how_to_turn_it_on", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).getByRole("heading", { name: "Page HTML" })).toBeTruthy();
+  expect(within(details()).getByText(/Turn on Settings › Page data › Store page HTML and crawl again/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("page_html_missing_for_a_url_without_a_body", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={10} />);
+  await loaded();
+  expect(within(details()).getByText(/None stored for this URL: it is not an HTML page/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("view_source_opens_the_page_html_viewer", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  fireEvent.click(within(details()).getByRole("button", { name: "View source" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText("<!doctype html>")).toBeTruthy();
+  expect(within(dialog).getByText("https://example.com/page-1", { selector: "p" })).toBeTruthy();
+  expect(within(dialog).getByTestId("html-facts").textContent).toMatch(/^\d+ KB · 2,008 lines · UTF-8$/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 test("nothing_missing_hides_the_not_collected_group", async () => {

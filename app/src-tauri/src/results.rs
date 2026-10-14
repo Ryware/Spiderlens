@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabCounts, TabDef,
-    UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts,
+    TabDef, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -263,6 +263,12 @@ pub async fn url_list(
     state
         .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
         .await
+}
+
+/// A page's stored HTML for the source viewer (T029).
+#[tauri::command]
+pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageHtml> {
+    state.with(&path, move |r| r.page_html(id).map_err(err)).await
 }
 
 /// Puts the selected rows on the clipboard as TSV with a header (FR-026)

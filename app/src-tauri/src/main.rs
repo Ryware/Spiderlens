@@ -99,6 +99,7 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::url_html,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

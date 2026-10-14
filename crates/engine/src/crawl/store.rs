@@ -1108,12 +1108,9 @@ impl CrawlStore {
         let Some((codec, size, packed)) = row else {
             return Ok(None);
         };
-        if codec != body::CODEC {
-            return Err(StoreError::Format(format!("unknown body codec {codec}")));
-        }
-        body::decompress(&packed, size as usize)
+        body::unpack(&codec, size, &packed)
             .map(Some)
-            .map_err(|e| StoreError::Format(format!("stored HTML is damaged: {e}")))
+            .map_err(StoreError::Format)
     }
 
     /// Everything stored for one URL, as JSON (`spiderlens page`, tests).
