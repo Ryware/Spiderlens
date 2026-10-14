@@ -458,6 +458,16 @@ impl Crawler {
                 "extraction,timing"
             },
         )?;
+        if config.rendering.is_on() {
+            let mut features = vec!["rendering"];
+            if config.extraction.store_html {
+                features.push("rendered_html");
+            }
+            if config.rendering.screenshots {
+                features.push("screenshots");
+            }
+            store.add_data_features(&features)?;
+        }
 
         store.begin()?;
         let source = match config.mode {

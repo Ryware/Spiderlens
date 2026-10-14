@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,7 +34,203 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}];
+    },
+    Step {
+        version: 4,
+        additive: true,
+        sql: RENDERING,
+    },
+];
+
+/// JavaScript rendering (spec 014 data-model.md): new tables only, empty
+/// unless a crawl renders.
+const RENDERING: &str = "
+CREATE TABLE renders (
+    url_id INTEGER PRIMARY KEY,
+    state TEXT NOT NULL,
+    reason TEXT,
+    reason_detail TEXT,
+    queue_seq INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    render_ms INTEGER,
+    window_w INTEGER,
+    window_h INTEGER,
+    js_redirect TEXT,
+    js_redirect_id INTEGER,
+    console_errors INTEGER,
+    console_warnings INTEGER,
+    resources_failed INTEGER,
+    resources_blocked INTEGER,
+    bot_challenge INTEGER,
+    rendered_at INTEGER
+);
+CREATE INDEX renders_queue ON renders(queue_seq) WHERE state = 'queued';
+CREATE INDEX renders_state ON renders(state, reason);
+CREATE TABLE render_inputs (
+    url_id INTEGER PRIMARY KEY,
+    codec TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    body BLOB NOT NULL
+);
+CREATE TABLE rendered_pages (
+    url_id INTEGER PRIMARY KEY,
+    title_count INTEGER NOT NULL,
+    meta_description TEXT,
+    meta_description_count INTEGER NOT NULL,
+    h1_1 TEXT,
+    h1_2 TEXT,
+    h1_count INTEGER NOT NULL,
+    h2_1 TEXT,
+    h2_2 TEXT,
+    h2_count INTEGER NOT NULL,
+    heading_counts TEXT NOT NULL,
+    word_count INTEGER NOT NULL,
+    lang TEXT,
+    text_hash INTEGER,
+    title_hash INTEGER,
+    meta_description_hash INTEGER,
+    meta_refresh_delay REAL,
+    meta_refresh_url TEXT,
+    extract_error TEXT,
+    no_content INTEGER NOT NULL,
+    title TEXT,
+    noindex INTEGER,
+    nofollow INTEGER,
+    canonical TEXT,
+    canonical_count INTEGER,
+    canonical_conflict INTEGER,
+    rendered_html_stored INTEGER NOT NULL
+);
+CREATE TABLE rendered_text (
+    url_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    level INTEGER,
+    pos INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    in_head INTEGER,
+    origin TEXT NOT NULL
+);
+CREATE INDEX rendered_text_url ON rendered_text(url_id, kind, pos);
+CREATE TABLE rendered_directives (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    directive TEXT NOT NULL,
+    value TEXT,
+    known INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    crawler TEXT NOT NULL,
+    in_head INTEGER,
+    origin TEXT NOT NULL
+);
+CREATE INDEX rendered_directives_url ON rendered_directives(url_id);
+CREATE TABLE rendered_structured_data (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    parseable INTEGER NOT NULL,
+    origin TEXT NOT NULL
+);
+CREATE INDEX rendered_structured_data_url ON rendered_structured_data(url_id);
+CREATE TABLE rendered_links (
+    from_id INTEGER NOT NULL,
+    to_id INTEGER,
+    raw TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    nofollow INTEGER NOT NULL,
+    page_nofollow INTEGER NOT NULL,
+    followed INTEGER NOT NULL,
+    pos INTEGER,
+    target TEXT,
+    skip_reason TEXT,
+    text TEXT,
+    alt TEXT,
+    rel TEXT,
+    sponsored INTEGER NOT NULL DEFAULT 0,
+    ugc INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'html',
+    in_head INTEGER,
+    noscript INTEGER NOT NULL DEFAULT 0,
+    lang TEXT,
+    width INTEGER,
+    height INTEGER,
+    srcset INTEGER NOT NULL DEFAULT 0,
+    in_link INTEGER NOT NULL DEFAULT 0,
+    rpos INTEGER
+);
+CREATE INDEX rendered_links_from ON rendered_links(from_id);
+CREATE INDEX rendered_links_to ON rendered_links(to_id);
+CREATE TABLE raw_only_links (
+    from_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    PRIMARY KEY (from_id, pos)
+) WITHOUT ROWID;
+CREATE TABLE render_comparisons (
+    url_id INTEGER PRIMARY KEY,
+    words_raw INTEGER,
+    words_rendered INTEGER,
+    words_change INTEGER,
+    links_raw INTEGER,
+    links_rendered INTEGER,
+    links_rendered_only INTEGER,
+    links_raw_only INTEGER,
+    title_diff TEXT,
+    description_diff TEXT,
+    h1_diff TEXT,
+    canonical_diff TEXT,
+    noindex_diff TEXT,
+    nofollow_diff TEXT,
+    hreflang_diff TEXT,
+    structured_rendered_only INTEGER,
+    dep_text REAL,
+    dep_headings REAL,
+    dep_internal_links REAL,
+    dep_structured REAL,
+    dep_images REAL,
+    raw_has_title INTEGER,
+    raw_has_description INTEGER,
+    raw_has_canonical INTEGER,
+    raw_has_directives INTEGER,
+    dependence REAL
+);
+CREATE TABLE render_resources (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    type TEXT NOT NULL,
+    host TEXT NOT NULL,
+    third_party INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    status INTEGER,
+    error TEXT,
+    robots_rule TEXT,
+    bytes INTEGER
+);
+CREATE INDEX render_resources_url ON render_resources(url_id);
+CREATE TABLE console_entries (
+    url_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    source_url TEXT,
+    line INTEGER,
+    col INTEGER
+);
+CREATE INDEX console_entries_url ON console_entries(url_id);
+CREATE TABLE rendered_bodies (
+    url_id INTEGER PRIMARY KEY,
+    codec TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    body BLOB NOT NULL
+);
+CREATE TABLE screenshots (
+    url_id INTEGER PRIMARY KEY,
+    format TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    image BLOB NOT NULL
+);
+";
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();
@@ -135,6 +332,25 @@ mod tests {
     fn steps_are_numbered_from_the_base() {
         assert_eq!(STEPS[0].version, BASE + 1);
         assert_eq!(LATEST, STEPS.last().unwrap().version);
+    }
+
+    #[test]
+    fn rendering_tables_apply_to_a_base_file() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
+        apply_all(&conn).unwrap();
+        for table in ["renders", "rendered_pages", "render_resources", "screenshots"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "{table}");
+        }
+        assert_eq!(version(&conn).unwrap(), LATEST);
     }
 
     #[test]

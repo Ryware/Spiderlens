@@ -19,6 +19,23 @@ const HOST: &str = "127.0.0.1";
 const PAGES: usize = 300;
 
 /// A tree of pages: each links to its ten children and the home page.
+/// Every table of the rendering step (spec 014 data-model.md).
+const RENDER_TABLES: &[&str] = &[
+    "renders",
+    "render_inputs",
+    "rendered_pages",
+    "rendered_text",
+    "rendered_directives",
+    "rendered_structured_data",
+    "rendered_links",
+    "raw_only_links",
+    "render_comparisons",
+    "render_resources",
+    "console_entries",
+    "rendered_bodies",
+    "screenshots",
+];
+
 fn tree_site() -> Site {
     let mut b = SiteBuilder::new();
     for i in 0..PAGES {
@@ -195,6 +212,25 @@ async fn sc_003_pause_reopen_resume_equals_an_uninterrupted_crawl() {
     );
     let changes = &info.config.unwrap().changes;
     assert_eq!(changes.len(), 1, "the change is in the configuration history");
+    assert_no_render_rows(&path);
+}
+
+/// A crawl with rendering off writes nothing in the rendering tables, and
+/// its file does not list rendering as a feature (spec 014 FR-002).
+fn assert_no_render_rows(path: &Path) {
+    let store = CrawlStore::open_read_only(path).unwrap();
+    for table in RENDER_TABLES {
+        let n: i64 = store
+            .conn_for_tests()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap_or_else(|e| panic!("{table}: {e}"));
+        assert_eq!(n, 0, "{table}");
+    }
+    for key in ["renderer", "render_version", "fetch_completed_at"] {
+        assert!(store.meta(key).unwrap().is_none(), "{key}");
+    }
+    let features = store.meta("data_features").unwrap().unwrap_or_default();
+    assert!(!features.contains("render"), "{features}");
 }
 
 #[tokio::test]
@@ -430,6 +466,8 @@ async fn fr_036_resuming_an_older_file_upgrades_it_and_keeps_a_copy() {
     let info = file::info(&path).unwrap();
     assert_eq!(info.format_version, FORMAT_VERSION);
     assert!(info.versions.iter().any(|v| v.kind == "upgraded"));
+    // The rendering step (spec 014) is there and empty.
+    assert_no_render_rows(&path);
 
     // Declining the copy upgrades without one.
     let other = dir.path().join("other.spiderlens");
@@ -596,4 +634,22 @@ fn deleting_a_crawl_and_crash_leftovers_leaves_nothing_behind() {
     assert_eq!(file::remove_stale_partials(dir.path()), 1);
     assert!(!stale.exists());
     assert!(busy.exists(), "a copy in progress is left alone");
+}
+
+#[test]
+fn a_crawl_that_renders_lists_its_rendering_features() {
+    let site = tree_site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("render.spiderlens");
+    let mut c = config(None);
+    c.rendering.mode = spiderlens_config::RenderMode::Javascript;
+    c.rendering.screenshots = true;
+    c.extraction.store_html = true;
+    drop(Crawler::create(&path, c, &input(&site)).unwrap());
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let features = store.meta("data_features").unwrap().unwrap();
+    assert!(
+        features.ends_with(",rendering,rendered_html,screenshots"),
+        "{features}"
+    );
 }
