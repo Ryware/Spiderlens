@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CrawlConfig } from "../generated/CrawlConfig";
-import type { CrawlFinished, CrawlProgress, CrawlReport, Transport } from "../transport";
+import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, ResumeOptions, Transport } from "../transport";
 
 /**
  * Where the crawl is in its life. "pausing" and "stopping" last while the
@@ -10,6 +10,9 @@ export type Phase = "idle" | "starting" | "running" | "pausing" | "stopping" | "
 
 /** The crawl owns the window in these phases: settings are locked. */
 export const activePhases: Phase[] = ["starting", "running", "pausing", "stopping", "paused"];
+
+/** A run is in progress in these phases: opening another crawl must pause it first. */
+export const busyPhases: Phase[] = ["starting", "running", "pausing", "stopping"];
 
 /** URLs per second is averaged over this window, so the figure does not jitter. */
 export const RATE_WINDOW_MS = 5000;
@@ -30,9 +33,11 @@ export interface CrawlRunState {
   report: CrawlReport | null;
   error: string | null;
   warnings: string[];
+  /** The disk or write problem that paused the crawl (spec 006 US5). */
+  local: LocalError | null;
 }
 
-const initial: CrawlRunState = { phase: "idle", id: null, path: null, target: "", progress: null, report: null, error: null, warnings: [] };
+const initial: CrawlRunState = { phase: "idle", id: null, path: null, target: "", progress: null, report: null, error: null, warnings: [], local: null };
 
 const phaseFor = (f: CrawlFinished): Phase => (f.error ? "failed" : (f.report?.summary.status as Phase | undefined) ?? "completed");
 
@@ -64,7 +69,7 @@ export function useCrawlRun(transport: Transport) {
   const finish = useCallback((f: CrawlFinished) => {
     endSegment();
     idRef.current = null;
-    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error }));
+    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error, local: f.local ?? null }));
   }, []);
 
   useEffect(() => {
@@ -84,6 +89,10 @@ export function useCrawlRun(transport: Transport) {
         if (f.id === idRef.current) finish(f);
         else if (idRef.current === null) early.current.set(f.id, f);
       }),
+      // Save As while crawling: results keep going into the new file.
+      transport.onCrawlMoved((m) => {
+        setState((s) => (s.path === m.from || (s.id !== null && s.id === m.id) ? { ...s, path: m.to } : s));
+      }),
     ];
     return () => offs.forEach((o) => o.then((off) => off()));
   }, [transport, finish]);
@@ -96,7 +105,7 @@ export function useCrawlRun(transport: Transport) {
   }, [running]);
 
   const begin = useCallback(
-    async (call: () => Promise<{ id: number; path: string }>, reset: Partial<CrawlRunState>) => {
+    async (call: () => Promise<{ id: number; path: string }>, reset: Partial<CrawlRunState>, restore?: Phase) => {
       setState((s) => ({ ...s, ...reset, phase: "starting", error: null }));
       try {
         const started = await call();
@@ -109,7 +118,8 @@ export function useCrawlRun(transport: Transport) {
         if (done) finish(done);
         return started.id;
       } catch (e) {
-        setState((s) => ({ ...s, phase: "failed", error: String(e) }));
+        // A resume that is refused leaves the crawl as it was.
+        setState((s) => ({ ...s, phase: restore ?? "failed", error: String(e) }));
         return null;
       }
     },
@@ -124,16 +134,36 @@ export function useCrawlRun(transport: Transport) {
     [transport, begin],
   );
 
-  const resume = useCallback(() => {
-    if (!state.path) return Promise.resolve(null);
-    const path = state.path;
-    return begin(() => transport.crawlResume(path), { report: null });
-  }, [transport, begin, state.path]);
+  /** Resumes the crawl file at `path` (the open one unless given). */
+  const resume = useCallback(
+    (path: string | null = state.path, options?: ResumeOptions) => {
+      if (!path || busyPhases.includes(state.phase)) return Promise.resolve(null);
+      const restore = state.phase === "idle" ? undefined : state.phase;
+      return begin(() => transport.crawlResume(path, options), { report: null, local: null, path }, restore);
+    },
+    [transport, begin, state.path, state.phase],
+  );
+
+  /** The crawl's file now lives at `path` (Save As). */
+  const moved = useCallback((path: string) => setState((s) => ({ ...s, path })), []);
+
+  /** "Keep paused": the disk notice has been read. */
+  const dismissLocal = useCallback(() => setState((s) => ({ ...s, local: null })), []);
+
+  /** Back to the start screen. A running crawl is never closed this way. */
+  const close = useCallback(() => {
+    if (busyPhases.includes(state.phase)) return false;
+    elapsedBefore.current = 0;
+    segmentStart.current = null;
+    samples.current = [];
+    setState(initial);
+    return true;
+  }, [state.phase]);
 
   /** Opens a saved crawl file to browse its results (spec 007 D14). */
   const open = useCallback(
     async (path: string) => {
-      if (activePhases.includes(state.phase)) return false;
+      if (busyPhases.includes(state.phase)) return false;
       try {
         const report = await transport.crawlSummary(path);
         const status = report.summary.status;
@@ -204,6 +234,9 @@ export function useCrawlRun(transport: Transport) {
     pause,
     resume,
     stop,
+    moved,
+    dismissLocal,
+    close,
   };
 }
 
