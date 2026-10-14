@@ -105,6 +105,7 @@ pub fn run_guard(parent_pid: u32, browser_args: Vec<OsString>) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use url::Url;
 
     #[test]
     fn skeleton_reports_no_browser() {
@@ -120,6 +121,53 @@ mod tests {
     fn remove_download_without_a_download_is_ok() {
         let dir = std::env::temp_dir().join("spiderlens-render-test-no-download");
         assert!(remove_download(&dir).is_ok());
+    }
+
+    #[test]
+    fn a_new_job_has_the_documented_defaults() {
+        let url = Url::parse("http://js.test/a").expect("url");
+        let main = MainResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: b"<html></html>".to_vec(),
+        };
+        let window = Window {
+            width: 412,
+            height: 732,
+            mobile: true,
+        };
+        let job = RenderJob::new(url, main, "SpiderLens".into(), window);
+        assert!(job.probes.is_empty());
+        assert_eq!(job.probes_max_total, PROBES_MAX_TOTAL_DEFAULT);
+        assert!(job.load_types.is_none());
+        assert!(job.cookies.is_empty());
+        assert!(job.proxy.is_none());
+        assert_eq!(job.max_time, std::time::Duration::from_secs(10));
+        let block = job.block;
+        assert!(block.images && block.media && block.fonts);
+        assert!(!block.stylesheets && !block.third_party);
+        let internal = &job.internal_hosts;
+        assert!(internal(&Url::parse("http://js.test/other").expect("url")));
+        assert!(!internal(&Url::parse("http://cdn.test/lib.js").expect("url")));
+    }
+
+    #[test]
+    fn a_failed_outcome_has_no_html_and_no_probes() {
+        let window = Window {
+            width: 1366,
+            height: 768,
+            mobile: false,
+        };
+        let out = RenderOutcome::failed(FailedReason::Crash, true, window);
+        assert!(out.html.is_none());
+        assert!(out.probes.is_empty());
+        assert_eq!(
+            out.state,
+            RenderState::Failed {
+                reason: FailedReason::Crash,
+                retryable: true
+            }
+        );
     }
 
     #[test]

@@ -143,13 +143,26 @@ pub struct Window {
 }
 
 /// Resource types answered with `BlockedByClient` without a network call.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockSet {
     pub images: bool,
     pub media: bool,
     pub fonts: bool,
     pub stylesheets: bool,
     pub third_party: bool,
+}
+
+impl Default for BlockSet {
+    /// The spec's default (FR-014): images, media and fonts are not loaded.
+    fn default() -> Self {
+        Self {
+            images: true,
+            media: true,
+            fonts: true,
+            stylesheets: false,
+            third_party: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +185,52 @@ impl Default for ScreenshotOptions {
 /// Tells whether a URL belongs to the crawled site.
 pub type InternalHosts = Arc<dyn Fn(&Url) -> bool + Send + Sync>;
 
+/// A cookie placed in a page's fresh browser context before it loads.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeedCookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    /// Seconds since the Unix epoch; `None` for a session cookie.
+    pub expires: Option<f64>,
+}
+
+/// The largest probe result kept, in bytes of JSON.
+pub const PROBE_RESULT_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Default for [`RenderJob::probes_max_total`].
+pub const PROBES_MAX_TOTAL_DEFAULT: Duration = Duration::from_secs(5);
+
+/// A script run on the settled page in an isolated world (plugin hook for
+/// specs 025 and 026). See `contracts/render-crate.md`, "Probes".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageProbe {
+    /// Unique within the job; keys the outcome.
+    pub name: String,
+    /// A JavaScript function expression, called with the parsed `args_json`.
+    pub script: String,
+    /// JSON; `"null"` when the probe takes no arguments.
+    pub args_json: String,
+    /// This probe's own timeout.
+    pub budget: Duration,
+}
+
+/// What one probe produced. A probe never changes the page's [`RenderState`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// The JSON the function returned.
+    Ok(String),
+    /// The probe's own budget or the page's total probe time ran out.
+    TimedOut { spent: Duration },
+    /// The result passed [`PROBE_RESULT_MAX_BYTES`].
+    TooLarge,
+    /// The script threw, or its result was not JSON.
+    Failed(String),
+}
+
 /// One page to render.
 #[derive(Clone)]
 pub struct RenderJob {
@@ -185,6 +244,43 @@ pub struct RenderJob {
     pub block: BlockSet,
     pub internal_hosts: InternalHosts,
     pub screenshot: Option<ScreenshotOptions>,
+    /// `None`: `block` decides. `Some`: exactly these types load and every
+    /// other type fails with `BlockedByClient`; `block.third_party` still
+    /// applies.
+    pub load_types: Option<Vec<ResourceKind>>,
+    /// Cookies seeded into the page's fresh context (the crawl's cookie jar).
+    pub cookies: Vec<SeedCookie>,
+    /// Proxy of the page's fresh context (the crawl's proxy setting).
+    pub proxy: Option<String>,
+    /// Probes run after settle, serialisation and screenshot. Empty by default.
+    pub probes: Vec<PageProbe>,
+    /// All probes of one page together; [`PROBES_MAX_TOTAL_DEFAULT`] by default.
+    pub probes_max_total: Duration,
+}
+
+impl RenderJob {
+    /// A job with the defaults: 10 s cap, no minimum wait, images, media and
+    /// fonts blocked, only the page's own host internal, no screenshot, no
+    /// probes, no cookies, no proxy.
+    pub fn new(url: Url, main: MainResponse, user_agent: String, window: Window) -> Self {
+        let host = url.host_str().map(str::to_owned);
+        Self {
+            url,
+            main,
+            user_agent,
+            window,
+            max_time: Duration::from_secs(10),
+            min_wait: Duration::ZERO,
+            block: BlockSet::default(),
+            internal_hosts: Arc::new(move |u: &Url| u.host_str() == host.as_deref()),
+            screenshot: None,
+            load_types: None,
+            cookies: Vec::new(),
+            proxy: None,
+            probes: Vec::new(),
+            probes_max_total: PROBES_MAX_TOTAL_DEFAULT,
+        }
+    }
 }
 
 /// Answers every request the page makes except the main document.
@@ -309,6 +405,8 @@ pub struct RenderOutcome {
     pub render_ms: u32,
     pub window: Window,
     pub screenshot: Option<Screenshot>,
+    /// One entry per [`RenderJob::probes`] entry, in the same order.
+    pub probes: Vec<(String, ProbeOutcome)>,
 }
 
 impl RenderOutcome {
@@ -324,6 +422,7 @@ impl RenderOutcome {
             render_ms: 0,
             window,
             screenshot: None,
+            probes: Vec::new(),
         }
     }
 }
