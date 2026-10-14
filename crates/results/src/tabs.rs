@@ -963,6 +963,113 @@ pub(crate) mod page_flag {
     pub const HEADING_SKIP: u32 = 65536;
 }
 
+/// Link target classes, by URL id (see [`page_flags`]).
+mod target_class {
+    pub const INTERNAL: u8 = 1;
+    pub const BROKEN: u8 = 2;
+    pub const REDIRECT: u8 = 4;
+    pub const HTTP: u8 = 8;
+    pub const NOT_OK: u8 = 16;
+}
+
+/// Flags from the links with rowid in `[lo, hi)` (see [`page_flags`]).
+fn scan_links(
+    conn: &rusqlite::Connection,
+    class: &[u8],
+    extra: &str,
+    (lo, hi): (i64, i64),
+    flags: &mut [u32],
+) -> rusqlite::Result<()> {
+    use page_flag::*;
+    use target_class::*;
+    let len = class.len();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT from_id, to_id, kind, nofollow, target LIKE 'http:%', {extra} FROM links \
+         WHERE rowid >= ?1 AND rowid < ?2 AND kind IN ('anchor', 'image', 'canonical', 'hreflang', 'next', 'prev')"
+    ))?;
+    let mut rows = stmt.query((lo, hi))?;
+    while let Some(r) = rows.next()? {
+        let Some(from) = usize::try_from(r.get::<_, i64>(0)?).ok().filter(|&i| i < len) else {
+            continue;
+        };
+        let to = r.get::<_, Option<i64>>(1)?.and_then(|t| usize::try_from(t).ok());
+        let c = to.and_then(|t| class.get(t).copied());
+        let other = to.is_some_and(|t| t != from);
+        let not_ok = other && c.is_some_and(|c| c & NOT_OK != 0);
+        let kind = r.get_ref(2)?.as_str().unwrap_or("");
+        let mut f = 0u32;
+        match kind {
+            "anchor" => {
+                if let Some(c) = c {
+                    let internal = c & INTERNAL != 0;
+                    if c & BROKEN != 0 {
+                        f |= if internal {
+                            BROKEN_INTERNAL
+                        } else {
+                            BROKEN_EXTERNAL
+                        };
+                    }
+                    if internal {
+                        f |= INTERNAL_OUT;
+                        if c & REDIRECT != 0 {
+                            f |= TO_REDIRECT;
+                        }
+                        if r.get::<_, i64>(3)? == 1 {
+                            f |= NOFOLLOW_INTERNAL;
+                        }
+                    }
+                }
+                if r.get_ref(5)?
+                    .as_str_or_null()?
+                    .is_some_and(crate::sql::weak_anchor)
+                {
+                    f |= WEAK_ANCHOR;
+                }
+            }
+            "image" => {
+                let http = match c {
+                    Some(c) => c & HTTP != 0,
+                    None => to.is_none() && r.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                };
+                if http {
+                    f |= HTTP_IMAGE;
+                }
+            }
+            "canonical" => {
+                if r.get::<_, Option<i64>>(6)? == Some(0) {
+                    f |= CANONICAL_IN_BODY;
+                }
+                if not_ok {
+                    f |= CANONICAL_BAD_TARGET;
+                }
+            }
+            "hreflang" => {
+                f |= HREFLANG;
+                if to == Some(from) {
+                    f |= HREFLANG_SELF;
+                }
+                let lang = r.get_ref(7)?.as_str_or_null()?;
+                if lang.is_some_and(|l| l.eq_ignore_ascii_case("x-default")) {
+                    f |= HREFLANG_X_DEFAULT;
+                }
+                if !lang.is_some_and(crate::sql::lang_code_ok) {
+                    f |= HREFLANG_BAD_CODE;
+                }
+                if not_ok {
+                    f |= HREFLANG_BAD_TARGET;
+                }
+            }
+            _ => {
+                if not_ok {
+                    f |= PAGINATION_BAD_TARGET;
+                }
+            }
+        }
+        flags[from] |= f;
+    }
+    Ok(())
+}
+
 /// Builds `temp.page_flags` in Rust: one sequential scan of `links` (and
 /// one of `page_text`) with
 /// each target's class looked up in an array by URL id. A SQL join probes
@@ -970,13 +1077,12 @@ pub(crate) mod page_flag {
 /// links again; on 10 million links either takes tens of seconds, this a
 /// few (spec 009 SC-003).
 fn page_flags(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    page_flags_with(conn, 200_000)
+}
+
+/// [`page_flags`], splitting the links scan from `min_parallel` links.
+fn page_flags_with(conn: &rusqlite::Connection, min_parallel: i64) -> rusqlite::Result<()> {
     use page_flag::*;
-    // Target classes, by URL id.
-    const INTERNAL: u8 = 1;
-    const BROKEN: u8 = 2;
-    const REDIRECT: u8 = 4;
-    const HTTP: u8 = 8;
-    const NOT_OK: u8 = 16;
     let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
     let len = usize::try_from(max_id).unwrap_or(0) + 1;
     let mut class = vec![0u8; len];
@@ -1008,91 +1114,43 @@ fn page_flags(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         "NULL, NULL, NULL"
     };
     let mut flags = vec![0u32; len];
-    {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT from_id, to_id, kind, nofollow, target LIKE 'http:%', {extra} FROM links NOT INDEXED \
-             WHERE kind IN ('anchor', 'image', 'canonical', 'hreflang', 'next', 'prev')"
-        ))?;
-        let mut rows = stmt.query([])?;
-        while let Some(r) = rows.next()? {
-            let Some(from) = usize::try_from(r.get::<_, i64>(0)?).ok().filter(|&i| i < len) else {
-                continue;
-            };
-            let to = r.get::<_, Option<i64>>(1)?.and_then(|t| usize::try_from(t).ok());
-            let c = to.and_then(|t| class.get(t).copied());
-            let other = to.is_some_and(|t| t != from);
-            let not_ok = other && c.is_some_and(|c| c & NOT_OK != 0);
-            let kind = r.get_ref(2)?.as_str().unwrap_or("");
-            let mut f = 0u32;
-            match kind {
-                "anchor" => {
-                    if let Some(c) = c {
-                        let internal = c & INTERNAL != 0;
-                        if c & BROKEN != 0 {
-                            f |= if internal {
-                                BROKEN_INTERNAL
-                            } else {
-                                BROKEN_EXTERNAL
-                            };
-                        }
-                        if internal {
-                            f |= INTERNAL_OUT;
-                            if c & REDIRECT != 0 {
-                                f |= TO_REDIRECT;
-                            }
-                            if r.get::<_, i64>(3)? == 1 {
-                                f |= NOFOLLOW_INTERNAL;
-                            }
-                        }
-                    }
-                    if r.get_ref(5)?
-                        .as_str_or_null()?
-                        .is_some_and(crate::sql::weak_anchor)
-                    {
-                        f |= WEAK_ANCHOR;
-                    }
-                }
-                "image" => {
-                    let http = match c {
-                        Some(c) => c & HTTP != 0,
-                        None => to.is_none() && r.get::<_, Option<bool>>(4)?.unwrap_or(false),
-                    };
-                    if http {
-                        f |= HTTP_IMAGE;
-                    }
-                }
-                "canonical" => {
-                    if r.get::<_, Option<i64>>(6)? == Some(0) {
-                        f |= CANONICAL_IN_BODY;
-                    }
-                    if not_ok {
-                        f |= CANONICAL_BAD_TARGET;
-                    }
-                }
-                "hreflang" => {
-                    f |= HREFLANG;
-                    if to == Some(from) {
-                        f |= HREFLANG_SELF;
-                    }
-                    let lang = r.get_ref(7)?.as_str_or_null()?;
-                    if lang.is_some_and(|l| l.eq_ignore_ascii_case("x-default")) {
-                        f |= HREFLANG_X_DEFAULT;
-                    }
-                    if !lang.is_some_and(crate::sql::lang_code_ok) {
-                        f |= HREFLANG_BAD_CODE;
-                    }
-                    if not_ok {
-                        f |= HREFLANG_BAD_TARGET;
-                    }
-                }
-                _ => {
-                    if not_ok {
-                        f |= PAGINATION_BAD_TARGET;
-                    }
+    let max_link: i64 = conn.query_row("SELECT COALESCE(MAX(rowid), 0) FROM links", [], |r| r.get(0))?;
+    // Large files: split the scan by rowid over a few read-only connections.
+    // During a live crawl each sees its own snapshot; counts then are
+    // provisional anyway (FR-019).
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(4) as i64;
+    let path = conn
+        .path()
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    match path {
+        Some(path) if threads > 1 && max_link >= min_parallel => {
+            let step = max_link / threads + 1;
+            let parts = std::thread::scope(|sc| {
+                let handles: Vec<_> = (0..threads)
+                    .map(|t| {
+                        let (class, path, extra) = (&class, &path, extra);
+                        sc.spawn(move || -> rusqlite::Result<Vec<u32>> {
+                            let c = spiderlens_engine::crawl::store::connect_read_only(path)
+                                .map_err(|e| rusqlite::Error::UserFunctionError(e.to_string().into()))?;
+                            let mut f = vec![0u32; class.len()];
+                            scan_links(&c, class, extra, (t * step, (t + 1) * step), &mut f)?;
+                            Ok(f)
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("link scan thread"))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })?;
+            for part in parts {
+                for (f, p) in flags.iter_mut().zip(part) {
+                    *f |= p;
                 }
             }
-            flags[from] |= f;
         }
+        _ => scan_links(conn, &class, extra, (0, max_link + 1), &mut flags)?,
     }
     // Titles and headings, in page order (the page_text_url index).
     let has_text = conn
@@ -1176,6 +1234,51 @@ mod tests {
             }
         }
         assert_eq!(tab_ids.len(), 11);
+    }
+
+    #[test]
+    fn split_link_scan_gives_the_same_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.sqlite");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE urls(id INTEGER PRIMARY KEY, url TEXT, internal INTEGER, status INTEGER, error_class TEXT,
+               fetched_at INTEGER, noindex INTEGER, canonical TEXT);
+             CREATE TABLE links(from_id INTEGER, to_id INTEGER, kind TEXT, nofollow INTEGER, target TEXT,
+               text TEXT, in_head INTEGER, lang TEXT);
+             BEGIN;",
+        )
+        .unwrap();
+        for id in 1..=200i64 {
+            let status = [200, 404, 301, 500][id as usize % 4];
+            conn.execute(
+                "INSERT INTO urls VALUES (?1, 'https://a.test/' || ?1, ?1 % 3 <> 0, ?2, NULL, 1, 0, NULL)",
+                (id, status),
+            )
+            .unwrap();
+        }
+        for i in 0..5_000i64 {
+            let kind = ["anchor", "image", "canonical", "hreflang", "next"][i as usize % 5];
+            conn.execute(
+                "INSERT INTO links VALUES (?1, ?2, ?3, ?4 % 2, 'http://x', 'click here', ?4 % 3 = 0, 'en')",
+                (i % 200 + 1, (i * 7) % 200 + 1, kind, i),
+            )
+            .unwrap();
+        }
+        conn.execute_batch("COMMIT").unwrap();
+        let read = |min: i64| {
+            page_flags_with(&conn, min).unwrap();
+            let mut st = conn
+                .prepare("SELECT url_id, flags FROM temp.page_flags ORDER BY 1")
+                .unwrap();
+            st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let one = read(i64::MAX);
+        assert!(one.len() > 100);
+        assert_eq!(read(0), one);
     }
 
     #[test]
