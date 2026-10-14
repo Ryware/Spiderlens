@@ -30,6 +30,16 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// Near duplicate content (spec 020, data-model.md): main content columns
+/// and one signature per page. Additive; becomes a `migrate::STEPS` entry
+/// with the next free number when spec 006's migrations are on main.
+pub const NEAR_DUP_SCHEMA: &str = "
+ALTER TABLE pages ADD COLUMN main_words INTEGER;
+ALTER TABLE pages ADD COLUMN main_hash INTEGER;
+ALTER TABLE pages ADD COLUMN main_source TEXT;
+CREATE TABLE content_sig (url_id INTEGER PRIMARY KEY, sig BLOB NOT NULL);
+";
+
 const SCHEMA: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE urls (
@@ -412,6 +422,7 @@ impl CrawlStore {
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(NEAR_DUP_SCHEMA)?;
         let store = Self {
             conn,
             next_seq: 1,
@@ -468,6 +479,22 @@ impl CrawlStore {
         }
         store.live.set(live);
         Ok(store)
+    }
+
+    /// Adds the spec 020 tables to a file made before them, before it is
+    /// resumed. Returns whether anything changed.
+    pub fn ensure_near_dup_schema(&self) -> Result<bool> {
+        let has: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'content_sig')",
+            [],
+            |r| r.get(0),
+        )?;
+        if has {
+            return Ok(false);
+        }
+        self.conn
+            .execute_batch(&format!("BEGIN; {NEAR_DUP_SCHEMA} COMMIT;"))?;
+        Ok(true)
     }
 
     /// Hands write-ahead-log checkpoints to a background thread with its own
@@ -832,9 +859,10 @@ impl CrawlStore {
                 "INSERT OR REPLACE INTO pages (url_id, title_count, meta_description, meta_description_count,
                  h1_1, h1_2, h1_count, h2_1, h2_2, h2_count, heading_counts, word_count, lang, text_hash,
                  title_hash, meta_description_hash, meta_refresh_delay, meta_refresh_url, partial,
-                 encoding_errors, encoding, extract_error, no_content, html_stored)
+                 encoding_errors, encoding, extract_error, no_content, html_stored,
+                 main_words, main_hash, main_source)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                 ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             )?
             .execute(params![
                 id,
@@ -861,7 +889,15 @@ impl CrawlStore {
                 page.extract_error,
                 d.no_content,
                 page.html.is_some(),
+                page.data.map(|d| d.main.words),
+                page.data.map(|d| d.main.text_hash),
+                page.data.map(|d| d.main.source.as_str()),
             ])?;
+        if let Some(sig) = page.data.and_then(|d| d.main.signature.as_ref()) {
+            self.conn
+                .prepare_cached("INSERT OR REPLACE INTO content_sig (url_id, sig) VALUES (?1, ?2)")?
+                .execute(params![id, sig.0.as_slice()])?;
+        }
         let mut text_row = self.conn.prepare_cached(
             "INSERT INTO page_text (url_id, kind, level, pos, text, in_head) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
@@ -1475,6 +1511,62 @@ mod tests {
         check_only: false,
         via_nofollow: false,
     };
+
+    #[test]
+    fn main_content_and_signature_are_stored() {
+        let (_d, mut s) = store();
+        let id = s.record(&disc("https://a.test/a", 1, QUEUE)).unwrap().id();
+        let url = url::Url::parse("https://a.test/a").unwrap();
+        let data = crate::extract::extract_page(&crate::extract::PageInput {
+            url: &url,
+            charset: Some("utf-8"),
+            body: b"<body><nav>menu</nav><main><p>one two three four five six</p></main></body>",
+            truncated: false,
+            robots_token: "x",
+            content: None,
+        });
+        s.record_page(
+            id,
+            &PageRecord {
+                data: Some(&data),
+                extract_error: None,
+                html: None,
+            },
+        )
+        .unwrap();
+        let (words, source, sig): (i64, String, Vec<u8>) = s
+            .conn
+            .query_row(
+                "SELECT p.main_words, p.main_source, c.sig FROM pages p JOIN content_sig c USING (url_id)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((words, source.as_str()), (6, "main"));
+        assert_eq!(sig.len(), crate::extract::shingle::SIG_BYTES);
+        assert!(!s.ensure_near_dup_schema().unwrap(), "new files already have it");
+    }
+
+    #[test]
+    fn older_files_get_the_near_dup_tables() {
+        let (_d, s) = store();
+        s.conn
+            .execute_batch(
+                "DROP TABLE content_sig; ALTER TABLE pages DROP COLUMN main_words;
+                 ALTER TABLE pages DROP COLUMN main_hash; ALTER TABLE pages DROP COLUMN main_source;",
+            )
+            .unwrap();
+        assert!(s.ensure_near_dup_schema().unwrap());
+        let n: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name LIKE 'main_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 3);
+    }
 
     #[test]
     fn each_url_is_recorded_once() {

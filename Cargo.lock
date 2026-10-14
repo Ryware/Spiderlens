@@ -4392,6 +4392,7 @@ dependencies = [
  "proptest",
  "psl",
  "regex",
+ "scraper",
  "secrecy",
  "serde",
  "serde_ignored",

@@ -29,7 +29,7 @@ use super::store::{
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
+use crate::extract::{self, ContentRules, Directive, HeaderFacts, PageData, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
@@ -303,7 +303,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    rules: Arc<ContentRules>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -322,7 +329,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     body: &bytes,
                     truncated,
                     robots_token: &token,
-                    content: None,
+                    content: Some(&rules),
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
@@ -419,9 +426,9 @@ impl Crawler {
         store.set_meta(
             "data_features",
             if config.extraction.store_html {
-                "extraction,timing,raw_html"
+                "extraction,timing,raw_html,near_dup"
             } else {
-                "extraction,timing"
+                "extraction,timing,near_dup"
             },
         )?;
 
@@ -467,6 +474,9 @@ impl Crawler {
     /// Opens a crawl file to resume it with its stored configuration.
     pub fn open(path: &Path) -> Result<Self, CrawlError> {
         let store = CrawlStore::open(path)?;
+        if store.format_version()? >= 2 {
+            store.ensure_near_dup_schema()?;
+        }
         if store.format_version()? < 2 {
             return Err(CrawlError::Config(
                 "This crawl file was made by an earlier SpiderLens build, before page data extraction. \
@@ -588,6 +598,8 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Main content settings, parsed once (spec 020 FR-003).
+    content_rules: Arc<ContentRules>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
 }
@@ -638,6 +650,11 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // Validation rejected bad selectors before the crawl started.
+        let content = &c.config.content;
+        let content_rules =
+            ContentRules::new(content.content_selector.as_deref(), &content.exclude_selectors)
+                .unwrap_or_default();
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
@@ -665,6 +682,7 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            content_rules: Arc::new(content_rules),
             active_before_ms,
         })
     }
@@ -1002,13 +1020,14 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        let rules = self.content_rules.clone();
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
