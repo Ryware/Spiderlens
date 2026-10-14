@@ -27,7 +27,11 @@ impl Reader {
     pub fn counts(&mut self, tab: &str, scope: UrlScope) -> Result<FilterCounts> {
         let t = tabs::tab(tab).ok_or_else(|| Error::invalid(format!("unknown tab {tab:?}")))?;
         let available: Vec<_> = t.filters.iter().filter(|f| self.features.has(f.need)).collect();
-        let derived: Vec<Derived> = available.iter().filter_map(|f| f.derived).collect();
+        let derived: Vec<Derived> = t
+            .rows
+            .into_iter()
+            .chain(available.iter().filter_map(|f| f.derived))
+            .collect();
         self.ensure_derived(derived)?;
         let version = self.version()? as u32;
         let mut sql = String::from("SELECT ");
@@ -40,7 +44,7 @@ impl Reader {
                 f.cond
             ));
         }
-        sql.push_str(&format!(" FROM urls u NOT INDEXED WHERE ({})", t.eligible));
+        sql.push_str(&format!(" FROM {} WHERE ({})", t.source_sql(), t.eligible));
         match (t.scoped, scope) {
             (true, UrlScope::Internal) => sql.push_str(" AND u.internal = 1"),
             (true, UrlScope::External) => sql.push_str(" AND u.internal = 0"),
@@ -90,8 +94,9 @@ impl Reader {
         }
         let mut conds: Vec<&str> = Vec::new();
         for t in tabs::tabs() {
-            if !conds.contains(&t.eligible) {
-                conds.push(t.eligible);
+            let c = t.eligible_on_urls();
+            if !conds.contains(&c) {
+                conds.push(c);
             }
         }
         let sums: Vec<String> = conds
@@ -105,7 +110,10 @@ impl Reader {
         let counts = tabs::tabs()
             .iter()
             .map(|t| {
-                let i = conds.iter().position(|c| *c == t.eligible).expect("listed");
+                let i = conds
+                    .iter()
+                    .position(|c| *c == t.eligible_on_urls())
+                    .expect("listed");
                 (t.id.to_string(), values[i] as u64)
             })
             .collect();

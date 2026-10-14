@@ -102,7 +102,8 @@ impl Reader {
         Ok(self.version)
     }
 
-    /// Makes sure each derived table is current for this data version.
+    /// Makes sure each derived table is current for this data version,
+    /// updating it in place when it can (see `tabs::update_derived`).
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
         let v = self.version()?;
         for d in needed {
@@ -111,7 +112,12 @@ impl Reader {
                 self.ensure_derived([Derived::LinkPositions])?;
             }
             if self.derived.get(&d) != Some(&v) {
-                crate::tabs::build_derived(&self.conn, d, &self.features.link_settings)?;
+                // Forgotten first: a build that fails or is interrupted
+                // half way is rebuilt from scratch next time.
+                let built = self.derived.remove(&d).is_some();
+                if !(built && crate::tabs::update_derived(&self.conn, d, &self.features)?) {
+                    crate::tabs::build_derived(&self.conn, d, &self.features)?;
+                }
                 self.derived.insert(d, v);
             }
         }

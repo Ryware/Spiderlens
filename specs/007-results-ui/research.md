@@ -86,3 +86,61 @@ injection: prefix `'` when a value starts with `=`, `+`, `-`, `@`, tab or
 CR. A hand-written writer (~40 lines, property-tested) is simpler than
 configuring the `csv` crate to do the prefixing and BOM, and keeps one
 writer for TSV copy too.
+
+## R8. Page titles tab (T039)
+
+Measured 2026-10-14 in the same 4-core container (shared with other builds,
+load average 4–5, so ±30%). File: `gen_crawl --pages` (synthetic crawl
+with page content; 71,870 Page titles rows per 100k URLs). Harness:
+`cargo run --release -p spiderlens-results --example bench -- <file>
+page-titles`. Each figure is what the table waits for when a tab, sort or
+filter is picked: first screen, full order and the filter counts.
+
+| 100k URLs, release | Before | After |
+|---|---|---|
+| Open the tab (All), data unchanged | 254 ms | 66 ms |
+| Sort by title / title desc | 383 / 453 ms | 136 / 155 ms |
+| Sort by title length / occurrences | 407 / 582 ms | 77 / 73 ms |
+| Filters (missing … multiple) | 220–309 ms | 22–47 ms |
+| Any of the above right after a crawl commit (worst) | 699 ms | 260 ms |
+| Live refresh of a title-sorted view + counts | 471 ms | 153 ms |
+| First open of the file (cold cache, builds `temp.titles`) | 409 ms | 385 ms |
+| Debug build (`tauri dev`), worst case | 2.0–2.7 s | 0.3–0.4 s (1 s cold) |
+
+At 1M URLs (release): filters 2.5–4.1 s → 0.4–0.8 s, sorts 4.3–6.6 s →
+1.3–2.0 s, live refresh + counts 5.8 s → 2.4 s; the first open (full build)
+stays ~4 s.
+
+The `pages_title_hash` / `pages_md_hash` indexes made no difference either
+way (a finished file with them measured the same as a live one without):
+the results reader never used them; it normalised titles itself (FR-011).
+
+**Findings**: every query of the tab called `content_kind`, `norm_ws` (up to
+seven times per row in the counts) and `natkey` per row, and probed `pages`
+twice per row for Same as H1 and Multiple; sorting by Occurrences looked up
+the normalised title per row. The 2.1–2.7 s seen in the app match the debug
+build, where these Rust callbacks and the bundled SQLite run unoptimised.
+
+**Decision**: one derived table per crawl file, `temp.titles(id, t, len, k,
+n, same_h1, count)` plus `temp.title_occ(v, n)`, holding exactly the tab's
+rows. The tab's view, counts and export read it (`TabDef.rows`) instead of
+scanning `urls`, and sort by title on the stored `natkey` (`ColumnDef.key`).
+It is built once and then **appended to** on each data version: the engine
+writes a response, with its page content in the same transaction, only to a
+URL in flight, so a listed page never changes; new pages are found with one
+primary-key probe per URL and their titles' counts updated in place
+(a window function was 4× slower than group-and-look-up). Results are
+identical: `tests/page_titles.rs` checks rows, values, every filter, count
+and sort against rules computed from the raw file, before and after a live
+update, with and without page content, and the export.
+
+**Not changed**: the on-disk schema. An engine-side alternative (a stored
+normalised title or its hash, indexed only when a run ends as now) would
+save the first build (~0.3 s at 100k, ~4 s at 1M) but not the per-query
+work this fixes. Optional for development: `[profile.dev.package."*"]
+opt-level = 2` in the workspace would make `tauri dev` timings close to
+release ones.
+
+Still to measure on Ryware's Mac (T036–T038, T040): scrolling in the real
+WebKit view and its frame times, memory at 100k and 1M (SC-008), and the
+live crawl against CLI speed (SC-007) with this tab open.
