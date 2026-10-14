@@ -72,6 +72,13 @@ pub struct UrlDetail {
     pub headings: u64,
     /// The page's HTML is stored in the crawl file.
     pub html_stored: bool,
+    /// Requests made for this URL across the crawl, retries included
+    /// (spec 004 FR-020).
+    pub attempts: Option<u32>,
+    /// The error's sub-reason, such as "refused" or "expired" (FR-013).
+    pub error_reason: Option<String>,
+    /// The result came from "Retry failed URLs" (US5.3).
+    pub manual_retry: bool,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
@@ -227,6 +234,21 @@ impl Reader {
         } else {
             (None, None)
         };
+        let (attempts, error_reason, manual_retry) = if self.features.has(Need::Attempts) {
+            self.conn.query_row(
+                "SELECT attempts, error_reason, manual_retry FROM urls WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get::<_, Option<bool>>(2)?.unwrap_or(false),
+                    ))
+                },
+            )?
+        } else {
+            (None, None, false)
+        };
         let html_stored = self.features.has(Need::RawHtml)
             && self.conn.query_row(
                 "SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)",
@@ -287,6 +309,9 @@ impl Reader {
             headers,
             headings,
             html_stored,
+            attempts,
+            error_reason,
+            manual_retry,
             unavailable,
         })
     }
