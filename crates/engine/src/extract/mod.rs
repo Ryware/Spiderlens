@@ -3,6 +3,7 @@
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
 pub mod body;
+pub mod challenge;
 pub mod directives;
 mod link_header;
 mod microdata;
