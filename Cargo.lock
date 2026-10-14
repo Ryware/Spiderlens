@@ -4392,6 +4392,7 @@ dependencies = [
  "proptest",
  "psl",
  "regex",
+ "scraper",
  "secrecy",
  "serde",
  "serde_ignored",
@@ -4447,8 +4448,10 @@ dependencies = [
 name = "spiderlens-results"
 version = "0.1.0"
 dependencies = [
+ "ego-tree",
  "proptest",
  "rusqlite",
+ "scraper",
  "serde",
  "serde_json",
  "spiderlens-config",

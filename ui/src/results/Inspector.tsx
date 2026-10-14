@@ -98,6 +98,16 @@ function LinkText({ kind, text }: { kind: ListKind; text: string | null }) {
   );
 }
 
+/** Link positions (spec 023 US4), as the lists show them. */
+const positionLabel: Record<string, string> = {
+  navigation: "Navigation",
+  header: "Header",
+  content: "Content",
+  sidebar: "Sidebar",
+  footer: "Footer",
+  unknown: "Position unknown",
+};
+
 function LinkList({ transport, path, id, kind, total }: { transport: Transport; path: string; id: number; kind: ListKind; total: number }) {
   const [page, setPage] = useState<ListPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +156,11 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
                 {r.url}
               </span>
               <LinkText kind={kind} text={r.text} />
+              {r.position && (
+                <span className="shrink-0 text-xs text-fg-3" title="Where the link sits on its page">
+                  {positionLabel[r.position] ?? r.position}
+                </span>
+              )}
               {(r.nofollow || !r.followed || r.sponsored || r.ugc) && (
                 <span className="shrink-0 text-xs text-fg-3">
                   {[r.nofollow ? "nofollow" : !r.followed ? "not followed" : null, r.sponsored && "sponsored", r.ugc && "ugc"].filter(Boolean).join(", ")}

@@ -107,12 +107,43 @@ impl Reader {
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
         let v = self.version()?;
         for d in needed {
+            // Weighted Link Score reads the link positions (spec 023 FR-025).
+            if d == Derived::LinkMetrics && self.features.link_settings.weighting.is_some() {
+                self.ensure_derived([Derived::LinkPositions])?;
+            }
             if self.derived.get(&d) != Some(&v) {
-                crate::tabs::build_derived(&self.conn, d)?;
+                crate::tabs::build_derived(&self.conn, d, &self.features.link_settings)?;
                 self.derived.insert(d, v);
             }
         }
         Ok(())
+    }
+
+    /// Records that a derived table was just built for the current data.
+    pub(crate) fn mark_built(&mut self, d: Derived) -> Result<()> {
+        let v = self.version()?;
+        self.derived.insert(d, v);
+        Ok(())
+    }
+
+    /// Whether a derived table is current, without building it.
+    pub(crate) fn has_derived(&mut self, d: Derived) -> Result<bool> {
+        let v = self.version()?;
+        Ok(self.derived.get(&d) == Some(&v))
+    }
+
+    pub fn link_settings(&self) -> &spiderlens_config::LinkAnalysisSettings {
+        &self.features.link_settings
+    }
+
+    /// Replaces the link analysis settings (Settings › Link analysis). The
+    /// positions and Link Score are worked out again on next use (FR-023).
+    pub fn set_link_settings(&mut self, settings: spiderlens_config::LinkAnalysisSettings) {
+        if settings != self.features.link_settings {
+            self.features.link_settings = settings;
+            self.derived.remove(&Derived::LinkPositions);
+            self.derived.remove(&Derived::LinkMetrics);
+        }
     }
 
     /// A handle that stops this reader's running query from another thread

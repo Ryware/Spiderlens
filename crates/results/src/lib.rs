@@ -20,6 +20,8 @@ pub mod synth;
 mod tabs;
 mod view;
 
+pub use analysis::AnalysisRun;
+pub use analysis::link_positions::TestedLink;
 pub use counts::FilterCounts;
 pub use detail::{HeadingRow, LinkMetrics, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
 pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
