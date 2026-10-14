@@ -17,6 +17,7 @@ fn page_bytes(url: &str, charset: Option<&str>, body: &[u8], truncated: bool) ->
         body,
         truncated,
         robots_token: "SpiderLens",
+        a11y: false,
     })
 }
 
@@ -298,7 +299,7 @@ fn parse_time_budget_cuts_pathological_pages() {
     let html = "<title>t</title>".to_string() + &"<div>".repeat(100_000) + "end";
     let url = Url::parse("https://e.test/").unwrap();
     let started = std::time::Instant::now();
-    let d = walk::walk(&html, &url, "x", std::time::Duration::from_millis(200));
+    let d = walk::walk(&html, &url, "x", std::time::Duration::from_millis(200), false);
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
     assert!(d.partial);
     assert_eq!(d.title(), Some("t"));
