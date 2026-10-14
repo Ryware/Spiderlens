@@ -6,6 +6,7 @@
 
 mod crawl;
 mod files;
+mod manage;
 mod results;
 mod settings;
 
@@ -86,6 +87,17 @@ fn main() {
             files::crawl_salvage,
             files::storage_status,
             files::pending_open,
+            manage::crawls_manage_list,
+            manage::crawls_html_size,
+            manage::reveal_path,
+            manage::crawls_delete,
+            manage::crawls_delete_permanently,
+            manage::crawls_purge_html_check,
+            manage::crawls_purge_html,
+            manage::storage_prefs_get,
+            manage::storage_prefs_set,
+            manage::cleanup_history,
+            manage::cleanup_run_now,
             results::results_tabs,
             results::results_open,
             results::view_open,
@@ -97,6 +109,9 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::url_html,
+            results::url_tabs,
+            results::copy_text,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

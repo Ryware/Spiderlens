@@ -14,6 +14,7 @@ use scraper::node::Element;
 use scraper::{Html, HtmlTreeSink, Node};
 use url::Url;
 
+use super::a11y::A11yCollector;
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
 use super::text::{collapse, hash, word_count};
@@ -97,8 +98,8 @@ struct Walker<'p> {
 }
 
 #[cfg(test)]
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> PageData {
-    walk_doc(text, page, token, budget, false).1
+pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: bool) -> PageData {
+    walk_doc(text, page, token, budget, a11y, false).1
 }
 
 /// [`walk`], also returning the document and, when `track` is set, the
@@ -108,9 +109,12 @@ pub(super) fn walk_doc(
     page: &Url,
     token: &str,
     budget: Duration,
+    a11y: bool,
     track: bool,
 ) -> (Html, PageData, Vec<NodeId>) {
     let (doc, cut) = parse(text, budget);
+    // Spec 026: only created when asked for, so "Off" costs this test.
+    let mut checks = a11y.then(|| A11yCollector::new(&doc));
     let mut w = Walker {
         page,
         token,
@@ -134,7 +138,12 @@ pub(super) fn walk_doc(
     let mut stack: Vec<Frame<'_>> = vec![Frame::Enter(doc.tree.root(), Ctx::default())];
     while let Some(frame) = stack.pop() {
         match frame {
-            Frame::Enter(node, ctx) => w.enter(node, ctx, &mut stack),
+            Frame::Enter(node, ctx) => {
+                if let Some(c) = checks.as_mut() {
+                    c.enter(node, ctx.noscript);
+                }
+                w.enter(node, ctx, &mut stack);
+            }
             Frame::Separate => w.separate(),
             Frame::EndAnchor(prev) => {
                 if let Some(open) = std::mem::replace(&mut w.anchor, prev) {
@@ -152,6 +161,7 @@ pub(super) fn walk_doc(
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
+    w.data.a11y = checks.map(|c| c.finish(&doc));
     (doc, w.data, w.nodes)
 }
 
@@ -439,7 +449,7 @@ fn push_children<'a>(node: NodeRef<'a, Node>, ctx: Ctx, stack: &mut Vec<Frame<'a
 }
 
 /// `5; url=/new`, `0;URL='/x'`, `3`, `0; /new`.
-fn parse_refresh(content: &str) -> Option<MetaRefresh> {
+pub(super) fn parse_refresh(content: &str) -> Option<MetaRefresh> {
     let s = content.trim_start();
     let num_len = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))
