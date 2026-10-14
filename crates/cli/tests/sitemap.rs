@@ -127,3 +127,40 @@ fn existing_files_need_force_and_bad_input_has_its_own_codes() {
         .assert()
         .code(3);
 }
+
+#[test]
+fn sitemaps_lists_files_as_a_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = crawl_file(&dir);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "UPDATE meta SET value = 'sitemap_entries' WHERE key = 'data_features';
+             INSERT INTO sitemap_files (id, location, source, level, kind, http_status, entry_count)
+                 VALUES (1, 'https://example.com/index.xml', 'robots', 0, 'index', 200, 2);
+             INSERT INTO sitemap_files (id, location, source, parent_id, level, kind, http_status, entry_count)
+                 VALUES (2, 'https://example.com/a.xml', 'robots', 1, 1, 'urlset', 200, 1);
+             INSERT INTO sitemap_files (id, location, source, parent_id, level, http_status, error_class, error)
+                 VALUES (3, 'https://example.com/gone.xml', 'robots', 1, 1, 404, 'http_4xx', 'not found');
+             INSERT INTO sitemap_entries (file_id, pos, kind, loc, invalid) VALUES (2, 0, 'url', 'mailto:x', 'mailto: address');",
+        )
+        .unwrap();
+    }
+    let p = path.to_str().unwrap();
+    let out = cli().args(["sitemaps", p]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "https://example.com/index.xml  robots  200  2 entries\n  \
+         https://example.com/a.xml  robots  200  1 entries  1 invalid\n  \
+         https://example.com/gone.xml  robots  http_4xx  0 entries  not found\n"
+    );
+    let out = cli().args(["sitemaps", p, "--json"]).output().unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["available"], true);
+    assert_eq!(v["files"][0]["children"], 2);
+    cli()
+        .args(["sitemaps", dir.path().join("nope.spiderlens").to_str().unwrap()])
+        .assert()
+        .code(2);
+}

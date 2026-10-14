@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Every sitemap file and entry the crawl read (spec 011).
+    SitemapEntries,
 }
 
 impl Need {
@@ -44,6 +46,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::SitemapEntries => {
+                "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
+            }
         }
     }
 
@@ -55,6 +60,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::SitemapEntries => "sitemap_entries",
         }
     }
 }

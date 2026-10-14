@@ -94,6 +94,7 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            results::sitemap_files,
             results::sitemap_preview,
             results::sitemap_generate,
         ])

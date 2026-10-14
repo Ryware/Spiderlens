@@ -71,6 +71,8 @@ enum Command {
     /// Generate XML sitemaps from a crawl file.
     #[command(subcommand)]
     Sitemap(sitemap_cmd::SitemapCommand),
+    /// List the sitemap files a crawl read, as a tree.
+    Sitemaps(sitemap_cmd::SitemapsArgs),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -162,6 +164,7 @@ fn main() -> ExitCode {
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
+        Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
     }
 }
 

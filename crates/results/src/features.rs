@@ -51,7 +51,13 @@ impl Features {
             None => String::new(),
         };
         let mut available = vec![Need::Base];
-        for need in [Need::Extraction, Need::Attempts, Need::Timing, Need::RawHtml] {
+        for need in [
+            Need::Extraction,
+            Need::Attempts,
+            Need::Timing,
+            Need::RawHtml,
+            Need::SitemapEntries,
+        ] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
             }

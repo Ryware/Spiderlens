@@ -17,7 +17,7 @@ use spiderlens_results::{
     ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
     UrlScope, ViewQuery, export_file, tabs,
 };
-use spiderlens_results::{GenerateError, GenerateReport, SitemapOutput, generate_sitemaps};
+use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -343,6 +343,12 @@ pub fn export_cancel(state: tauri::State<'_, State>, job: u32) {
     if let Some(c) = state.exports.lock().expect("exports lock").get(&job) {
         c.store(true, Ordering::Relaxed);
     }
+}
+
+/// The Sitemap files view (spec 011 US3).
+#[tauri::command]
+pub async fn sitemap_files(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<SitemapFiles> {
+    state.with(&path, |r| r.sitemap_files().map_err(err)).await
 }
 
 /// Counts for the Generate sitemap sheet's live preview (spec 011 FR-018);

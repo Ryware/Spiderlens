@@ -4382,6 +4382,7 @@ dependencies = [
  "jiff",
  "jsonschema",
  "predicates",
+ "rusqlite",
  "serde",
  "serde_json",
  "spiderlens-config",

@@ -16,6 +16,7 @@ import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
+import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { useResults } from "../results/useResults";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
@@ -271,6 +272,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onSession={onSession}
               onFocusId={onFocusId}
             />
+          ) : section === "sitemap-files" && crawl.path ? (
+            <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
           ) : (

@@ -4,6 +4,8 @@
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { GenerateReport } from "../generated/GenerateReport";
+import type { SitemapFileRow } from "../generated/SitemapFileRow";
+import type { SitemapFiles } from "../generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
@@ -132,8 +134,36 @@ export interface FakePicks {
   folder: string | null;
 }
 
-/** Sitemap generation as the tests see it. */
+/** A sitemap file row with defaults, for tests. */
+export function fakeSitemapFile(id: number, location: string, patch: Partial<SitemapFileRow> = {}): SitemapFileRow {
+  return {
+    id,
+    location,
+    source: "robots",
+    parent_id: null,
+    level: 0,
+    kind: "urlset",
+    http_status: 200,
+    final_url: location,
+    redirected: false,
+    compressed: false,
+    bytes: 1200,
+    entries: 10,
+    over_limit: false,
+    error_class: null,
+    error: null,
+    error_line: null,
+    invalid_entries: 0,
+    children: 0,
+    base_url: null,
+    ...patch,
+  };
+}
+
+/** Sitemap generation and files as the tests see them. */
 export interface FakeSitemaps {
+  /** What the Sitemap files view reads. */
+  files: SitemapFiles;
   /** File names already in each folder. */
   existing: Map<string, string[]>;
   generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
@@ -183,7 +213,7 @@ export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
 ): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
-  const sitemaps: FakeSitemaps = { existing: new Map(), generated: [], previews: 0, fail: null };
+  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -212,6 +242,7 @@ export function fakeTransport(
     picks,
     sitemaps,
     pickFolder: async () => picks.folder,
+    sitemapFiles: async () => structuredClone(sitemaps.files),
     sitemapPreview: async (_path, options, folder) => {
       sitemaps.previews += 1;
       const r = fakeReport_(resultsApi.results.urls, options, folder ? (sitemaps.existing.get(folder) ?? []) : []);

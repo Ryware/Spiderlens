@@ -131,6 +131,74 @@ fn options(a: &GenerateArgs) -> Result<SitemapGenerateOptions, String> {
     })
 }
 
+#[derive(Args)]
+pub struct SitemapsArgs {
+    /// The crawl file.
+    file: PathBuf,
+    /// Print `{ files, available }` as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+/// `spiderlens sitemaps`: one line per file, indented by level (spec 011
+/// contracts/cli.md).
+pub fn run_sitemaps(a: &SitemapsArgs) -> ExitCode {
+    let view = match Reader::open(&a.file).and_then(|r| r.sitemap_files()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    if a.json {
+        crate::print_json(&view);
+        return ExitCode::from(exit::FETCHED);
+    }
+    if !view.available {
+        eprintln!(
+            "note: this crawl file was made before SpiderLens kept sitemap entries; showing the summary only"
+        );
+    }
+    if view.files.is_empty() {
+        eprintln!("no sitemap files were read in this crawl");
+    }
+    for f in &view.files {
+        let status = match (&f.error_class, f.http_status) {
+            (Some(class), _) => class.clone(),
+            (None, Some(s)) => s.to_string(),
+            (None, None) if f.error.is_some() => "error".into(),
+            (None, None) => "ok".into(),
+        };
+        let mut problems = Vec::new();
+        if f.invalid_entries > 0 {
+            problems.push(format!("{} invalid", f.invalid_entries));
+        }
+        if f.over_limit {
+            problems.push("over the limit".into());
+        }
+        if let Some(e) = &f.error {
+            problems.push(match f.error_line {
+                Some(l) => format!("{e} (line {l})"),
+                None => e.clone(),
+            });
+        }
+        println!(
+            "{}{}  {}  {}  {} entries{}",
+            "  ".repeat(f.level as usize),
+            f.location,
+            f.source.as_deref().unwrap_or("-"),
+            status,
+            f.entries,
+            if problems.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", problems.join("; "))
+            }
+        );
+    }
+    ExitCode::from(exit::FETCHED)
+}
+
 pub fn run(cmd: SitemapCommand) -> ExitCode {
     match cmd {
         SitemapCommand::Generate(a) => run_generate(&a),

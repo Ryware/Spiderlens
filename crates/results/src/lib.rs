@@ -27,7 +27,7 @@ pub use features::Features;
 pub use reader::Reader;
 pub use rusqlite::InterruptHandle;
 pub use sitemaps::{
-    GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput,
+    GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput, SitemapFileRow, SitemapFiles,
     check_structure as check_sitemap_structure, generate as generate_sitemaps,
 };
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
