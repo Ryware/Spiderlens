@@ -584,14 +584,14 @@ impl Crawler {
             store.set_meta("start_url", s.as_str())?;
         }
         // What readers will find in this file (spec 007 plan D3).
-        store.set_meta(
-            "data_features",
-            if config.extraction.store_html {
-                "extraction,timing,attempts,raw_html"
-            } else {
-                "extraction,timing,attempts"
-            },
-        )?;
+        let mut features = String::from("extraction,timing,attempts");
+        if config.extraction.store_html {
+            features.push_str(",raw_html");
+        }
+        if config.extraction.pdf.crawl {
+            features.push_str(",pdf");
+        }
+        store.set_meta("data_features", &features)?;
 
         store.begin()?;
         let source = match config.mode {
@@ -1666,7 +1666,9 @@ impl Run {
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
         let pool = self.pdf_pool.clone().filter(|_| !check_only);
-        let pdf_max = pool.as_ref().map(|_| u64::from(self.c.config.extraction.pdf.max_mb) * 1024 * 1024);
+        let pdf_max = pool
+            .as_ref()
+            .map(|_| u64::from(self.c.config.extraction.pdf.max_mb) * 1024 * 1024);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body, pdf_max).await;
@@ -2380,7 +2382,14 @@ impl Run {
     /// Records what was read from a PDF and its link annotations (FR-C03).
     /// Links are followed only from internal PDFs, and only when the crawl
     /// follows PDF links; otherwise they are stored as not followed.
-    fn on_pdf(&mut self, id: i64, url: &str, depth: u32, internal: bool, read: pdf::pool::Read) -> Result<(), CrawlError> {
+    fn on_pdf(
+        &mut self,
+        id: i64,
+        url: &str,
+        depth: u32,
+        internal: bool,
+        read: pdf::pool::Read,
+    ) -> Result<(), CrawlError> {
         let facts = read.facts;
         self.c
             .store

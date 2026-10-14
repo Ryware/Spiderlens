@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// What was read from PDFs (spec 027 part C).
+    Pdf,
 }
 
 impl Need {
@@ -44,6 +46,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Pdf => {
+                "This crawl did not read PDFs. Turn on Crawl PDFs in the crawl settings to read them."
+            }
         }
     }
 
@@ -55,6 +60,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Pdf => "pdf",
         }
     }
 }
@@ -222,6 +228,27 @@ impl ColumnDef {
         self.derived = Some(d);
         self
     }
+}
+
+/// A fact read from a PDF (spec 027 part C).
+macro_rules! pdf_fact {
+    ($col:literal) => {
+        concat!("(SELECT p.", $col, " FROM pdfs p WHERE p.url_id = u.id)")
+    };
+}
+
+const fn pdf_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::Pdf)
+}
+
+const fn pdf_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::Pdf)
 }
 
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -817,6 +844,60 @@ fn build() -> Vec<TabDef> {
             search_column: Some("alt"),
             scoped: false,
         },
+        TabDef {
+            id: "pdfs",
+            title: "PDFs",
+            eligible: "u.internal = 1 AND u.state = 'crawled' AND content_kind(u.content_type) = 'pdf'",
+            columns: vec![
+                c::ADDRESS,
+                pdf_col("pdf_title", "PDF title", pdf_fact!("title"), Text, 280),
+                pdf_col("pdf_pages", "Pages", pdf_fact!("page_count"), Int, 80),
+                pdf_col("pdf_words", "Words", pdf_fact!("word_count"), Int, 90),
+                pdf_col(
+                    "pdf_status",
+                    "Read",
+                    "(SELECT CASE p.status WHEN 'read' THEN 'Read' WHEN 'partly_read' THEN 'Partly read' \
+                     WHEN 'encrypted' THEN 'Password protected' WHEN 'over_size_limit' THEN 'Over size limit' \
+                     ELSE 'Unreadable' END FROM pdfs p WHERE p.url_id = u.id)",
+                    Text,
+                    140,
+                ),
+                c::STATUS_CODE,
+                c::SIZE,
+                c::INDEXABILITY,
+                pdf_col("pdf_author", "Author", pdf_fact!("author"), Text, 160).hidden(),
+                pdf_col("pdf_subject", "Subject", pdf_fact!("subject"), Text, 200).hidden(),
+                pdf_col("pdf_keywords", "Keywords", pdf_fact!("keywords"), Text, 200).hidden(),
+                pdf_col("pdf_creator", "Creator", pdf_fact!("creator"), Text, 160).hidden(),
+                pdf_col("pdf_producer", "Producer", pdf_fact!("producer"), Text, 160).hidden(),
+                pdf_col("pdf_created", "Created", pdf_fact!("created_at"), Text, 170).hidden(),
+                pdf_col("pdf_modified", "Modified", pdf_fact!("modified_at"), Text, 170).hidden(),
+                pdf_col("pdf_lang", "Language", pdf_fact!("lang"), Text, 90).hidden(),
+                pdf_col("pdf_tagged", "Tagged", pdf_fact!("tagged"), Bool, 80).hidden(),
+                pdf_col("pdf_links", "Links", pdf_fact!("link_count"), Int, 80).hidden(),
+                pdf_col("pdf_reason", "Read detail", pdf_fact!("status_reason"), Text, 240).hidden(),
+            ],
+            filters: vec![
+                filter("all", "All", "1"),
+                pdf_filter("missing_title", "Missing title", concat!("COALESCE(trim(", pdf_fact!("title"), "), '') = ''")),
+                pdf_filter("no_text", "No text (scanned)", "(SELECT p.no_text FROM pdfs p WHERE p.url_id = u.id) = 1"),
+                pdf_filter("encrypted", "Password protected", "(SELECT p.status FROM pdfs p WHERE p.url_id = u.id) = 'encrypted'"),
+                pdf_filter(
+                    "size_limit",
+                    "Over the PDF size limit",
+                    "(SELECT p.status FROM pdfs p WHERE p.url_id = u.id) = 'over_size_limit'",
+                ),
+                pdf_filter(
+                    "unreadable",
+                    "Unreadable or partly read",
+                    "(SELECT p.status FROM pdfs p WHERE p.url_id = u.id) IN ('failed', 'partly_read')",
+                ),
+                pdf_filter("untagged", "Not tagged", "(SELECT p.tagged FROM pdfs p WHERE p.url_id = u.id) = 0"),
+                filter("noindex", "Noindex", "u.noindex = 1"),
+            ],
+            search_column: Some("pdf_title"),
+            scoped: false,
+        },
         content_tab(
             "canonicals",
             "Canonicals",
@@ -923,7 +1004,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 11);
+        assert_eq!(tab_ids.len(), 12);
     }
 
     #[test]

@@ -256,12 +256,18 @@ pub(crate) async fn fetch_once(
         .as_deref()
         .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
     let pdf_limit = pdf_max_bytes.filter(|_| {
-        read_body && location.is_none() && (200..300).contains(&status) && is_pdf(url, content_type.as_deref())
+        read_body
+            && location.is_none()
+            && (200..300).contains(&status)
+            && is_pdf(url, content_type.as_deref())
     });
     let mut pdf = None;
     let (body, body_problem) = if let Some(limit) = pdf_limit {
         if content_length.is_some_and(|n| n > limit) {
-            pdf = Some(PdfBody { bytes: Vec::new(), over_limit: true });
+            pdf = Some(PdfBody {
+                bytes: Vec::new(),
+                over_limit: true,
+            });
             (None, None)
         } else {
             let (bytes, problem) = read_body_partial(response, limit).await;

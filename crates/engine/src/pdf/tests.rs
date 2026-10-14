@@ -17,7 +17,10 @@ fn properties_pages_text_and_links() {
         created: Some("D:20250131120000+02'00'".into()),
         lang: Some("en-GB".into()),
         tagged: true,
-        links: vec![(2, "https://example.test/only-from-pdf".into()), (12, "/relative".into())],
+        links: vec![
+            (2, "https://example.test/only-from-pdf".into()),
+            (12, "/relative".into()),
+        ],
         ..PdfSpec::titled("Annual Report 2025", 12)
     };
     let f = read_now(&spec.build());
@@ -39,15 +42,27 @@ fn properties_pages_text_and_links() {
     assert_eq!(
         f.links,
         vec![
-            PdfLink { uri: "https://example.test/only-from-pdf".into(), page: 2 },
-            PdfLink { uri: "/relative".into(), page: 12 },
+            PdfLink {
+                uri: "https://example.test/only-from-pdf".into(),
+                page: 2
+            },
+            PdfLink {
+                uri: "/relative".into(),
+                page: 12
+            },
         ]
     );
 }
 
 #[test]
 fn a_scan_has_no_text() {
-    let f = read_now(&PdfSpec { scanned: true, ..PdfSpec::titled("Scan", 3) }.build());
+    let f = read_now(
+        &PdfSpec {
+            scanned: true,
+            ..PdfSpec::titled("Scan", 3)
+        }
+        .build(),
+    );
     assert_eq!(f.status, PdfStatus::Read, "{:?}", f.detail);
     assert_eq!(f.words, Some(0));
     assert!(f.no_text());
@@ -55,7 +70,13 @@ fn a_scan_has_no_text() {
 
 #[test]
 fn a_password_keeps_the_properties_and_says_so() {
-    let f = read_now(&PdfSpec { password: Some("secret".into()), ..PdfSpec::titled("Locked", 2) }.build());
+    let f = read_now(
+        &PdfSpec {
+            password: Some("secret".into()),
+            ..PdfSpec::titled("Locked", 2)
+        }
+        .build(),
+    );
     assert_eq!(f.status, PdfStatus::Encrypted, "{:?}", f.detail);
     assert!(f.encrypted);
     // Here even the page tree is encrypted: nothing else is readable, and
@@ -69,7 +90,13 @@ fn a_password_keeps_the_properties_and_says_so() {
 fn owner_only_protection_reads_like_any_pdf() {
     // Most "protected" PDFs restrict printing or copying with an empty
     // user password: they open for everyone.
-    let f = read_now(&PdfSpec { password: Some(String::new()), ..PdfSpec::titled("Restricted", 2) }.build());
+    let f = read_now(
+        &PdfSpec {
+            password: Some(String::new()),
+            ..PdfSpec::titled("Restricted", 2)
+        }
+        .build(),
+    );
     assert_eq!(f.status, PdfStatus::Read, "{:?}", f.detail);
     assert!(f.encrypted);
     assert_eq!(f.title.as_deref(), Some("Restricted"));
@@ -104,7 +131,11 @@ fn the_deadline_stops_between_pages() {
 #[test]
 fn the_watchdog_keeps_what_was_read() {
     let p = progress();
-    let _ = read(&PdfSpec::titled("Watched", 2).build(), Instant::now() + Duration::from_secs(30), &p);
+    let _ = read(
+        &PdfSpec::titled("Watched", 2).build(),
+        Instant::now() + Duration::from_secs(30),
+        &p,
+    );
     let f = timed_out(&p);
     assert_eq!(f.status, PdfStatus::PartlyRead);
     assert_eq!(f.title.as_deref(), Some("Watched"));
@@ -129,4 +160,3 @@ fn utf16_titles() {
     }
     assert_eq!(decode_text(&b), "דוח שנתי");
 }
-

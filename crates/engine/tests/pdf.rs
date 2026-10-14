@@ -39,7 +39,15 @@ fn site() -> Site {
             E,
             "/",
             "",
-            &["/report.pdf", "/scan.pdf", "/locked.pdf", "/broken.pdf", "/big.pdf", "/hidden.pdf", "/file.pdf"],
+            &[
+                "/report.pdf",
+                "/scan.pdf",
+                "/locked.pdf",
+                "/broken.pdf",
+                "/big.pdf",
+                "/hidden.pdf",
+                "/file.pdf",
+            ],
         )
         .raw(E, "/report.pdf", 200, PDF, &report.build())
         .raw(E, "/scan.pdf", 200, PDF, &scan.build())
@@ -49,10 +57,19 @@ fn site() -> Site {
         .raw(E, "/hidden.pdf", 200, PDF, &PdfSpec::titled("Hidden", 1).build())
         .header(E, "/hidden.pdf", "X-Robots-Tag", "noindex")
         // A generic type: known as a PDF by its path.
-        .raw(E, "/file.pdf", 200, "application/octet-stream", &PdfSpec::titled("Generic", 1).build())
+        .raw(
+            E,
+            "/file.pdf",
+            200,
+            "application/octet-stream",
+            &PdfSpec::titled("Generic", 1).build(),
+        )
         .page(E, "/only-from-pdf", "", &[])
         .start()
 }
+
+/// status, title, page count, word count, no text.
+type PdfRow = (String, Option<String>, Option<i64>, Option<i64>, bool);
 
 struct Done {
     _dir: tempfile::TempDir,
@@ -64,7 +81,7 @@ impl Done {
         connect_read_only(&self.path).unwrap()
     }
 
-    fn pdf(&self, site: &Site, path: &str) -> Option<(String, Option<String>, Option<i64>, Option<i64>, bool)> {
+    fn pdf(&self, site: &Site, path: &str) -> Option<PdfRow> {
         self.conn()
             .query_row(
                 "SELECT p.status, p.title, p.page_count, p.word_count, p.no_text
@@ -78,7 +95,11 @@ impl Done {
 
     fn state(&self, site: &Site, path: &str) -> Option<String> {
         self.conn()
-            .query_row("SELECT state FROM urls WHERE url = ?1", [site.url(E, path)], |r| r.get(0))
+            .query_row(
+                "SELECT state FROM urls WHERE url = ?1",
+                [site.url(E, path)],
+                |r| r.get(0),
+            )
             .optional()
             .unwrap()
     }
@@ -119,7 +140,10 @@ async fn pdfs_are_read_with_their_properties_and_reasons() {
 
     // C1.1: properties, page count and words.
     let (status, title, pages, words, no_text) = d.pdf(&site, "/report.pdf").unwrap();
-    assert_eq!((status.as_str(), title.as_deref(), pages), ("read", Some("Annual report"), Some(3)));
+    assert_eq!(
+        (status.as_str(), title.as_deref(), pages),
+        ("read", Some("Annual report"), Some(3))
+    );
     assert!(words.unwrap() > 10);
     assert!(!no_text);
     let (author, lang, links): (Option<String>, Option<String>, i64) = d
@@ -130,7 +154,10 @@ async fn pdfs_are_read_with_their_properties_and_reasons() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!((author.as_deref(), lang.as_deref(), links), (Some("Ada"), Some("en"), 2));
+    assert_eq!(
+        (author.as_deref(), lang.as_deref(), links),
+        (Some("Ada"), Some("en"), 2)
+    );
 
     // C1.2: a scan has pages but no text.
     let (status, _, pages, _, no_text) = d.pdf(&site, "/scan.pdf").unwrap();
@@ -210,7 +237,10 @@ async fn with_pdfs_off_nothing_changes() {
     let site = site();
     let d = crawl(&site, |_| {}).await;
     // C1.6: checked like any other file, no PDF rows, no reads.
-    let rows: i64 = d.conn().query_row("SELECT COUNT(*) FROM pdfs", [], |r| r.get(0)).unwrap();
+    let rows: i64 = d
+        .conn()
+        .query_row("SELECT COUNT(*) FROM pdfs", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(rows, 0);
     let kind: String = d
         .conn()

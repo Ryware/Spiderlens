@@ -2,7 +2,9 @@
 //! fixtures say what they contain instead of being opaque binaries.
 
 use lopdf::content::{Content, Operation};
-use lopdf::{Dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions, Stream, dictionary};
+use lopdf::{
+    Dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions, Stream, dictionary,
+};
 
 /// What to put in a fixture PDF.
 #[derive(Debug, Clone, Default)]
@@ -30,7 +32,9 @@ impl PdfSpec {
     pub fn titled(title: &str, pages: usize) -> Self {
         Self {
             title: Some(title.into()),
-            pages: (1..=pages).map(|n| format!("Page {n} of the report with some words")).collect(),
+            pages: (1..=pages)
+                .map(|n| format!("Page {n} of the report with some words"))
+                .collect(),
             ..Self::default()
         }
     }
@@ -58,7 +62,10 @@ impl PdfSpec {
             let ops = if self.scanned {
                 vec![
                     Operation::new("q", vec![]),
-                    Operation::new("cm", vec![500.into(), 0.into(), 0.into(), 700.into(), 50.into(), 50.into()]),
+                    Operation::new(
+                        "cm",
+                        vec![500.into(), 0.into(), 0.into(), 700.into(), 50.into(), 50.into()],
+                    ),
                     Operation::new("Do", vec!["Im1".into()]),
                     Operation::new("Q", vec![]),
                 ]
@@ -73,7 +80,10 @@ impl PdfSpec {
                     Operation::new("ET", vec![]),
                 ]
             };
-            let content = doc.add_object(Stream::new(dictionary! {}, Content { operations: ops }.encode().expect("content encodes")));
+            let content = doc.add_object(Stream::new(
+                dictionary! {},
+                Content { operations: ops }.encode().expect("content encodes"),
+            ));
             let annots: Vec<Object> = self
                 .links
                 .iter()
@@ -97,7 +107,10 @@ impl PdfSpec {
             kids.push(doc.add_object(page).into());
         }
         let count = kids.len() as i64;
-        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }),
+        );
         let mut catalog = dictionary! { "Type" => "Catalog", "Pages" => pages_id };
         if let Some(l) = &self.lang {
             catalog.set("Lang", Object::string_literal(l.as_str()));
@@ -125,7 +138,13 @@ impl PdfSpec {
             doc.add_object(Stream::new(dictionary! {}, vec![b'x'; self.padding]));
         }
         if let Some(password) = &self.password {
-            doc.trailer.set("ID", vec![Object::string_literal("0123456789abcdef"), Object::string_literal("0123456789abcdef")]);
+            doc.trailer.set(
+                "ID",
+                vec![
+                    Object::string_literal("0123456789abcdef"),
+                    Object::string_literal("0123456789abcdef"),
+                ],
+            );
             let state = EncryptionState::try_from(EncryptionVersion::V2 {
                 document: &doc,
                 owner_password: "owner",

@@ -109,7 +109,10 @@ impl PdfFacts {
     pub fn over_size_limit(limit_bytes: u64) -> Self {
         Self {
             status: PdfStatus::OverSizeLimit,
-            detail: Some(format!("Larger than the PDF size limit ({} MB)", limit_bytes / (1024 * 1024))),
+            detail: Some(format!(
+                "Larger than the PDF size limit ({} MB)",
+                limit_bytes / (1024 * 1024)
+            )),
             ..Self::new()
         }
     }
@@ -147,7 +150,10 @@ pub fn progress() -> Progress {
 
 /// What the watchdog keeps when a read runs past its time limit (C3.2).
 pub fn timed_out(progress: &Progress) -> PdfFacts {
-    let mut f = progress.lock().map(|f| f.clone()).unwrap_or_else(|e| e.into_inner().clone());
+    let mut f = progress
+        .lock()
+        .map(|f| f.clone())
+        .unwrap_or_else(|e| e.into_inner().clone());
     if f.pages.is_none() && f.title.is_none() && f.pages_read == 0 {
         f.status = PdfStatus::Failed;
         f.detail = Some("Time limit reached before anything could be read".into());
@@ -163,7 +169,10 @@ pub fn timed_out(progress: &Progress) -> PdfFacts {
 /// "failed" status with the facts read before it.
 pub fn read(bytes: &[u8], deadline: Instant, progress: &Progress) -> PdfFacts {
     let result = catch_unwind(AssertUnwindSafe(|| read_inner(bytes, deadline, progress)));
-    let mut f = progress.lock().map(|f| f.clone()).unwrap_or_else(|e| e.into_inner().clone());
+    let mut f = progress
+        .lock()
+        .map(|f| f.clone())
+        .unwrap_or_else(|e| e.into_inner().clone());
     if result.is_err() {
         if f.pages.is_none() {
             f.status = PdfStatus::Failed;
@@ -178,7 +187,11 @@ pub fn read(bytes: &[u8], deadline: Instant, progress: &Progress) -> PdfFacts {
 
 fn finish_words(f: &mut PdfFacts) {
     if f.pages_read > 0 {
-        let words = f.text.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count();
+        let words = f
+            .text
+            .split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphanumeric))
+            .count();
         f.words = Some(u32::try_from(words).unwrap_or(u32::MAX));
     }
 }
@@ -190,7 +203,11 @@ fn update(progress: &Progress, f: impl FnOnce(&mut PdfFacts)) {
 }
 
 fn read_inner(bytes: &[u8], deadline: Instant, progress: &Progress) {
-    if !bytes.starts_with(b"%PDF-") && !bytes.get(..1024).is_some_and(|h| h.windows(5).any(|w| w == b"%PDF-")) {
+    if !bytes.starts_with(b"%PDF-")
+        && !bytes
+            .get(..1024)
+            .is_some_and(|h| h.windows(5).any(|w| w == b"%PDF-"))
+    {
         update(progress, |f| {
             f.status = PdfStatus::Failed;
             f.detail = Some("Not a PDF file".into());
@@ -295,7 +312,10 @@ fn read_inner(bytes: &[u8], deadline: Instant, progress: &Progress) {
 }
 
 fn info_dict(doc: &Document) -> Option<&Dictionary> {
-    doc.trailer.get(b"Info").ok().and_then(|o| resolve(doc, o).as_dict().ok())
+    doc.trailer
+        .get(b"Info")
+        .ok()
+        .and_then(|o| resolve(doc, o).as_dict().ok())
 }
 
 fn resolve<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
@@ -321,7 +341,10 @@ fn text_of(doc: &Document, dict: &Dictionary, key: &[u8]) -> Option<String> {
 
 fn decode_text(b: &[u8]) -> String {
     if let Some(rest) = b.strip_prefix(&[0xFE, 0xFF]) {
-        let units: Vec<u16> = rest.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         return String::from_utf16_lossy(&units);
     }
     if let Some(rest) = b.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
@@ -344,13 +367,22 @@ fn pdf_date(raw: &str) -> String {
     if digits.len() < 10 {
         return date;
     }
-    let time = format!("{}:{}:{}", part(8, 10, "00"), part(10, 12, "00"), part(12, 14, "00"));
+    let time = format!(
+        "{}:{}:{}",
+        part(8, 10, "00"),
+        part(10, 12, "00"),
+        part(12, 14, "00")
+    );
     let zone = &s[digits.len()..];
     let tz = match zone.chars().next() {
         Some('Z') => "Z".to_string(),
         Some(sign @ ('+' | '-')) => {
             let z: String = zone[1..].chars().filter(char::is_ascii_digit).collect();
-            format!("{sign}{}:{}", z.get(0..2).unwrap_or("00"), z.get(2..4).unwrap_or("00"))
+            format!(
+                "{sign}{}:{}",
+                z.get(0..2).unwrap_or("00"),
+                z.get(2..4).unwrap_or("00")
+            )
         }
         _ => String::new(),
     };

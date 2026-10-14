@@ -19,9 +19,9 @@ mod validate;
 
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    CrawlConfig, CustomHeader, ExtractionSettings, PdfSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
-    NetworkSettings, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings,
-    SubdomainMode, UserAgent,
+    CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
+    NetworkSettings, PdfSettings, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope,
+    SpeedSettings, SubdomainMode, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};

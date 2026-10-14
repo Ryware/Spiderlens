@@ -101,7 +101,12 @@ impl Pool {
     /// Reads one held PDF under the time limit.
     pub async fn read(&self, held: Held) -> Read {
         let i = &self.inner;
-        let permit = i.readers.clone().acquire_owned().await.expect("the pool is never closed");
+        let permit = i
+            .readers
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the pool is never closed");
         let from_memory = matches!(held, Held::Memory(_));
         let progress = super::progress();
         let deadline = Instant::now() + i.time_limit;
@@ -154,7 +159,9 @@ fn take_text(facts: &mut PdfFacts, keep: bool) -> Option<(Vec<u8>, usize)> {
     if !keep || text.is_empty() || facts.status == PdfStatus::Failed {
         return None;
     }
-    body::compress(text.as_bytes()).ok().map(|packed| (packed, text.len()))
+    body::compress(text.as_bytes())
+        .ok()
+        .map(|packed| (packed, text.len()))
 }
 
 #[cfg(test)]
