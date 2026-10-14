@@ -27,7 +27,8 @@ ego-tree = "0.10"
 zstd = "0.13"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 encoding_rs = "0.8"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+fs4 = "0.13"
 quick-xml = "0.42"
 flate2 = "1"
 thiserror = "2"
@@ -43,6 +44,7 @@ serde_ignored = "0.1"
 secrecy = { version = "0.10", features = ["serde"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 jiff = { version = "0.2", features = ["serde"] }
+fastrand = "2"
 proptest = "1"
 tempfile = "3"
 axum = "0.8"

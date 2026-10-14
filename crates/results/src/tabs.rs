@@ -169,6 +169,20 @@ impl TabDef {
     }
 }
 
+/// A failure a later attempt may fix (spec 004 FR-012). Mirrors the engine's
+/// `TRANSIENT_FAILURE`, which picks the rows "Retry failed URLs" re-queues.
+const TRANSIENT: &str = "u.fetched_at IS NOT NULL AND (\
+    u.error_class IN ('dns_temporary', 'connection', 'timeout', 'host_unavailable') \
+    OR (u.error_class = 'content_problem' AND u.error_reason = 'truncated') \
+    OR (u.error_class IS NULL AND (u.status = 429 OR (u.status BETWEEN 500 AND 599 AND u.status NOT IN (501, 505)))))";
+
+/// Every other error: retrying cannot help.
+const PERMANENT: &str = "u.fetched_at IS NOT NULL AND (\
+    (u.error_class IS NOT NULL AND u.error_class NOT IN ('dns_temporary', 'connection', 'timeout', 'host_unavailable') \
+     AND NOT (u.error_class = 'content_problem' AND u.error_reason IS 'truncated')) \
+    OR (u.error_class IS NULL AND (u.status BETWEEN 400 AND 428 OR u.status BETWEEN 430 AND 499 \
+        OR u.status IN (501, 505) OR u.status < 100 OR u.status > 599)))";
+
 /// Internal pages that were fetched successfully as HTML: the rows of the
 /// content tabs (FR-010).
 pub(crate) const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
@@ -358,7 +372,7 @@ mod c {
         170,
     );
     pub const ATTEMPTS: ColumnDef =
-        col("attempts", "Attempts", "NULL", ValueKind::Int, 90).needs(Need::Attempts);
+        col("attempts", "Attempts", "u.attempts", ValueKind::Int, 90).needs(Need::Attempts);
     pub const FOUND_ON: ColumnDef = col(
         "found_on",
         "Found on",
@@ -765,11 +779,16 @@ fn build() -> Vec<TabDef> {
                 filter(
                     "redirect_chain",
                     "Redirect loop or chain over limit",
-                    "(u.error_class = 'redirect_loop' OR u.id IN (SELECT r.id FROM temp.redirects r WHERE r.is_loop OR r.hops > redirect_limit()))",
+                    "(u.error_class IN ('redirect_loop', 'redirect_problem') OR u.id IN (SELECT r.id FROM temp.redirects r WHERE r.is_loop OR r.hops > redirect_limit()))",
                 )
                 .reads(Derived::Redirects),
                 filter("client_error", "Client error (4xx)", "u.error_class IS NULL AND u.status BETWEEN 400 AND 499"),
                 filter("server_error", "Server error (5xx)", "u.error_class IS NULL AND u.status BETWEEN 500 AND 599"),
+                // Spec 004 FR-012: the failures "Retry failed URLs" picks up,
+                // and the ones it never will. Same condition as the engine.
+                filter("transient", "Failed, may work later", TRANSIENT).needs(Need::Attempts),
+                filter("permanent", "Failed, permanent", PERMANENT).needs(Need::Attempts),
+                filter("retried", "Needed more than one attempt", "u.attempts > 1").needs(Need::Attempts),
             ],
             search_column: None,
             scoped: true,
