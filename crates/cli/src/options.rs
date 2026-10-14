@@ -286,6 +286,37 @@ impl NetworkArgs {
 }
 
 impl CrawlArgs {
+    /// The speed options given on the command line applied to `speed`, or
+    /// None when none was given (`crawl --resume`, spec 006 FR-011).
+    pub fn speed_change(&self, speed: SpeedSettings) -> Option<SpeedSettings> {
+        let given = self.speed.is_some()
+            || self.concurrency.is_some()
+            || self.per_host.is_some()
+            || self.rate.is_some()
+            || self.no_adaptive;
+        if !given {
+            return None;
+        }
+        let mut s = match self.speed {
+            Some(SpeedArg::Polite) => SpeedSettings::POLITE,
+            Some(SpeedArg::Fast) => SpeedSettings::FAST,
+            None => speed,
+        };
+        if let Some(v) = self.concurrency {
+            s.max_concurrent = v;
+        }
+        if let Some(v) = self.per_host {
+            s.max_per_host = v;
+        }
+        if let Some(RateArg(v)) = self.rate {
+            s.max_urls_per_sec = v;
+        }
+        if self.no_adaptive {
+            s.adaptive = false;
+        }
+        Some(s)
+    }
+
     pub fn resolve(&self, mode: Mode) -> Result<Resolved, String> {
         let mut notices = Vec::new();
         let mut c = match &self.profile {
