@@ -696,6 +696,7 @@ fn ai_search_tab() -> TabDef {
         ],
         search_column: Some("author"),
         scoped: false,
+        rows: None,
     }
 }
 

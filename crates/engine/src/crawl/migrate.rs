@@ -99,7 +99,7 @@ CREATE TABLE page_facts (
     version INTEGER NOT NULL,
     data BLOB NOT NULL,
     PRIMARY KEY (url_id, kind)
-) WITHOUT ROWID;
+);
 CREATE TABLE site_files (
     host_key TEXT NOT NULL,
     path TEXT NOT NULL,
