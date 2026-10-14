@@ -24,6 +24,8 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// JavaScript rendering (spec 014). Off (`raw`) by default.
+    pub rendering: RenderSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -391,6 +393,125 @@ impl Default for ExtractionSettings {
     }
 }
 
+/// JavaScript rendering (spec 014, data-model.md "Settings"). A
+/// configuration without this section loads with rendering off.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RenderSettings {
+    pub mode: RenderMode,
+    /// The longest one page may take, 1 to 60 s (FR-010).
+    pub max_render_secs: f64,
+    /// Waited before the settle rule applies, 0 to `max_render_secs`.
+    pub min_wait_secs: f64,
+    pub window: RenderWindow,
+    pub block: RenderBlock,
+    /// Pages rendered, by regex on the URL (same rules as `scope.include`).
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    /// Also render internal 4xx and 5xx HTML pages (FR-004).
+    pub render_error_pages: bool,
+    /// Pages rendered at once, 1 to 16. Null: total memory GB / 4, clamped.
+    pub concurrency: Option<u32>,
+    /// Browser memory budget, 256 to 65,536 MB. Null: total memory / 8.
+    pub memory_budget_mb: Option<u32>,
+    pub screenshots: bool,
+    /// FR-027: share of rendered text that is new, 1 to 1,000 %.
+    pub js_content_min_percent: u32,
+    /// FR-027: words added by rendering, 0 to 100,000.
+    pub js_content_min_words: u32,
+    /// FR-030: share of text hidden from non-rendering crawlers, 1 to 100 %.
+    pub hidden_content_percent: u32,
+}
+
+impl Default for RenderSettings {
+    fn default() -> Self {
+        Self {
+            mode: RenderMode::Raw,
+            max_render_secs: 10.0,
+            min_wait_secs: 0.0,
+            window: RenderWindow::default(),
+            block: RenderBlock::default(),
+            include: Vec::new(),
+            exclude: Vec::new(),
+            render_error_pages: false,
+            concurrency: None,
+            memory_budget_mb: None,
+            screenshots: false,
+            js_content_min_percent: 20,
+            js_content_min_words: 50,
+            hidden_content_percent: 50,
+        }
+    }
+}
+
+impl RenderSettings {
+    /// Whether the crawl renders pages.
+    pub fn is_on(&self) -> bool {
+        self.mode == RenderMode::Javascript
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RenderMode {
+    /// Raw HTML only, as before spec 014.
+    #[default]
+    Raw,
+    Javascript,
+}
+
+/// The rendering window (FR-008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RenderWindow {
+    pub preset: WindowPreset,
+    /// Required for `custom`: 320 to 3,840 CSS px.
+    pub width: Option<u32>,
+    /// Required for `custom`: 480 to 4,320 CSS px.
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum WindowPreset {
+    /// Mobile for a mobile user agent, desktop otherwise.
+    #[default]
+    Auto,
+    /// 411 x 731.
+    Mobile,
+    /// 1024 x 768.
+    Desktop,
+    Custom,
+}
+
+/// Resource types not loaded while rendering (FR-014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RenderBlock {
+    pub images: bool,
+    pub media: bool,
+    pub fonts: bool,
+    pub stylesheets: bool,
+    pub third_party: bool,
+}
+
+impl Default for RenderBlock {
+    fn default() -> Self {
+        Self {
+            images: true,
+            media: true,
+            fonts: true,
+            stylesheets: false,
+            third_party: false,
+        }
+    }
+}
+
 /// What the crawl starts from: one URL or a list (FR-001).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -441,6 +562,23 @@ mod tests {
         assert_eq!(c.retry.attempts, 3);
         assert_eq!(c.retry.max_wait_secs, 60.0);
         assert!(c.extraction.store_html);
+        let r = &c.rendering;
+        assert_eq!(r.mode, RenderMode::Raw);
+        assert!(!r.is_on());
+        assert_eq!(r.max_render_secs, 10.0);
+        assert_eq!(r.min_wait_secs, 0.0);
+        assert_eq!(r.window.preset, WindowPreset::Auto);
+        assert_eq!((r.window.width, r.window.height), (None, None));
+        assert!(r.block.images && r.block.media && r.block.fonts);
+        assert!(!r.block.stylesheets && !r.block.third_party);
+        assert!(r.include.is_empty() && r.exclude.is_empty());
+        assert!(!r.render_error_pages);
+        assert_eq!(r.concurrency, None);
+        assert_eq!(r.memory_budget_mb, None);
+        assert!(!r.screenshots);
+        assert_eq!(r.js_content_min_percent, 20);
+        assert_eq!(r.js_content_min_words, 50);
+        assert_eq!(r.hidden_content_percent, 50);
     }
 
     #[test]
@@ -456,11 +594,33 @@ mod tests {
             "network",
             "retry",
             "extraction",
+            "rendering",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");
         }
         assert_eq!(v["limits"]["max_urls"], json!(null));
         assert_eq!(v["speed"]["preset"], "polite");
+        let r = &v["rendering"];
+        assert_eq!(r["mode"], "raw");
+        assert_eq!(r["concurrency"], json!(null));
+        assert_eq!(r["memory_budget_mb"], json!(null));
+        assert_eq!(r["window"]["preset"], "auto");
+        assert_eq!(r["window"]["width"], json!(null));
+        assert_eq!(r["block"]["images"], true);
+        assert_eq!(r["block"]["third_party"], false);
+        for key in [
+            "max_render_secs",
+            "min_wait_secs",
+            "include",
+            "exclude",
+            "render_error_pages",
+            "screenshots",
+            "js_content_min_percent",
+            "js_content_min_words",
+            "hidden_content_percent",
+        ] {
+            assert!(r.get(key).is_some(), "missing rendering.{key}");
+        }
     }
 
     #[test]
@@ -471,6 +631,15 @@ mod tests {
         assert_eq!(c.retry, RetrySettings::default());
         // Configs from before spec 005 keep raw HTML (the default).
         assert!(c.extraction.store_html);
+        // Configs from before spec 014 do not render.
+        assert_eq!(c.rendering, RenderSettings::default());
+        assert_eq!(c.rendering.mode, RenderMode::Raw);
+        let c: CrawlConfig =
+            serde_json::from_value(json!({"rendering": {"mode": "javascript", "block": {"images": false}}}))
+                .unwrap();
+        assert!(c.rendering.is_on());
+        assert!(!c.rendering.block.images && c.rendering.block.fonts);
+        assert_eq!(c.rendering.max_render_secs, 10.0);
     }
 
     #[test]

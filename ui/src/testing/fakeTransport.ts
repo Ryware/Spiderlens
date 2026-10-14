@@ -47,6 +47,22 @@ export function defaultConfig(): CrawlConfig {
     network: { connect_timeout_secs: 10, read_timeout_secs: 30, max_redirects: 10, max_body_mb: 50 },
     retry: { attempts: 3, max_wait_secs: 60, retry_5xx: true, retry_429: true },
     extraction: { store_html: true },
+    rendering: {
+      mode: "raw",
+      max_render_secs: 10,
+      min_wait_secs: 0,
+      window: { preset: "auto", width: null, height: null },
+      block: { images: true, media: true, fonts: true, stylesheets: false, third_party: false },
+      include: [],
+      exclude: [],
+      render_error_pages: false,
+      concurrency: null,
+      memory_budget_mb: null,
+      screenshots: false,
+      js_content_min_percent: 20,
+      js_content_min_words: 50,
+      hidden_content_percent: 50,
+    },
   };
 }
 

@@ -20,8 +20,8 @@ mod validate;
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
     CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
-    NetworkSettings, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings,
-    SubdomainMode, UserAgent,
+    NetworkSettings, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow,
+    RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings, SubdomainMode, UserAgent, WindowPreset,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
