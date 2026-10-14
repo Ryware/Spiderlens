@@ -58,6 +58,8 @@
   --info-soft: oklch(0.50 0.12 240 / 0.12);
   --warn-soft: oklch(0.70 0.14 75 / 0.18);
   --bad-soft: oklch(0.52 0.18 27 / 0.11);
+  /* Words only on one side of a comparison (spec 020): the warning fill, so it follows every step. */
+  --diff-changed: var(--warn-soft);
 
   --shadow-popover: 0 12px 32px -8px oklch(0.2 0.02 195 / 0.25), 0 0 0 1px oklch(0.2 0.02 195 / 0.08);
   --shadow-sheet: 0 28px 70px -18px oklch(0.2 0.02 195 / 0.35), 0 0 0 1px oklch(0.2 0.02 195 / 0.08);

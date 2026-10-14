@@ -77,7 +77,11 @@ const combos = Object.entries(levels).flatMap(([lv, t]) =>
 );
 
 describe.each(combos)("%s contrast (spec 017 FR-018, spec 018 FR-017)", (_, t) => {
-  const c = (name: string) => oklchToRgba(t[name]);
+  const c = (name: string) => {
+    let v = t[name];
+    for (let m = v.match(/^var\(--([\w-]+)\)$/); m; m = v.match(/^var\(--([\w-]+)\)$/)) v = t[m[1]];
+    return oklchToRgba(v);
+  };
   const surfaces = ["bg", "surface", "surface-2", "sidebar", "chrome"];
 
   test.each(["fg", "fg-2", "fg-3"].flatMap((f) => surfaces.map((s) => [f, s])))("text %s on %s >= 4.5", (f, s) => {
@@ -89,6 +93,10 @@ describe.each(combos)("%s contrast (spec 017 FR-018, spec 018 FR-017)", (_, t) =
     (m, s) => {
       expect(contrast(c(m), over(c(`${m}-soft`), c(s)))).toBeGreaterThanOrEqual(4.5);
     },
+  );
+
+  test.each(["bg", "surface"])("compared text on its changed-word fill over %s >= 4.5 (spec 020)", (s) =>
+    expect(contrast(c("fg"), over(c("diff-changed"), c(s)))).toBeGreaterThanOrEqual(4.5),
   );
 
   test("primary button label >= 4.5", () => expect(contrast(c("accent-fg"), c("accent"))).toBeGreaterThanOrEqual(4.5));

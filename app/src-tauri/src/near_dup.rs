@@ -22,8 +22,8 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use spiderlens_config::ContentSettings;
 use spiderlens_results::near_dup::{
-    self, ClustersPage, Comparison, Connection, Listing, NearDupState, NearDupStatus, PairsPage, PassSummary,
-    Schema,
+    self, ClustersPage, Comparison, Connection, Listing, MembersPage, NearDupState, NearDupStatus, PairsPage,
+    PassSummary, Schema,
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -182,6 +182,22 @@ pub async fn near_dup_clusters(
     results
         .with(&path, move |r| {
             near_dup::clusters(r.connection(), offset, limit).map_err(err)
+        })
+        .await
+}
+
+/// One cluster's pages, representative first (FR-017).
+#[tauri::command]
+pub async fn near_dup_members(
+    results: tauri::State<'_, results::State>,
+    path: PathBuf,
+    cluster: u32,
+    offset: u32,
+    limit: u32,
+) -> Cmd<MembersPage> {
+    results
+        .with(&path, move |r| {
+            near_dup::members(r.connection(), cluster, offset, limit).map_err(err)
         })
         .await
 }

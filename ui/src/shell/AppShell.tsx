@@ -16,6 +16,10 @@ import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { useResults } from "../results/useResults";
+import { ContentView } from "../content/ContentView";
+import { CompareSheet } from "../content/CompareSheet";
+import type { CompareRequest } from "../content/compare";
+import { useNearDup } from "../content/useNearDup";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
 export const AUTO_COLLAPSE_DETAIL = 1100;
@@ -82,6 +86,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
+  const nearDup = useNearDup(transport, crawl.path, crawl.running);
+  const [compare, setCompare] = useState<CompareRequest | null>(null);
+  const duplicates = useMemo(() => ({ generation: nearDup.generation, onCompare: setCompare }), [nearDup.generation]);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
@@ -186,7 +193,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen) return;
+      if (settingsOpen || paletteOpen || aboutOpen || compare) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -195,7 +202,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, compare]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
@@ -220,19 +227,29 @@ export function AppShell({ transport }: { transport: Transport }) {
         <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {resultTab && crawl.path ? (
-            <ResultsView
-              // One instance per tab: a tab switch must not carry the old
-              // tab's selection into the new tab's first render.
-              key={`${crawl.path}\n${resultTab.id}`}
-              transport={transport}
-              path={crawl.path}
-              tab={resultTab}
-              features={results.features}
-              live={crawl.running}
-              session={results.session(resultTab.id)}
-              onSession={onSession}
-              onFocusId={onFocusId}
-            />
+            (() => {
+              const view = (
+                <ResultsView
+                  // One instance per tab: a tab switch must not carry the old
+                  // tab's selection into the new tab's first render. The
+                  // Content tab reopens when new analysis results land.
+                  key={`${crawl.path}\n${resultTab.id}${resultTab.id === "content" ? `\n${nearDup.generation}` : ""}`}
+                  transport={transport}
+                  path={crawl.path}
+                  tab={resultTab}
+                  features={results.features}
+                  live={crawl.running}
+                  session={results.session(resultTab.id)}
+                  onSession={onSession}
+                  onFocusId={onFocusId}
+                />
+              );
+              return resultTab.id === "content" ? (
+                <ContentView transport={transport} path={crawl.path} live={crawl.running} nd={nearDup} settings={setup.config?.content ?? null} onCompare={setCompare} pages={view} />
+              ) : (
+                view
+              );
+            })()
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
           ) : (
@@ -243,7 +260,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           <>
             <Splitter label="Resize details" value={ui.detailWidth} min={DETAIL.min} max={DETAIL.max} invert onChange={(v) => updateUi({ detailWidth: v })} />
             <div className="shrink-0 border-l border-line" style={{ width: ui.detailWidth }}>
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} duplicates={nearDup.status?.state === "done" || nearDup.status?.state === "stale" ? duplicates : undefined} /> : <DetailPanel />}
             </div>
           </>
         )}
@@ -263,6 +280,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         systemDark={systemDark}
         onAppearance={updateUi}
       />
+      {crawl.path && <CompareSheet transport={transport} path={crawl.path} request={compare} onRequest={setCompare} onClose={() => setCompare(null)} />}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
     </div>

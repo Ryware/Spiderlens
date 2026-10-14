@@ -50,17 +50,33 @@ impl Signature {
 
     /// Bins with the same value in both signatures.
     pub fn equal_bins(&self, other: &Self) -> u32 {
-        self.0
-            .iter()
-            .zip(other.0.iter())
-            .map(|(a, b)| u32::from(a == b))
-            .sum()
+        equal_bytes(&self.0, &other.0)
     }
 
-    /// Estimated similarity in whole percent, 0 to 100.
+    /// Equal bins among the first `n`: a cheap estimate that rules most
+    /// unrelated pairs out before the full comparison.
+    pub fn equal_prefix(&self, other: &Self, n: usize) -> u32 {
+        equal_bytes(&self.0[..n], &other.0[..n])
+    }
+
     pub fn similarity(&self, other: &Self) -> u8 {
         similarity_of(self.equal_bins(other))
     }
+}
+
+/// Positions where two equal-length byte strings agree. Counted in u8
+/// lanes over blocks of 240 bytes (no lane can overflow), a shape the
+/// compiler turns into vector compares on every target.
+fn equal_bytes(a: &[u8], b: &[u8]) -> u32 {
+    let mut n = 0u32;
+    for (ca, cb) in a.chunks(240).zip(b.chunks(240)) {
+        let mut block = 0u8;
+        for (x, y) in ca.iter().zip(cb) {
+            block = block.wrapping_add(u8::from(x == y));
+        }
+        n += u32::from(block);
+    }
+    n
 }
 
 /// Whole percent for a count of equal bins. Two unrelated bins hold the
@@ -93,33 +109,75 @@ fn no_space_script(c: char) -> bool {
 
 /// Hashes of the tokens of `text`, in order.
 pub fn token_hashes(text: &str) -> Vec<u64> {
+    scan(text).0
+}
+
+/// Token hashes and the word count (as [`super::text::word_count`] counts
+/// words) in one pass over the text.
+pub fn scan(text: &str) -> (Vec<u64>, u32) {
     let mut out = Vec::with_capacity(text.len() / 6);
-    let mut word = String::new();
-    let flush = |word: &mut String, out: &mut Vec<u64>| {
+    // UTF-8 bytes of the current word; ASCII takes a byte path that never
+    // decodes a character (most pages are mostly ASCII).
+    let mut word: Vec<u8> = Vec::with_capacity(32);
+    let mut words = 0u32;
+    let mut in_word = false;
+    let flush = |word: &mut Vec<u8>, out: &mut Vec<u64>| {
         if !word.is_empty() {
-            out.push(xxhash_rust::xxh3::xxh3_64(word.as_bytes()));
+            out.push(xxhash_rust::xxh3::xxh3_64(word));
             word.clear();
         }
     };
-    for c in text.chars() {
-        if is_mark(c) {
-            // A mark belongs to the character it sits on; after a
-            // no-space-script character (already a token) it adds nothing.
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut utf8 = [0u8; 4];
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            if b.is_ascii_alphanumeric() {
+                words += u32::from(!in_word);
+                in_word = true;
+                word.push(b.to_ascii_lowercase());
+            } else {
+                in_word = false;
+                flush(&mut word, &mut out);
+            }
+            i += 1;
+            continue;
+        }
+        let c = text[i..].chars().next().expect("char boundary");
+        i += c.len_utf8();
+        let mark = is_mark(c);
+        let word_char = mark || c.is_alphanumeric();
+        words += u32::from(word_char && !in_word);
+        in_word = word_char;
+        if mark {
             if !word.is_empty() {
-                word.push(c);
+                word.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
             }
         } else if no_space_script(c) {
             flush(&mut word, &mut out);
-            word.push(c);
+            word.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
             flush(&mut word, &mut out);
         } else if c.is_alphanumeric() {
-            word.extend(c.to_lowercase());
+            for l in c.to_lowercase() {
+                word.extend_from_slice(l.encode_utf8(&mut utf8).as_bytes());
+            }
         } else {
             flush(&mut word, &mut out);
         }
     }
     flush(&mut word, &mut out);
-    out
+    (out, words)
+}
+
+/// Hash of a token sequence: equal for texts with the same words in the
+/// same order, whatever their case, spacing and punctuation.
+pub fn tokens_hash(tokens: &[u64]) -> i64 {
+    let mut h = xxhash_rust::xxh3::Xxh3::new();
+    for t in tokens {
+        h.update(&t.to_le_bytes());
+    }
+    h.digest() as i64
 }
 
 /// Hashes of every run of [`SHINGLE`] consecutive tokens. Fewer tokens than
@@ -154,8 +212,11 @@ const fn mix(mut z: u64) -> u64 {
 
 /// The signature of `text`, or `None` when it has no tokens.
 pub fn signature(text: &str) -> Option<Signature> {
-    let tokens = token_hashes(text);
-    signature_of_shingles(shingle_hashes(&tokens))
+    signature_of_tokens(&token_hashes(text))
+}
+
+pub fn signature_of_tokens(tokens: &[u64]) -> Option<Signature> {
+    signature_of_shingles(shingle_hashes(tokens))
 }
 
 /// The signature of a set of shingle hashes (duplicates are harmless).
@@ -216,6 +277,42 @@ mod tests {
         assert_eq!(token_hashes("don't").len(), 2);
         assert_eq!(token_hashes("  — … ").len(), 0);
         assert_eq!(token_hashes("שָׁלוֹם עולם").len(), 2);
+    }
+
+    #[test]
+    fn equal_bytes_counts_every_position() {
+        let a: Vec<u8> = (0..=255).chain(0..13).collect();
+        let mut b = a.clone();
+        for k in [0, 7, 8, 100, 255, 260] {
+            b[k] ^= 0x80;
+        }
+        b[50] = b[50].wrapping_add(1);
+        let slow = a.iter().zip(&b).filter(|(x, y)| x == y).count() as u32;
+        assert_eq!(equal_bytes(&a, &b), slow);
+        assert_eq!(equal_bytes(&a, &a), a.len() as u32);
+    }
+
+    #[test]
+    fn scan_counts_words_as_word_count_does() {
+        for t in [
+            "Hello, world!",
+            "don't e-mail 3.5",
+            "שָׁלוֹם עולם",
+            "  — … ",
+            "naïve café",
+            "東京都に行く abc",
+            "x\u{0301}y z",
+        ] {
+            assert_eq!(scan(t).1, crate::extract::text::word_count(t), "{t}");
+        }
+        assert_eq!(
+            tokens_hash(&token_hashes("Hello,  WORLD")),
+            tokens_hash(&token_hashes("hello world"))
+        );
+        assert_ne!(
+            tokens_hash(&token_hashes("hello world")),
+            tokens_hash(&token_hashes("world hello"))
+        );
     }
 
     #[test]

@@ -5,7 +5,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { ClustersPage } from "./generated/ClustersPage";
+import type { Comparison } from "./generated/Comparison";
+import type { ContentSettings } from "./generated/ContentSettings";
 import type { CrawlConfig } from "./generated/CrawlConfig";
+import type { MembersPage } from "./generated/MembersPage";
+import type { NearDupStatus } from "./generated/NearDupStatus";
+import type { PairsPage } from "./generated/PairsPage";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
 import type { ListKind } from "./generated/ListKind";
@@ -156,6 +162,23 @@ export interface ExportProgress {
   path: string;
 }
 
+/** Near duplicate analysis progress (spec 020). */
+export interface AnalysisProgress {
+  path: string;
+  done: number;
+  total: number;
+  step: string;
+}
+
+export interface AnalysisFinished {
+  path: string;
+  summary: { compared: number; too_short: number; not_indexable: number; no_signature: number; clusters: number; ms: number } | null;
+  cancelled: boolean;
+  error: string | null;
+}
+
+export type NearDupExport = "pages" | "pairs" | "clusters";
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -208,6 +231,18 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // Near duplicate content (spec 020, contracts/desktop-commands.md).
+  nearDupStatus(path: string): Promise<NearDupStatus>;
+  nearDupClusters(path: string, offset: number, limit: number): Promise<ClustersPage>;
+  nearDupMembers(path: string, cluster: number, offset: number, limit: number): Promise<MembersPage>;
+  nearDupPairs(path: string, urlId: number): Promise<PairsPage>;
+  comparePages(path: string, a: number, b: number, full: boolean): Promise<Comparison>;
+  /** Starts the analysis; `settings` re-runs with changed content settings. */
+  runNearDup(path: string, settings: ContentSettings | null): Promise<void>;
+  cancelNearDup(path: string): Promise<void>;
+  exportNearDup(path: string, kind: NearDupExport, cluster: number | null, dest: string): Promise<number>;
+  onAnalysisProgress(cb: (p: AnalysisProgress) => void): Promise<() => void>;
+  onAnalysisFinished(cb: (f: AnalysisFinished) => void): Promise<() => void>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -262,4 +297,14 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  nearDupStatus: (path) => invoke("near_dup_status", { path, settings: null }),
+  nearDupClusters: (path, offset, limit) => invoke("near_dup_clusters", { path, offset, limit }),
+  nearDupMembers: (path, cluster, offset, limit) => invoke("near_dup_members", { path, cluster, offset, limit }),
+  nearDupPairs: (path, urlId) => invoke("near_dup_pairs", { path, urlId }),
+  comparePages: (path, a, b, full) => invoke("compare_pages", { path, a, b, full }),
+  runNearDup: (path, settings) => invoke("run_near_dup", { path, settings }),
+  cancelNearDup: (path) => invoke("cancel_near_dup", { path }),
+  exportNearDup: (path, kind, cluster, dest) => invoke("export_near_dup", { path, kind, cluster, dest }),
+  onAnalysisProgress: (cb) => listen<AnalysisProgress>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisFinished: (cb) => listen<AnalysisFinished>("analysis-finished", (e) => cb(e.payload)),
 };

@@ -32,6 +32,7 @@ export function defaultConfig(): CrawlConfig {
     network: { connect_timeout_secs: 10, read_timeout_secs: 30, max_redirects: 10, max_body_mb: 50 },
     retry: { attempts: 3, max_wait_secs: 60, retry_5xx: true, retry_429: true },
     extraction: { store_html: true },
+    content: { threshold: 90, report_floor: 80, min_words: 50, indexable_only: true, content_selector: null, exclude_selectors: [] },
   };
 }
 

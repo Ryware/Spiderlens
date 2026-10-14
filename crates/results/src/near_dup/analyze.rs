@@ -42,6 +42,31 @@ impl Params {
             sample: 2_000,
         }
     }
+
+    /// Fewest equal bins among the first [`PREFIX`] for a pair that could
+    /// still reach the floor: the floor's expected share less a 0.2 margin,
+    /// over five standard deviations of the prefix estimate (a true pair at
+    /// the floor is ruled out about once in 10^8).
+    fn prefix_gate(&self) -> u32 {
+        let j = f64::from(self.floor) / 100.0;
+        let p = j + (1.0 - j) / 256.0;
+        ((p - 0.2).max(0.0) * PREFIX as f64).floor() as u32
+    }
+}
+
+/// Bins compared before the full signature (research R4): unrelated pages
+/// that share a bucket (thin templated pages do) cost an eighth.
+const PREFIX: usize = 128;
+
+/// Rows of a dense group scored together against each compared signature.
+const TILE: usize = 32;
+
+/// Similarity of `a` and `b`, or `None` when the prefix rules the pair out.
+fn score(a: &Item, b: &Item, gate: u32) -> Option<u8> {
+    if a.sig.equal_prefix(&b.sig, PREFIX) < gate {
+        return None;
+    }
+    Some(similarity_of(a.sig.equal_bins(&b.sig)))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -196,6 +221,7 @@ pub fn analyze(
     let mut dense = Dsu::new(n);
     let mut in_dense = vec![false; n];
     let mut candidates: Vec<u64> = Vec::new();
+    let mut dedup_at = 4 * n + 1_000_000;
     let mut keys: Vec<(u64, u32)> = Vec::with_capacity(n);
     for band in 0..nbands {
         check()?;
@@ -229,10 +255,12 @@ pub fn analyze(
             }
             start = end;
         }
-        // Keep the candidate list from growing with repeats across bands.
-        if candidates.len() > 4 * n + 1_000_000 {
+        // Keep the candidate list from growing with repeats across bands;
+        // the limit doubles with what survives, so sorting stays amortised.
+        if candidates.len() > dedup_at {
             candidates.sort_unstable();
             candidates.dedup();
+            dedup_at = dedup_at.max(2 * candidates.len());
         }
         progress(band + 1, total);
     }
@@ -244,6 +272,7 @@ pub fn analyze(
     let dense_root: Vec<Option<u32>> = (0..n)
         .map(|i| in_dense[i].then(|| dense.find(i as u32)))
         .collect();
+    let gate = p.prefix_gate();
     for &c in &candidates {
         let (a, b) = ((c >> 32) as u32, c as u32);
         if let (Some(ra), Some(rb)) = (dense_root[a as usize], dense_root[b as usize])
@@ -251,7 +280,9 @@ pub fn analyze(
         {
             continue; // scored with its dense group
         }
-        let sim = items[a as usize].sig.similarity(&items[b as usize].sig);
+        let Some(sim) = score(&items[a as usize], &items[b as usize], gate) else {
+            continue;
+        };
         if sim >= p.floor {
             stats[a as usize].add(b, sim, p);
             stats[b as usize].add(a, sim, p);
@@ -357,6 +388,7 @@ fn score_group(
     cancel: &AtomicBool,
 ) -> Result<GroupScore, Cancelled> {
     let sampled = members.len() > p.exact_limit;
+    let gate = p.prefix_gate();
     // Positions in `members` to compare each member with.
     let compare: Vec<usize> = if sampled {
         let step = members.len() as f64 / p.sample as f64;
@@ -364,6 +396,10 @@ fn score_group(
     } else {
         (0..members.len()).collect()
     };
+    let targets: Vec<Signature> = compare
+        .iter()
+        .map(|&b| items[members[b] as usize].sig.clone())
+        .collect();
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
         .min(members.len());
@@ -373,37 +409,47 @@ fn score_group(
         let handles: Vec<_> = (0..members.len())
             .step_by(chunk)
             .map(|first| {
-                let compare = &compare;
+                let (compare, targets) = (&compare, &targets);
                 scope.spawn(move || {
                     let rows = first..(first + chunk).min(members.len());
                     let mut local = Vec::with_capacity(rows.len());
                     let mut dsu = Dsu::new(members.len());
-                    for (k, a) in rows.enumerate() {
-                        if k % 64 == 0 && cancel.load(Ordering::Relaxed) {
+                    // Rows in tiles that stay in cache while the compared
+                    // signatures stream past (contiguous, in `targets`).
+                    let rows: Vec<usize> = rows.collect();
+                    for tile in rows.chunks(TILE) {
+                        if cancel.load(Ordering::Relaxed) {
                             return Err(Cancelled);
                         }
-                        let i = members[a];
-                        let mut s = Stats {
-                            is_min: sampled,
-                            ..Stats::default()
-                        };
-                        for &b in compare {
-                            if b == a {
-                                continue;
-                            }
-                            let j = members[b];
-                            let sim = similarity_of(items[i as usize].sig.equal_bins(&items[j as usize].sig));
-                            if sim >= p.floor {
-                                s.add(j, sim, p);
-                                if sim >= p.threshold {
-                                    dsu.union(a as u32, b as u32);
+                        let sigs: Vec<&Signature> =
+                            tile.iter().map(|&a| &items[members[a] as usize].sig).collect();
+                        let mut stats: Vec<Stats> = tile
+                            .iter()
+                            .map(|_| Stats {
+                                is_min: sampled,
+                                ..Stats::default()
+                            })
+                            .collect();
+                        for (&b, target) in compare.iter().zip(targets) {
+                            for (t, &a) in tile.iter().enumerate() {
+                                if b == a || sigs[t].equal_prefix(target, PREFIX) < gate {
+                                    continue;
+                                }
+                                let sim = similarity_of(sigs[t].equal_bins(target));
+                                if sim >= p.floor {
+                                    stats[t].add(members[b], sim, p);
+                                    if sim >= p.threshold {
+                                        dsu.union(a as u32, b as u32);
+                                    }
                                 }
                             }
                         }
-                        s.trim(p.top_k);
-                        local.push((i, s));
+                        for (&a, mut st) in tile.iter().zip(stats) {
+                            st.trim(p.top_k);
+                            local.push((members[a], st));
+                        }
                     }
-                    let edges = (0..members.len() as u32)
+                    let edges: Vec<(u32, u32)> = (0..members.len() as u32)
                         .filter_map(|x| {
                             let r = dsu.find(x);
                             (r != x).then(|| (members[x as usize], members[r as usize]))

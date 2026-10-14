@@ -16,8 +16,8 @@ pub use pass::{
     stored_settings,
 };
 pub use query::{
-    ClusterRow, ClustersPage, NearDupState, NearDupStatus, PageSummaryRow, PairExportRow, PairRow, PairsPage,
-    clusters, compare, page_rows, pair_rows, pairs, status,
+    ClusterRow, ClustersPage, MemberRow, MembersPage, NearDupState, NearDupStatus, PageSummaryRow,
+    PairExportRow, PairRow, PairsPage, clusters, compare, members, page_rows, pair_rows, pairs, status,
 };
 
 pub use rusqlite::{Connection, OpenFlags};

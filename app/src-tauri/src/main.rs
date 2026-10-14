@@ -75,6 +75,7 @@ fn main() {
             results::export_cancel,
             near_dup::near_dup_status,
             near_dup::near_dup_clusters,
+            near_dup::near_dup_members,
             near_dup::near_dup_pairs,
             near_dup::compare_pages,
             near_dup::run_near_dup,

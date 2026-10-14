@@ -108,6 +108,12 @@ async fn us1_finds_near_duplicates_and_us2_clusters() {
     let clusters = near_dup::clusters(&conn, 0, 10).unwrap();
     assert_eq!(clusters.rows[0].size as usize, Expect::CITIES);
     assert!(clusters.rows.iter().any(|r| r.id == shoes && r.size == 3));
+    // US2.2: a cluster's pages, representative first.
+    let m = near_dup::members(&conn, clusters.rows[0].id, 0, 5).unwrap();
+    assert_eq!(m.total as usize, Expect::CITIES);
+    assert_eq!(m.rows.len(), 5);
+    assert!(m.rows[0].representative && m.rows[0].url_id == clusters.rows[0].representative_id);
+    assert!(m.rows[1..].iter().all(|r| !r.representative));
     assert_eq!(
         near_dup::status(&conn, &settings).unwrap().state,
         NearDupState::Done

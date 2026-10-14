@@ -3,10 +3,12 @@
 // (crates/results/tests).
 
 import type { ColumnDef } from "../generated/ColumnDef";
+import type { Comparison } from "../generated/Comparison";
+import type { NearDupStatus } from "../generated/NearDupStatus";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
-import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
+import type { AnalysisFinished, AnalysisProgress, ExportProgress, Range, Transport, ViewReady } from "../transport";
 
 export interface FakeUrl {
   id: number;
@@ -52,9 +54,67 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: true,
   },
+  {
+    id: "content",
+    title: "Content",
+    columns: [
+      col("address", "Address", "url", 420),
+      col("main_words", "Main content words", "int", 130, "near_dup"),
+      col("closest_sim", "Closest similarity", "int", 130, "near_dup"),
+      col("closest_url", "Closest match", "url", 320, "near_dup"),
+      col("near_count", "Near duplicates", "int", 120, "near_dup"),
+      col("cluster", "Cluster", "int", 80, "near_dup"),
+    ],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "near_duplicates", label: "Near duplicates", need: "near_dup" },
+    ],
+    search_column: "closest_url",
+    scoped: false,
+  },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
+/** Fake clusters by URL id: `[ids, similarity to the first]`. Ids 2-5 and 12-13. */
+export const fakeClusters: [number[], number[]][] = [
+  [
+    [2, 3, 4, 5],
+    [0, 97, 93, 91],
+  ],
+  [
+    [12, 13],
+    [0, 100],
+  ],
+];
+
+const clusterOf = (id: number) => fakeClusters.findIndex(([ids]) => ids.includes(id));
+const nd = (id: number) => {
+  const c = clusterOf(id);
+  if (c < 0) return null;
+  const [ids, sims] = fakeClusters[c];
+  const i = ids.indexOf(id);
+  const others = ids.map((o, j) => ({ o, sim: i === 0 ? sims[j] : j === 0 ? sims[i] : Math.min(sims[i], sims[j]) })).filter((x) => x.o !== id);
+  others.sort((a, b) => b.sim - a.sim);
+  return { cluster: c + 1, others };
+};
+
+const cell = (u: FakeUrl, c: string, urls: FakeUrl[] = []) => {
+  const d = nd(u.id);
+  const closest = d ? urls.find((x) => x.id === d.others[0].o) : undefined;
+  return (
+    {
+      address: u.url,
+      status_code: u.status,
+      title: u.title,
+      h1: u.h1 ?? null,
+      depth: u.depth,
+      main_words: u.title === null ? null : 240,
+      closest_sim: d ? d.others[0].sim : null,
+      closest_url: closest?.url ?? null,
+      near_count: d ? d.others.length : 0,
+      cluster: d?.cluster ?? null,
+    } as Record<string, string | number | null>
+  )[c] ?? null;
+};
 
 export interface FakeResults {
   urls: FakeUrl[];
@@ -68,6 +128,15 @@ export interface FakeResults {
   progress(p: Partial<ExportProgress>): void;
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** Near duplicate analysis state; "done" once a test or a run says so. */
+  nearDup: NearDupStatus["state"];
+  /** Whether the file keeps HTML for the comparison view. */
+  htmlStored: boolean;
+  analysisRuns: number;
+  nearDupExports: { kind: string; cluster: number | null; dest: string }[];
+  /** Ends a running analysis, as the engine would. */
+  finishAnalysis(f?: Partial<AnalysisFinished>): void;
+  analysisProgress(p: Partial<AnalysisProgress>): void;
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -87,12 +156,24 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "exportCancel"
   | "onViewReady"
   | "onExportProgress"
+  | "nearDupStatus"
+  | "nearDupClusters"
+  | "nearDupMembers"
+  | "nearDupPairs"
+  | "comparePages"
+  | "runNearDup"
+  | "cancelNearDup"
+  | "exportNearDup"
+  | "onAnalysisProgress"
+  | "onAnalysisFinished"
 > & { results: FakeResults } {
   let version = 1;
   let next = 0;
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
   const readyCbs = new Set<(r: ViewReady) => void>();
   const progressCbs = new Set<(p: ExportProgress) => void>();
+  const analysisProgressCbs = new Set<(p: AnalysisProgress) => void>();
+  const analysisFinishedCbs = new Set<(f: AnalysisFinished) => void>();
   const results: FakeResults = {
     urls: [...initial],
     copied: [],
@@ -107,6 +188,19 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.urls.push(...urls);
       version++;
     },
+    nearDup: "not_run",
+    htmlStored: true,
+    analysisRuns: 0,
+    nearDupExports: [],
+    finishAnalysis: (f) => {
+      results.nearDup = f?.error || f?.cancelled ? "not_run" : "done";
+      if (results.nearDup === "done" && !results.features.includes("near_dup")) results.features.push("near_dup");
+      version++;
+      analysisFinishedCbs.forEach((cb) =>
+        cb({ path: "/crawls/example.com.spiderlens", summary: f?.error || f?.cancelled ? null : { compared: 27, too_short: 0, not_indexable: 0, no_signature: 0, clusters: 2, ms: 40 }, cancelled: false, error: null, ...f }),
+      );
+    },
+    analysisProgress: (p) => analysisProgressCbs.forEach((cb) => cb({ path: "/crawls/example.com.spiderlens", done: 1, total: 3, step: "Comparing pages", ...p })),
   };
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
@@ -115,14 +209,16 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
+    if (q.tab === "content") us = us.filter((u) => u.internal && u.status === 200);
+    if (q.filter === "near_duplicates") us = us.filter((u) => clusterOf(u.id) >= 0);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
     if (q.sort) {
       const k = q.sort.column;
       const d = q.sort.desc ? -1 : 1;
       us = [...us].sort((a, b) => {
-        const x = cell(a, k);
-        const y = cell(b, k);
+        const x = cell(a, k, results.urls);
+        const y = cell(b, k, results.urls);
         if (x === y) return a.id - b.id;
         if (x === null) return 1;
         if (y === null) return -1;
@@ -133,14 +229,100 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
-    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id) : null))];
+    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id, results.urls) : null))];
   };
   const page = (view: number, from: number, count: number) => {
     const v = views.get(view)!;
     return { view, version: v.version, from, rows: v.ids.slice(from, from + count).map((id) => row(v.tab, id)), total: v.ids.length, ready: true };
   };
+  const address = (id: number) => results.urls.find((u) => u.id === id)?.url ?? `https://example.com/${id}`;
+  const paragraphs = (id: number, changed: boolean) => [
+    { spans: [{ text: "Hand made leather shoes, stitched in our workshop.", op: "equal" as const }], pair: 0 },
+    {
+      spans: [
+        { text: "Available in ", op: "equal" as const },
+        { text: changed ? `colour ${id}` : "black", op: changed ? ("changed" as const) : ("equal" as const) },
+        { text: " with free returns.", op: "equal" as const },
+      ],
+      pair: 1,
+    },
+  ];
   return {
     results,
+    nearDupStatus: async () => ({
+      state: results.nearDup,
+      reason: results.nearDup === "not_run" ? "Not analysed yet." : null,
+      threshold: results.nearDup === "not_run" ? null : 90,
+      compared: results.nearDup === "done" ? 27 : 0,
+      too_short: 0,
+      not_indexable: 0,
+      no_signature: 0,
+      near_duplicates: results.nearDup === "done" ? 6 : 0,
+      clusters: results.nearDup === "done" ? fakeClusters.length : 0,
+      html_stored: results.htmlStored,
+    }),
+    nearDupClusters: async (_p, offset, limit) => ({
+      total: results.nearDup === "done" ? fakeClusters.length : 0,
+      rows: (results.nearDup === "done" ? fakeClusters : []).slice(offset, offset + limit).map(([ids, sims], i) => ({
+        id: i + 1,
+        size: ids.length,
+        min_sim: Math.min(...sims.slice(1)),
+        max_sim: Math.max(...sims.slice(1)),
+        representative_id: ids[0],
+        representative: address(ids[0]),
+        exact: sims.slice(1).every((x) => x === 100),
+      })),
+    }),
+    nearDupMembers: async (_p, cluster, offset, limit) => {
+      const [ids, sims] = fakeClusters[cluster - 1] ?? [[], []];
+      return {
+        total: ids.length,
+        representative_id: ids[0] ?? 0,
+        rows: ids.slice(offset, offset + limit).map((id, j) => ({ url_id: id, address: address(id), sim: j + offset === 0 ? null : sims[j + offset], exact: sims[j + offset] === 100, representative: j + offset === 0 })),
+      };
+    },
+    nearDupPairs: async (_p, urlId) => {
+      const d = results.nearDup === "done" ? nd(urlId) : null;
+      return {
+        status: results.nearDup === "done" ? "compared" : null,
+        near_count: d?.others.length ?? 0,
+        near_count_is_min: false,
+        cluster: d?.cluster ?? null,
+        threshold: results.nearDup === "done" ? 90 : null,
+        rows: (d?.others ?? []).map(({ o, sim }) => ({ other_id: o, address: address(o), sim, exact: sim === 100, cluster: d!.cluster })),
+      };
+    },
+    comparePages: async (_p, a, b, full): Promise<Comparison> => {
+      const d = nd(a);
+      const sim = d?.others.find((x) => x.o === b)?.sim ?? null;
+      if (!results.htmlStored) return { sim, exact: sim === 100, unavailable: "html_not_stored", a: null, b: null };
+      const side = (id: number, changed: boolean) => ({
+        url_id: id,
+        address: address(id),
+        source: "main",
+        paragraphs: full ? [{ spans: [{ text: "Home · Shop · About", op: "excluded" as const }], pair: null }, ...paragraphs(id, changed)] : paragraphs(id, changed),
+      });
+      return { sim, exact: sim === 100, unavailable: null, a: side(a, sim !== 100), b: side(b, sim !== 100) };
+    },
+    runNearDup: async () => {
+      results.analysisRuns++;
+      results.nearDup = "running";
+    },
+    cancelNearDup: async () => {
+      results.finishAnalysis({ cancelled: true });
+    },
+    exportNearDup: async (_p, kind, cluster, dest) => {
+      results.nearDupExports.push({ kind, cluster, dest });
+      return 6;
+    },
+    onAnalysisProgress: async (cb) => {
+      analysisProgressCbs.add(cb);
+      return () => void analysisProgressCbs.delete(cb);
+    },
+    onAnalysisFinished: async (cb) => {
+      analysisFinishedCbs.add(cb);
+      return () => void analysisFinishedCbs.delete(cb);
+    },
     resultsTabs: async () => fakeTabs,
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {

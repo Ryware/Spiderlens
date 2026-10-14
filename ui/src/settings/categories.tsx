@@ -12,7 +12,7 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "content" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +34,12 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "content",
+    title: "Duplicate content",
+    description: "How SpiderLens finds pages whose main content is nearly the same. Everything runs on this computer.",
+    prefixes: ["content"],
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -328,5 +334,41 @@ export function CategoryBody({ id, setup, transport }: { id: CategoryId; setup: 
           </Row>
         </Group>
       );
+
+    case "content": {
+      const ct = config.content;
+      const put = (patch: Partial<typeof ct>) => set((c) => ({ ...c, content: { ...c.content, ...patch } }));
+      return (
+        <>
+          <Group title="Matching">
+            <Row label="Near duplicate threshold" help="Pages at least this similar, in percent, count as near duplicates. 90 is a good start; 100 finds only exact copies." issues={at("content.threshold")}>
+              {(i) => <NumberInput id={i} min={50} max={100} value={ct.threshold} onChange={(v) => put({ threshold: v ?? NaN })} />}
+            </Row>
+            <Row label="Show closest matches from" help="Each page lists its closest matches at least this similar, even below the threshold." issues={at("content.report_floor")}>
+              {(i) => <NumberInput id={i} min={50} max={100} value={ct.report_floor} onChange={(v) => put({ report_floor: v ?? NaN })} />}
+            </Row>
+            <Row label="Minimum words" help="Pages with fewer words of main content are not compared." issues={at("content.min_words")}>
+              {(i) => <NumberInput id={i} min={0} value={ct.min_words} onChange={(v) => put({ min_words: v ?? NaN })} />}
+            </Row>
+            <Row label="Indexable pages only" help="Leaves out noindex pages and pages that name another page as canonical.">
+              {(_, l) => <Switch labelledBy={l} checked={ct.indexable_only} onChange={(v) => put({ indexable_only: v })} />}
+            </Row>
+          </Group>
+          <Group title="Main content">
+            <Row
+              label="Content area selector"
+              stacked
+              help="CSS selector of the element that holds the main content. Blank uses <main>, then <article>, then the page without navigation, header, footer and sidebars."
+              issues={at("content.content_selector")}
+            >
+              {(i) => <Input id={i} mono placeholder="#content" value={ct.content_selector ?? ""} onChange={(e) => put({ content_selector: e.target.value === "" ? null : e.target.value })} />}
+            </Row>
+            <Row label="Leave out" stacked help="CSS selectors of parts to ignore, one per line, such as related products or cookie banners." issues={at("content.exclude_selectors")}>
+              {(i) => <Lines id={i} placeholder=".related-products" value={ct.exclude_selectors} onChange={(v) => put({ exclude_selectors: v })} />}
+            </Row>
+          </Group>
+        </>
+      );
+    }
   }
 }

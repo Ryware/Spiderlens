@@ -35,6 +35,7 @@ pub struct DiffParagraph {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub struct CompareSide {
+    #[ts(type = "number")]
     pub url_id: i64,
     pub address: String,
     pub source: String,

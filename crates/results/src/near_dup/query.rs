@@ -302,6 +302,81 @@ pub fn page_rows(conn: &Connection) -> Result<Vec<PageSummaryRow>> {
     Ok(rows)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct MemberRow {
+    #[ts(type = "number")]
+    pub url_id: i64,
+    pub address: String,
+    /// Similarity to the cluster's representative, when that pair was kept.
+    pub sim: Option<u8>,
+    pub exact: bool,
+    pub representative: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct MembersPage {
+    pub total: u32,
+    #[ts(type = "number")]
+    pub representative_id: i64,
+    pub rows: Vec<MemberRow>,
+}
+
+/// One cluster's pages: the representative first, then the closest to it.
+pub fn members(conn: &Connection, cluster: u32, offset: u32, limit: u32) -> Result<MembersPage> {
+    let empty = MembersPage {
+        total: 0,
+        representative_id: 0,
+        rows: vec![],
+    };
+    if !has_results(conn)? {
+        return Ok(empty);
+    }
+    let Some(rep): Option<i64> = conn
+        .query_row(
+            "SELECT representative_id FROM near_dup_clusters WHERE id = ?1",
+            [cluster],
+            |r| r.get(0),
+        )
+        .optional()?
+    else {
+        return Ok(empty);
+    };
+    let total: u32 = conn.query_row(
+        "SELECT COUNT(*) FROM near_dup_pages WHERE cluster = ?1",
+        [cluster],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(
+        "SELECT n.url_id, u.url,
+                COALESCE((SELECT q.sim FROM near_dup_pairs q WHERE q.url_id = ?2 AND q.other_id = n.url_id),
+                         (SELECT q.sim FROM near_dup_pairs q WHERE q.url_id = n.url_id AND q.other_id = ?2)) AS sim,
+                COALESCE((SELECT q.exact FROM near_dup_pairs q WHERE q.url_id = ?2 AND q.other_id = n.url_id), 0)
+         FROM near_dup_pages n JOIN urls u ON u.id = n.url_id
+         WHERE n.cluster = ?1
+         ORDER BY n.url_id <> ?2, sim IS NULL, sim DESC, u.url
+         LIMIT ?3 OFFSET ?4",
+    )?;
+    let rows = stmt
+        .query_map(params![cluster, rep, limit, offset], |r| {
+            let url_id: i64 = r.get(0)?;
+            Ok(MemberRow {
+                url_id,
+                address: r.get(1)?,
+                sim: if url_id == rep { None } else { r.get(2)? },
+                exact: r.get(3)?,
+                representative: url_id == rep,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(MembersPage {
+        total,
+        representative_id: rep,
+        rows,
+    })
+}
+
 /// One unordered near duplicate pair (at or above the threshold).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PairExportRow {

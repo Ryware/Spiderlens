@@ -10,7 +10,7 @@ use scraper::{ElementRef, Selector};
 use serde::Serialize;
 
 use super::shingle::{self, Signature};
-use super::text::{collapse, hash, word_count};
+use super::text::collapse;
 
 pub(super) const MAIN: u8 = 1;
 pub(super) const ARTICLE: u8 = 2;
@@ -50,7 +50,8 @@ impl MainSource {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MainContent {
     pub words: u32,
-    /// xxh3 of the collapsed main text: equal = exact content duplicate.
+    /// Hash of the main text's words in order (case, spacing and
+    /// punctuation aside): equal = exact content duplicate.
     pub text_hash: i64,
     pub source: MainSource,
     /// `None` when the main content has no words.
@@ -62,7 +63,7 @@ impl MainContent {
     pub(super) fn empty() -> Self {
         Self {
             words: 0,
-            text_hash: hash(""),
+            text_hash: shingle::tokens_hash(&[]),
             source: MainSource::Fallback,
             signature: None,
         }
@@ -210,51 +211,60 @@ impl Spans {
         }
     }
 
+    /// The source's text, spans joined with a space where they were apart
+    /// (not collapsed: tokenising ignores spacing).
     fn collect(&self, source: MainSource) -> String {
-        let mut out = String::new();
+        let mut out = String::with_capacity(self.text.len());
         for s in &self.spans {
-            if s.sep {
-                out.push(' ');
-            } else if Self::keeps(source, s.flags) {
+            if !s.sep && Self::keeps(source, s.flags) {
                 out.push_str(&self.text[s.start as usize..s.end as usize]);
             } else {
                 // Left-out inline content still separates its neighbours.
                 out.push(' ');
             }
         }
-        collapse(&out)
+        out
     }
 
-    /// The winning source and its collapsed text.
-    fn choose(&self, rules: Option<&ContentRules>) -> (MainSource, String) {
+    /// Whether the source holds at least one word.
+    fn has_words(&self, source: MainSource) -> bool {
+        self.spans.iter().any(|s| {
+            !s.sep
+                && Self::keeps(source, s.flags)
+                && self.text[s.start as usize..s.end as usize]
+                    .chars()
+                    .any(|c| c.is_alphanumeric())
+        })
+    }
+
+    /// The winning source.
+    fn source(&self, rules: Option<&ContentRules>) -> MainSource {
         if rules.is_some_and(ContentRules::has_content) {
-            if self.selected_seen {
-                return (MainSource::Selector, self.collect(MainSource::Selector));
-            }
-            let text = self.collect(MainSource::Fallback);
-            return (MainSource::SelectorMissing, text);
+            return if self.selected_seen {
+                MainSource::Selector
+            } else {
+                MainSource::SelectorMissing
+            };
         }
-        for source in [MainSource::Main, MainSource::Article] {
-            let text = self.collect(source);
-            if word_count(&text) > 0 {
-                return (source, text);
-            }
-        }
-        (MainSource::Fallback, self.collect(MainSource::Fallback))
+        [MainSource::Main, MainSource::Article]
+            .into_iter()
+            .find(|&s| self.has_words(s))
+            .unwrap_or(MainSource::Fallback)
     }
 
     pub(super) fn summary(&self, rules: Option<&ContentRules>) -> MainContent {
-        let (source, text) = self.choose(rules);
+        let source = self.source(rules);
+        let (tokens, words) = shingle::scan(&self.collect(source));
         MainContent {
-            words: word_count(&text),
-            text_hash: hash(&text),
+            words,
+            text_hash: shingle::tokens_hash(&tokens),
             source,
-            signature: shingle::signature(&text),
+            signature: shingle::signature_of_tokens(&tokens),
         }
     }
 
     pub(super) fn paragraphs(&self, rules: Option<&ContentRules>) -> MainText {
-        let (source, _) = self.choose(rules);
+        let source = self.source(rules);
         let mut paragraphs = Vec::new();
         let mut runs: Vec<Run> = Vec::new();
         let mut flush = |runs: &mut Vec<Run>| {
