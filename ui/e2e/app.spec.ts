@@ -206,8 +206,8 @@ test("crawl_tree_draws_and_selecting_a_node_shows_it_in_the_details", async ({ p
   expect(box.width).toBeGreaterThan(300);
   expect(box.height).toBeGreaterThan(200);
   // Something was drawn: the canvas is not blank.
-  await expect(canvas).toHaveAttribute("data-layout", "cloud");
-  // The cloud is drawn on the next frames after its scene arrives.
+  await expect(canvas).toHaveAttribute("data-layout", "tree");
+  // The tree is drawn on the next frames after its scene arrives.
   await expect
     .poll(() =>
       canvas.evaluate((c: HTMLCanvasElement) => {
@@ -302,13 +302,18 @@ test("anchor_text_cloud_from_the_details_lists_a_terms_links", async ({ page }) 
   const canvas = page.getByRole("application");
   await expect(canvas).toHaveAttribute("aria-label", /^Anchor text: \d+ nodes/);
   await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.focus)).toMatch(/^u:\d+$/);
-  const painted = await canvas.evaluate((c: HTMLCanvasElement) => {
-    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
-    let n = 0;
-    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
-    return n;
-  });
-  expect(painted).toBeGreaterThan(100);
+  await expect(canvas).toHaveAttribute("data-layout", "cloud");
+  // The cloud is drawn on the next frames after its scene arrives.
+  await expect
+    .poll(() =>
+      canvas.evaluate((c: HTMLCanvasElement) => {
+        const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+        return n;
+      }),
+    )
+    .toBeGreaterThan(100);
   // Click the biggest term: its links open; a source drives the details.
   const term = await nodeOnPage(page, "t:running");
   await page.mouse.click(term.x, term.y);
