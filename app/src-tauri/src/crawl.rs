@@ -44,6 +44,11 @@ impl State {
             next_id: AtomicU64::new(1),
         }
     }
+
+    /// The app's crawl folder (spec 012 suggests a previous crawl from it).
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
 }
 
 #[derive(Serialize)]

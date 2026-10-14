@@ -53,6 +53,38 @@ struct ExportProgress {
     path: PathBuf,
 }
 
+/// Sends one export job's `export-progress` events; comparison exports
+/// (spec 012) use the same events and the same cancel command.
+pub struct ExportEvents {
+    app: AppHandle,
+    job: u32,
+    path: PathBuf,
+}
+
+impl ExportEvents {
+    pub fn new(app: &AppHandle, job: u32, path: PathBuf) -> Self {
+        Self {
+            app: app.clone(),
+            job,
+            path,
+        }
+    }
+
+    pub fn send(&self, rows_written: u64, total: u64, state: &'static str, error: Option<String>) {
+        let _ = self.app.emit(
+            "export-progress",
+            ExportProgress {
+                job: self.job,
+                rows_written,
+                total,
+                state,
+                error,
+                path: self.path.clone(),
+            },
+        );
+    }
+}
+
 fn start_actor(path: &Path) -> Cmd<Actor> {
     let mut reader = Reader::open(path).map_err(|e| e.to_string())?;
     let interrupt = reader.interrupt_handle();
@@ -100,6 +132,21 @@ impl State {
         answer
             .await
             .map_err(|_| "The results reader stopped.".to_string())?
+    }
+
+    /// A new export job id and its cancel flag.
+    pub fn new_export(&self) -> (u32, Arc<AtomicBool>) {
+        let job = self.next_export.fetch_add(1, Ordering::Relaxed) + 1;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.exports
+            .lock()
+            .expect("exports lock")
+            .insert(job, cancel.clone());
+        (job, cancel)
+    }
+
+    pub fn end_export(&self, job: u32) {
+        self.exports.lock().expect("exports lock").remove(&job);
     }
 
     fn interrupt_build(&self) {
@@ -278,29 +325,11 @@ pub fn export_start(
     ranges: Option<Vec<(u32, u32)>>,
     dest: PathBuf,
 ) -> Cmd<u32> {
-    let job = state.next_export.fetch_add(1, Ordering::Relaxed) + 1;
-    let cancel = Arc::new(AtomicBool::new(false));
-    state
-        .exports
-        .lock()
-        .expect("exports lock")
-        .insert(job, cancel.clone());
+    let (job, cancel) = state.new_export();
     std::thread::Builder::new()
         .name("export".into())
         .spawn(move || {
-            let send = |rows_written, total, state, error: Option<String>| {
-                let _ = app.emit(
-                    "export-progress",
-                    ExportProgress {
-                        job,
-                        rows_written,
-                        total,
-                        state,
-                        error,
-                        path: dest.clone(),
-                    },
-                );
-            };
+            let events = ExportEvents::new(&app, job, dest.clone());
             let mut last = std::time::Instant::now();
             let result = export_file(
                 &path,
@@ -312,17 +341,16 @@ pub fn export_start(
                 &mut |n, total| {
                     if last.elapsed().as_millis() >= 250 || n == 0 {
                         last = std::time::Instant::now();
-                        send(n, total, "running", None);
+                        events.send(n, total, "running", None);
                     }
                 },
             );
             match result {
-                Ok(n) => send(n, n, "done", None),
-                Err(ExportError::Cancelled) => send(0, 0, "cancelled", None),
-                Err(e) => send(0, 0, "failed", Some(e.to_string())),
+                Ok(n) => events.send(n, n, "done", None),
+                Err(ExportError::Cancelled) => events.send(0, 0, "cancelled", None),
+                Err(e) => events.send(0, 0, "failed", Some(e.to_string())),
             }
-            let state = tauri::Manager::state::<State>(&app);
-            state.exports.lock().expect("exports lock").remove(&job);
+            tauri::Manager::state::<State>(&app).end_export(job);
         })
         .map_err(|e| format!("Could not start the export: {e}"))?;
     Ok(job)

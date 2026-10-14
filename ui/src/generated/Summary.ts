@@ -11,6 +11,14 @@ export type Summary = { previous: CrawlInfo, current: CrawlInfo, config_diffs: A
  */
 matched: bigint, new: bigint, missing: bigint, not_reached: bigint, collisions: bigint, 
 /**
+ * Internal HTML pages of the previous crawl missing from the current one.
+ */
+missing_pages: bigint, 
+/**
+ * Pages indexable in the previous crawl and not in the current one.
+ */
+lost_indexable: bigint, 
+/**
  * Fewer than 10% of the smaller crawl's URLs matched (FR-010).
  */
 low_overlap: boolean, filters: Array<FilterDelta>, elements: Array<ElementDelta>, };

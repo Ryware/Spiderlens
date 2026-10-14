@@ -360,3 +360,30 @@ impl Comparison {
         })
     }
 }
+
+/// The crawl file in `dir` to compare `current` with by default (FR-001):
+/// the most recent other file, no newer than `current`, that starts on the
+/// same origin. Files that cannot be read are skipped.
+pub fn suggest_previous(dir: &Path, current: &Path) -> Option<PathBuf> {
+    let origin = |p: &Path| -> Option<String> {
+        let (conn, _) = spiderlens_results::connect_attachable(p).ok()?;
+        CrawlInfo::read(&conn, p).ok()?.origin()
+    };
+    let mtime = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
+    let want = origin(current)?;
+    let limit = mtime(current);
+    let current = current.canonicalize().unwrap_or_else(|_| current.to_path_buf());
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "spiderlens"))
+        .filter(|p| p.canonicalize().map_or(true, |c| c != current))
+        .filter_map(|p| Some((mtime(&p)?, p)))
+        .filter(|(t, _)| limit.is_none_or(|l| *t <= l))
+        .collect();
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    files
+        .into_iter()
+        .map(|(_, p)| p)
+        .find(|p| origin(p).as_deref() == Some(want.as_str()))
+}

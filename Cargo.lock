@@ -4429,6 +4429,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spiderlens-compare",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",

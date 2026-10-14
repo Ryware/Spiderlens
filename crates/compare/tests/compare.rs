@@ -226,6 +226,15 @@ fn element(id: &str) -> Group {
 #[tokio::test]
 async fn us1_us2_changes_between_two_crawls_of_the_same_site() {
     let p = same_site_pair().await;
+    // FR-001: the previous crawl of the same site is suggested.
+    assert_eq!(
+        spiderlens_compare::suggest_previous(p.prev.parent().unwrap(), &p.cur).as_deref(),
+        Some(p.prev.as_path())
+    );
+    assert_eq!(
+        spiderlens_compare::suggest_previous(p.prev.parent().unwrap(), &p.prev),
+        None
+    );
     let mut c = run(&p, CompareSettings::default());
     let s = c.summary().clone();
 
@@ -448,9 +457,14 @@ async fn us4_mapping_matches_a_migrated_site() {
     drop(c);
 
     // US4-3: the tester shows the mapped URL and whether it exists.
-    let tests =
-        spiderlens_compare::test_mapping(&prev, &cur, std::slice::from_ref(&rule), &[old.url("old.test", "/gone")], 0)
-            .unwrap();
+    let tests = spiderlens_compare::test_mapping(
+        &prev,
+        &cur,
+        std::slice::from_ref(&rule),
+        &[old.url("old.test", "/gone")],
+        0,
+    )
+    .unwrap();
     assert_eq!(tests[0].mapped, new.url("new.test", "/gone"));
     assert!(!tests[0].exists_in_current);
 

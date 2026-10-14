@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod compare;
 mod crawl;
 mod results;
 mod settings;
@@ -33,6 +34,7 @@ fn main() {
             app.manage(settings::State::open(dir)?);
             app.manage(crawl::State::new(app.path().app_data_dir()?.join("crawls")));
             app.manage(results::State::default());
+            app.manage(compare::State::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,6 +73,23 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            compare::compare_suggest,
+            compare::compare_setup,
+            compare::compare_test_mapping,
+            compare::compare_start,
+            compare::compare_cancel,
+            compare::compare_summary,
+            compare::compare_settings,
+            compare::compare_set_elements,
+            compare::compare_open_group,
+            compare::compare_rows,
+            compare::compare_close_group,
+            compare::compare_detail,
+            compare::compare_report,
+            compare::compare_export,
+            compare::compare_close,
+            compare::compare_settings_load,
+            compare::compare_settings_save,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {
