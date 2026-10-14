@@ -31,7 +31,7 @@ ignored tests now and enabled when spec 005 lands.
 - [x] T011 [US1] Windowing component with scaled scrolling (cap 2^24 px), wheel and keys in row units when scaled; tests at 1k, 1.5M and 5M rows (position ↔ index round-trip, last row reachable)
 - [ ] T012 [US1] `usePagedRows`: 100-row pages, 30-page LRU, version-tagged requests, skeleton rows; tests for stale replies and eviction (done: cache keeps the 30 pages nearest the last one loaded, stale replies dropped by version; open: dedicated tests)
 - [x] T013 [US1] Grid: TanStack Table column model, 28 px rows, cell renderers per kind (status badge, state, URL with readable form, numbers tabular), truncation with tooltip
-- [ ] T014 [US1] ResultsView in the main area; sidebar result tabs live with counts; empty states ("results will appear…", "No URLs match this filter") (open: sidebar counts per tab)
+- [x] T014 [US1] ResultsView in the main area; sidebar result tabs live with counts; empty states ("results will appear…", "No URLs match this filter") (sidebar counts: `tab_counts`, one pass over `urls` for every tab, cached per data version; ~35 ms on 100k URLs)
 - [x] T015 [US1] Live refresh: `view_refresh` driven by progress `version`, adaptive interval, anchor and selection kept; Rust and UI tests
 - [x] T016 [US1] Engine: `active_ms` in meta and progress events; status bar and overview use it (FR-004); `stopping` state shown
 - [x] T017 [US1] Engine + overview: failures by error class in the completeness summary (FR-005); counts equal stored states (FR-006 test)
@@ -43,8 +43,8 @@ ignored tests now and enabled when spec 005 lands.
 - [x] T020 [US2] Filter strip: chips with counts (refresh ≤ 5 s live, exact at end), disabled with reason when unavailable; Response codes scope switch (all, internal, external)
 - [x] T021 [US2] Sort by header click asc/desc with indicator; natural text, numeric numbers, empty last
 - [x] T022 [US2] Search field (debounced) on URL + main column; count updates
-- [ ] T023 [US2] Column menu: show, hide, reorder (drag and keyboard), resize, reset; persisted per tab across restarts (open: reorder by keyboard (drag works))
-- [ ] T024 [US2] Per-tab session memory of filter, search, sort (FR-014); keyboard operation of the table: arrows, Shift range, Home/End, Page keys, Enter to inspector, ⌘1..⌘9 tabs (FR-018) (open: Enter to inspector, ⌘1..⌘9 tabs)
+- [x] T023 [US2] Column menu: show, hide, reorder (drag and keyboard: Alt/⌥+↑/↓ on a shown column, announced), resize, reset; persisted per tab across restarts
+- [x] T024 [US2] Per-tab session memory of filter, search, sort (FR-014); keyboard operation of the table: arrows, Shift range, Home/End, Page keys, Enter to inspector (Escape back), ⌘1..⌘9 tabs (FR-018)
 - [x] T025 [US2] Issues-site acceptance tests for every base filter (SC-002 now); content filters **after 005**
 
 ## Phase 5: US3 inspector (P2)

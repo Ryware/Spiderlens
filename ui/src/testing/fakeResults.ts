@@ -65,6 +65,8 @@ export interface FakeResults {
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
+  /** How often the sidebar asked for its tab counts. */
+  tabCountCalls: number;
   /** What the open crawl file holds; base only unless a test adds more. */
   features: Need[];
   /** Announces that the open view's full order is ready. */
@@ -83,6 +85,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewLocate"
   | "viewRefresh"
   | "viewCounts"
+  | "tabCounts"
   | "viewClose"
   | "urlDetail"
   | "urlList"
@@ -102,6 +105,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     copied: [],
     exports: [],
     opened: [],
+    tabCountCalls: 0,
     features: ["base"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
@@ -177,6 +181,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null }).ids.length;
       }
       return { tab, counts, unavailable, version };
+    },
+    tabCounts: async () => {
+      results.tabCountCalls++;
+      return { counts: Object.fromEntries(fakeTabs.map((t) => [t.id, select({ tab: t.id, filter: "all", scope: "all", search: "", sort: null }).ids.length])), version };
     },
     viewClose: async (_p, view) => {
       views.delete(view);
