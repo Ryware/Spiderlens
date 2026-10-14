@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft
+**Status**: Approved (2026-10-13)
 
 **Input**: Product backlog entry 010, "End-of-crawl report and exports: report sections, health score, HTML/XLSX/CSV" (milestone M2), opened on the owner's approval of 2026-10-13 to write specs for every feature gap ("מאושר בכל") and their standing go-ahead ("go for everything, in parallel, and do not forget UI tests"). The product spec describes the report: when a crawl finishes the user sees a summary with a site health score, issues by priority with affected URLs, response codes, site structure and crawl completeness, and can export it as a standalone file for clients, plus bulk exports of everything the crawl found to CSV and Excel.
 
