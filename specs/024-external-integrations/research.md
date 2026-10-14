@@ -36,3 +36,10 @@ These are the published limits and access rules the spec's defaults rely on. The
 - Ahrefs API: https://docs.ahrefs.com/docs/api/reference/introduction ; plans and units https://serpwatch.io/blog/the-8-best-seo-apis-ranked-by-what-they-actually-cost-to-run-in-2026/
 - Majestic API: https://majestic.com/account/api
 - Moz API plans: https://lucasfonseque.fr/?p=6263
+
+## Plan-time decisions (2026-10-14)
+
+- **Keychain library**: `keyring` 3 covers macOS Keychain, Windows Credential Manager and the Linux Secret Service behind one API; alternatives (`security-framework`, `windows` crate, `secret-service` directly) would mean three code paths. Chosen per the owner's keychain decision (2026-10-13).
+- **No incremental scopes**: Google's installed-app guide says incremental authorization is not supported for installed apps, so adding a feature re-consents with the union of scopes (plan D3).
+- **Client secret**: Google desktop clients issue a secret that the token endpoint expects, but treats it as not confidential; the built-in one is compiled in, a user's own one goes to the keychain.
+- **Cache format**: SQLite (already a dependency) rather than files per response: one file, indexed expiry, atomic writes.

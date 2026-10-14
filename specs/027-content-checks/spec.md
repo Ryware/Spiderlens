@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft
+**Status**: Approved (2026-10-13)
 
 **Input**: Owner approval of the feature-gap report (2026-10-13, rows 19, 30, 31, 32, 33 and 36): "the remaining content checks: spelling and grammar on visible text with offline dictionaries per language including Hebrew, PDF crawling, AMP validation, SERP snippet preview with pixel widths, and user-defined URL segments, as one spec with separable parts so any part can be dropped. Desktop only, no servers, crawl speed unchanged on the default path."
 
