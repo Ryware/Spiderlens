@@ -4441,8 +4441,10 @@ name = "spiderlens-desktop"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "rusqlite",
  "serde",
  "serde_json",
+ "spiderlens-aeo",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",

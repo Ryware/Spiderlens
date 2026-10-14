@@ -224,7 +224,7 @@ fn page(a: PageArgs) -> ExitCode {
         Ok(c) => c,
         Err(code) => return code,
     };
-    match analyze::page_result(&conn, &a.url) {
+    match analyze::page_result(&conn, analyze::PageKey::Url(&a.url)) {
         Ok(Some(p)) if a.json => {
             print_json(&p);
             ExitCode::from(exit::FETCHED)

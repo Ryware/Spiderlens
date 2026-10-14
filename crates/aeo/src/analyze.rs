@@ -1133,17 +1133,29 @@ pub struct PageResult {
     pub checks: Vec<PageCheck>,
 }
 
+/// Which page [`page_result`] reads.
+#[derive(Debug, Clone, Copy)]
+pub enum PageKey<'a> {
+    Id(i64),
+    Url(&'a str),
+}
+
 /// The stored result for one URL; `None` when the URL has no AI result.
-pub fn page_result(conn: &Connection, url: &str) -> Result<Option<PageResult>> {
+pub fn page_result(conn: &Connection, key: PageKey<'_>) -> Result<Option<PageResult>> {
     if !store::has_table(conn, "aeo_pages")? {
         return Ok(None);
     }
+    let (by_id, by_url) = match key {
+        PageKey::Id(id) => (Some(id), None),
+        PageKey::Url(url) => (None, Some(url)),
+    };
     let row = conn
         .query_row(
             "SELECT u.id, u.url, a.page_type, a.page_type_reason, a.score, a.provisional, a.version_used,
                     a.published, a.modified, a.author, a.blocked_bots
-             FROM urls u JOIN aeo_pages a ON a.url_id = u.id WHERE u.url = ?1",
-            [url],
+             FROM urls u JOIN aeo_pages a ON a.url_id = u.id
+             WHERE (?1 IS NOT NULL AND u.id = ?1) OR (?2 IS NOT NULL AND u.url = ?2)",
+            params![by_id, by_url],
             |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
