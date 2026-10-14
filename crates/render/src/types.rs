@@ -100,12 +100,16 @@ pub enum DownloadError {
 }
 
 /// Options for one browser process.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct LaunchOptions {
     /// Per-page JavaScript heap limit (`Failed { reason: PageTooLarge }` beyond it).
     pub heap_limit_mb: u32,
     /// Restart the browser after this many pages.
     pub restart_every: u32,
+    /// Start the browser through a guard process that closes it if this
+    /// process dies (research R12). `None` starts it directly, which leaves
+    /// it running if this process is killed; only tests do that.
+    pub guard: Option<GuardCommand>,
 }
 
 impl Default for LaunchOptions {
@@ -113,7 +117,27 @@ impl Default for LaunchOptions {
         Self {
             heap_limit_mb: 512,
             restart_every: 1_000,
+            guard: None,
         }
+    }
+}
+
+/// How to start the guard: `exe args... --render-guard <pid> <browser> <browser args...>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuardCommand {
+    pub exe: PathBuf,
+    /// Arguments placed before `--render-guard`.
+    pub args: Vec<std::ffi::OsString>,
+}
+
+impl GuardCommand {
+    /// The running executable, which must handle `--render-guard` by calling
+    /// [`crate::run_guard`] (the `spiderlens` and desktop binaries do).
+    pub fn current_exe() -> std::io::Result<Self> {
+        Ok(Self {
+            exe: std::env::current_exe()?,
+            args: Vec::new(),
+        })
     }
 }
 

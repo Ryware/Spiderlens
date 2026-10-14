@@ -316,6 +316,30 @@ pub fn data_dir() -> Option<PathBuf> {
     data_dir_from(|k| std::env::var_os(k))
 }
 
+/// The browser render tests use: `$SPIDERLENS_BROWSER` if set (any version,
+/// so a pinned older test browser works), else [`find_browser`]. `Ok(None)`
+/// means "skip": no browser, and `$SPIDERLENS_REQUIRE_BROWSER` is not `1`.
+/// In CI that variable is set, so a missing browser fails (research R13).
+#[doc(hidden)]
+pub fn browser_for_tests() -> Result<Option<BrowserInfo>, String> {
+    let user_path = std::env::var_os("SPIDERLENS_BROWSER").map(PathBuf::from);
+    let opts = FindOptions {
+        user_path,
+        data_dir: data_dir().unwrap_or_else(std::env::temp_dir),
+    };
+    match find_browser(&opts) {
+        Ok(b) => Ok(Some(b)),
+        Err(NotUsable::TooOld { found, .. }) if opts.user_path.is_some() => Ok(Some(found)),
+        Err(e) if std::env::var("SPIDERLENS_REQUIRE_BROWSER").as_deref() == Ok("1") => {
+            Err(format!("no browser for render tests: {e:?}"))
+        }
+        Err(e) => {
+            eprintln!("skipping render tests: no browser ({e:?}); set SPIDERLENS_BROWSER to run them");
+            Ok(None)
+        }
+    }
+}
+
 pub(crate) const APP_ID: &str = "com.ryware.spiderlens";
 
 pub(crate) fn data_dir_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {

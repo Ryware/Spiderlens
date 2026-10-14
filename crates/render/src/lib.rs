@@ -11,17 +11,20 @@
 //! rendering (T016) land.
 
 mod find;
+mod guard;
+mod launch;
 pub mod settle;
 mod types;
 
-use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
 pub use find::{
-    MAJOR_TOLERANCE, PINNED_VERSION, PREFER_DOWNLOAD, data_dir, find_browser, min_major,
+    MAJOR_TOLERANCE, PINNED_VERSION, PREFER_DOWNLOAD, browser_for_tests, data_dir, find_browser, min_major,
     should_offer_download,
 };
+pub use guard::{GUARD_ARG, parse_guard_args, run_guard};
+pub use launch::{launch_count, sweep_stale_profiles};
 pub use types::*;
 
 /// The pinned download for this platform, or `None` where Chrome for
@@ -54,14 +57,32 @@ pub fn remove_download(data_dir: &Path) -> std::io::Result<()> {
 
 /// One browser process.
 pub struct Browser {
+    info: BrowserInfo,
+    opts: LaunchOptions,
+    running: Option<launch::Running>,
     window: Window,
 }
 
 impl Browser {
-    /// Starts the browser. Until T010 this reports that no browser is usable.
+    /// Starts the browser. Stale temporary profiles of earlier, killed runs
+    /// are deleted first.
     pub async fn launch(info: &BrowserInfo, opts: LaunchOptions) -> Result<Self, LaunchError> {
-        let _ = (info, opts);
-        Err(LaunchError::NotUsable(NotUsable::NotFound))
+        let running = launch::Running::start(info, &opts).await?;
+        Ok(Self {
+            info: info.clone(),
+            opts,
+            running: Some(running),
+            window: Window {
+                width: 1024,
+                height: 768,
+                mobile: false,
+            },
+        })
+    }
+
+    /// The browser this process runs.
+    pub fn info(&self) -> &BrowserInfo {
+        &self.info
     }
 
     /// Renders one page in a fresh browser context. Never panics; every
@@ -74,23 +95,62 @@ impl Browser {
 
     /// Resident memory of the browser process tree, in bytes.
     pub fn memory_bytes(&self) -> u64 {
-        0
+        self.running.as_ref().map_or(0, launch::Running::memory_bytes)
     }
 
+    /// Closes the browser and starts a new one with the same options.
     pub async fn restart(&mut self) -> Result<(), LaunchError> {
-        Err(LaunchError::NotUsable(NotUsable::NotFound))
+        if let Some(r) = self.running.take() {
+            r.close().await;
+        }
+        self.running = Some(launch::Running::start(&self.info, &self.opts).await?);
+        Ok(())
     }
 
     /// Closes the process and deletes its temporary profile. Also on drop.
-    pub async fn close(self) {}
-}
+    pub async fn close(mut self) {
+        if let Some(r) = self.running.take() {
+            r.close().await;
+        }
+    }
 
-/// The guard process entry point (research R12), for the hidden
-/// `--render-guard <pid>` argument of the `spiderlens` and desktop binaries.
-/// Until T010 it exits at once with status 2.
-pub fn run_guard(parent_pid: u32, browser_args: Vec<OsString>) -> ! {
-    let _ = (parent_pid, browser_args);
-    std::process::exit(2)
+    /// The temporary profile folder of the running browser. For tests.
+    #[doc(hidden)]
+    pub fn profile_dir(&self) -> Option<&std::path::Path> {
+        self.running.as_ref().map(launch::Running::profile)
+    }
+
+    /// Opens `about:blank` in a fresh context and evaluates a script, to
+    /// check the connection works. For tests.
+    #[doc(hidden)]
+    pub async fn smoke_test(&self) -> Result<String, String> {
+        use chromiumoxide::cdp::browser_protocol::target::{
+            CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams,
+        };
+        let cdp = &self.running.as_ref().ok_or("closed")?.cdp;
+        let context = cdp
+            .execute(CreateBrowserContextParams::default())
+            .await
+            .map_err(|e| e.to_string())?
+            .result
+            .browser_context_id;
+        let mut target = CreateTargetParams::new("about:blank");
+        target.browser_context_id = Some(context.clone());
+        let result = async {
+            let page = cdp.new_page(target).await.map_err(|e| e.to_string())?;
+            let v = page
+                .evaluate("navigator.language + ' ' + (6 * 7)")
+                .await
+                .map_err(|e| e.to_string())?
+                .into_value::<String>()
+                .map_err(|e| e.to_string())?;
+            page.close().await.ok();
+            Ok(v)
+        }
+        .await;
+        cdp.execute(DisposeBrowserContextParams::new(context)).await.ok();
+        result
+    }
 }
 
 #[cfg(test)]
