@@ -38,25 +38,25 @@ impl Path {
         })
     }
 
-    pub(super) fn find(&self, blocks: &[StructuredBlock]) -> Found {
+    pub(super) fn find(&self, blocks: &[Option<Value>]) -> Found {
         let mut found = Found {
             values: Vec::new(),
             bad_json: false,
         };
-        for b in blocks.iter().filter(|b| b.kind == StructuredKind::JsonLd) {
-            let Ok(json) = serde_json::from_str::<Value>(&b.raw) else {
+        for b in blocks {
+            let Some(json) = b else {
                 found.bad_json = true;
                 continue;
             };
             match self {
                 Self::Json(p) => {
-                    for v in p.query(&json).all() {
+                    for v in p.query(json).all() {
                         push_value(v, &mut found.values);
                     }
                 }
                 Self::Item { segments, type_ } => {
                     let mut items = Vec::new();
-                    collect_items(&json, &mut items);
+                    collect_items(json, &mut items);
                     for item in items {
                         if type_.as_deref().is_some_and(|t| !has_type(item, t)) {
                             continue;
@@ -74,6 +74,16 @@ impl Path {
         }
         found
     }
+}
+
+/// The page's JSON-LD blocks, parsed once for every rule; `None` for a
+/// block that is not valid JSON.
+pub(super) fn parse(blocks: &[StructuredBlock]) -> Vec<Option<Value>> {
+    blocks
+        .iter()
+        .filter(|b| b.kind == StructuredKind::JsonLd)
+        .map(|b| serde_json::from_str(&b.raw).ok())
+        .collect()
 }
 
 /// Top-level objects, array members and `@graph` members, in order.
@@ -140,7 +150,7 @@ mod tests {
 
     fn find(expr: &str, t: Option<&str>, raw: &[&str]) -> (Vec<String>, bool) {
         let blocks: Vec<_> = raw.iter().map(|r| block(r)).collect();
-        let f = Path::new(expr, t).unwrap().find(&blocks);
+        let f = Path::new(expr, t).unwrap().find(&parse(&blocks));
         (f.values, f.bad_json)
     }
 

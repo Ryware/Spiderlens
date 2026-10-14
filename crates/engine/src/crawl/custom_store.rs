@@ -318,16 +318,16 @@ impl CrawlStore {
                 *s = (0, 0, None);
             }
             page.values.remove(&slot);
-            self.write_page_custom(url_id, &page)?;
+            self.write_encoded(url_id, &encode_page(&page)?)?;
         }
         Ok(())
     }
 
     /// Stores one page's rule outcomes during a crawl.
-    pub fn record_custom(&self, url_id: i64, slots: &Slots, outcomes: &PageRules) -> Result<()> {
-        let mut page = PageCustom::default();
-        set_outcomes(&mut page, slots, outcomes);
-        self.write_page_custom(url_id, &page)
+    /// Writes one page's results, encoded off the writer thread by
+    /// [`encode_custom`].
+    pub fn record_custom(&self, url_id: i64, encoded: &EncodedCustom) -> Result<()> {
+        self.write_encoded(url_id, encoded)
     }
 
     /// Replaces the given slots of one page and keeps the others (reruns).
@@ -337,42 +337,26 @@ impl CrawlStore {
             page.values.remove(s);
         }
         set_outcomes(&mut page, slots, outcomes);
-        self.write_page_custom(url_id, &page)
+        self.write_encoded(url_id, &encode_page(&page)?)
     }
 
-    fn write_page_custom(&self, url_id: i64, page: &PageCustom) -> Result<()> {
-        let mut packed = Vec::with_capacity(page.slots.len() * SLOT_BYTES);
-        let mut firsts = Vec::with_capacity(page.slots.len());
-        for (count, f, first) in &page.slots {
-            packed.extend_from_slice(&count.to_le_bytes());
-            packed.extend_from_slice(&f.to_le_bytes());
-            packed.extend_from_slice(&[0, 0]);
-            firsts.push(first.as_ref().map_or(Value::Null, |s| Value::String(s.clone())));
-        }
+    fn write_encoded(&self, url_id: i64, e: &EncodedCustom) -> Result<()> {
         self.conn
             .prepare_cached(
                 "INSERT OR REPLACE INTO custom_results (url_id, slots, firsts) VALUES (?1, ?2, ?3)",
             )?
-            .execute(params![url_id, packed, Value::Array(firsts).to_string()])?;
-        let mut map = Map::new();
-        for (slot, (values, error)) in &page.values {
-            if !values.is_empty() {
-                map.insert(slot.to_string(), Value::from(values.clone()));
+            .execute(params![url_id, e.slots, e.firsts])?;
+        match &e.values {
+            None => {
+                self.conn
+                    .prepare_cached("DELETE FROM custom_values WHERE url_id = ?1")?
+                    .execute([url_id])?;
             }
-            if let Some(e) = error {
-                map.insert(format!("e{slot}"), Value::String(e.clone()));
+            Some(packed) => {
+                self.conn
+                    .prepare_cached("INSERT OR REPLACE INTO custom_values (url_id, data) VALUES (?1, ?2)")?
+                    .execute(params![url_id, packed])?;
             }
-        }
-        if map.is_empty() {
-            self.conn
-                .prepare_cached("DELETE FROM custom_values WHERE url_id = ?1")?
-                .execute([url_id])?;
-        } else {
-            let json = Value::Object(map).to_string();
-            let packed = body::compress(json.as_bytes()).map_err(|e| StoreError::Format(e.to_string()))?;
-            self.conn
-                .prepare_cached("INSERT OR REPLACE INTO custom_values (url_id, data) VALUES (?1, ?2)")?
-                .execute(params![url_id, packed])?;
         }
         Ok(())
     }
@@ -474,6 +458,54 @@ impl CrawlStore {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?)
     }
+}
+
+/// One page's results as stored: the packed slots, the first values and
+/// the compressed other values. Built on the extraction thread, so the
+/// single writer only inserts (plan D7, T032).
+#[derive(Debug, Clone)]
+pub struct EncodedCustom {
+    slots: Vec<u8>,
+    firsts: String,
+    values: Option<Vec<u8>>,
+}
+
+/// Encodes a crawled page's rule outcomes for [`CrawlStore::record_custom`].
+pub fn encode_custom(slots: &Slots, outcomes: &PageRules) -> Result<EncodedCustom> {
+    let mut page = PageCustom::default();
+    set_outcomes(&mut page, slots, outcomes);
+    encode_page(&page)
+}
+
+fn encode_page(page: &PageCustom) -> Result<EncodedCustom> {
+    let mut packed = Vec::with_capacity(page.slots.len() * SLOT_BYTES);
+    let mut firsts = Vec::with_capacity(page.slots.len());
+    for (count, f, first) in &page.slots {
+        packed.extend_from_slice(&count.to_le_bytes());
+        packed.extend_from_slice(&f.to_le_bytes());
+        packed.extend_from_slice(&[0, 0]);
+        firsts.push(first.as_ref().map_or(Value::Null, |s| Value::String(s.clone())));
+    }
+    let mut map = Map::new();
+    for (slot, (values, error)) in &page.values {
+        if !values.is_empty() {
+            map.insert(slot.to_string(), Value::from(values.clone()));
+        }
+        if let Some(e) = error {
+            map.insert(format!("e{slot}"), Value::String(e.clone()));
+        }
+    }
+    let values = if map.is_empty() {
+        None
+    } else {
+        let json = Value::Object(map).to_string();
+        Some(body::compress(json.as_bytes()).map_err(|e| StoreError::Format(e.to_string()))?)
+    };
+    Ok(EncodedCustom {
+        slots: packed,
+        firsts: Value::Array(firsts).to_string(),
+        values,
+    })
 }
 
 fn set_outcomes(page: &mut PageCustom, slots: &Slots, outcomes: &PageRules) {

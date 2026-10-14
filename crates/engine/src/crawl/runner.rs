@@ -25,13 +25,19 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
-use super::store::custom::Slots;
+use super::store::custom::{EncodedCustom, Slots, encode_custom};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
     Response, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
 use crate::custom::CompiledRules;
+
+/// A crawl's compiled rules and the stored slot of each.
+struct CustomRun {
+    rules: CompiledRules,
+    slots: Slots,
+}
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
@@ -356,6 +362,8 @@ struct PageOutcome {
 /// What the extraction step produced for an HTML body.
 struct Extracted {
     data: Result<PageData, String>,
+    /// Rule results, encoded for the store.
+    custom: Option<EncodedCustom>,
     /// Compressed body and its size, when raw HTML is kept.
     html: Option<(Vec<u8>, usize)>,
 }
@@ -368,7 +376,7 @@ async fn finish_page(
     url: Url,
     token: String,
     store_html: bool,
-    rules: Option<Arc<CompiledRules>>,
+    custom: Option<Arc<CustomRun>>,
     budget: &Semaphore,
 ) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
@@ -383,7 +391,7 @@ async fn finish_page(
                 .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let data = extract::extract_page_caught(
+                let mut data = extract::extract_page_caught(
                     &PageInput {
                         url: &url,
                         charset: charset.as_deref(),
@@ -391,17 +399,23 @@ async fn finish_page(
                         truncated,
                         robots_token: &token,
                     },
-                    rules.as_deref(),
+                    custom.as_deref().map(|c| &c.rules),
                 );
+                // Encoded here, so the single writer only inserts.
+                let custom = match (data.as_mut().ok().and_then(|d| d.custom.take()), &custom) {
+                    (Some(out), Some(c)) => encode_custom(&c.slots, &out).ok(),
+                    _ => None,
+                };
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
                     None
                 };
-                Extracted { data, html }
+                Extracted { data, custom, html }
             });
             Some(job.await.unwrap_or_else(|e| Extracted {
                 data: Err(format!("Page extraction failed: {e}")),
+                custom: None,
                 html: None,
             }))
         }
@@ -801,7 +815,7 @@ struct Run {
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
     /// Custom rules and where their results go (spec 013).
-    custom: Option<(Arc<CompiledRules>, Slots)>,
+    custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -875,7 +889,7 @@ impl Run {
                 Ok(None) => None,
                 Ok(Some(rules)) => {
                     c.store.mark_new_custom_rules_running()?;
-                    Some((Arc::new(rules), slots))
+                    Some(Arc::new(CustomRun { rules, slots }))
                 }
                 Err(errors) => {
                     let joined = errors
@@ -1349,11 +1363,7 @@ impl Run {
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
         // Rules run on the pages spec 005 extracts for the results: internal ones.
-        let rules = self
-            .custom
-            .as_ref()
-            .filter(|_| internal)
-            .map(|(r, _)| Arc::clone(r));
+        let rules = self.custom.as_ref().filter(|_| internal).map(Arc::clone);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
@@ -1793,9 +1803,8 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
-                    if let (Ok(PageData { custom: Some(c), .. }), Some((_, slots))) = (&p.data, &self.custom)
-                    {
-                        store.record_custom(entry.id, slots, c)?;
+                    if let Some(c) = &p.custom {
+                        store.record_custom(entry.id, c)?;
                     }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }

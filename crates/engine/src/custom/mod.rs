@@ -10,6 +10,7 @@ pub mod rerun;
 mod search;
 pub mod tester;
 mod xpath;
+mod xpath_fast;
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -110,9 +111,10 @@ pub struct DocView<'a> {
 
 enum Matcher {
     Css(Selector),
-    /// Checked at compile time; built per page, because compiled
-    /// `sxd_xpath` expressions cannot be shared between threads.
-    Xpath(String),
+    /// Simple paths run as CSS on the page's tree; the rest are checked at
+    /// compile time and evaluated on a copy of the tree (`sxd_xpath`
+    /// expressions cannot be shared between threads).
+    Xpath(String, Option<xpath_fast::Fast>),
     Regex(regex::Regex),
     JsonLd(json_ld::Path),
 }
@@ -128,6 +130,15 @@ enum Within {
     Xpath(String),
 }
 
+fn xpath_within(expr: &str) -> Result<Within, String> {
+    Ok(
+        match xpath_fast::Fast::new(expr).filter(xpath_fast::Fast::selects_elements) {
+            Some(f) => Within::Css(f.selector().clone()),
+            None => Within::Xpath(xpath(expr)?),
+        },
+    )
+}
+
 struct CSearch {
     re: regex::Regex,
     not: bool,
@@ -140,6 +151,7 @@ pub struct CompiledRules {
     extractors: Vec<CExtractor>,
     searches: Vec<CSearch>,
     needs_xpath: bool,
+    needs_json: bool,
 }
 
 /// A rule that does not compile, with where (`custom.extractors[2].expr`).
@@ -182,10 +194,12 @@ pub fn compile(rules: &CustomRules) -> Result<Option<CompiledRules>, Vec<RuleErr
     let mut extractors = Vec::new();
     let mut searches = Vec::new();
     let mut needs_xpath = false;
+    let mut needs_json = false;
     for (i, e) in rules.extractors.iter().enumerate() {
         match compile_extractor(e) {
             Ok(c) => {
-                needs_xpath |= matches!(c.matcher, Matcher::Xpath(_));
+                needs_xpath |= matches!(c.matcher, Matcher::Xpath(_, None));
+                needs_json |= matches!(c.matcher, Matcher::JsonLd(_));
                 extractors.push(c);
             }
             Err(message) => errors.push(RuleError {
@@ -211,6 +225,7 @@ pub fn compile(rules: &CustomRules) -> Result<Option<CompiledRules>, Vec<RuleErr
             extractors,
             searches,
             needs_xpath,
+            needs_json,
         }))
     } else {
         Err(errors)
@@ -220,7 +235,7 @@ pub fn compile(rules: &CustomRules) -> Result<Option<CompiledRules>, Vec<RuleErr
 fn compile_extractor(e: &Extractor) -> Result<CExtractor, String> {
     let matcher = match e.kind {
         ExtractorKind::Css => Matcher::Css(css(&e.expr)?),
-        ExtractorKind::Xpath => Matcher::Xpath(xpath(&e.expr)?),
+        ExtractorKind::Xpath => Matcher::Xpath(xpath(&e.expr)?, xpath_fast::Fast::new(&e.expr)),
         ExtractorKind::Regex => Matcher::Regex(regex(&e.expr, false)?),
         ExtractorKind::JsonLd => Matcher::JsonLd(json_ld::Path::new(&e.expr, e.json_type.as_deref())?),
     };
@@ -244,7 +259,7 @@ fn compile_search(s: &Search) -> Result<CSearch, String> {
         None => None,
         Some(w) => Some(match w.kind {
             ElementKind::Css => Within::Css(css(&w.expr)?),
-            ElementKind::Xpath => Within::Xpath(xpath(&w.expr)?),
+            ElementKind::Xpath => xpath_within(&w.expr)?,
         }),
     };
     Ok(CSearch {
@@ -302,6 +317,11 @@ pub(crate) fn apply_within(rules: &CompiledRules, page: &DocView<'_>, budget: Du
     let started = Instant::now();
     let package = rules.needs_xpath.then(sxd_document::Package::new);
     let tree = package.as_ref().map(|p| xpath::Tree::new(p, page.doc));
+    let json = if rules.needs_json {
+        json_ld::parse(page.structured)
+    } else {
+        Vec::new()
+    };
     let mut out = PageRules::default();
     let mut timed_out = false;
     for e in &rules.extractors {
@@ -310,7 +330,7 @@ pub(crate) fn apply_within(rules: &CompiledRules, page: &DocView<'_>, budget: Du
             out.extractors.push(RuleOutcome::flagged(flags::TIMED_OUT));
             continue;
         }
-        out.extractors.push(extract(e, page, tree.as_ref()));
+        out.extractors.push(extract(e, page, tree.as_ref(), &json));
     }
     for s in &rules.searches {
         if timed_out || started.elapsed() > budget {
@@ -354,7 +374,12 @@ impl Values {
     }
 }
 
-fn extract(e: &CExtractor, page: &DocView<'_>, tree: Option<&xpath::Tree<'_>>) -> RuleOutcome {
+fn extract(
+    e: &CExtractor,
+    page: &DocView<'_>,
+    tree: Option<&xpath::Tree<'_>>,
+    json: &[Option<serde_json::Value>],
+) -> RuleOutcome {
     let mut v = Values::default();
     match &e.matcher {
         Matcher::Css(sel) => {
@@ -364,7 +389,21 @@ fn extract(e: &CExtractor, page: &DocView<'_>, tree: Option<&xpath::Tree<'_>>) -
                 }
             }
         }
-        Matcher::Xpath(x) => {
+        Matcher::Xpath(_, Some(fast)) => match fast.evaluate(page.doc) {
+            xpath_fast::Found::Nodes(nodes) => {
+                for n in nodes {
+                    let s = match n {
+                        xpath_fast::Hit::Element(el) => node_value(el, e.mode, &e.attr),
+                        xpath_fast::Hit::Other(s) => Some(collapse_if_text(e.mode, s)),
+                    };
+                    if let Some(s) = s {
+                        v.push(s);
+                    }
+                }
+            }
+            xpath_fast::Found::Value(s) => v.push(s),
+        },
+        Matcher::Xpath(x, None) => {
             let tree = tree.expect("built when XPath rules exist");
             match tree.evaluate(x) {
                 Ok(xpath::Found::Nodes(nodes)) => {
@@ -399,7 +438,7 @@ fn extract(e: &CExtractor, page: &DocView<'_>, tree: Option<&xpath::Tree<'_>>) -
             }
         }
         Matcher::JsonLd(path) => {
-            let found = path.find(page.structured);
+            let found = path.find(json);
             if found.bad_json {
                 v.out.flags |= flags::BAD_JSON;
             }

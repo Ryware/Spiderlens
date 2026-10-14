@@ -6,7 +6,9 @@
 //! elements as it does in browsers. A map back to the original nodes lets
 //! Text, Inner HTML and Outer HTML come out exactly as for CSS rules.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use ego_tree::NodeId;
 use scraper::{Html, Node};
@@ -22,6 +24,29 @@ pub(super) fn build(expr: &str) -> Result<XPath, String> {
         Ok(None) => Err("Enter an XPath expression.".into()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Compiled expressions per thread. `XPath` cannot cross threads, and
+/// compiling it on every page cost more than evaluating it (T032).
+const CACHE_LIMIT: usize = 256;
+
+thread_local! {
+    static COMPILED: RefCell<HashMap<String, Rc<XPath>>> = RefCell::new(HashMap::new());
+}
+
+fn compiled(expr: &str) -> Result<Rc<XPath>, String> {
+    if let Some(x) = COMPILED.with(|c| c.borrow().get(expr).cloned()) {
+        return Ok(x);
+    }
+    let x = Rc::new(build(expr)?);
+    COMPILED.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= CACHE_LIMIT {
+            c.clear();
+        }
+        c.insert(expr.to_string(), Rc::clone(&x));
+    });
+    Ok(x)
 }
 
 /// One node an expression selected.
@@ -92,7 +117,7 @@ impl<'d> Tree<'d> {
     }
 
     pub(super) fn evaluate(&self, expr: &str) -> Result<Found, String> {
-        let x = build(expr)?;
+        let x = compiled(expr)?;
         let ctx = Context::new();
         let value = x.evaluate(&ctx, self.doc.root()).map_err(|e| e.to_string())?;
         Ok(match value {
@@ -198,5 +223,43 @@ mod tests {
         assert_eq!(number(5.0), "5");
         assert_eq!(number(2.5), "2.5");
         assert_eq!(number(f64::NAN), "NaN");
+    }
+}
+
+#[cfg(test)]
+mod cost {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn tree_copy_cost() {
+        let Ok(page) = std::env::var("BENCH_PAGE") else {
+            return;
+        };
+        let html = Html::parse_document(&std::fs::read_to_string(page).unwrap());
+        let n = 5_000;
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            let p = Package::new();
+            std::hint::black_box(Tree::new(&p, &html));
+        }
+        println!("copy: {:.1} us", t.elapsed().as_secs_f64() * 1e6 / n as f64);
+        let p = Package::new();
+        let tree = Tree::new(&p, &html);
+        for e in [
+            "/descendant::h1",
+            "count(/descendant::a)",
+            "//h1",
+            "count(//a)",
+            "//meta[@name='description']/@content",
+            "//ul/li[2]/a/@href",
+            "string(//title)",
+        ] {
+            let t = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(tree.evaluate(e).ok());
+            }
+            println!("{e}: {:.1} us", t.elapsed().as_secs_f64() * 1e6 / n as f64);
+        }
     }
 }

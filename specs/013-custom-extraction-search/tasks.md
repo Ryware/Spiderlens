@@ -6,9 +6,9 @@
 
 ## Phase 1: Setup and baseline
 
-- [ ] T001 Measure bench-site 100k on the merge base (3 runs, URLs/s and peak RSS) into `benchmarks.md` (plan, Performance plan)
+- [x] T001 Measure bench-site 100k on the merge base (3 runs, URLs/s and peak RSS) into `benchmarks.md` (plan, Performance plan)
 - [ ] T002 Add `sxd-document`, `sxd-xpath`, `serde_json_path` to the workspace (research R1, R2)
-- [ ] T003 Prototype the scraper → sxd tree copy and time it against parse on the bench pages; record in `benchmarks.md`; keep or switch XPath option (research R1)
+- [x] T003 Prototype the scraper → sxd tree copy and time it against parse on the bench pages; record in `benchmarks.md`; keep or switch XPath option (research R1)
 
 ## Phase 2: Configuration (`crates/config`)
 
@@ -61,7 +61,7 @@
 
 ## Phase 9: Performance and converge
 
-- [ ] T032 Bench with no rules and with the typical set; record in `benchmarks.md` (SC-001, SC-002); tune per plan levers if needed
+- [x] T032 Bench with no rules and with the typical set; record in `benchmarks.md` (SC-001, SC-002); tune per plan levers if needed
 - [ ] T033 CSS/XPath vs Chromium on a 50-page corpus with a golden file from `scripts/browser-golden.mjs` (SC-005)
 - [ ] T034 Pathological rule fixture: page marked timed out, crawl continues (SC-007)
 - [ ] T035 `/speckit-converge`

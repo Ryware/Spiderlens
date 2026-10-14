@@ -343,3 +343,54 @@ fn deterministic() {
     };
     assert_eq!(run(SHOP, rules.clone()), run(SHOP, rules));
 }
+
+/// Cost of each rule kind on a bench-site page (plan T032). Run with
+/// `BENCH_PAGE=page.html cargo test --release -p spiderlens-engine
+/// custom::tests::cost_by_kind -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn cost_by_kind() {
+    let Ok(page) = std::env::var("BENCH_PAGE") else {
+        return;
+    };
+    let html = std::fs::read(page).unwrap();
+    let all: CustomRules = spiderlens_config::import_rules(include_str!(
+        "../../../../specs/013-custom-extraction-search/bench-rules.json"
+    ))
+    .unwrap();
+    let url = Url::parse("http://127.0.0.1:8700/p/5").unwrap();
+    let input = PageInput {
+        url: &url,
+        charset: Some("utf-8"),
+        body: &html,
+        truncated: false,
+        robots_token: "spiderlens",
+    };
+    let time = |rules: Option<&CompiledRules>| {
+        let n = 3_000;
+        let t = Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(extract_page_with(&input, rules));
+        }
+        t.elapsed().as_secs_f64() * 1e6 / n as f64
+    };
+    let base = time(None);
+    println!("no rules: {base:.1} us/page");
+    type Keep = fn(&Extractor) -> bool;
+    let kinds: [(&str, Keep, bool); 6] = [
+        ("css", |e| e.kind == ExtractorKind::Css, false),
+        ("xpath", |e| e.kind == ExtractorKind::Xpath, false),
+        ("regex", |e| e.kind == ExtractorKind::Regex, false),
+        ("json-ld", |e| e.kind == ExtractorKind::JsonLd, false),
+        ("searches", |_| false, true),
+        ("all", |_| true, true),
+    ];
+    for (name, keep, searches) in kinds {
+        let set = CustomRules {
+            extractors: all.extractors.iter().filter(|e| keep(e)).cloned().collect(),
+            searches: if searches { all.searches.clone() } else { vec![] },
+        };
+        let c = compile(&set).unwrap().unwrap();
+        println!("{name}: +{:.1} us/page", time(Some(&c)) - base);
+    }
+}
