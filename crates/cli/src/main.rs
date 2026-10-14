@@ -6,6 +6,7 @@
 mod crawl_cmd;
 mod export_cmd;
 mod options;
+mod rules_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -67,6 +68,9 @@ enum Command {
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Validate, test and run custom extraction and search rules.
+    #[command(subcommand)]
+    Rules(rules_cmd::RulesCommand),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -157,6 +161,7 @@ fn main() -> ExitCode {
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Rules(cmd) => rules_cmd::run(cmd),
     }
 }
 

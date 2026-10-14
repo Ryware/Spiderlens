@@ -9,6 +9,8 @@ mod microdata;
 pub mod text;
 mod walk;
 
+pub(crate) use walk::visible_text_into;
+
 use serde::Serialize;
 use url::Url;
 
@@ -160,6 +162,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// Custom rule outcomes; `None` when the crawl has no rules (spec 013).
+    pub custom: Option<crate::custom::PageRules>,
 }
 
 impl PageData {
@@ -195,6 +199,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            custom: None,
         }
     }
 }
@@ -215,6 +220,12 @@ pub struct PageInput<'a> {
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
+    extract_page_with(input, None)
+}
+
+/// [`extract_page`] plus the crawl's custom rules on the same parse
+/// (spec 013). Pages with no readable content get every rule as no match.
+pub fn extract_page_with(input: &PageInput<'_>, rules: Option<&crate::custom::CompiledRules>) -> PageData {
     let declared = crate::title::declared_encoding(input.charset, input.body);
     let encoding = match declared {
         Some(enc) => enc,
@@ -225,10 +236,12 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
         None => encoding_rs::UTF_8,
     };
     if looks_binary(input.body) {
-        return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        let mut d = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        d.custom = rules.map(crate::custom::CompiledRules::on_empty_page);
+        return d;
     }
     let (text, used, had_errors) = encoding.decode(input.body);
-    let mut data = walk::walk(&text, input.url, input.robots_token, walk::PARSE_BUDGET);
+    let mut data = walk::walk_with(&text, input.url, input.robots_token, walk::PARSE_BUDGET, rules);
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
@@ -246,8 +259,11 @@ fn utf8_or_cut(body: &[u8], truncated: bool) -> bool {
 
 /// Like [`extract_page`], but a panic inside the parser becomes an error
 /// message instead of taking the crawl down (FR-033).
-pub fn extract_page_caught(input: &PageInput<'_>) -> Result<PageData, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_page(input))).map_err(|p| {
+pub fn extract_page_caught(
+    input: &PageInput<'_>,
+    rules: Option<&crate::custom::CompiledRules>,
+) -> Result<PageData, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_page_with(input, rules))).map_err(|p| {
         let msg = p
             .downcast_ref::<&str>()
             .map(|s| s.to_string())

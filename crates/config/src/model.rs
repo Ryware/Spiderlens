@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::custom::CustomRules;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
 use crate::secret::HeaderValue;
@@ -24,6 +25,8 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// Custom extraction and search rules (spec 013).
+    pub custom: CustomRules,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]

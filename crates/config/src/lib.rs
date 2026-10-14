@@ -4,6 +4,7 @@
 //! crawl store. Validation lives here too, so every surface reports the same
 //! issues. This crate has no dependency on the desktop shell.
 
+pub mod custom;
 mod list_input;
 mod model;
 mod patterns;
@@ -17,6 +18,10 @@ mod stored;
 mod url_norm;
 mod validate;
 
+pub use custom::{
+    CustomRules, ElementKind, ElementLimit, ExtractMode, Extractor, ExtractorKind, Search, SearchCondition,
+    SearchTarget, export_rules, import_rules, merge_rules,
+};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
     CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,

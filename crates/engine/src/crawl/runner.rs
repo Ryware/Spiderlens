@@ -25,11 +25,13 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
+use super::store::custom::Slots;
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
     Response, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
+use crate::custom::CompiledRules;
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
@@ -361,7 +363,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    rules: Option<Arc<CompiledRules>>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -374,13 +383,16 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                 .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let data = extract::extract_page_caught(&PageInput {
-                    url: &url,
-                    charset: charset.as_deref(),
-                    body: &bytes,
-                    truncated,
-                    robots_token: &token,
-                });
+                let data = extract::extract_page_caught(
+                    &PageInput {
+                        url: &url,
+                        charset: charset.as_deref(),
+                        body: &bytes,
+                        truncated,
+                        robots_token: &token,
+                    },
+                    rules.as_deref(),
+                );
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
@@ -788,6 +800,8 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Custom rules and where their results go (spec 013).
+    custom: Option<(Arc<CompiledRules>, Slots)>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -850,6 +864,29 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        let custom = if c.config.custom.is_empty() && !c.store.has_custom_tables()? {
+            None
+        } else {
+            if !c.config.custom.is_empty() {
+                c.store.sync_custom_rules(&c.config.custom)?;
+            }
+            let (set, slots) = c.store.stored_rule_set()?;
+            match crate::custom::compile(&set) {
+                Ok(None) => None,
+                Ok(Some(rules)) => {
+                    c.store.mark_new_custom_rules_running()?;
+                    Some((Arc::new(rules), slots))
+                }
+                Err(errors) => {
+                    let joined = errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(CrawlError::Config(format!("custom rules: {joined}")));
+                }
+            }
+        };
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
@@ -877,6 +914,7 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            custom,
             active_before_ms,
             commands,
             local: None,
@@ -1310,13 +1348,19 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // Rules run on the pages spec 005 extracts for the results: internal ones.
+        let rules = self
+            .custom
+            .as_ref()
+            .filter(|_| internal)
+            .map(|(r, _)| Arc::clone(r));
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1749,6 +1793,10 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
+                    if let (Ok(PageData { custom: Some(c), .. }), Some((_, slots))) = (&p.data, &self.custom)
+                    {
+                        store.record_custom(entry.id, slots, c)?;
+                    }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }
                 None => 0,
