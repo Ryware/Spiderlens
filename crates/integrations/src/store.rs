@@ -53,7 +53,10 @@ impl RunState {
     }
 
     pub fn is_resumable(self) -> bool {
-        matches!(self, Self::PausedUser | Self::PausedQuota | Self::Running | Self::Queued)
+        matches!(
+            self,
+            Self::PausedUser | Self::PausedQuota | Self::Running | Self::Queued
+        )
     }
 }
 
@@ -88,7 +91,8 @@ pub struct RunProgress {
 }
 
 fn ts(sec: Option<i64>) -> Option<String> {
-    sec.and_then(|s| Timestamp::from_second(s).ok()).map(|t| t.to_string())
+    sec.and_then(|s| Timestamp::from_second(s).ok())
+        .map(|t| t.to_string())
 }
 
 pub fn create_run(
@@ -127,7 +131,16 @@ pub fn save_progress(conn: &Connection, id: i64, c: &Counts, cursor: Option<&str
     conn.execute(
         "UPDATE integration_runs SET requested = ?2, done = ?3, failed = ?4, matched = ?5,
            unmatched = ?6, usage = ?7, cursor = COALESCE(?8, cursor) WHERE id = ?1",
-        params![id, c.requested, c.done, c.failed, c.matched, c.unmatched, c.usage, cursor],
+        params![
+            id,
+            c.requested,
+            c.done,
+            c.failed,
+            c.matched,
+            c.unmatched,
+            c.usage,
+            cursor
+        ],
     )?;
     Ok(())
 }
@@ -144,7 +157,13 @@ pub fn set_state(
     conn.execute(
         "UPDATE integration_runs SET state = ?2, message = ?3, resume_at = ?4,
            finished_at = COALESCE(?5, finished_at) WHERE id = ?1",
-        params![id, state.as_str(), message, resume_at.map(|t| t.as_second()), finished],
+        params![
+            id,
+            state.as_str(),
+            message,
+            resume_at.map(|t| t.as_second()),
+            finished
+        ],
     )?;
     if finished.is_some() {
         let (provider, done, failed): (String, i64, i64) = conn.query_row(
@@ -165,7 +184,9 @@ pub fn set_state(
     }
     if state == RunState::Finished {
         let provider: String =
-            conn.query_row("SELECT provider FROM integration_runs WHERE id = ?1", [id], |r| r.get(0))?;
+            conn.query_row("SELECT provider FROM integration_runs WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
         if let Some(p) = Provider::from_id(&provider) {
             add_feature(conn, p.feature_id())?;
         }
@@ -175,7 +196,9 @@ pub fn set_state(
 
 pub fn features(conn: &Connection) -> Result<Vec<String>> {
     let v: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = ?1", [FEATURES_KEY], |r| r.get(0))
+        .query_row("SELECT value FROM meta WHERE key = ?1", [FEATURES_KEY], |r| {
+            r.get(0)
+        })
         .optional()?;
     Ok(v.unwrap_or_default()
         .split(',')
@@ -231,18 +254,28 @@ pub fn runs(conn: &Connection) -> Result<Vec<RunProgress>> {
         return Ok(Vec::new());
     }
     let mut s = conn.prepare("SELECT * FROM integration_runs ORDER BY id DESC")?;
-    let v = s.query_map([], row_to_progress)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let v = s
+        .query_map([], row_to_progress)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(v)
 }
 
 pub fn run(conn: &Connection, id: i64) -> Result<Option<RunProgress>> {
     Ok(conn
-        .query_row("SELECT * FROM integration_runs WHERE id = ?1", [id], row_to_progress)
+        .query_row(
+            "SELECT * FROM integration_runs WHERE id = ?1",
+            [id],
+            row_to_progress,
+        )
         .optional()?)
 }
 
 pub fn cursor(conn: &Connection, id: i64) -> Result<Option<String>> {
-    Ok(conn.query_row("SELECT cursor FROM integration_runs WHERE id = ?1", [id], |r| r.get(0))?)
+    Ok(
+        conn.query_row("SELECT cursor FROM integration_runs WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })?,
+    )
 }
 
 /// Whether the file has the integration tables (format with spec 024's step).
@@ -346,7 +379,12 @@ pub struct OrphanCandidate {
     pub sessions: Option<i64>,
 }
 
-pub fn orphans(conn: &Connection, source: Option<&str>, offset: i64, limit: i64) -> Result<(Vec<OrphanCandidate>, i64)> {
+pub fn orphans(
+    conn: &Connection,
+    source: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<OrphanCandidate>, i64)> {
     if !has_tables(conn)? {
         return Ok((Vec::new(), 0));
     }

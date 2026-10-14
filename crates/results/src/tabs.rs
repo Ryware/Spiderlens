@@ -255,8 +255,14 @@ mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
-    pub const GSC_CLICKS: ColumnDef =
-        col("gsc_clicks", "Clicks (Search Console)", super::GSC_CLICKS, ValueKind::Int, 120).needs(Need::SearchConsole);
+    pub const GSC_CLICKS: ColumnDef = col(
+        "gsc_clicks",
+        "Clicks (Search Console)",
+        super::GSC_CLICKS,
+        ValueKind::Int,
+        120,
+    )
+    .needs(Need::SearchConsole);
     pub const GSC_IMPRESSIONS: ColumnDef = col(
         "gsc_impressions",
         "Impressions (Search Console)",
@@ -265,8 +271,14 @@ mod c {
         140,
     )
     .needs(Need::SearchConsole);
-    pub const GSC_CTR: ColumnDef =
-        col("gsc_ctr", "CTR (Search Console)", super::GSC_CTR, ValueKind::Percent, 110).needs(Need::SearchConsole);
+    pub const GSC_CTR: ColumnDef = col(
+        "gsc_ctr",
+        "CTR (Search Console)",
+        super::GSC_CTR,
+        ValueKind::Percent,
+        110,
+    )
+    .needs(Need::SearchConsole);
     pub const GSC_POSITION: ColumnDef = col(
         "gsc_position",
         "Avg. position (Search Console)",
@@ -275,8 +287,14 @@ mod c {
         120,
     )
     .needs(Need::SearchConsole);
-    pub const GSC_DATA: ColumnDef =
-        col("gsc_data", "Search Console data", super::GSC_DATA, ValueKind::Text, 150).needs(Need::SearchConsole);
+    pub const GSC_DATA: ColumnDef = col(
+        "gsc_data",
+        "Search Console data",
+        super::GSC_DATA,
+        ValueKind::Text,
+        150,
+    )
+    .needs(Need::SearchConsole);
     pub const CONTENT_TYPE: ColumnDef = col(
         "content_type",
         "Content type",

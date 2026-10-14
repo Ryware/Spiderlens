@@ -35,7 +35,10 @@ fn crawl(site: &Site, dir: &Path) -> PathBuf {
     )
     .unwrap();
     let (_tx, rx) = watch::channel(Control::Run);
-    tokio::runtime::Runtime::new().unwrap().block_on(crawler.run(rx, None)).unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(crawler.run(rx, None))
+        .unwrap();
     path
 }
 
@@ -50,7 +53,11 @@ fn cli(home: &Path, g: &FakeGoogle) -> Command {
 
 fn ok(c: &mut Command, args: &[&str]) -> String {
     let out = c.args(args).output().unwrap();
-    assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap()
 }
 
@@ -74,7 +81,10 @@ fn connect_enable_fetch_runs_remove_and_forget() {
     });
 
     // Not connected: a usage error that says what to do.
-    let out = cli(&home, &g).args(["fetch", file, "--provider", "search-console"]).output().unwrap();
+    let out = cli(&home, &g)
+        .args(["fetch", file, "--provider", "search-console"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("connect"));
 
@@ -83,26 +93,54 @@ fn connect_enable_fetch_runs_remove_and_forget() {
     assert!(props.contains("(suggested)"), "{props}");
 
     // Off until turned on.
-    let out = cli(&home, &g).args(["fetch", file, "--provider", "search-console"]).output().unwrap();
+    let out = cli(&home, &g)
+        .args(["fetch", file, "--provider", "search-console"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     ok(&mut cli(&home, &g), &["enable", "search-console"]);
 
     let json = ok(
         &mut cli(&home, &g),
-        &["fetch", file, "--provider", "search-console", "--from", "2026-09-01", "--to", "2026-09-28", "--json"],
+        &[
+            "fetch",
+            file,
+            "--provider",
+            "search-console",
+            "--from",
+            "2026-09-01",
+            "--to",
+            "2026-09-28",
+            "--json",
+        ],
     );
     let run: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(run["state"], "finished");
     assert_eq!(run["matched"], 1);
 
-    let list: serde_json::Value = serde_json::from_str(&ok(&mut cli(&home, &g), &["list", "--json"])).unwrap();
-    let sc = list["providers"].as_array().unwrap().iter().find(|p| p["provider"] == "search_console").unwrap();
+    let list: serde_json::Value =
+        serde_json::from_str(&ok(&mut cli(&home, &g), &["list", "--json"])).unwrap();
+    let sc = list["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["provider"] == "search_console")
+        .unwrap();
     assert_eq!(sc["settings"]["enabled"], true);
 
     // The same data through the export command (results parity).
     let csv = Command::cargo_bin("spiderlens")
         .unwrap()
-        .args(["export", file, "--tab", "search-console", "--filter", "clicks", "--columns", "address,gsc_clicks"])
+        .args([
+            "export",
+            file,
+            "--tab",
+            "search-console",
+            "--filter",
+            "clicks",
+            "--columns",
+            "address,gsc_clicks",
+        ])
         .output()
         .unwrap();
     assert!(csv.status.success(), "{}", String::from_utf8_lossy(&csv.stderr));
@@ -115,7 +153,10 @@ fn connect_enable_fetch_runs_remove_and_forget() {
     ok(&mut cli(&home, &g), &["remove", file, "--all"]);
     assert!(ok(&mut cli(&home, &g), &["runs", file]).trim().is_empty());
 
-    ok(&mut cli(&home, &g), &["forget", "google", "--label", "ana@example.com"]);
+    ok(
+        &mut cli(&home, &g),
+        &["forget", "google", "--label", "ana@example.com"],
+    );
     assert_eq!(g.revoked().len(), 1);
     let keys = std::fs::read_to_string(home.join("test-keychain.json")).unwrap();
     assert!(!keys.contains("ana@example.com"));

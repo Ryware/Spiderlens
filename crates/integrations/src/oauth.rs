@@ -63,7 +63,9 @@ pub struct Client {
 
 impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Client").field("id", &self.id).finish_non_exhaustive()
+        f.debug_struct("Client")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -174,7 +176,10 @@ pub async fn authorize(
         form.push(("client_secret", s.expose_secret().to_string()));
     }
     let v = http
-        .json("Google sign-in", http.request(Method::POST, &endpoints.token).form(&form))
+        .json(
+            "Google sign-in",
+            http.request(Method::POST, &endpoints.token).form(&form),
+        )
         .await?;
     let refresh = v["refresh_token"]
         .as_str()
@@ -226,7 +231,11 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
         let head = String::from_utf8_lossy(&buf);
         let target = head.split_whitespace().nth(1).unwrap_or("/").to_string();
         let url = Url::parse(&format!("http://127.0.0.1{target}")).map_err(|e| Error::Auth(e.to_string()))?;
-        let get = |k: &str| url.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.into_owned());
+        let get = |k: &str| {
+            url.query_pairs()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.into_owned())
+        };
         let (status, body, result) = match (get("code"), get("error"), get("state")) {
             (Some(code), _, Some(s)) if s == state => (
                 "200 OK",
@@ -236,12 +245,16 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String> {
             (Some(_), _, _) => (
                 "400 Bad Request",
                 "This sign-in link is not the one SpiderLens started. Close this tab and try again.",
-                Some(Err(Error::Auth("the sign-in answer did not match; try again".into()))),
+                Some(Err(Error::Auth(
+                    "the sign-in answer did not match; try again".into(),
+                ))),
             ),
             (None, Some(e), _) => (
                 "200 OK",
                 "Sign-in was cancelled. You can close this tab.",
-                Some(Err(Error::Auth(format!("Google sign-in was not completed ({e})")))),
+                Some(Err(Error::Auth(format!(
+                    "Google sign-in was not completed ({e})"
+                )))),
             ),
             _ => ("404 Not Found", "", None),
         };
@@ -276,7 +289,10 @@ pub async fn refresh(
         form.push(("client_secret", s.expose_secret().to_string()));
     }
     let v = http
-        .json("Google sign-in", http.request(Method::POST, &endpoints.token).form(&form))
+        .json(
+            "Google sign-in",
+            http.request(Method::POST, &endpoints.token).form(&form),
+        )
         .await?;
     let token = v["access_token"].as_str().ok_or_else(|| HttpError::Decode {
         provider: "Google sign-in".into(),
@@ -289,7 +305,11 @@ pub async fn refresh(
 }
 
 /// Revokes a token at Google (FR-017).
-pub async fn revoke(http: &Http, endpoints: &Endpoints, token: &SecretString) -> std::result::Result<(), HttpError> {
+pub async fn revoke(
+    http: &Http,
+    endpoints: &Endpoints,
+    token: &SecretString,
+) -> std::result::Result<(), HttpError> {
     http.json(
         "Google sign-in",
         http.request(Method::POST, &endpoints.revoke)
@@ -325,7 +345,8 @@ impl Session {
             return Ok(t.expose_secret().to_string());
         }
         let refresh_token = SecretString::from(self.stored.refresh_token.clone());
-        let (token, ttl) = refresh(&self.http, &self.stored.client(), &self.endpoints, &refresh_token).await?;
+        let (token, ttl) =
+            refresh(&self.http, &self.stored.client(), &self.endpoints, &refresh_token).await?;
         let s = token.expose_secret().to_string();
         *self.access.lock().expect("lock") = Some((token, Instant::now() + ttl));
         Ok(s)

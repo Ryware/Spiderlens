@@ -31,7 +31,10 @@ mod tests {
 
     #[test]
     fn folders_end_with_the_app_id() {
-        for d in [app_config_dir(), app_data_dir(), app_cache_dir()].into_iter().flatten() {
+        for d in [app_config_dir(), app_data_dir(), app_cache_dir()]
+            .into_iter()
+            .flatten()
+        {
             assert!(d.ends_with(APP_ID));
         }
     }

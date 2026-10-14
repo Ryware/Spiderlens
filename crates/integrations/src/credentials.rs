@@ -125,10 +125,7 @@ impl CredentialStore for MemoryStore {
     }
 
     fn set(&self, id: &CredentialId, secret: &SecretString) -> Result<()> {
-        self.map
-            .lock()
-            .expect("lock")
-            .insert(id.clone(), secret.clone());
+        self.map.lock().expect("lock").insert(id.clone(), secret.clone());
         Ok(())
     }
 

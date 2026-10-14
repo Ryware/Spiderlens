@@ -3,6 +3,7 @@ import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { SettingsSheet } from "../settings/SettingsSheet";
+import { IntegrationsView } from "../integrations/IntegrationsView";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
@@ -181,6 +182,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
+      { id: "go-integrations", title: "Integrations", group: "Go to", keywords: ["search console", "google", "external data"], run: () => setSection("integrations") },
       ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
@@ -261,6 +263,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onSession={onSession}
               onFocusId={onFocusId}
             />
+          ) : section === "integrations" ? (
+            <IntegrationsView transport={transport} path={crawl.path} crawlRunning={crawl.running} onDataChanged={results.reload} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
           ) : (

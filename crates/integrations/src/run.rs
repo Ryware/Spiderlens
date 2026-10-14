@@ -83,7 +83,13 @@ impl Ctx {
         if let Some(c) = &self.cache {
             let now = Timestamp::now();
             // A cache that cannot be written only costs a repeat request.
-            let _ = c.put(key, self.provider, cache::default_ttl(self.provider, now), value, now);
+            let _ = c.put(
+                key,
+                self.provider,
+                cache::default_ttl(self.provider, now),
+                value,
+                now,
+            );
         }
     }
 }

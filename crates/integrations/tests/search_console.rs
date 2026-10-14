@@ -122,7 +122,10 @@ fn property(site: &Site) -> String {
 fn fake(site: &Site, extra: usize) -> FakeGoogle {
     FakeGoogle::start(GoogleData {
         email: "ana@example.com".into(),
-        sites: vec![(property(site), "siteOwner".into()), ("sc-domain:other.test".into(), "siteFullUser".into())],
+        sites: vec![
+            (property(site), "siteOwner".into()),
+            ("sc-domain:other.test".into(), "siteFullUser".into()),
+        ],
         rows: rows(site, extra),
         ..GoogleData::default()
     })
@@ -141,14 +144,29 @@ fn req(site: &Site) -> PageRequest {
 async fn fetch(g: &FakeGoogle, path: &Path, site: &Site, cache: Option<Cache>) -> store::RunProgress {
     let update = open_for_update(path, None).unwrap();
     let s = session(g, g.issue_refresh_token());
-    let api = Api { base: g.webmasters_url() };
-    gsc::run_pages(&ctx(cache), &s, &api, &update, "ana@example.com", &req(site), None, &Control::default(), &mut |_| {})
-        .await
-        .unwrap()
+    let api = Api {
+        base: g.webmasters_url(),
+    };
+    gsc::run_pages(
+        &ctx(cache),
+        &s,
+        &api,
+        &update,
+        "ana@example.com",
+        &req(site),
+        None,
+        &Control::default(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap()
 }
 
 fn count(path: &Path, sql: &str) -> i64 {
-    Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    Connection::open(path)
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .unwrap()
 }
 
 #[tokio::test]
@@ -159,14 +177,21 @@ async fn sign_in_uses_pkce_and_loopback_and_labels_the_account() {
     });
     let http = Http::new(Duration::from_secs(10));
     let scope = oauth::scope_for("search_console").unwrap();
-    let a = oauth::authorize(&http, &client(), &endpoints(&g), &[scope], Duration::from_secs(20), |url| {
-        // Stands in for the system browser: follows the consent redirect
-        // back to SpiderLens's loopback listener.
-        let url = url.to_string();
-        tokio::spawn(async move {
-            reqwest::get(url).await.unwrap();
-        });
-    })
+    let a = oauth::authorize(
+        &http,
+        &client(),
+        &endpoints(&g),
+        &[scope],
+        Duration::from_secs(20),
+        |url| {
+            // Stands in for the system browser: follows the consent redirect
+            // back to SpiderLens's loopback listener.
+            let url = url.to_string();
+            tokio::spawn(async move {
+                reqwest::get(url).await.unwrap();
+            });
+        },
+    )
     .await
     .unwrap();
     assert_eq!(a.email, "ana@example.com");
@@ -174,7 +199,9 @@ async fn sign_in_uses_pkce_and_loopback_and_labels_the_account() {
     assert!(!a.refresh_token.expose_secret().is_empty());
 
     // Forget revokes at Google (US7.3, FR-017).
-    oauth::revoke(&http, &endpoints(&g), &a.refresh_token).await.unwrap();
+    oauth::revoke(&http, &endpoints(&g), &a.refresh_token)
+        .await
+        .unwrap();
     assert_eq!(g.revoked(), vec![a.refresh_token.expose_secret().to_string()]);
 }
 
@@ -183,9 +210,16 @@ async fn us1_2_suggests_the_property_covering_the_crawled_site() {
     let site = site();
     let g = fake(&site, 0);
     let s = session(&g, g.issue_refresh_token());
-    let props: Vec<Property> = gsc::properties(&ctx(None), &s, &Api { base: g.webmasters_url() }, Some(&site.url(HOST, "/p/0")))
-        .await
-        .unwrap();
+    let props: Vec<Property> = gsc::properties(
+        &ctx(None),
+        &s,
+        &Api {
+            base: g.webmasters_url(),
+        },
+        Some(&site.url(HOST, "/p/0")),
+    )
+    .await
+    .unwrap();
     assert_eq!(props.len(), 2);
     assert!(props[0].suggested);
     assert_eq!(props[0].id, property(&site));
@@ -219,15 +253,36 @@ async fn us1_3_to_us1_5_pages_match_zero_rows_and_orphans_with_paging() {
         .unwrap();
     assert_eq!(c, 13);
     // The others show zero and are marked "no data", not "not fetched".
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM gsc_pages WHERE impressions = 0"), (PAGES - 10) as i64);
     assert_eq!(
-        count(&path, "SELECT COUNT(*) FROM integration_status WHERE provider = 'search_console' AND reason = 'no_data'"),
+        count(&path, "SELECT COUNT(*) FROM gsc_pages WHERE impressions = 0"),
         (PAGES - 10) as i64
     );
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM orphan_candidates WHERE source = 'search_console'"), 60_000);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT COUNT(*) FROM integration_status WHERE provider = 'search_console' AND reason = 'no_data'"
+        ),
+        (PAGES - 10) as i64
+    );
+    assert_eq!(
+        count(
+            &path,
+            "SELECT COUNT(*) FROM orphan_candidates WHERE source = 'search_console'"
+        ),
+        60_000
+    );
     let conn = Connection::open(&path).unwrap();
-    assert_eq!(store::features(&conn).unwrap(), vec!["search_console".to_string()]);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM events WHERE kind = 'integration_run'"), 1);
+    assert_eq!(
+        store::features(&conn).unwrap(),
+        vec!["search_console".to_string()]
+    );
+    assert_eq!(
+        count(
+            &path,
+            "SELECT COUNT(*) FROM events WHERE kind = 'integration_run'"
+        ),
+        1
+    );
 }
 
 #[tokio::test]
@@ -252,13 +307,25 @@ async fn expired_access_tokens_are_refreshed_once() {
     let path = crawl(&site, dir.path()).await;
     let g = fake(&site, 0);
     let s = session(&g, g.issue_refresh_token());
-    let api = Api { base: g.webmasters_url() };
+    let api = Api {
+        base: g.webmasters_url(),
+    };
     gsc::properties(&ctx(None), &s, &api, None).await.unwrap();
     g.expire_access_tokens();
     let update = open_for_update(&path, None).unwrap();
-    let p = gsc::run_pages(&ctx(None), &s, &api, &update, "a", &req(&site), None, &Control::default(), &mut |_| {})
-        .await
-        .unwrap();
+    let p = gsc::run_pages(
+        &ctx(None),
+        &s,
+        &api,
+        &update,
+        "a",
+        &req(&site),
+        None,
+        &Control::default(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
     assert_eq!(p.state, RunState::Finished);
 }
 
@@ -269,7 +336,9 @@ async fn fr_006_quota_pauses_with_reset_time_and_resume_continues_from_the_curso
     let path = crawl(&site, dir.path()).await;
     let g = fake(&site, 30_000);
     let s = session(&g, g.issue_refresh_token());
-    let api = Api { base: g.webmasters_url() };
+    let api = Api {
+        base: g.webmasters_url(),
+    };
     // The first page succeeds; the second hits the daily quota.
     let quota = r#"{"error":{"code":429,"message":"Quota exceeded for quota metric 'Queries' and limit 'Queries per day'"}}"#;
     {
@@ -299,13 +368,28 @@ async fn fr_006_quota_pauses_with_reset_time_and_resume_continues_from_the_curso
     let queries_before = g.log().iter().filter(|l| l.path.ends_with("/query")).count();
     let update = open_for_update(&path, None).unwrap();
     let id = store::runs(update.conn()).unwrap()[0].id;
-    let p = gsc::run_pages(&ctx(None), &s, &api, &update, "a", &req(&site), Some(id), &Control::default(), &mut |_| {})
-        .await
-        .unwrap();
+    let p = gsc::run_pages(
+        &ctx(None),
+        &s,
+        &api,
+        &update,
+        "a",
+        &req(&site),
+        Some(id),
+        &Control::default(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
     assert_eq!(p.state, RunState::Finished);
     assert_eq!(p.done, 30_010);
     // Only the remaining page was requested, starting after the first.
-    let after: Vec<_> = g.log().into_iter().filter(|l| l.path.ends_with("/query")).skip(queries_before).collect();
+    let after: Vec<_> = g
+        .log()
+        .into_iter()
+        .filter(|l| l.path.ends_with("/query"))
+        .skip(queries_before)
+        .collect();
     assert_eq!(after.len(), 1);
     assert!(after[0].body.contains("\"startRow\":25000"));
     drop(update);
@@ -331,12 +415,24 @@ async fn fr_011_remove_drops_one_provider_s_data() {
     let update = open_for_update(&path, None).unwrap();
     store::remove(update.conn(), Some(Provider::SearchConsole)).unwrap();
     drop(update);
-    for t in ["gsc_pages", "orphan_candidates", "integration_runs", "integration_status"] {
+    for t in [
+        "gsc_pages",
+        "orphan_candidates",
+        "integration_runs",
+        "integration_status",
+    ] {
         assert_eq!(count(&path, &format!("SELECT COUNT(*) FROM {t}")), 0, "{t}");
     }
-    assert!(store::features(&Connection::open(&path).unwrap()).unwrap().is_empty());
+    assert!(
+        store::features(&Connection::open(&path).unwrap())
+            .unwrap()
+            .is_empty()
+    );
     // The crawl itself is untouched.
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM urls WHERE internal = 1"), PAGES as i64);
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM urls WHERE internal = 1"),
+        PAGES as i64
+    );
 }
 
 #[tokio::test]
@@ -349,17 +445,35 @@ async fn us1_6_top_queries_on_demand() {
         email: "a".into(),
         sites: vec![(property(&site), "siteOwner".into())],
         rows: rows(&site, 0),
-        queries: [(page.clone(), vec![("spider lens".to_string(), 7, 70), ("seo crawler".to_string(), 2, 40)])]
-            .into_iter()
-            .collect(),
+        queries: [(
+            page.clone(),
+            vec![
+                ("spider lens".to_string(), 7, 70),
+                ("seo crawler".to_string(), 2, 40),
+            ],
+        )]
+        .into_iter()
+        .collect(),
     });
     fetch(&g, &path, &site, None).await;
     let update = open_for_update(&path, None).unwrap();
-    let id: i64 = update.conn().query_row("SELECT id FROM urls WHERE url = ?1", [&page], |r| r.get(0)).unwrap();
-    let s = session(&g, g.issue_refresh_token());
-    let q = gsc::top_queries(&ctx(None), &s, &Api { base: g.webmasters_url() }, update.conn(), "a", id)
-        .await
+    let id: i64 = update
+        .conn()
+        .query_row("SELECT id FROM urls WHERE url = ?1", [&page], |r| r.get(0))
         .unwrap();
+    let s = session(&g, g.issue_refresh_token());
+    let q = gsc::top_queries(
+        &ctx(None),
+        &s,
+        &Api {
+            base: g.webmasters_url(),
+        },
+        update.conn(),
+        "a",
+        id,
+    )
+    .await
+    .unwrap();
     assert_eq!(q.len(), 2);
     assert_eq!(q[0].query, "spider lens");
     assert_eq!(q[0].clicks, 7);
@@ -378,7 +492,9 @@ async fn sc_004_no_token_reaches_the_crawl_file() {
     gsc::run_pages(
         &ctx(Some(Cache::open(&cache_path).unwrap())),
         &s,
-        &Api { base: g.webmasters_url() },
+        &Api {
+            base: g.webmasters_url(),
+        },
         &update,
         "ana@example.com",
         &req(&site),

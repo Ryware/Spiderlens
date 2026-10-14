@@ -118,7 +118,10 @@ impl FakeGoogle {
 
     /// Requests to the data APIs (not sign-in).
     pub fn api_calls(&self) -> usize {
-        self.log().iter().filter(|l| l.path.starts_with("/webmasters")).count()
+        self.log()
+            .iter()
+            .filter(|l| l.path.starts_with("/webmasters"))
+            .count()
     }
 
     pub fn revoked(&self) -> Vec<String> {
@@ -190,7 +193,12 @@ async fn authorize(State(s): State<Shared>, Query(q): Query<HashMap<String, Stri
 }
 
 async fn token(State(s): State<Shared>, Form(f): Form<HashMap<String, String>>) -> Response {
-    log(&s, "POST", "/token", f.get("grant_type").map_or("", String::as_str));
+    log(
+        &s,
+        "POST",
+        "/token",
+        f.get("grant_type").map_or("", String::as_str),
+    );
     let mut g = s.lock().unwrap();
     g.counter += 1;
     let n = g.counter;
@@ -198,11 +206,18 @@ async fn token(State(s): State<Shared>, Form(f): Form<HashMap<String, String>>) 
         Some("authorization_code") => {
             let code = f.get("code").cloned().unwrap_or_default();
             let Some((challenge, scope)) = g.codes.remove(&code) else {
-                return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "invalid_grant"}))).into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "invalid_grant"})),
+                )
+                    .into_response();
             };
             let verifier = f.get("code_verifier").cloned().unwrap_or_default();
             if URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())) != challenge {
-                return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "invalid_grant", "error_description": "PKCE"})))
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "invalid_grant", "error_description": "PKCE"})),
+                )
                     .into_response();
             }
             let access = format!("access-{n}");
@@ -222,13 +237,21 @@ async fn token(State(s): State<Shared>, Form(f): Form<HashMap<String, String>>) 
         Some("refresh_token") => {
             let r = f.get("refresh_token").cloned().unwrap_or_default();
             if !g.refresh.contains(&r) {
-                return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "invalid_grant"}))).into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "invalid_grant"})),
+                )
+                    .into_response();
             }
             let access = format!("access-{n}");
             g.access.insert(access.clone());
             axum::Json(json!({"access_token": access, "expires_in": 3599})).into_response()
         }
-        _ => (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "unsupported_grant_type"}))).into_response(),
+        _ => (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "unsupported_grant_type"})),
+        )
+            .into_response(),
     }
 }
 
@@ -247,7 +270,8 @@ fn gate(s: &Shared, headers: &HeaderMap) -> Option<Response> {
     if let Some((status, body, retry)) = g.failures.pop_front() {
         let mut r = (StatusCode::from_u16(status).unwrap(), body).into_response();
         if let Some(sec) = retry {
-            r.headers_mut().insert(header::RETRY_AFTER, sec.to_string().parse().unwrap());
+            r.headers_mut()
+                .insert(header::RETRY_AFTER, sec.to_string().parse().unwrap());
         }
         return Some(r);
     }
@@ -283,8 +307,18 @@ async fn sites(State(s): State<Shared>, headers: HeaderMap) -> Response {
     axum::Json(json!({"siteEntry": entries})).into_response()
 }
 
-async fn query(State(s): State<Shared>, Path(site): Path<String>, headers: HeaderMap, body: String) -> Response {
-    log(&s, "POST", &format!("/webmasters/v3/sites/{site}/searchAnalytics/query"), &body);
+async fn query(
+    State(s): State<Shared>,
+    Path(site): Path<String>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    log(
+        &s,
+        "POST",
+        &format!("/webmasters/v3/sites/{site}/searchAnalytics/query"),
+        &body,
+    );
     if let Some(r) = gate(&s, &headers) {
         return r;
     }
@@ -297,7 +331,12 @@ async fn query(State(s): State<Shared>, Path(site): Path<String>, headers: Heade
         )
             .into_response();
     }
-    let dims: Vec<&str> = req["dimensions"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let dims: Vec<&str> = req["dimensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
     if dims == ["query"] {
         let page = req
             .pointer("/dimensionFilterGroups/0/filters/0/expression")

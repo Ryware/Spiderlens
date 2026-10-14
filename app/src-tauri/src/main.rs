@@ -98,6 +98,7 @@ fn main() {
             results::export_cancel,
             integrations::integrations_status,
             integrations::integrations_settings_save,
+            integrations::integrations_google_client,
             integrations::integrations_connect_google,
             integrations::integrations_connect_cancel,
             integrations::integrations_save_key,

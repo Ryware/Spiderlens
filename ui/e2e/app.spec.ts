@@ -228,3 +228,26 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+test("integrations_fetch_search_console_for_the_open_crawl", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  await page.getByRole("button", { name: "Connect Google account" }).click();
+  await expect(page.getByRole("list", { name: "Google accounts" })).toContainText("ana@example.com");
+  await page.locator('[data-provider="search_console"]').getByRole("switch").click();
+  await expect(page.getByLabel("Property")).toHaveValue("sc-domain:example.com");
+  await page.getByRole("button", { name: "Fetch Search Console data" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Runs" })).toContainText("Finished");
+  // The screen scrolls inside the main pane, never the window.
+  const { scrollW, innerW, scrollH, innerH } = await page.evaluate(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    innerW: window.innerWidth,
+    scrollH: document.documentElement.scrollHeight,
+    innerH: window.innerHeight,
+  }));
+  expect(scrollW).toBeLessThanOrEqual(innerW);
+  expect(scrollH).toBeLessThanOrEqual(innerH);
+});

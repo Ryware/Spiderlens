@@ -94,8 +94,13 @@ pub struct Hub {
 impl Hub {
     /// The app's own folder, keychain and cache.
     pub fn open_default() -> Result<Self> {
-        let folder = Folder::default_location().ok_or_else(|| Error::Invalid("no settings folder on this system".into()))?;
-        Ok(Self::new(folder, credentials::default_store(), Cache::default_path()))
+        let folder = Folder::default_location()
+            .ok_or_else(|| Error::Invalid("no settings folder on this system".into()))?;
+        Ok(Self::new(
+            folder,
+            credentials::default_store(),
+            Cache::default_path(),
+        ))
     }
 
     pub fn new(folder: Folder, store: Arc<dyn CredentialStore>, cache_path: Option<PathBuf>) -> Self {
@@ -151,7 +156,12 @@ impl Hub {
         }
     }
 
-    fn provider_status(&self, p: Provider, settings: &IntegrationSettings, connections: &[Connection]) -> ProviderStatus {
+    fn provider_status(
+        &self,
+        p: Provider,
+        settings: &IntegrationSettings,
+        connections: &[Connection],
+    ) -> ProviderStatus {
         let s = settings.provider(p);
         let l = Limits::defaults(p).with_settings(&s);
         ProviderStatus {
@@ -220,7 +230,13 @@ impl Hub {
     /// Signs in to Google for `features` plus every feature already granted,
     /// since Google gets one consent for all scopes (plan D3). `open` gets the
     /// sign-in link. Returns early when `cancel` is cancelled.
-    pub fn connect_google(&self, features: &[&str], timeout: Duration, cancel: &Control, open: impl FnOnce(&str)) -> Result<Connection> {
+    pub fn connect_google(
+        &self,
+        features: &[&str],
+        timeout: Duration,
+        cancel: &Control,
+        open: impl FnOnce(&str),
+    ) -> Result<Connection> {
         let client = self.google_client()?;
         let mut wanted: Vec<String> = features.iter().map(|s| s.to_string()).collect();
         for c in self.folder.connections().iter().filter(|c| c.kind == "google") {
@@ -256,7 +272,8 @@ impl Hub {
             client_secret: client.secret.as_ref().map(|s| s.expose_secret().to_string()),
             refresh_token: a.refresh_token.expose_secret().to_string(),
         };
-        self.store.set(&CredentialId::new("google", &a.email), &stored.to_secret())?;
+        self.store
+            .set(&CredentialId::new("google", &a.email), &stored.to_secret())?;
         self.upsert(Connection {
             kind: "google".into(),
             label: a.email,
@@ -269,7 +286,10 @@ impl Hub {
     /// Saves an API key for a key-based provider (FR-013).
     pub fn save_key(&self, p: Provider, label: &str, key: SecretString) -> Result<Connection> {
         if p.uses_google_account() {
-            return Err(Error::Invalid(format!("{} uses a Google account, not a key", p.label())));
+            return Err(Error::Invalid(format!(
+                "{} uses a Google account, not a key",
+                p.label()
+            )));
         }
         let label = label.trim();
         if label.is_empty() || key.expose_secret().trim().is_empty() {
@@ -322,7 +342,12 @@ impl Hub {
             Provider::SearchConsole | Provider::UrlInspection => "search_console",
             Provider::Analytics => "analytics",
             Provider::Sheets => "sheets",
-            _ => return Err(Error::Invalid(format!("{} does not use a Google account", p.label()))),
+            _ => {
+                return Err(Error::Invalid(format!(
+                    "{} does not use a Google account",
+                    p.label()
+                )));
+            }
         };
         let candidates: Vec<Connection> = self
             .folder
@@ -346,7 +371,10 @@ impl Hub {
             .get(&CredentialId::new("google", &c.label))?
             .ok_or_else(|| Error::NoConnection(format!("{} ({}; connect it again)", p.label(), c.label)))?;
         let stored = StoredGoogle::from_secret(&secret)?;
-        Ok((Session::new(Http::new(Duration::from_secs(30)), self.endpoints.clone(), stored), c.label))
+        Ok((
+            Session::new(Http::new(Duration::from_secs(30)), self.endpoints.clone(), stored),
+            c.label,
+        ))
     }
 
     /// Search Console properties, the one covering `crawl`'s start URL first.
@@ -354,7 +382,12 @@ impl Hub {
         let start = crawl.map(start_url).transpose()?.flatten();
         let (session, _) = self.google_session(Provider::SearchConsole, account)?;
         let ctx = self.ctx(Provider::SearchConsole, false);
-        run::block_on(gsc::properties(&ctx, &session, &self.webmasters, start.as_deref()))
+        run::block_on(gsc::properties(
+            &ctx,
+            &session,
+            &self.webmasters,
+            start.as_deref(),
+        ))
     }
 
     /// The property to use when none was chosen: the suggested one.
@@ -408,12 +441,18 @@ impl Hub {
         }
         .ok_or_else(|| Error::Invalid("no paused run in this crawl".into()))?;
         if !r.state.is_resumable() {
-            return Err(Error::Invalid(format!("run {} is {}; start a new one", r.id, r.state.as_str())));
+            return Err(Error::Invalid(format!(
+                "run {} is {}; start a new one",
+                r.id,
+                r.state.as_str()
+            )));
         }
         match r.provider {
             Provider::SearchConsole => {
-                let req: PageRequest = serde_json::from_value(r.params.clone()).map_err(|e| Error::Invalid(e.to_string()))?;
-                let (session, label) = self.google_session(Provider::SearchConsole, r.account_label.as_deref())?;
+                let req: PageRequest =
+                    serde_json::from_value(r.params.clone()).map_err(|e| Error::Invalid(e.to_string()))?;
+                let (session, label) =
+                    self.google_session(Provider::SearchConsole, r.account_label.as_deref())?;
                 let update = spiderlens_engine::crawl::open_for_update(crawl, None)?;
                 let ctx = self.ctx(Provider::SearchConsole, req.fresh);
                 run::block_on(gsc::run_pages(
@@ -428,7 +467,10 @@ impl Hub {
                     on_progress,
                 ))
             }
-            p => Err(Error::Invalid(format!("{} is not available in this build", p.label()))),
+            p => Err(Error::Invalid(format!(
+                "{} is not available in this build",
+                p.label()
+            ))),
         }
     }
 
@@ -462,13 +504,23 @@ impl Hub {
         let (session, label) = self.google_session(Provider::SearchConsole, label.as_deref())?;
         let update = spiderlens_engine::crawl::open_for_update(crawl, None)?;
         let ctx = self.ctx(Provider::SearchConsole, false);
-        run::block_on(gsc::top_queries(&ctx, &session, &self.webmasters, update.conn(), &label, url_id))
+        run::block_on(gsc::top_queries(
+            &ctx,
+            &session,
+            &self.webmasters,
+            update.conn(),
+            &label,
+            url_id,
+        ))
     }
 
     pub fn orphans(&self, crawl: &Path, source: Option<&str>, offset: i64, limit: i64) -> Result<OrphanPage> {
         let db = read_only(crawl)?;
         if !store::has_tables(&db)? {
-            return Ok(OrphanPage { rows: Vec::new(), total: 0 });
+            return Ok(OrphanPage {
+                rows: Vec::new(),
+                total: 0,
+            });
         }
         let (rows, total) = store::orphans(&db, source, offset, limit)?;
         Ok(OrphanPage { rows, total })
@@ -498,7 +550,9 @@ impl Hub {
 
 fn serves(c: &Connection, p: Provider) -> bool {
     match p {
-        Provider::SearchConsole | Provider::UrlInspection => c.kind == "google" && c.scopes.iter().any(|s| s == "search_console"),
+        Provider::SearchConsole | Provider::UrlInspection => {
+            c.kind == "google" && c.scopes.iter().any(|s| s == "search_console")
+        }
         Provider::Analytics => c.kind == "google" && c.scopes.iter().any(|s| s == "analytics"),
         Provider::Sheets => c.kind == "google" && c.scopes.iter().any(|s| s == "sheets"),
         other => c.kind == other.id(),
@@ -506,7 +560,10 @@ fn serves(c: &Connection, p: Provider) -> bool {
 }
 
 fn read_only(path: &Path) -> Result<Db> {
-    Ok(Db::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?)
+    Ok(Db::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?)
 }
 
 fn start_url(path: &Path) -> Result<Option<String>> {

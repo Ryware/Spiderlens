@@ -4,6 +4,7 @@
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type {
   CrawlFinished,
@@ -105,7 +106,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; integrations: FakeIntegrations } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -126,9 +127,12 @@ export function fakeTransport(
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   return {
     ...resultsApi,
+    ...integrationsApi,
+    integrations,
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,

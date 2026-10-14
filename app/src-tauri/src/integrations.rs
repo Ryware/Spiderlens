@@ -57,7 +57,8 @@ async fn blocking<T: Send + 'static>(
             let _ = tx.send(f(&hub).map_err(err));
         })
         .map_err(err)?;
-    rx.await.map_err(|_| "The integrations worker stopped.".to_string())?
+    rx.await
+        .map_err(|_| "The integrations worker stopped.".to_string())?
 }
 
 fn provider(id: &str) -> Cmd<Provider> {
@@ -79,10 +80,35 @@ pub async fn integrations_settings_save(
     blocking(&state, move |h| h.save_settings(p, settings)).await
 }
 
+/// Saves the user's own Google OAuth client, or goes back to the built-in
+/// one when `client_id` is empty (FR-016).
+#[tauri::command]
+pub async fn integrations_google_client(
+    state: tauri::State<'_, State>,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Cmd<()> {
+    blocking(&state, move |h| {
+        let id = client_id.trim().to_string();
+        h.save_google_client((!id.is_empty()).then(|| {
+            (
+                id,
+                client_secret
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.trim().to_string().into()),
+            )
+        }))
+    })
+    .await
+}
+
 /// Opens Google's consent page in the system browser and waits for the
 /// answer (or `integrations_connect_cancel`).
 #[tauri::command]
-pub async fn integrations_connect_google(state: tauri::State<'_, State>, features: Vec<String>) -> Cmd<Connection> {
+pub async fn integrations_connect_google(
+    state: tauri::State<'_, State>,
+    features: Vec<String>,
+) -> Cmd<Connection> {
     let control = Control::default();
     *state.sign_in.lock().expect("lock") = Some(control.clone());
     let r = blocking(&state, move |h| {
@@ -138,7 +164,9 @@ pub fn integrations_default_request(property: String) -> PageRequest {
 
 fn refused_while_crawling(app: &AppHandle, path: &std::path::Path) -> Cmd<()> {
     if app.state::<crate::crawl::State>().active_path().as_deref() == Some(path) {
-        return Err("This crawl is still running. Fetch external data when it has finished or paused.".into());
+        return Err(
+            "This crawl is still running. Fetch external data when it has finished or paused.".into(),
+        );
     }
     Ok(())
 }
@@ -228,7 +256,11 @@ pub async fn integrations_runs(state: tauri::State<'_, State>, path: PathBuf) ->
 }
 
 #[tauri::command]
-pub async fn integrations_queries(state: tauri::State<'_, State>, path: PathBuf, url_id: i64) -> Cmd<Vec<QueryRow>> {
+pub async fn integrations_queries(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    url_id: i64,
+) -> Cmd<Vec<QueryRow>> {
     blocking(&state, move |h| h.queries(&path, url_id)).await
 }
 
@@ -240,7 +272,10 @@ pub async fn integrations_orphans(
     offset: i64,
     limit: i64,
 ) -> Cmd<OrphanPage> {
-    blocking(&state, move |h| h.orphans(&path, source.as_deref(), offset, limit.clamp(1, 1000))).await
+    blocking(&state, move |h| {
+        h.orphans(&path, source.as_deref(), offset, limit.clamp(1, 1000))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -264,7 +299,10 @@ pub async fn integrations_cache_info(state: tauri::State<'_, State>) -> Cmd<Cach
 }
 
 #[tauri::command]
-pub async fn integrations_cache_clear(state: tauri::State<'_, State>, provider: Option<String>) -> Cmd<usize> {
+pub async fn integrations_cache_clear(
+    state: tauri::State<'_, State>,
+    provider: Option<String>,
+) -> Cmd<usize> {
     let p = provider.as_deref().map(self::provider).transpose()?;
     blocking(&state, move |h| h.cache_clear(p)).await
 }

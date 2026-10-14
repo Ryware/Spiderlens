@@ -259,8 +259,16 @@ mod tests {
             b.acquire().await;
         }
         // 60/min with a burst of 7: 30 requests need at least 23 seconds.
-        assert!(start.elapsed() >= Duration::from_secs(22), "{:?}", start.elapsed());
-        assert!(start.elapsed() <= Duration::from_secs(25), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() >= Duration::from_secs(22),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(
+            start.elapsed() <= Duration::from_secs(25),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

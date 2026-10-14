@@ -118,15 +118,22 @@ mod tests {
         c.execute_batch("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, internal INTEGER NOT NULL);")
             .unwrap();
         for (u, internal) in urls {
-            c.execute("INSERT INTO urls (url, internal) VALUES (?1, ?2)", params![u, internal])
-                .unwrap();
+            c.execute(
+                "INSERT INTO urls (url, internal) VALUES (?1, ?2)",
+                params![u, internal],
+            )
+            .unwrap();
         }
         c
     }
 
     #[test]
     fn exact_scheme_and_slash_variants_match_when_unique() {
-        let c = conn(&[("https://a.test/", true), ("https://a.test/blog", true), ("https://x.test/", false)]);
+        let c = conn(&[
+            ("https://a.test/", true),
+            ("https://a.test/blog", true),
+            ("https://x.test/", false),
+        ]);
         let m = Matcher::build(&c).unwrap();
         assert_eq!(m.lookup("https://a.test/blog").unwrap(), Some(2));
         assert_eq!(m.lookup("https://a.test/blog/").unwrap(), Some(2));

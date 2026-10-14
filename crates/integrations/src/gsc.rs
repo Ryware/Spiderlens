@@ -99,7 +99,13 @@ impl PageRequest {
 
 /// Calls the API with the session's token: refreshes once on 401 and
 /// applies spec 004's retry rules to transient failures.
-async fn call(ctx: &Ctx, session: &Session, method: Method, url: &str, body: Option<&Value>) -> (std::result::Result<Value, HttpError>, u32) {
+async fn call(
+    ctx: &Ctx,
+    session: &Session,
+    method: Method,
+    url: &str,
+    body: Option<&Value>,
+) -> (std::result::Result<Value, HttpError>, u32) {
     let mut refreshed = false;
     loop {
         ctx.bucket.acquire().await;
@@ -125,7 +131,12 @@ async fn call(ctx: &Ctx, session: &Session, method: Method, url: &str, body: Opt
 }
 
 /// The properties the account can read, best match for `crawl_host` first.
-pub async fn properties(ctx: &Ctx, session: &Session, api: &Api, crawl_host: Option<&str>) -> Result<Vec<Property>> {
+pub async fn properties(
+    ctx: &Ctx,
+    session: &Session,
+    api: &Api,
+    crawl_host: Option<&str>,
+) -> Result<Vec<Property>> {
     let (r, _) = call(ctx, session, Method::GET, &format!("{}/sites", api.base), None).await;
     let v = r?;
     let mut list: Vec<Property> = v["siteEntry"]
@@ -147,11 +158,11 @@ pub async fn properties(ctx: &Ctx, session: &Session, api: &Api, crawl_host: Opt
             }
         })
         .collect();
-    if let Some(host) = crawl_host {
-        if let Some(best) = suggest(&list, host) {
-            for p in &mut list {
-                p.suggested = p.id == best;
-            }
+    if let Some(host) = crawl_host
+        && let Some(best) = suggest(&list, host)
+    {
+        for p in &mut list {
+            p.suggested = p.id == best;
         }
     }
     list.sort_by(|a, b| b.suggested.cmp(&a.suggested).then(a.display.cmp(&b.display)));
@@ -168,7 +179,10 @@ pub fn suggest(props: &[Property], start_url: &str) -> Option<String> {
     let domain = props
         .iter()
         .filter(|p| p.kind == PropertyKind::Domain)
-        .filter_map(|p| p.id.strip_prefix("sc-domain:").map(|d| (p, d.to_ascii_lowercase())))
+        .filter_map(|p| {
+            p.id.strip_prefix("sc-domain:")
+                .map(|d| (p, d.to_ascii_lowercase()))
+        })
         .filter(|(_, d)| host == *d || host.ends_with(&format!(".{d}")))
         .max_by_key(|(_, d)| d.len());
     if let Some((p, _)) = domain {
@@ -204,8 +218,11 @@ pub async fn run_pages(
     let params_json = serde_json::to_value(req).expect("serializes");
     let (run_id, mut start_row, mut counts) = match resume {
         Some(id) => {
-            let p = store::run(conn, id)?.ok_or_else(|| Error::Invalid(format!("no run {id} in this crawl")))?;
-            let cur = store::cursor(conn, id)?.and_then(|c| c.parse::<usize>().ok()).unwrap_or(0);
+            let p =
+                store::run(conn, id)?.ok_or_else(|| Error::Invalid(format!("no run {id} in this crawl")))?;
+            let cur = store::cursor(conn, id)?
+                .and_then(|c| c.parse::<usize>().ok())
+                .unwrap_or(0);
             store::set_state(conn, id, RunState::Running, None, None)?;
             (
                 id,
@@ -224,9 +241,21 @@ pub async fn run_pages(
             conn.execute_batch("BEGIN IMMEDIATE")?;
             conn.execute("DELETE FROM gsc_pages", [])?;
             conn.execute("DELETE FROM gsc_queries", [])?;
-            conn.execute("DELETE FROM orphan_candidates WHERE source = 'search_console'", [])?;
-            conn.execute("DELETE FROM integration_status WHERE provider = 'search_console'", [])?;
-            let id = store::create_run(conn, Provider::SearchConsole, Some(account_label), Some(&req.property), &params_json)?;
+            conn.execute(
+                "DELETE FROM orphan_candidates WHERE source = 'search_console'",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM integration_status WHERE provider = 'search_console'",
+                [],
+            )?;
+            let id = store::create_run(
+                conn,
+                Provider::SearchConsole,
+                Some(account_label),
+                Some(&req.property),
+                &params_json,
+            )?;
             conn.execute_batch("COMMIT")?;
             (
                 id,
@@ -280,10 +309,17 @@ pub async fn run_pages(
                     }
                     Err(e) => {
                         let (state, resume_at) = match &e {
-                            HttpError::RateLimited { quota: true, retry_after, .. } => (
+                            HttpError::RateLimited {
+                                quota: true,
+                                retry_after,
+                                ..
+                            } => (
                                 RunState::PausedQuota,
                                 Some(match retry_after {
-                                    Some(d) => Timestamp::now() + jiff::SignedDuration::try_from(*d).unwrap_or_default(),
+                                    Some(d) => {
+                                        Timestamp::now()
+                                            + jiff::SignedDuration::try_from(*d).unwrap_or_default()
+                                    }
                                     None => next_reset(Timestamp::now(), GOOGLE_TZ),
                                 }),
                             ),
@@ -333,7 +369,13 @@ pub async fn run_pages(
     report(on_progress)
 }
 
-fn write_rows(conn: &Connection, matcher: &Matcher<'_>, run_id: i64, rows: &[Value], counts: &mut Counts) -> Result<()> {
+fn write_rows(
+    conn: &Connection,
+    matcher: &Matcher<'_>,
+    run_id: i64,
+    rows: &[Value],
+    counts: &mut Counts,
+) -> Result<()> {
     let mut page_stmt = conn.prepare_cached(
         "INSERT INTO gsc_pages (url_id, run_id, clicks, impressions, ctr, position)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -403,7 +445,8 @@ pub async fn top_queries(
         .into_iter()
         .find(|r| r.provider == Provider::SearchConsole && r.state == RunState::Finished)
         .ok_or_else(|| Error::Invalid("fetch Search Console data for this crawl first".into()))?;
-    let req: PageRequest = serde_json::from_value(run.params.clone()).map_err(|e| Error::Invalid(e.to_string()))?;
+    let req: PageRequest =
+        serde_json::from_value(run.params.clone()).map_err(|e| Error::Invalid(e.to_string()))?;
     let page_url: String = conn.query_row("SELECT url FROM urls WHERE id = ?1", [url_id], |r| r.get(0))?;
     let body = json!({
         "startDate": req.start_date,
@@ -445,7 +488,15 @@ pub async fn top_queries(
         conn.execute(
             "INSERT OR REPLACE INTO gsc_queries (url_id, run_id, query, clicks, impressions, ctr, position)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![url_id, run.id, q.query, q.clicks, q.impressions, q.ctr, q.position],
+            params![
+                url_id,
+                run.id,
+                q.query,
+                q.clicks,
+                q.impressions,
+                q.ctr,
+                q.position
+            ],
         )?;
     }
     conn.execute_batch("COMMIT")?;
@@ -460,21 +511,42 @@ mod tests {
         Property {
             id: id.into(),
             display: id.into(),
-            kind: if id.starts_with("sc-domain:") { PropertyKind::Domain } else { PropertyKind::UrlPrefix },
+            kind: if id.starts_with("sc-domain:") {
+                PropertyKind::Domain
+            } else {
+                PropertyKind::UrlPrefix
+            },
             suggested: false,
         }
     }
 
     #[test]
     fn suggests_domain_property_then_longest_prefix() {
-        let props = [p("https://www.a.test/"), p("https://www.a.test/blog/"), p("sc-domain:a.test"), p("https://b.test/")];
-        assert_eq!(suggest(&props, "https://www.a.test/blog/x").as_deref(), Some("sc-domain:a.test"));
+        let props = [
+            p("https://www.a.test/"),
+            p("https://www.a.test/blog/"),
+            p("sc-domain:a.test"),
+            p("https://b.test/"),
+        ];
+        assert_eq!(
+            suggest(&props, "https://www.a.test/blog/x").as_deref(),
+            Some("sc-domain:a.test")
+        );
         let props = [p("https://www.a.test/"), p("https://www.a.test/blog/")];
-        assert_eq!(suggest(&props, "https://www.a.test/blog/x").as_deref(), Some("https://www.a.test/blog/"));
+        assert_eq!(
+            suggest(&props, "https://www.a.test/blog/x").as_deref(),
+            Some("https://www.a.test/blog/")
+        );
         assert_eq!(suggest(&props, "https://c.test/").as_deref(), None);
         // A domain property for a different registrable domain never matches.
-        assert_eq!(suggest(&[p("sc-domain:test")], "https://nota.test/").as_deref(), Some("sc-domain:test"));
-        assert_eq!(suggest(&[p("sc-domain:b.test")], "https://ab.test/").as_deref(), None);
+        assert_eq!(
+            suggest(&[p("sc-domain:test")], "https://nota.test/").as_deref(),
+            Some("sc-domain:test")
+        );
+        assert_eq!(
+            suggest(&[p("sc-domain:b.test")], "https://ab.test/").as_deref(),
+            None
+        );
     }
 
     #[test]

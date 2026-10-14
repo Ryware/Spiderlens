@@ -75,7 +75,11 @@ pub struct Http {
 impl Http {
     pub fn new(read_timeout: Duration) -> Self {
         let client = reqwest::Client::builder()
-            .user_agent(concat!("SpiderLens/", env!("CARGO_PKG_VERSION"), " (integrations)"))
+            .user_agent(concat!(
+                "SpiderLens/",
+                env!("CARGO_PKG_VERSION"),
+                " (integrations)"
+            ))
             .connect_timeout(Duration::from_secs(10))
             .timeout(read_timeout)
             .build()
@@ -169,21 +173,38 @@ mod tests {
     use super::*;
 
     fn c(status: u16, body: &str) -> HttpError {
-        classify("Test", StatusCode::from_u16(status).unwrap(), None, body.as_bytes())
+        classify(
+            "Test",
+            StatusCode::from_u16(status).unwrap(),
+            None,
+            body.as_bytes(),
+        )
     }
 
     #[test]
     fn classifies_google_style_errors() {
         assert!(matches!(
-            c(429, r#"{"error":{"message":"Quota exceeded for quota metric 'Queries' and limit 'Queries per day'"}}"#),
+            c(
+                429,
+                r#"{"error":{"message":"Quota exceeded for quota metric 'Queries' and limit 'Queries per day'"}}"#
+            ),
             HttpError::RateLimited { quota: true, .. }
         ));
         assert!(matches!(
             c(429, r#"{"error":{"message":"Quota exceeded … per minute"}}"#),
             HttpError::RateLimited { quota: false, .. }
         ));
-        assert!(matches!(c(403, r#"{"error":{"message":"User does not have sufficient permission"}}"#), HttpError::Forbidden { .. }));
-        assert!(matches!(c(401, r#"{"error":"invalid_grant"}"#), HttpError::Unauthorized { .. }));
+        assert!(matches!(
+            c(
+                403,
+                r#"{"error":{"message":"User does not have sufficient permission"}}"#
+            ),
+            HttpError::Forbidden { .. }
+        ));
+        assert!(matches!(
+            c(401, r#"{"error":"invalid_grant"}"#),
+            HttpError::Unauthorized { .. }
+        ));
         assert!(c(503, "busy").is_transient());
         assert!(!c(400, "{}").is_transient());
     }

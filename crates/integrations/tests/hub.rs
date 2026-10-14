@@ -43,7 +43,10 @@ fn crawl(site: &Site, dir: &Path) -> PathBuf {
     )
     .unwrap();
     let (_tx, rx) = watch::channel(CrawlControl::Run);
-    tokio::runtime::Runtime::new().unwrap().block_on(crawler.run(rx, None)).unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(crawler.run(rx, None))
+        .unwrap();
     path
 }
 
@@ -54,7 +57,9 @@ fn hub(g: &FakeGoogle, dir: &Path, store: Arc<MemoryStore>) -> Hub {
             token: g.token_url(),
             revoke: g.revoke_url(),
         },
-        Api { base: g.webmasters_url() },
+        Api {
+            base: g.webmasters_url(),
+        },
         Some(Client {
             id: "test-client".into(),
             secret: None,
@@ -92,20 +97,37 @@ fn connect_fetch_resume_and_forget() {
     let h = hub(&g, dir.path(), store.clone());
 
     // Not connected yet.
-    assert!(matches!(h.properties(None, Some(&path)), Err(Error::NoConnection(_))));
+    assert!(matches!(
+        h.properties(None, Some(&path)),
+        Err(Error::NoConnection(_))
+    ));
 
     let c = h
-        .connect_google(&["search_console"], Duration::from_secs(20), &Control::default(), follow)
+        .connect_google(
+            &["search_console"],
+            Duration::from_secs(20),
+            &Control::default(),
+            follow,
+        )
         .unwrap();
     assert_eq!(c.label, "ana@example.com");
     assert_eq!(c.scopes, vec!["search_console".to_string()]);
-    assert!(store.get(&CredentialId::new("google", "ana@example.com")).unwrap().is_some());
+    assert!(
+        store
+            .get(&CredentialId::new("google", "ana@example.com"))
+            .unwrap()
+            .is_some()
+    );
     // Nothing secret in the settings folder.
     let listing = std::fs::read_to_string(dir.path().join("integrations/connections.json")).unwrap();
     assert!(!listing.contains("refresh"));
 
     let status = h.status();
-    let sc = status.providers.iter().find(|p| p.provider == Provider::SearchConsole).unwrap();
+    let sc = status
+        .providers
+        .iter()
+        .find(|p| p.provider == Provider::SearchConsole)
+        .unwrap();
     assert!(sc.available);
     assert_eq!(sc.connections, vec!["ana@example.com".to_string()]);
 
@@ -114,7 +136,10 @@ fn connect_fetch_resume_and_forget() {
     let req = PageRequest::last_28_days(property);
 
     // Off until the user turns it on (FR-001).
-    assert!(h.fetch_search_console(&path, None, &req, &Control::default(), &mut |_| {}).is_err());
+    assert!(
+        h.fetch_search_console(&path, None, &req, &Control::default(), &mut |_| {})
+            .is_err()
+    );
     h.save_settings(
         Provider::SearchConsole,
         ProviderSettings {
@@ -127,7 +152,9 @@ fn connect_fetch_resume_and_forget() {
     // Paused by the user before the first page, then resumed.
     let control = Control::default();
     control.pause();
-    let p = h.fetch_search_console(&path, None, &req, &control, &mut |_| {}).unwrap();
+    let p = h
+        .fetch_search_console(&path, None, &req, &control, &mut |_| {})
+        .unwrap();
     assert_eq!(p.state, RunState::PausedUser);
     let p = h.resume(&path, None, &Control::default(), &mut |_| {}).unwrap();
     assert_eq!(p.state, RunState::Finished);
@@ -139,7 +166,12 @@ fn connect_fetch_resume_and_forget() {
 
     assert!(h.forget("google", "ana@example.com").unwrap());
     assert_eq!(g.revoked().len(), 1);
-    assert!(store.get(&CredentialId::new("google", "ana@example.com")).unwrap().is_none());
+    assert!(
+        store
+            .get(&CredentialId::new("google", "ana@example.com"))
+            .unwrap()
+            .is_none()
+    );
     assert!(h.status().connections.is_empty());
 }
 
@@ -153,7 +185,16 @@ fn keys_need_a_name_and_google_providers_refuse_keys() {
     assert!(h.save_key(Provider::Ahrefs, " ", "k".into()).is_err());
     let c = h.save_key(Provider::Ahrefs, "Agency", "k-1".into()).unwrap();
     assert_eq!(c.kind, "ahrefs");
-    assert!(!std::fs::read_to_string(dir.path().join("integrations/connections.json")).unwrap().contains("k-1"));
+    assert!(
+        !std::fs::read_to_string(dir.path().join("integrations/connections.json"))
+            .unwrap()
+            .contains("k-1")
+    );
     assert!(!h.forget("ahrefs", "Agency").unwrap());
-    assert!(store.get(&CredentialId::new("ahrefs", "Agency")).unwrap().is_none());
+    assert!(
+        store
+            .get(&CredentialId::new("ahrefs", "Agency"))
+            .unwrap()
+            .is_none()
+    );
 }

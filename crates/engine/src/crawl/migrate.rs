@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,12 +34,14 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}, Step {
-    // External integrations (spec 024, data-model.md). Tables only.
-    version: 4,
-    additive: true,
-    sql: INTEGRATIONS,
-}];
+    },
+    Step {
+        // External integrations (spec 024, data-model.md). Tables only.
+        version: 4,
+        additive: true,
+        sql: INTEGRATIONS,
+    },
+];
 
 const INTEGRATIONS: &str = "
 CREATE TABLE integration_runs (

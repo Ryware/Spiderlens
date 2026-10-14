@@ -91,7 +91,9 @@ impl Provider {
 
     pub fn terms_url(self) -> &'static str {
         match self {
-            Self::SearchConsole | Self::UrlInspection => "https://developers.google.com/webmaster-tools/terms",
+            Self::SearchConsole | Self::UrlInspection => {
+                "https://developers.google.com/webmaster-tools/terms"
+            }
             Self::Analytics => "https://developers.google.com/analytics/terms",
             Self::FieldData => "https://developer.chrome.com/docs/crux/api",
             Self::LabTests => "https://developers.google.com/speed/docs/insights/v5/about",

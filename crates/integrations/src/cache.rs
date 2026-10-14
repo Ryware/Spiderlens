@@ -94,7 +94,9 @@ impl Cache {
     /// Clears one provider's entries, or all.
     pub fn clear(&self, provider: Option<Provider>) -> Result<usize> {
         Ok(match provider {
-            Some(p) => self.conn.execute("DELETE FROM cache WHERE provider = ?1", [p.id()])?,
+            Some(p) => self
+                .conn
+                .execute("DELETE FROM cache WHERE provider = ?1", [p.id()])?,
             None => self.conn.execute("DELETE FROM cache", [])?,
         })
     }
@@ -120,9 +122,13 @@ mod tests {
         let now: Timestamp = "2026-10-14T10:00:00Z".parse().unwrap();
         let k = key(&["search_console", "a@b.c", "sc-domain:a.test", "page=0"]);
         let v = serde_json::json!({"rows": [1, 2, 3]});
-        c.put(&k, Provider::SearchConsole, Duration::from_secs(60), &v, now).unwrap();
+        c.put(&k, Provider::SearchConsole, Duration::from_secs(60), &v, now)
+            .unwrap();
         assert_eq!(c.get(&k, now).unwrap(), Some(v));
-        assert_eq!(c.get(&k, now + jiff::SignedDuration::from_secs(61)).unwrap(), None);
+        assert_eq!(
+            c.get(&k, now + jiff::SignedDuration::from_secs(61)).unwrap(),
+            None
+        );
         assert_eq!(c.size().unwrap().0, 1);
         assert_eq!(c.clear(Some(Provider::Moz)).unwrap(), 0);
         assert_eq!(c.clear(None).unwrap(), 1);
@@ -138,6 +144,9 @@ mod tests {
         let now: Timestamp = "2026-10-14T03:00:00Z".parse().unwrap();
         assert_eq!(default_ttl(Provider::FieldData, now), Duration::from_secs(3600));
         let now: Timestamp = "2026-10-14T05:00:00Z".parse().unwrap();
-        assert_eq!(default_ttl(Provider::FieldData, now), Duration::from_secs(23 * 3600));
+        assert_eq!(
+            default_ttl(Provider::FieldData, now),
+            Duration::from_secs(23 * 3600)
+        );
     }
 }

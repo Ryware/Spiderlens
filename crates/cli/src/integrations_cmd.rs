@@ -251,7 +251,13 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
         }
         IntegrationsCommand::Enable { provider, off } => {
             let p = Provider::from(provider);
-            let mut s = h.status().providers.into_iter().find(|s| s.provider == p).expect("listed").settings;
+            let mut s = h
+                .status()
+                .providers
+                .into_iter()
+                .find(|s| s.provider == p)
+                .expect("listed")
+                .settings;
             s.enabled = !off;
             h.save_settings(p, s)?;
             println!("{} is {}.", p.label(), if off { "off" } else { "on" });
@@ -261,7 +267,9 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
         IntegrationsCommand::Forget { kind, label } => {
             let revoked = h.forget(&kind, &label)?;
             if kind == "google" && !revoked {
-                println!("Removed {label} here. Google did not confirm the revoke; you can also remove access at https://myaccount.google.com/permissions");
+                println!(
+                    "Removed {label} here. Google did not confirm the revoke; you can also remove access at https://myaccount.google.com/permissions"
+                );
             } else {
                 println!("Removed {label}.");
             }
@@ -309,7 +317,10 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
                 print_json(&rows);
             } else {
                 for q in rows {
-                    println!("{:>8} clicks {:>10} impressions  {:>5.1}  {}", q.clicks, q.impressions, q.position, q.query);
+                    println!(
+                        "{:>8} clicks {:>10} impressions  {:>5.1}  {}",
+                        q.clicks, q.impressions, q.position, q.query
+                    );
                 }
             }
             Ok(ExitCode::from(exit::FETCHED))
@@ -370,7 +381,9 @@ fn connect(h: &Hub, a: ConnectArgs) -> Result<ExitCode, Error> {
     let p = Provider::from_id(&a.target.replace('-', "_"))
         .filter(|p| !p.uses_google_account())
         .ok_or_else(|| Error::Invalid(format!("unknown provider {}", a.target)))?;
-    let label = a.label.ok_or_else(|| Error::Invalid("a key needs --label".into()))?;
+    let label = a
+        .label
+        .ok_or_else(|| Error::Invalid("a key needs --label".into()))?;
     if std::io::stdin().is_terminal() {
         eprint!("Paste the {} key and press Enter: ", p.label());
         std::io::stderr().flush().ok();
@@ -386,7 +399,10 @@ fn connect(h: &Hub, a: ConnectArgs) -> Result<ExitCode, Error> {
 fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
     let p = Provider::from(a.provider);
     if p != Provider::SearchConsole {
-        return Err(Error::Invalid(format!("{} is not available in this build yet", p.label())));
+        return Err(Error::Invalid(format!(
+            "{} is not available in this build yet",
+            p.label()
+        )));
     }
     let property = match a.property {
         Some(p) => p,
@@ -430,12 +446,19 @@ fn finish(p: &RunProgress, json: bool) -> ExitCode {
     if json {
         print_json(p);
     } else {
-        let matched = p.matched.map_or(String::new(), |m| format!(", {m} matched crawled pages"));
+        let matched = p
+            .matched
+            .map_or(String::new(), |m| format!(", {m} matched crawled pages"));
         let unmatched = p
             .unmatched
             .filter(|n| *n > 0)
             .map_or(String::new(), |n| format!(", {n} not in the crawl"));
-        println!("Run {}: {} ({} rows{matched}{unmatched}).", p.id, p.state.as_str(), p.done);
+        println!(
+            "Run {}: {} ({} rows{matched}{unmatched}).",
+            p.id,
+            p.state.as_str(),
+            p.done
+        );
         if let Some(m) = &p.message {
             println!("{m}");
         }
