@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft, awaiting owner approval
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: User description: "Crawling behind a login and network options: HTTP Basic, Digest and NTLM authentication; forms-based login through a login window in the app that captures the session cookies; custom cookies and custom request headers per crawl; a cookie storage policy (cookies are session only, never written to the crawl file, and re-entered on resume like the secrets of spec 006); proxy settings (HTTP and SOCKS with optional sign-in, or the system proxy); and a cookie audit (the cookies each URL sets, for consent reporting). Desktop first, secrets never stored, crawl speed unchanged on the default path."
 
