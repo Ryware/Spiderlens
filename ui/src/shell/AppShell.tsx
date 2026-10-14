@@ -21,6 +21,8 @@ import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
 import { CrawlFileDialogs } from "../files/CrawlFileDialogs";
 import { CrawlInfoSheet } from "../files/CrawlInfoSheet";
+import { ManageCrawls } from "../files/ManageCrawls";
+import { CleanupNotice } from "../files/CleanupNotice";
 import type { CrawlInfo } from "../transport";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
@@ -89,6 +91,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
   const [infoOpen, setInfoOpen] = useState(false);
+  /** Crawl information for a file other than the open crawl (from Manage crawls). */
+  const [infoPath, setInfoPath] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
   const inspectFrom = useRef<HTMLElement | null>(null);
@@ -209,6 +214,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
+      { id: "manage-crawls", title: "Manage crawls…", group: "Crawl", keywords: ["disk", "space", "delete", "cleanup", "storage", "files", "trash"], run: () => setManageOpen(true) },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -257,7 +263,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || manageOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -266,7 +272,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, manageOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -310,7 +316,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
             <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} />
           )}
@@ -354,7 +360,31 @@ export function AppShell({ transport }: { transport: Transport }) {
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
       <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
-      <CrawlInfoSheet open={infoOpen} onOpenChange={setInfoOpen} transport={transport} path={crawl.path} onNewCrawl={newCrawlFrom} />
+      <CrawlInfoSheet
+        open={infoOpen}
+        onOpenChange={(o) => {
+          setInfoOpen(o);
+          if (!o) setInfoPath(null);
+        }}
+        transport={transport}
+        path={infoPath ?? crawl.path}
+        onNewCrawl={newCrawlFrom}
+      />
+      <ManageCrawls
+        open={manageOpen}
+        onOpenChange={(o) => {
+          setManageOpen(o);
+          if (!o) library.reload();
+        }}
+        transport={transport}
+        onOpenCrawl={(p) => void file.open(p)}
+        onShowInfo={(p) => {
+          setInfoPath(p);
+          setInfoOpen(true);
+        }}
+        onSaveAs={(p) => void saveFileAs(p).then(() => library.reload())}
+      />
+      <CleanupNotice transport={transport} onManage={() => setManageOpen(true)} onSettings={() => openSettings("storage")} />
       <CrawlFileDialogs file={file} />
     </div>
   );

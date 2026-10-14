@@ -7,6 +7,7 @@
 
 pub mod file;
 mod health;
+pub mod manage;
 pub mod migrate;
 pub mod reason;
 pub mod redact;

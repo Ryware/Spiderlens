@@ -12,6 +12,7 @@ mod profile;
 mod recent;
 mod secret;
 mod site;
+mod storage;
 mod store;
 mod stored;
 mod url_norm;
@@ -29,6 +30,10 @@ pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile,
 pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
 pub use secret::HeaderValue;
 pub use site::{InternalHosts, registrable_domain};
+pub use storage::{
+    CLEANUP_DAY_CHOICES, CleanupReason, CleanupRecord, DEFAULT_CLEANUP_DAYS, DEFAULT_RESERVE, HISTORY_LIMIT,
+    MAX_RESERVE, MIN_RESERVE, StoragePrefs, StorageStore,
+};
 pub use store::{ProfileEntry, ProfileStore, StoreError};
 pub use stored::{Change, ConfigChange, StoredCrawlConfig, unavailable_settings};
 pub use url_norm::{LinkProblem, NormError, apply_query_rules, normalize_link, normalize_url, tidy_percent};
