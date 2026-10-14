@@ -276,3 +276,34 @@ test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) =
   await page.keyboard.press("Control+1");
   await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
 });
+
+test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => {
+    window.spiderlens.results.features = ["base", "extraction", "timing", "raw_html"];
+  });
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(2).click();
+  await page.getByRole("complementary", { name: "Details" }).getByRole("button", { name: "View source" }).click();
+  const dialog = page.getByRole("dialog");
+  const source = dialog.getByRole("region", { name: "Page source" });
+  await expect(source).toContainText("<!doctype html>");
+  await expect(dialog.getByLabel("Find in source")).toBeFocused();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  // 2,008 lines, but only those on screen exist in the page.
+  expect(await source.locator("[data-row]").count()).toBeLessThan(80);
+  await page.keyboard.type("paragraph 1999");
+  await expect(dialog.getByTestId("match-count")).toHaveText("1 of 1");
+  await expect(source.locator("mark[data-current]")).toBeInViewport();
+  await dialog.getByRole("button", { name: "Copy" }).click();
+  await expect(dialog.getByText("Copied.")).toBeVisible();
+  // The Windows clipboard hands text back with CRLF line ends.
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  expect(copied.startsWith("<!doctype html>\n")).toBe(true);
+  expect(copied.split("\n").length).toBe(2009);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});

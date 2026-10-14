@@ -17,7 +17,7 @@ messages. Types are generated with ts-rs into `ui/src/generated`.
 | `view_close` | `view` | – |
 | `url_detail` | `path`, `id` | `UrlDetail` |
 | `url_list` | `path`, `id`, `kind` (`inlinks`, `outlinks`, `images`, `headings`), `from`, `count` | rows and total |
-| `url_html` | `path`, `id`, `from_byte`, `max_bytes` | chunk or `unavailable { reason }` |
+| `url_html` | `path`, `id` | `PageHtml`: the whole source decoded in the page's encoding, or `missing` (`not_stored`, `no_body`); the viewer windows the lines, so no byte chunks |
 | `copy_rows` | `view`, `ranges [[from, to]]`, `columns[]` | TSV text (≤ 10,000 rows, else error) |
 | `export_start` | `view`, `columns[]`, `ranges?`, `dest` | `job` |
 | `export_cancel` | `job` | – |

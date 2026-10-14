@@ -89,6 +89,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "urlHtml"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -225,11 +226,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           ["x-robots-tag", "noarchive"],
         ],
         headings: 2,
-        html_stored: true,
+        html_stored: results.features.includes("raw_html") && u.title !== null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
-        unavailable: results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." },
+        unavailable: {
+          ...(results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." }),
+          ...(results.features.includes("raw_html") ? {} : { raw_html: "This crawl does not store page HTML." }),
+        },
       };
       return d;
     },
@@ -247,6 +251,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
                 unavailable: null,
               }
             : { total: 0, from, rows: [], headings: [], unavailable: null },
+    urlHtml: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id)!;
+      const none = { html: null, bytes: 0, encoding: null, encoding_errors: false };
+      if (!results.features.includes("raw_html")) return { ...none, missing: "not_stored" };
+      if (u.title === null) return { ...none, missing: "no_body" };
+      const html = fakePageHtml(u);
+      return { html, missing: null, bytes: new TextEncoder().encode(html).length, encoding: "UTF-8", encoding_errors: false };
+    },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;
       const cols = columns.map((c) => v.tab.columns.findIndex((x) => x.id === c));
@@ -281,4 +293,10 @@ export function fakeUrls(n: number): FakeUrl[] {
     depth: i === 0 ? 0 : 1,
     internal: true,
   }));
+}
+
+/** The stored source of a fake page: long enough to need windowing. */
+export function fakePageHtml(u: FakeUrl, paragraphs = 2000): string {
+  const body = Array.from({ length: paragraphs }, (_, i) => `    <p>Paragraph ${i + 1} of ${u.url}</p>`);
+  return ["<!doctype html>", "<html>", "  <head>", `    <title>${u.title}</title>`, "  </head>", "  <body>", ...body, "  </body>", "</html>", ""].join("\n");
 }
