@@ -81,7 +81,122 @@ pub const STEPS: &[Step] = &[
     )
     WHERE headers.headers LIKE '%set-cookie%';",
     },
+    // Spec 015 (data-model.md): per-host site files fetched by the crawl and
+    // the AI checks' results, written by `spiderlens_aeo::analyze`.
+    Step {
+        version: 6,
+        additive: true,
+        sql: AEO_TABLES,
+    },
 ];
+
+const AEO_TABLES: &str = r#"
+CREATE TABLE site_files (
+    host_key TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER,
+    final_url TEXT,
+    content_type TEXT,
+    size INTEGER,
+    body BLOB,
+    outcome TEXT NOT NULL,
+    error TEXT,
+    fetched_at INTEGER,
+    PRIMARY KEY (host_key, path)
+);
+CREATE TABLE aeo_hosts (
+    host_key TEXT PRIMARY KEY,
+    robots TEXT NOT NULL,
+    signals TEXT,
+    llms_txt TEXT,
+    llms_full_txt TEXT,
+    tdmrep TEXT
+);
+CREATE TABLE aeo_bot_access (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    home_verdict TEXT NOT NULL,
+    matched_group TEXT,
+    urls_total INTEGER NOT NULL,
+    urls_blocked INTEGER NOT NULL,
+    rules TEXT,
+    PRIMARY KEY (host_key, bot)
+);
+CREATE TABLE aeo_pages (
+    url_id INTEGER PRIMARY KEY,
+    page_type TEXT NOT NULL,
+    page_type_reason TEXT,
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    checks_used INTEGER NOT NULL,
+    checks_total INTEGER NOT NULL,
+    provisional INTEGER NOT NULL,
+    blocked_bots INTEGER NOT NULL,
+    flags INTEGER NOT NULL,
+    version_used TEXT NOT NULL,
+    js_dependence REAL,
+    published TEXT,
+    modified TEXT,
+    dates_agree INTEGER,
+    author TEXT,
+    author_url_id INTEGER,
+    question_headings INTEGER,
+    direct_answers INTEGER,
+    figures INTEGER,
+    quotations INTEGER,
+    citations INTEGER,
+    lists INTEGER,
+    tables INTEGER,
+    longest_paragraph INTEGER,
+    snippet_limits TEXT
+);
+CREATE TABLE aeo_findings (
+    url_id INTEGER,
+    rule_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    points_lost INTEGER NOT NULL,
+    evidence TEXT
+);
+CREATE INDEX aeo_findings_rule ON aeo_findings(rule_id, url_id);
+CREATE INDEX aeo_findings_url ON aeo_findings(url_id);
+CREATE TABLE aeo_site (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    site_checks INTEGER,
+    distribution TEXT,
+    entity TEXT,
+    pages_found TEXT,
+    coverage TEXT,
+    top_fixes TEXT,
+    site_outcomes TEXT,
+    profile TEXT,
+    versions TEXT,
+    ran_at INTEGER,
+    pages_analyzed INTEGER,
+    duration_ms INTEGER
+);
+CREATE TABLE aeo_probe (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    url_id INTEGER NOT NULL,
+    status INTEGER,
+    size INTEGER,
+    content_type TEXT,
+    outcome TEXT NOT NULL,
+    detail TEXT,
+    probed_at INTEGER,
+    PRIMARY KEY (host_key, bot, url_id)
+);
+"#;
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();
