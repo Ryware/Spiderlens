@@ -45,6 +45,8 @@ anyhow = "1"
 regex = "1"
 psl = "2"
 csv = "1"
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
+calamine = "0.36"
 serde_ignored = "0.1"
 secrecy = { version = "0.10", features = ["serde"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }

@@ -83,6 +83,27 @@ pub struct ReportArgs {
     /// JSON (one object per line for URL listings).
     #[arg(long)]
     json: bool,
+    /// Print the crawl report: health score, issues and each section (spec 010).
+    #[arg(long, conflicts_with_all = ["not_crawled", "crawled", "reason", "html"])]
+    audit: bool,
+    /// Write the self-contained HTML report file.
+    #[arg(long, value_name = "OUT", conflicts_with_all = ["not_crawled", "crawled", "reason"])]
+    html: Option<PathBuf>,
+    /// With --html: the report title.
+    #[arg(long, requires = "html")]
+    title: Option<String>,
+    /// With --html: a note shown under the title.
+    #[arg(long, requires = "html")]
+    note: Option<String>,
+    /// With --html: URLs listed under each issue.
+    #[arg(long, requires = "html", default_value_t = spiderlens_results::report::html::URLS_PER_ISSUE_DEFAULT)]
+    urls_per_issue: u32,
+    /// With --html: replace an existing file.
+    #[arg(long, requires = "html")]
+    force: bool,
+    /// Issue settings JSON (rule overrides) for --audit and --html.
+    #[arg(long, value_name = "FILE")]
+    issues: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -578,6 +599,19 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
+    if args.audit {
+        return crate::report_cmd::run_audit(&args.file, args.issues.as_deref(), args.json);
+    }
+    if let Some(out) = args.html {
+        let a = crate::report_cmd::HtmlArgs {
+            out,
+            title: args.title,
+            note: args.note,
+            urls_per_issue: args.urls_per_issue,
+            force: args.force,
+        };
+        return crate::report_cmd::run_html(&args.file, args.issues.as_deref(), a);
+    }
     let mut reasons = Vec::new();
     for r in &args.reason {
         match NotCrawledReason::parse(r) {

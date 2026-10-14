@@ -13,6 +13,7 @@ mod integrations_cmd;
 mod issues_cmd;
 mod links_cmd;
 mod options;
+mod report_cmd;
 mod rules_cmd;
 mod schedule_cmd;
 mod sitemap_cmd;

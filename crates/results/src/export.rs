@@ -25,6 +25,8 @@ pub enum ExportError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Results(#[from] Error),
+    #[error("{} already exists", .0.display())]
+    Exists(PathBuf),
 }
 
 impl From<rusqlite::Error> for ExportError {
@@ -34,7 +36,7 @@ impl From<rusqlite::Error> for ExportError {
 }
 
 /// Values a spreadsheet would run as a formula (OWASP CSV injection).
-fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     match s.chars().next() {
         Some('=' | '+' | '-' | '@' | '\t' | '\r') => format!("'{s}").into(),
         _ => s.into(),
@@ -63,7 +65,7 @@ fn tsv_field(out: &mut String, s: &str) {
 }
 
 /// The text a cell exports as: full value, booleans as Yes and No.
-fn cell_text(c: &ColumnDef, v: &Value) -> String {
+pub(crate) fn cell_text(c: &ColumnDef, v: &Value) -> String {
     match v {
         Value::Null | Value::Blob(_) => String::new(),
         Value::Integer(i) if c.kind == crate::ValueKind::Bool => (if *i != 0 { "Yes" } else { "No" }).into(),

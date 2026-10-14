@@ -6,6 +6,7 @@
 
 pub mod a11y_site;
 pub mod providers;
+pub mod report;
 mod site;
 
 pub use site::{Hit, Site, SiteBuilder};

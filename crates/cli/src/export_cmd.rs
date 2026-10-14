@@ -61,6 +61,25 @@ pub struct ExportArgs {
     /// With --list-tabs: print as JSON.
     #[arg(long)]
     json: bool,
+    /// Bulk export these tables, comma separated, or all: summary, tabs,
+    /// issues, links, images, redirect_chains, headers (spec 010).
+    #[arg(long, value_delimiter = ',', value_name = "TABLES", requires = "out")]
+    bulk: Vec<String>,
+    /// Bulk export format: a CSV folder or one Excel workbook.
+    #[arg(long, value_enum, default_value = "csv", requires = "bulk")]
+    format: FormatArg,
+    /// With --bulk: replace an existing folder or workbook.
+    #[arg(long, requires = "bulk")]
+    force: bool,
+    /// With --bulk: issue settings JSON (rule overrides).
+    #[arg(long, value_name = "FILE", requires = "bulk")]
+    issues: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum FormatArg {
+    Csv,
+    Xlsx,
 }
 
 pub fn run_export(a: ExportArgs) -> ExitCode {
@@ -88,6 +107,15 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
         return ExitCode::from(exit::FETCHED);
     }
     let file = a.file.expect("required by clap");
+    if !a.bulk.is_empty() {
+        let b = crate::report_cmd::BulkArgs {
+            tables: a.bulk,
+            xlsx: matches!(a.format, FormatArg::Xlsx),
+            out: a.out.expect("required by clap"),
+            force: a.force,
+        };
+        return crate::report_cmd::run_bulk(&file, a.issues.as_deref(), b);
+    }
     let sort = a.sort.map(|s| match s.strip_suffix(":desc") {
         Some(c) => Sort {
             column: c.into(),
