@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 spiderlens-config.workspace = true
+spiderlens-render.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 url.workspace = true
@@ -27,6 +28,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
+futures-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

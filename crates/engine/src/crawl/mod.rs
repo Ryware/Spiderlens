@@ -6,6 +6,7 @@
 //! - `speed` adapts how many requests each site gets at once (spec 008).
 
 pub mod file;
+mod hosts;
 pub mod migrate;
 pub mod reason;
 pub mod render;

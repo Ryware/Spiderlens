@@ -14,17 +14,19 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings,
-    StoredCrawlConfig, normalize_url,
+    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
+    normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
 use super::file::{self, LocalError, LockError, WriterLock};
+use super::hosts::{Host, RobotsState};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use super::render::net::{NetMsg, Permits, Slots};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
-use super::speed::{Signal, SiteSpeed, parse_retry_after};
+use super::speed::{Signal, parse_retry_after};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
     Response, SitemapRow, StateCounts, StoreError,
@@ -274,44 +276,6 @@ pub fn host_key(url: &Url) -> String {
     )
 }
 
-#[derive(Debug, Clone)]
-enum RobotsState {
-    Unknown,
-    Fetching,
-    Known(Arc<RobotsPolicy>, Option<String>),
-}
-
-#[derive(Debug)]
-struct Host {
-    robots: RobotsState,
-    in_flight: u32,
-    /// No request before this: crawl-delay spacing or a Retry-After pause.
-    next_start: Instant,
-    delay: Option<Duration>,
-    speed: SiteSpeed,
-}
-
-impl Host {
-    fn new(speed: &SpeedSettings) -> Self {
-        Self {
-            robots: RobotsState::Unknown,
-            in_flight: 0,
-            next_start: Instant::now(),
-            delay: None,
-            speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
-        }
-    }
-
-    /// Requests this host may have open now.
-    fn limit(&self) -> u32 {
-        if self.delay.is_some() {
-            1
-        } else {
-            self.speed.allowance()
-        }
-    }
-}
-
 /// What a fetch task reports.
 // Page is nearly every message, so boxing it would only add an allocation.
 #[allow(clippy::large_enum_variant)]
@@ -334,6 +298,9 @@ enum Msg {
     },
     SitemapDone(SitemapRow),
     SitemapsFinished,
+    /// A rendered page's request for a resource (spec 014 plan D4).
+    #[expect(dead_code, reason = "sent by the render stage (T019)")]
+    Net(NetMsg),
 }
 
 struct PageOutcome {
@@ -773,6 +740,10 @@ struct Run {
     hosts: HashMap<String, Host>,
     in_flight: u32,
     next_global: Instant,
+    /// Rendered pages' resource requests waiting for a slot (spec 014 D4).
+    permits: Permits,
+    /// A waiting resource holds the global caps: no new page may start.
+    permits_hold_global: bool,
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
@@ -865,6 +836,8 @@ impl Run {
             hosts,
             in_flight: 0,
             next_global: Instant::now(),
+            permits: Permits::default(),
+            permits_hold_global: false,
             pages_started,
             limit_reached,
             sitemaps_pending: false,
@@ -1069,11 +1042,17 @@ impl Run {
         loop {
             self.open_tx()?;
             self.check_disk();
+            // Resources of pages already rendering go first, paused or not:
+            // the render that waits for them holds a slot already.
+            let permit_wake = self.serve_permits()?;
             let mut wake = if self.state() == Control::Run {
                 self.dispatch()?
             } else {
                 None
             };
+            if let Some(t) = permit_wake {
+                wake = Some(wake.map_or(t, |w| w.min(t)));
+            }
             self.progress(false);
             if self.in_flight == 0 {
                 match self.state() {
@@ -1186,7 +1165,7 @@ impl Run {
         let max_concurrent = speed.max_concurrent;
         let robots_mode = self.c.config.robots.mode;
         loop {
-            if self.in_flight >= max_concurrent {
+            if self.in_flight >= max_concurrent || self.permits_hold_global {
                 break;
             }
             self.window.refill(&self.c.store)?;
@@ -1204,22 +1183,7 @@ impl Run {
                 }
             }
             for key in need_robots {
-                if robots_mode == RobotsMode::Ignore {
-                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
-                    host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
-                    self.c.store.upsert_host(&HostRow {
-                        host_key: key,
-                        robots_status: "ignored".into(),
-                        robots_http_status: None,
-                        robots_error: None,
-                        crawl_delay_ms: None,
-                        robots_txt: None,
-                    })?;
-                } else if self.in_flight < max_concurrent {
-                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
-                    host.robots = RobotsState::Fetching;
-                    self.spawn_robots(key);
-                }
+                self.ensure_robots(key)?;
             }
 
             // The earliest queued URL among hosts that may start now.
@@ -1267,6 +1231,61 @@ impl Run {
                 break;
             }
             self.start(e, robots_rule, now)?;
+        }
+        Ok(wake)
+    }
+
+    /// Reads robots.txt of a host seen for the first time, or marks it
+    /// ignored, when a global slot is free for it.
+    fn ensure_robots(&mut self, key: String) -> Result<(), CrawlError> {
+        let speed = self.c.config.speed;
+        if self.c.config.robots.mode == RobotsMode::Ignore {
+            let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+            host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
+            self.c.store.upsert_host(&HostRow {
+                host_key: key,
+                robots_status: "ignored".into(),
+                robots_http_status: None,
+                robots_error: None,
+                crawl_delay_ms: None,
+                robots_txt: None,
+            })?;
+        } else if self.in_flight < speed.max_concurrent {
+            let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+            host.robots = RobotsState::Fetching;
+            self.spawn_robots(key);
+        }
+        Ok(())
+    }
+
+    /// Grants every waiting resource permit that may go now (spec 014 D4).
+    /// Returns when to look again if one waits on time.
+    fn serve_permits(&mut self) -> Result<Option<Instant>, CrawlError> {
+        if self.permits.waiting() == 0 {
+            self.permits_hold_global = false;
+            return Ok(None);
+        }
+        let speed = self.c.config.speed;
+        let mut slots = Slots {
+            hosts: &mut self.hosts,
+            in_flight: &mut self.in_flight,
+            next_global: &mut self.next_global,
+            max_concurrent: speed.max_concurrent,
+            rate: speed.max_urls_per_sec,
+        };
+        let served = self
+            .permits
+            .serve(&mut slots, self.c.config.robots.mode, Instant::now());
+        self.permits_hold_global = served.waiting_on_global;
+        let mut wake = served.wake;
+        if !served.need_robots.is_empty() {
+            for key in served.need_robots {
+                self.ensure_robots(key)?;
+            }
+            // Hosts marked ignored can be served at once.
+            if self.c.config.robots.mode == RobotsMode::Ignore {
+                wake = Some(Instant::now());
+            }
         }
         Ok(wake)
     }
@@ -1515,6 +1534,28 @@ impl Run {
             }
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
+                Ok(())
+            }
+            Msg::Net(NetMsg::Permit(r)) => {
+                self.permits.push(r);
+                Ok(())
+            }
+            Msg::Net(NetMsg::Done {
+                host_key,
+                third_party,
+                took,
+                signal,
+            }) => {
+                let speed = self.c.config.speed;
+                let mut slots = Slots {
+                    hosts: &mut self.hosts,
+                    in_flight: &mut self.in_flight,
+                    next_global: &mut self.next_global,
+                    max_concurrent: speed.max_concurrent,
+                    rate: speed.max_urls_per_sec,
+                };
+                self.permits
+                    .done(&mut slots, &host_key, third_party, took, signal);
                 Ok(())
             }
         }
