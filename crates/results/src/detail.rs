@@ -218,9 +218,12 @@ impl Reader {
                     r.get(0)
                 })
                 .optional()?;
-            let headers = raw
+            let mut headers = raw
                 .and_then(|h| serde_json::from_str::<Vec<(String, String)>>(&h).ok())
                 .unwrap_or_default();
+            // Older files that are only viewed still hold cookie values
+            // (spec 025 FR-026).
+            spiderlens_engine::crawl::redact::scrub_pairs(&mut headers);
             (ix, headers)
         } else {
             (None, vec![])

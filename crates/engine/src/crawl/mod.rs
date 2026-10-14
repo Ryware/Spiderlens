@@ -9,6 +9,7 @@ pub mod file;
 mod health;
 pub mod migrate;
 pub mod reason;
+pub mod redact;
 pub mod retry;
 mod runner;
 pub mod scope;
