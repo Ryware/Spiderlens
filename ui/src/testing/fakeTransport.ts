@@ -6,7 +6,22 @@ import type { Issue } from "../generated/Issue";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type { FakeIssues } from "./fakeIssues";
-import type { CrawlFinished, CrawlProgress, CrawlReport, CrawlStatus, LoadedProfile, Presets, Transport } from "../transport";
+import type {
+  CrawlFinished,
+  CrawlInfo,
+  CrawlMoved,
+  CrawlProgress,
+  CrawlReport,
+  CrawlStatus,
+  LoadedProfile,
+  LocalError,
+  OpenFailure,
+  Presets,
+  RecentEntry,
+  ResumeOptions,
+  StorageStatus,
+  Transport,
+} from "../transport";
 
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
 const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per_sec: null, adaptive: true };
@@ -90,7 +105,9 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
-export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; issues: FakeIssues } {
+export function fakeTransport(
+  urls: FakeUrl[] = fakeUrls(30),
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; issues: FakeIssues } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -111,11 +128,11 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   return {
     ...resultsApi,
     saved,
     crawls,
-    pickCrawlFile: async () => null,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
     buildInfo: async () => ({
       product: "SpiderLens",
@@ -218,15 +235,244 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
       crawls.started.push({ config, startUrl });
       return { id: nextId++, path: "/crawls/example.com.spiderlens" };
     },
-    crawlResume: async (path) => {
-      crawls.resumed.push(path);
-      return { id: nextId++, path };
-    },
     crawlPause: async (id) => void crawls.controls.push(`pause ${id}`),
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
-    crawlSummary: async (path) => fakeReport("completed", 1, path),
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
     onCrawlFinished: (cb) => subscribe(onFinished, cb),
+    // Crawl files (spec 006), including pickCrawlFile, crawlResume and crawlSummary.
+    ...filesApi,
+    files,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Crawl files (spec 006): recent list, unsaved crawls, open, Save As, resume
+// prompts and the window events. Everything a test needs is on `files`.
+// ---------------------------------------------------------------------------
+
+/** A crawl file's information, as the engine would report it. */
+export function fakeCrawlInfo(path: string, patch: Partial<CrawlInfo> = {}): CrawlInfo {
+  const name = (path.split(/[\\/]/).pop() ?? path).replace(/\.spiderlens$/i, "");
+  return {
+    path,
+    name,
+    size_bytes: 48 * 1024 * 1024,
+    format_version: 2,
+    status: "completed",
+    pause_reason: null,
+    recovered: false,
+    mode: "spider",
+    start_url: "https://example.com/",
+    config: defaultConfig(),
+    started_at: "2026-10-12T09:00:00Z",
+    ended_at: "2026-10-12T09:42:00Z",
+    counts: { discovered: 120, crawled: 100, failed: 2, not_crawled: 18, queued: 0 },
+    versions: [{ kind: "created", app_version: "0.6.0", os: "macOS 15.1", at: "2026-10-12T09:00:00Z" }],
+    events: [
+      { at: "2026-10-12T09:00:00Z", kind: "started", app_version: "0.6.0", os: "macOS 15.1", detail: null },
+      { at: "2026-10-12T09:42:00Z", kind: "completed", app_version: "0.6.0", os: "macOS 15.1", detail: null },
+    ],
+    access: { kind: "writable" },
+    missing_secrets: [],
+    unsaved: false,
+    ...patch,
+  };
+}
+
+/** A recent-list entry. */
+export function fakeRecent(path: string, patch: Partial<RecentEntry> = {}): RecentEntry {
+  const name = (path.split(/[\\/]/).pop() ?? path).replace(/\.spiderlens$/i, "");
+  return {
+    path,
+    name,
+    start_url: `https://${name}/`,
+    urls: 120,
+    status: "completed",
+    recovered: false,
+    last_used: "2026-10-12T09:42:00Z",
+    available: true,
+    unsaved: false,
+    ...patch,
+  };
+}
+
+export function fakeLocalError(kind: LocalError["kind"] = "disk_full", patch: Partial<LocalError> = {}): LocalError {
+  return { kind, message: "No space left on device", path: "/crawls/example.com.spiderlens", free_bytes: 0, ...patch };
+}
+
+export interface FakeFiles {
+  /** Most recent first. Tests may assign to it. */
+  recent: RecentEntry[];
+  infos: Map<string, CrawlInfo>;
+  unsaved: { entry: RecentEntry; size: number }[];
+  storage: StorageStatus;
+  /** Paths whose open fails as damaged or not a crawl file. */
+  damaged: Map<string, OpenFailure>;
+  /** What the file pickers return. */
+  pickPath: string | null;
+  /** Save dialog answer: a path, null for Cancel, undefined for /saved/<name>.spiderlens. */
+  saveDest: string | null | undefined;
+  pending: string[];
+  opened: string[];
+  salvaged: string[];
+  savedAs: { path: string; dest: string }[];
+  resumes: { path: string; options: ResumeOptions | undefined }[];
+  removed: string[];
+  deleted: string[];
+  seedRecent(...entries: RecentEntry[]): void;
+  seedInfo(path: string, patch?: Partial<CrawlInfo>): CrawlInfo;
+  seedUnsaved(path: string, size: number, patch?: Partial<RecentEntry>): void;
+  openFile(path: string): void;
+  drop(paths: string[]): void;
+  moved(m: Partial<CrawlMoved> & { to: string }): void;
+  quitting(pausing?: boolean): void;
+  recovered(entries: RecentEntry[]): void;
+}
+
+type FilesApi = Pick<
+  Transport,
+  | "pickCrawlFile"
+  | "crawlResume"
+  | "crawlSummary"
+  | "crawlOpen"
+  | "crawlInfo"
+  | "crawlSaveAs"
+  | "pickSavePath"
+  | "recentList"
+  | "recentRemove"
+  | "recentLocate"
+  | "unsavedList"
+  | "unsavedDelete"
+  | "crawlSalvage"
+  | "storageStatus"
+  | "pendingOpen"
+  | "onOpenFile"
+  | "onFileDrop"
+  | "onCrawlMoved"
+  | "onAppQuitting"
+  | "onCrawlsRecovered"
+>;
+
+function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
+  const openFile: Listeners<string> = new Set();
+  const drop: Listeners<string[]> = new Set();
+  const moved: Listeners<CrawlMoved> = new Set();
+  const quitting: Listeners<{ pausing: boolean }> = new Set();
+  const recovered: Listeners<RecentEntry[]> = new Set();
+  const on = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
+    set.add(cb);
+    return () => void set.delete(cb);
+  };
+  // Unseeded files take what the recent list says about them.
+  const info = (path: string) => {
+    const seeded = files.infos.get(path);
+    if (seeded) return seeded;
+    const r = files.recent.find((e) => e.path === path);
+    return fakeCrawlInfo(path, r ? { name: r.name, start_url: r.start_url, status: r.status, recovered: r.recovered, unsaved: r.unsaved } : {});
+  };
+  const touch = (path: string) => {
+    const i = info(path);
+    const old = files.recent.find((r) => r.path === path);
+    const entry = old
+      ? { ...old, available: true, last_used: new Date().toISOString() }
+      : fakeRecent(path, { name: i.name, start_url: i.start_url, status: i.status, recovered: i.recovered, unsaved: i.unsaved, last_used: new Date().toISOString() });
+    files.recent = [entry, ...files.recent.filter((r) => r.path !== path)];
+  };
+
+  const files: FakeFiles = {
+    recent: [],
+    infos: new Map(),
+    unsaved: [],
+    storage: { unsaved_dir: "/data/SpiderLens/Unsaved", free_bytes: 200 * 1024 ** 3, reserve_bytes: 2 * 1024 ** 3, low: false },
+    damaged: new Map(),
+    pickPath: null,
+    saveDest: undefined,
+    pending: [],
+    opened: [],
+    salvaged: [],
+    savedAs: [],
+    resumes: [],
+    removed: [],
+    deleted: [],
+    seedRecent: (...entries) => void (files.recent = [...files.recent, ...entries]),
+    seedInfo: (path, patch) => {
+      const i = fakeCrawlInfo(path, patch);
+      files.infos.set(path, i);
+      return i;
+    },
+    seedUnsaved: (path, size, patch) => {
+      const entry = fakeRecent(path, { unsaved: true, ...patch });
+      files.unsaved.push({ entry, size });
+      if (!files.recent.some((r) => r.path === path)) files.recent.push(entry);
+    },
+    openFile: (path) => openFile.forEach((cb) => cb(path)),
+    drop: (paths) => drop.forEach((cb) => cb(paths)),
+    moved: (m) => moved.forEach((cb) => cb({ id: 0, from: "", ...m })),
+    quitting: (pausing = true) => quitting.forEach((cb) => cb({ pausing })),
+    recovered: (entries) => recovered.forEach((cb) => cb(entries)),
+  };
+
+  const api: FilesApi = {
+    pickCrawlFile: async () => files.pickPath,
+    crawlResume: async (path, options) => {
+      crawls.resumed.push(path);
+      files.resumes.push({ path, options });
+      return { id: nextCrawlId(), path };
+    },
+    crawlSummary: async (path) => fakeReport(info(path).status, 1, path),
+    crawlOpen: async (path) => {
+      const failure = files.damaged.get(path);
+      if (failure) throw JSON.stringify(failure);
+      files.opened.push(path);
+      touch(path);
+      return info(path);
+    },
+    crawlInfo: async (path) => info(path),
+    crawlSaveAs: async (path, dest) => {
+      files.savedAs.push({ path, dest });
+      files.infos.set(dest, { ...info(path), path: dest, name: dest.split(/[\\/]/).pop()!.replace(/\.spiderlens$/i, ""), unsaved: false, access: { kind: "writable" } });
+      files.recent = files.recent.map((r) => (r.path === path ? { ...r, path: dest, unsaved: false } : r));
+      return dest;
+    },
+    pickSavePath: async (name) => (files.saveDest === undefined ? `/saved/${name}.spiderlens` : files.saveDest),
+    recentList: async () => structuredClone(files.recent),
+    recentRemove: async (path) => {
+      files.removed.push(path);
+      files.recent = files.recent.filter((r) => r.path !== path);
+    },
+    recentLocate: async (oldPath, newPath) => {
+      const old = files.recent.find((r) => r.path === oldPath) ?? fakeRecent(newPath);
+      const entry = { ...old, path: newPath, available: true };
+      files.recent = files.recent.map((r) => (r.path === oldPath ? entry : r));
+      return entry;
+    },
+    unsavedList: async () => ({
+      entries: files.unsaved.map((u) => u.entry),
+      total_bytes: files.unsaved.reduce((n, u) => n + u.size, 0),
+      size_bytes: Object.fromEntries(files.unsaved.map((u) => [u.entry.path, u.size])),
+    }),
+    unsavedDelete: async (path) => {
+      files.deleted.push(path);
+      files.unsaved = files.unsaved.filter((u) => u.entry.path !== path);
+      files.recent = files.recent.filter((r) => r.path !== path);
+    },
+    crawlSalvage: async (path) => {
+      files.salvaged.push(path);
+      const to = `/data/SpiderLens/Unsaved/${info(path).name}-recovered.spiderlens`;
+      return files.seedInfo(to, { recovered: true, unsaved: true, status: "paused" });
+    },
+    storageStatus: async () => ({ ...files.storage }),
+    pendingOpen: async () => {
+      const p = files.pending;
+      files.pending = [];
+      return p;
+    },
+    onOpenFile: (cb) => on(openFile, cb),
+    onFileDrop: (cb) => on(drop, cb),
+    onCrawlMoved: (cb) => on(moved, cb),
+    onAppQuitting: (cb) => on(quitting, cb),
+    onCrawlsRecovered: (cb) => on(recovered, cb),
+  };
+  return { files, api };
 }

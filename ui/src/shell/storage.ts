@@ -11,6 +11,7 @@ export interface UiState extends Appearance {
   detailCollapsed: boolean;
   settingsCategory: string;
   recentCommands: string[];
+  translucent: boolean;
 }
 
 export const defaults: UiState = {
@@ -26,6 +27,7 @@ export const defaults: UiState = {
   detailCollapsed: false,
   settingsCategory: "speed",
   recentCommands: [],
+  translucent: true,
 };
 
 const KEY = "spiderlens.ui";
@@ -49,6 +51,7 @@ function clean(s: UiState): UiState {
   if (!isLevel(out.systemLight) || toneOf(out.systemLight) !== "light") out.systemLight = defaults.systemLight;
   if (!isLevel(out.systemDark) || toneOf(out.systemDark) !== "dark") out.systemDark = defaults.systemDark;
   if (!isAccent(out.accent)) out.accent = defaults.accent;
+  if (typeof out.translucent !== "boolean") out.translucent = defaults.translucent;
   return out;
 }
 

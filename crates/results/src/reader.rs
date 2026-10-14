@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::features::Features;
 use crate::issues::ResolvedSettings;
@@ -38,14 +38,10 @@ pub(crate) fn connect(
     path: &Path,
     settings: &ResolvedSettings,
 ) -> Result<(Connection, Features, Arc<RwLock<Thresholds>>)> {
-    if !path.exists() {
-        return Err(Error::invalid(format!("{} does not exist", path.display())));
-    }
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
-    )?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // Read-only, with an `immutable=1` retry for read-only media (spec 006
+    // FR-021); a damaged file is reported as such (FR-038).
+    let conn = spiderlens_engine::crawl::store::connect_read_only(path)
+        .map_err(|e| Error::invalid(e.to_string()))?;
     let format: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
         .optional()
