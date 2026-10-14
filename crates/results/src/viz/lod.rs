@@ -315,7 +315,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
     let parents: Vec<u32> = order.iter().map(|o| o.1).collect();
     let levels: Vec<u32> = order.iter().map(|o| o.2).collect();
     let pos = match state.layout {
-        Layout::Tree => layout::tidy(&parents, &levels),
+        Layout::Tree | Layout::Force => layout::tidy(&parents, &levels),
         Layout::Radial => layout::radial(&parents, &levels),
     };
 
@@ -417,6 +417,9 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
         layout: state.layout,
         bounds: bounds(&nodes),
         nodes,
+        edges: Vec::new(),
+        directed: false,
+        settled: true,
         legend: tree.legend(),
         size_legend,
         omitted,
@@ -425,7 +428,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
     })
 }
 
-fn bounds(nodes: &[SceneNode]) -> Bounds {
+pub(crate) fn bounds(nodes: &[SceneNode]) -> Bounds {
     if nodes.is_empty() {
         return Bounds {
             x: 0.0,

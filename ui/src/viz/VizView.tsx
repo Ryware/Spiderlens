@@ -2,7 +2,7 @@
 // legend, what was left out, and a tooltip. Rust builds every scene; this
 // only asks for the next one and draws it.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minus, Plus, RefreshCw } from "lucide-react";
+import { Crosshair, Globe, Maximize2, Minus, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import type { ColourBy } from "../generated/ColourBy";
 import type { Layout } from "../generated/Layout";
 import type { Scene } from "../generated/Scene";
@@ -17,6 +17,7 @@ import { categoryShape, categoryToken, VizCanvas, type VizCanvasHandle } from ".
 export const vizViews: { id: string; view: ViewKind; title: string }[] = [
   { id: "crawl-tree", view: "crawl_tree", title: "Crawl tree" },
   { id: "directory-tree", view: "directory_tree", title: "Directory tree" },
+  { id: "link-graph", view: "link_graph", title: "Link graph" },
 ];
 
 const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--fg-2", "--bg", "--font-ui"];
@@ -78,9 +79,14 @@ export function VizView({
   focusId: number | null;
   onFocusId: (id: number | null) => void;
 }) {
-  const [layout, setLayout] = useState<Layout>("tree");
+  const graph = view === "link_graph";
+  const [layout, setLayout] = useState<Layout>(graph ? "force" : "tree");
   const [colour, setColour] = useState<ColourBy>("status");
-  const [size, setSize] = useState<SizeBy>("uniform");
+  // The graph sizes pages by Link Score unless asked otherwise.
+  const [size, setSize] = useState<SizeBy>(graph ? "score" : "uniform");
+  const [focus, setFocus] = useState<string | null>(null);
+  const [distance, setDistance] = useState(1);
+  const [pinned, setPinned] = useState<Record<string, [number, number]>>({});
   const [expanded, setExpanded] = useState<string[] | null>(null);
   const [pages, setPages] = useState<Record<string, number>>({});
   const [scene, setScene] = useState<Scene | null>(null);
@@ -94,7 +100,10 @@ export function VizView({
   const canvas = useRef<VizCanvasHandle>(null);
   const colours = useTokenColours();
 
-  const state: ViewState = useMemo(() => ({ view, layout, colour, size, expanded, pages, budget: null }), [view, layout, colour, size, expanded, pages]);
+  const state: ViewState = useMemo(
+    () => ({ view, layout, colour, size, expanded, pages, budget: null, focus, distance, pinned }),
+    [view, layout, colour, size, expanded, pages, focus, distance, pinned],
+  );
   useEffect(() => {
     let off = false;
     setLoading(true);
@@ -131,8 +140,20 @@ export function VizView({
     if (n) setSelected(n.key);
   }, [scene, focusId]);
 
+  // Link graph: centre on a page and its neighbours; a new picture, so the
+  // dragged positions go.
+  const centre = (key: string | null) => {
+    setAnchor(null);
+    setPinned({});
+    setFocus(key);
+  };
+
   const activate = (key: string, at: { sx: number; sy: number }) => {
     if (!scene) return;
+    if (graph) {
+      if (key.startsWith("u:")) centre(key);
+      return;
+    }
     setAnchor({ key, ...at });
     if (key.startsWith("m:")) {
       // "+N more": the next page of the parent's children.
@@ -159,6 +180,37 @@ export function VizView({
   return (
     <section aria-label={title} className="flex h-full flex-col">
       <div role="toolbar" aria-label={`${title} options`} className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+        {graph ? (
+          <>
+            {focus ? (
+              <>
+                <span className="max-w-56 truncate text-sm text-fg-2" title={scene?.nodes.find((n) => n.key === focus)?.url ?? undefined}>
+                  Around {scene?.nodes.find((n) => n.key === focus)?.label ?? "the page"}
+                </span>
+                <Segmented
+                  label="Distance"
+                  size="sm"
+                  value={String(distance)}
+                  onChange={(v) => (setAnchor(null), setPinned({}), setDistance(Number(v)))}
+                  options={[
+                    { value: "1", label: "1 link" },
+                    { value: "2", label: "2 links" },
+                  ]}
+                />
+                <Button variant="quiet" size="sm" onClick={() => centre(null)}>
+                  <Globe className="size-3.5" /> Whole site
+                </Button>
+              </>
+            ) : (
+              <Button variant="quiet" size="sm" disabled={!selected?.startsWith("u:")} onClick={() => selected && centre(selected)}>
+                <Crosshair className="size-3.5" /> Focus on selected
+              </Button>
+            )}
+            <Button variant="quiet" size="sm" disabled={Object.keys(pinned).length === 0} onClick={() => (setAnchor(null), setPinned({}))}>
+              <RotateCcw className="size-3.5" /> Reset layout
+            </Button>
+          </>
+        ) : (
         <Segmented
           label="Layout"
           size="sm"
@@ -172,14 +224,16 @@ export function VizView({
             { value: "radial", label: "Radial" },
           ]}
         />
+        )}
         <Select aria-label="Colour" className="w-36" value={colour} onChange={(e) => setColour(e.target.value as ColourBy)}>
           <option value="status">Colour: status</option>
           <option value="depth">Colour: depth</option>
         </Select>
         <Select aria-label="Size" className="w-40" value={size} onChange={(e) => setSize(e.target.value as SizeBy)}>
-          <option value="uniform">Size: same</option>
+          {!graph && <option value="uniform">Size: same</option>}
           <option value="score">Size: Link Score</option>
           <option value="inlinks">Size: inlinks</option>
+          {graph && <option value="uniform">Size: same</option>}
         </Select>
         <form
           className="flex min-w-40 flex-1"
@@ -225,6 +279,14 @@ export function VizView({
             anchor={anchor}
             colours={colours}
             onHover={(node, at) => setTip(node && at ? { node, ...at } : null)}
+            onPin={
+              graph
+                ? (key, x, y, at) => {
+                    setAnchor({ key, ...at });
+                    setPinned((p) => ({ ...p, [key]: [x, y] }));
+                  }
+                : undefined
+            }
           />
         )}
         {tip && (
@@ -234,6 +296,7 @@ export function VizView({
               {scene?.legend.find((l) => l.category === tip.node.category)?.label ?? (tip.node.category === "folder" ? "Folder" : "")}
               {tip.node.count > 1 && ` · ${tip.node.count.toLocaleString()} URLs`}
               {tip.node.score !== null && ` · Link Score ${tip.node.score.toFixed(1)}`}
+              {graph && tip.node.inlinks !== null && ` · ${tip.node.inlinks.toLocaleString()} links in`}
               {tip.node.hidden > 0 && ` · ${tip.node.hidden.toLocaleString()} folded`}
             </div>
           </div>

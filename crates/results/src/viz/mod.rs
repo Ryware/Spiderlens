@@ -10,6 +10,8 @@
 
 pub mod crawl_tree;
 pub mod dirs;
+pub mod force;
+pub mod graph;
 pub mod layout;
 pub mod lod;
 
@@ -27,6 +29,9 @@ pub const TREE_BUDGET: u32 = 20_000;
 pub const TREE_BUDGET_MAX: u32 = 50_000;
 /// Children shown per page under a folded node.
 pub const PAGE: u32 = 500;
+/// Default and largest node budgets for the link graph (plan D4).
+pub const GRAPH_BUDGET: u32 = 5_000;
+pub const GRAPH_BUDGET_MAX: u32 = 15_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +39,7 @@ pub const PAGE: u32 = 500;
 pub enum ViewKind {
     CrawlTree,
     DirectoryTree,
+    LinkGraph,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -43,6 +49,8 @@ pub enum Layout {
     #[default]
     Tree,
     Radial,
+    /// Force-directed; the link graph always uses it.
+    Force,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -80,8 +88,15 @@ pub struct ViewState {
     pub expanded: Option<Vec<String>>,
     /// Pages of children shown under a node, by node key (default 1).
     pub pages: BTreeMap<String, u32>,
-    /// Most nodes to show; None for [`TREE_BUDGET`].
+    /// Most nodes to show; None for [`TREE_BUDGET`] or [`GRAPH_BUDGET`].
     pub budget: Option<u32>,
+    /// Link graph: the page to centre on (`u:<id>`), with its neighbours
+    /// up to `distance` links away (1 or 2). None: the whole site.
+    pub focus: Option<String>,
+    pub distance: u8,
+    /// Link graph: nodes the user dragged, by key, and where to.
+    #[ts(type = "Record<string, [number, number]>")]
+    pub pinned: BTreeMap<String, [f32; 2]>,
 }
 
 impl Default for ViewState {
@@ -94,6 +109,9 @@ impl Default for ViewState {
             expanded: None,
             pages: BTreeMap::new(),
             budget: None,
+            focus: None,
+            distance: 1,
+            pinned: BTreeMap::new(),
         }
     }
 }
@@ -198,6 +216,15 @@ pub struct SceneNode {
     pub parent: Option<u32>,
 }
 
+/// A followed link between two shown pages (link graph).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct SceneEdge {
+    /// Indexes in `nodes`: from `a` to `b`.
+    pub a: u32,
+    pub b: u32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, TS)]
 #[ts(export)]
 pub struct Bounds {
@@ -230,6 +257,13 @@ pub struct Scene {
     pub layout: Layout,
     /// Drawn in this order; a node's parent always comes first.
     pub nodes: Vec<SceneNode>,
+    /// Link graph: followed links among the shown pages. Trees draw
+    /// parent lines instead.
+    pub edges: Vec<SceneEdge>,
+    /// Edges have a direction worth drawing (focus mode).
+    pub directed: bool,
+    /// The force layout converged (always true for trees).
+    pub settled: bool,
     pub legend: Vec<LegendEntry>,
     /// What the size of a node means, when it means something.
     pub size_legend: Option<String>,
@@ -249,6 +283,10 @@ impl Reader {
         let derived = match state.view {
             ViewKind::CrawlTree => Derived::VizCrawlTree,
             ViewKind::DirectoryTree => Derived::VizDirs,
+            ViewKind::LinkGraph => {
+                let scores = self.has_current(Derived::LinkMetrics)?;
+                return graph::scene(&self.conn, state, scores);
+            }
         };
         self.ensure_derived([derived])?;
         // Link Score sizes and orders nodes only once worked out: a view
@@ -257,6 +295,7 @@ impl Reader {
         let tree = match state.view {
             ViewKind::CrawlTree => crawl_tree::load(&self.conn, scores)?,
             ViewKind::DirectoryTree => dirs::load(&self.conn, scores)?,
+            ViewKind::LinkGraph => unreachable!("handled above"),
         };
         lod::scene(&self.conn, &tree, state, scores)
     }

@@ -39,14 +39,29 @@ fn main() {
                     ..ViewState::default()
                 })
                 .expect("scene");
-            let json = serde_json::to_vec(&s).expect("json").len();
-            eprintln!(
-                "{:>8.0} ms  {view:?} {layout:?}: {} nodes of {} URLs, {} KB JSON",
-                t.elapsed().as_secs_f64() * 1000.0,
-                s.nodes.len(),
-                s.total,
-                json / 1024
-            );
+            print(t, &s);
         }
     }
+    let t = Instant::now();
+    let s = r
+        .viz_scene(&ViewState {
+            view: ViewKind::LinkGraph,
+            ..ViewState::default()
+        })
+        .expect("graph");
+    print(t, &s);
+    eprintln!("          {} edges, settled: {}", s.edges.len(), s.settled);
+}
+
+fn print(t: Instant, s: &spiderlens_results::viz::Scene) {
+    let json = serde_json::to_vec(s).expect("json").len();
+    eprintln!(
+        "{:>8.0} ms  {:?} {:?}: {} nodes of {} URLs, {} KB JSON",
+        t.elapsed().as_secs_f64() * 1000.0,
+        s.view,
+        s.layout,
+        s.nodes.len(),
+        s.total,
+        json / 1024
+    );
 }

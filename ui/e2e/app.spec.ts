@@ -243,6 +243,33 @@ test("tree_views_switch_layout_and_keep_working_from_the_keyboard", async ({ pag
   await expect(page.getByRole("complementary", { name: "Details" })).toContainText("example.com/page-");
 });
 
+test("link_graph_drags_a_page_and_centres_on_one", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByText("Link graph").click();
+  const canvas = page.getByRole("application");
+  await expect(canvas).toHaveAttribute("aria-label", /^Link graph: \d+ nodes, \d+ links/);
+  // Drag a page: it is pinned where it was dropped, and stays under the mouse.
+  const before = await nodeOnPage(page, "u:4");
+  await page.mouse.move(before.x, before.y);
+  await page.mouse.down();
+  await page.mouse.move(before.x + 30, before.y + 20, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => Object.keys(window.spiderlens.results.viz.at(-1)?.pinned ?? {}))).toEqual(["u:4"]);
+  const after = await nodeOnPage(page, "u:4");
+  expect(Math.abs(after.x - (before.x + 30))).toBeLessThan(2);
+  expect(Math.abs(after.y - (before.y + 20))).toBeLessThan(2);
+  await page.getByRole("button", { name: "Reset layout" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.pinned)).toEqual({});
+  // Double-click a page to centre on it; the details follow the click.
+  const root = await nodeOnPage(page, "u:1");
+  await page.mouse.dblclick(root.x, root.y);
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.focus)).toBe("u:1");
+  await expect(page.getByText(/^Around /)).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Details" })).toContainText("example.com");
+  await page.getByRole("radio", { name: "2 links" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.viz.at(-1)?.distance)).toBe(2);
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();
