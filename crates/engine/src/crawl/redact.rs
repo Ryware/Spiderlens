@@ -68,6 +68,15 @@ pub fn header_pairs(headers: &mut Value) {
     }
 }
 
+/// [`header_pairs`] for headers already parsed into pairs.
+pub fn scrub_pairs(headers: &mut [(String, String)]) {
+    for (name, value) in headers {
+        if is_cookie_header(name) && !is_removed(value) {
+            *value = set_cookie(value);
+        }
+    }
+}
+
 fn is_removed(value: &str) -> bool {
     let pair = value.split(';').next().unwrap_or_default();
     pair == REMOVED || pair.split_once('=').is_some_and(|(_, v)| v == REMOVED)
@@ -113,6 +122,14 @@ mod tests {
                 ("Set-Cookie2", "b=[removed]; Version=1".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn parsed_pairs_are_scrubbed_once() {
+        let mut h = vec![("set-cookie".to_string(), "a=1; Path=/".to_string())];
+        scrub_pairs(&mut h);
+        scrub_pairs(&mut h);
+        assert_eq!(h[0].1, "a=[removed]; Path=/");
     }
 
     #[test]
