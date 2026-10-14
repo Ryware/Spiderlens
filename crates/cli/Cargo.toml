@@ -16,6 +16,7 @@ path = "src/main.rs"
 spiderlens-engine.workspace = true
 spiderlens-config.workspace = true
 spiderlens-results.workspace = true
+spiderlens-mcp.workspace = true
 tokio.workspace = true
 clap.workspace = true
 serde.workspace = true

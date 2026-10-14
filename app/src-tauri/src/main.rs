@@ -24,6 +24,19 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // AI assistants start the app's executable with `mcp` (spec 016 plan
+    // D8): serve MCP on standard input and output, with no window.
+    let mut args = std::env::args_os().skip(1);
+    if args.next().is_some_and(|a| a == "mcp") {
+        let code = match spiderlens_mcp::McpArgs::parse(args) {
+            Ok(a) => spiderlens_mcp::run(a),
+            Err(e) => {
+                eprintln!("spiderlens mcp: {e}");
+                2
+            }
+        };
+        std::process::exit(code);
+    }
     let smoke_file = std::env::var_os(SMOKE_TEST_ENV);
 
     tauri::Builder::default()

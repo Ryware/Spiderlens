@@ -64,6 +64,8 @@ enum Command {
     Html(HtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Serve crawl files to AI assistants over MCP (standard input and output).
+    Mcp(McpCmd),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -73,6 +75,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// `spiderlens mcp` (spec 016 contracts/cli.md). Without flags, access
+/// comes from the desktop app's Settings › AI assistants.
+#[derive(Args)]
+struct McpCmd {
+    /// Allow reading crawls for this process only.
+    #[arg(long)]
+    allow_read: bool,
+    /// Also allow crawl files in this folder, for this process only.
+    #[arg(long, value_name = "DIR")]
+    folder: Vec<PathBuf>,
+    /// Print the server name, access and tool list as JSON, then exit.
+    #[arg(long)]
+    self_test: bool,
 }
 
 #[derive(Subcommand)]
@@ -156,6 +173,11 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Mcp(args) => ExitCode::from(spiderlens_mcp::run(spiderlens_mcp::McpArgs {
+            allow_read: args.allow_read,
+            folders: args.folder,
+            self_test: args.self_test,
+        }) as u8),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

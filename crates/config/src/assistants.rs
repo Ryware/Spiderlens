@@ -132,7 +132,8 @@ mod tests {
         };
         s.save(&want).unwrap();
         assert_eq!(s.load(), want);
-        let raw: serde_json::Value = serde_json::from_slice(&fs::read(dir.path().join(FILE)).unwrap()).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.path().join(FILE)).unwrap()).unwrap();
         assert_eq!(raw["version"], 1);
         assert_eq!(raw["allow_read"], true);
     }
