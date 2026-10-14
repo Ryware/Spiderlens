@@ -361,16 +361,38 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
         </>
       );
 
-    case "extraction":
+    case "extraction": {
+      const pdf = config.extraction.pdf;
+      const setPdf = (p: Partial<typeof pdf>) => set((c) => ({ ...c, extraction: { ...c.extraction, pdf: { ...c.extraction.pdf, ...p } } }));
       return (
-        <Group>
-          <Row
-            label="Store page HTML"
-            help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
-          >
-            {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
-          </Row>
-        </Group>
+        <>
+          <Group>
+            <Row
+              label="Store page HTML"
+              help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
+            </Row>
+          </Group>
+          <Group title="PDFs">
+            <Row
+              label="Crawl PDFs"
+              help="Downloads PDFs and reads their properties, page count, words and links. Reading happens beside the crawl, so pages are not slowed down. With Store page HTML on, the PDF text is kept too."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={pdf.crawl} onChange={(v) => setPdf({ crawl: v })} />}
+            </Row>
+            <Row label="Follow links in PDFs" help="Crawls the pages PDFs link to. When off, the links are still listed.">
+              {(_, l) => <Switch labelledBy={l} disabled={!pdf.crawl} checked={pdf.follow_links} onChange={(v) => setPdf({ follow_links: v })} />}
+            </Row>
+            <Row label="PDF size limit (MB)" help="Larger PDFs are not downloaded past the limit and are listed as over it." issues={at("extraction.pdf.max_mb")}>
+              {(i) => <NumberInput id={i} disabled={!pdf.crawl} value={pdf.max_mb} onChange={(v) => setPdf({ max_mb: v ?? NaN })} />}
+            </Row>
+            <Row label="Time to read one PDF (seconds)" help="A PDF that takes longer is listed as partly read, with what was read by then." issues={at("extraction.pdf.time_limit_secs")}>
+              {(i) => <NumberInput id={i} disabled={!pdf.crawl} value={pdf.time_limit_secs} onChange={(v) => setPdf({ time_limit_secs: v ?? NaN })} />}
+            </Row>
+          </Group>
+        </>
       );
+    }
   }
 }

@@ -4,6 +4,7 @@
 
 import type { ColumnDef } from "../generated/ColumnDef";
 import type { Need } from "../generated/Need";
+import type { PdfDetail } from "../generated/PdfDetail";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
@@ -21,7 +22,34 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** What was read, for a PDF (spec 027 part C). */
+  pdf?: PdfDetail;
 }
+
+/** A PDF's detail with sensible defaults. */
+export const fakePdf = (p: Partial<PdfDetail> = {}): PdfDetail => ({
+  status: "read",
+  status_label: "Read",
+  status_reason: null,
+  title: "Annual report",
+  author: "Ada",
+  subject: null,
+  keywords: null,
+  creator: null,
+  producer: null,
+  created: "2024-03-01T10:00:00",
+  modified: null,
+  lang: "en",
+  pages: 12,
+  pages_read: 12,
+  words: 3400,
+  encrypted: false,
+  tagged: true,
+  no_text: false,
+  links: 3,
+  text_stored: true,
+  ...p,
+});
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
   id,
@@ -56,9 +84,21 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: true,
   },
+  {
+    id: "pdfs",
+    title: "PDFs",
+    columns: [col("address", "Address", "url", 420), col("pdf_title", "PDF title", "text", 280, "pdf"), col("pdf_pages", "Pages", "int", 80, "pdf"), col("pdf_status", "Read", "text", 140, "pdf")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "missing_title", label: "Missing title", need: "pdf" },
+    ],
+    search_column: "pdf_title",
+    scoped: false,
+  },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
+const cell = (u: FakeUrl, c: string) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null })[c] ?? null;
 
 export interface FakeResults {
   urls: FakeUrl[];
@@ -116,6 +156,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
     const tab = fakeTabs.find((t) => t.id === q.tab)!;
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    if (q.tab === "pdfs") us = us.filter((u) => u.pdf);
+    if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -191,7 +233,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         final_state: "Crawled",
         status: u.status,
         status_text: u.status === 200 ? "OK" : null,
-        content_type: "text/html",
+        content_type: u.pdf ? "application/pdf" : "text/html",
         depth: u.depth,
         error_class: null,
         error_label: null,
@@ -217,7 +259,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           ["x-robots-tag", "noarchive"],
         ],
         headings: 2,
-        html_stored: true,
+        html_stored: !u.pdf,
+        pdf: u.pdf && results.features.includes("pdf") ? u.pdf : null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

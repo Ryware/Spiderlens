@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CornerDownRight, MousePointerClick } from "lucide-react";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { PdfDetail } from "../generated/PdfDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
@@ -27,7 +28,35 @@ const fieldLabels: Record<string, string> = {
   response_time: "Response time",
   attempts: "Retry attempts",
   raw_html: "Page HTML",
+  pdf: "PDF properties",
 };
+
+/** What was read from a PDF (spec 027 part C). */
+function PdfSection({ pdf }: { pdf: PdfDetail }) {
+  const rows: [string, ReactNode][] = [
+    ["Reading", <span className={pdf.status === "read" ? undefined : "text-warn"}>{pdf.status_label}</span>],
+    ["Title", pdf.title ?? <span className="text-warn">Missing</span>],
+  ];
+  const opt = (k: string, v: string | null) => v && rows.push([k, v]);
+  opt("Author", pdf.author);
+  opt("Subject", pdf.subject);
+  opt("Keywords", pdf.keywords);
+  if (pdf.pages !== null) rows.push(["Pages", pdf.pages_read !== null && pdf.pages_read < pdf.pages ? `${pdf.pages_read.toLocaleString()} of ${pdf.pages.toLocaleString()} read` : pdf.pages.toLocaleString()]);
+  if (pdf.words !== null) rows.push(["Words", pdf.no_text ? <span className="text-warn">No text (scanned)</span> : pdf.words.toLocaleString()]);
+  opt("Language", pdf.lang);
+  rows.push(["Tagged", pdf.tagged ? "Yes" : "No"]);
+  rows.push(["Links", pdf.links.toLocaleString()]);
+  opt("Created", pdf.created);
+  opt("Modified", pdf.modified);
+  opt("Creator", pdf.creator);
+  opt("Producer", pdf.producer);
+  return (
+    <Section title="PDF">
+      {pdf.status_reason && <Notice kind={pdf.status === "failed" ? "bad" : "warn"}>{pdf.status_reason}</Notice>}
+      <Facts rows={rows} />
+    </Section>
+  );
+}
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -245,6 +274,8 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
           </ol>
         </Section>
       )}
+
+      {d.pdf && <PdfSection pdf={d.pdf} />}
 
       <Section
         title="Links"

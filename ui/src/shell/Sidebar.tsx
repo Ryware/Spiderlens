@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ExternalLink, FileText, FileStack, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 
 export interface NavItem {
@@ -19,6 +19,7 @@ export const resultTabs: NavItem[] = [
   { id: "h1", title: "H1", icon: Heading1 },
   { id: "h2", title: "H2", icon: Heading2 },
   { id: "images", title: "Images", icon: Image },
+  { id: "pdfs", title: "PDFs", icon: FileStack },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
 ];
