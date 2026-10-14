@@ -176,6 +176,21 @@ test("links_tab_sorts_by_link_score", async ({ page }) => {
   await expect(grid.getByRole("row").nth(1)).toContainText("100");
 });
 
+test("link_position_tester_runs_the_rules_on_a_crawled_page", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Configure" }).click();
+  await page.getByRole("tab", { name: /^Link analysis/ }).click();
+  const panel = page.getByRole("tabpanel", { name: "Link analysis" });
+  await panel.getByRole("button", { name: "Add rule" }).click();
+  await panel.getByLabel("Rule 1 selector").fill(".mega-menu");
+  await panel.getByLabel("Page URL").fill("https://example.com/");
+  await panel.getByLabel("Page URL").press("Enter");
+  const promo = panel.getByRole("row").filter({ hasText: "/promo" });
+  await expect(promo).toContainText("Navigation");
+  await expect(promo).toContainText("Rule 1");
+  await expect(panel.getByRole("row").filter({ hasText: "/story" })).toContainText("Built-in rule");
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();

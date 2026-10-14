@@ -24,6 +24,7 @@ export function SettingsSheet({
   level,
   systemDark,
   onAppearance,
+  crawlPath = null,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -35,6 +36,8 @@ export function SettingsSheet({
   level: Level;
   systemDark: boolean;
   onAppearance: (patch: Partial<Appearance>) => void;
+  /** The open crawl file, for the link position tester. */
+  crawlPath?: string | null;
 }) {
   const navRef = useRef<HTMLButtonElement>(null);
   const mode = setup.config?.mode ?? "spider";
@@ -95,7 +98,7 @@ export function SettingsSheet({
             {current.id === "appearance" ? (
               <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
             ) : (
-              <CategoryBody id={current.id} setup={setup} transport={transport} />
+              <CategoryBody id={current.id} setup={setup} transport={transport} crawlPath={crawlPath} />
             )}
           </div>
           <footer className="flex items-center gap-2 border-t border-line px-6 py-3">

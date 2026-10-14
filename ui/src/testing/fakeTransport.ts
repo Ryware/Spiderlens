@@ -147,6 +147,11 @@ export function fakeTransport(urls: FakeUrl[] = fakeUrls(30)): Transport & { sav
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      config.links.position_rules.forEach((r, i) => {
+        // Stand-in for the CSS parser: an unclosed bracket is invalid.
+        if (r.selector.trim() === "" || r.selector.split("[").length !== r.selector.split("]").length)
+          issues.push({ path: `links.position_rules[${i}].selector`, severity: "error", code: "selector_syntax", message: "Not a valid CSS selector." });
+      });
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });

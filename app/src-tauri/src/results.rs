@@ -12,9 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
+use spiderlens_config::{LinkAnalysisSettings, PositionRule};
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
-    UrlScope, ViewQuery, export_file, tabs,
+    AnalysisRun, ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef,
+    TestedLink, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -242,6 +243,42 @@ pub async fn url_list(
 ) -> Cmd<ListPage> {
     state
         .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
+        .await
+}
+
+/// Runs Crawl Analysis on the open file now (spec 023 stage 1).
+#[tauri::command]
+pub async fn analysis_run(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<AnalysisRun> {
+    state.with(&path, move |r| r.analyse().map_err(err)).await
+}
+
+/// Uses `settings` for the open file's link positions and Link Score from
+/// now on (spec 023 FR-023): both are worked out again on next use.
+#[tauri::command]
+pub async fn analysis_settings(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    settings: LinkAnalysisSettings,
+) -> Cmd<()> {
+    state
+        .with(&path, move |r| {
+            r.set_link_settings(settings);
+            Ok(())
+        })
+        .await
+}
+
+/// The link position rules tester (spec 023 FR-022). None when the URL is
+/// not in the crawl or its HTML was not stored.
+#[tauri::command]
+pub async fn positions_test(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    url: String,
+    rules: Vec<PositionRule>,
+) -> Cmd<Option<Vec<TestedLink>>> {
+    state
+        .with(&path, move |r| r.test_positions_url(&url, &rules).map_err(err))
         .await
 }
 

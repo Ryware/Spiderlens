@@ -71,6 +71,9 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            results::analysis_run,
+            results::analysis_settings,
+            results::positions_test,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

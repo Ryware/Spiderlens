@@ -6,6 +6,7 @@ import type { ColumnDef } from "../generated/ColumnDef";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
+import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
 import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
 
 export interface FakeUrl {
@@ -82,6 +83,8 @@ export interface FakeResults {
   progress(p: Partial<ExportProgress>): void;
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** Link analysis settings sent for the open file (spec 023). */
+  linkSettings: LinkAnalysisSettings[];
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -99,6 +102,9 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "copyRows"
   | "exportStart"
   | "exportCancel"
+  | "analysisRun"
+  | "analysisSettings"
+  | "positionsTest"
   | "onViewReady"
   | "onExportProgress"
 > & { results: FakeResults } {
@@ -110,6 +116,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const results: FakeResults = {
     urls: [...initial],
     copied: [],
+    linkSettings: [],
     exports: [],
     opened: [],
     features: ["base", "analysis"],
@@ -262,6 +269,21 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return 1;
     },
     exportCancel: async () => {},
+    analysisRun: async () => ({ urls: results.urls.length, links: 12, rounds: 30, pages_without_html: 0, weighted: false, ms: 40 }),
+    analysisSettings: async (_p, settings) => {
+      results.linkSettings.push(settings);
+    },
+    // The page has a header link, a menu link and a content link; the first
+    // rule, when there is one, claims the menu link.
+    positionsTest: async (_p, url, rules) => {
+      if (!results.urls.some((u) => u.url === url.trim())) return null;
+      const rule = rules[0];
+      return [
+        { pos: 0, raw: "/", text: "Home", position: "header" as const, rule: null },
+        { pos: 1, raw: "/promo", text: "Promo", position: rule ? rule.position : ("content" as const), rule: rule ? 0 : null },
+        { pos: 2, raw: "/story", text: "Read the story", position: "content" as const, rule: null },
+      ];
+    },
     onViewReady: async (cb) => {
       readyCbs.add(cb);
       return () => void readyCbs.delete(cb);
