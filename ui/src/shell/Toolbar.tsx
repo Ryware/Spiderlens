@@ -40,6 +40,7 @@ export const Toolbar = forwardRef<HTMLInputElement, {
     <header
       data-tauri-drag-region
       data-region="chrome"
+      data-material-region
       className={cn("flex h-toolbar shrink-0 items-center gap-2 border-b border-line bg-chrome px-3", platform === "mac" && "pl-mac-inset")}
     >
       <Segmented
