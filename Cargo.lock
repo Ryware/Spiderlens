@@ -4958,6 +4958,7 @@ dependencies = [
  "sha2",
  "spiderlens-config",
  "spiderlens-engine",
+ "spiderlens-results",
  "spiderlens-test-fixtures",
  "tempfile",
  "thiserror 2.0.21",

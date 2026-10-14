@@ -402,3 +402,50 @@ async fn sc_004_no_token_reaches_the_crawl_file() {
         }
     }
 }
+
+#[tokio::test]
+async fn us1_4_search_console_tab_lists_the_fetched_pages() {
+    use spiderlens_results::{Need, Reader, UrlScope, ViewQuery, tabs};
+
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = crawl(&site, dir.path()).await;
+
+    // Before a fetch the tab says why it is empty.
+    let r = Reader::open(&path).unwrap();
+    assert!(!r.features().has(Need::SearchConsole));
+    drop(r);
+
+    let g = fake(&site, 3);
+    fetch(&g, &path, &site, None).await;
+
+    let mut r = Reader::open(&path).unwrap();
+    assert!(r.features().has(Need::SearchConsole));
+    let q = |filter: &str| ViewQuery {
+        tab: "search-console".into(),
+        filter: filter.into(),
+        scope: UrlScope::All,
+        search: String::new(),
+        sort: None,
+    };
+    let list = |r: &mut Reader, filter: &str| {
+        let page = r.open_view(&q(filter), 500).unwrap();
+        let total = r.materialize(page.view).unwrap();
+        let rows = r.rows(page.view, 0, 1000).unwrap().rows;
+        r.close_view(page.view).unwrap();
+        assert_eq!(rows.len() as u32, total);
+        rows
+    };
+    assert_eq!(list(&mut r, "all").len(), PAGES);
+    assert_eq!(list(&mut r, "clicks").len(), 10);
+    assert_eq!(list(&mut r, "no_data").len(), PAGES - 10);
+
+    let tab = tabs().iter().find(|t| t.id == "search-console").unwrap();
+    let clicks = tab.columns.iter().position(|c| c.id == "gsc_clicks").unwrap();
+    let url3 = site.url(HOST, "/p/3");
+    let row = list(&mut r, "all")
+        .into_iter()
+        .find(|row| row[1].as_str() == Some(url3.as_str()))
+        .unwrap();
+    assert_eq!(row[1 + clicks], serde_json::json!(13));
+}

@@ -32,6 +32,7 @@ getrandom.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 spiderlens-test-fixtures.workspace = true
+spiderlens-results.workspace = true
 
 [lints]
 workspace = true
