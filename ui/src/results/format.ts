@@ -29,6 +29,11 @@ export function formatCell(kind: ValueKind, v: JsonValue): string {
       return typeof v === "number" ? `${v.toLocaleString()} ms` : String(v);
     case "bool":
       return v ? "Yes" : "No";
+    case "percent":
+      // Stored as a fraction (Search Console CTR).
+      return typeof v === "number" ? `${(v * 100).toFixed(1)}%` : String(v);
+    case "decimal":
+      return typeof v === "number" ? v.toFixed(1) : String(v);
     default:
       return String(v);
   }
@@ -54,7 +59,7 @@ export function cellTone(kind: ValueKind, v: JsonValue): CellTone {
 
 export const toneText = { ok: "text-ok", info: "text-info", warn: "text-warn", bad: "text-bad" } as const;
 
-export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status";
+export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status" || kind === "percent" || kind === "decimal";
 
 /** Why a column or filter has no data in this file. */
 export const needReason: Record<Need, string> = {
@@ -63,4 +68,5 @@ export const needReason: Record<Need, string> = {
   attempts: "Not collected yet: retry attempts are recorded from spec 004.",
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
+  search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
 };

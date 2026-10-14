@@ -13,12 +13,14 @@
 //! - `run` and `store`: resumable runs inside the crawl file (D7, D8).
 //! - `matching`: provider URLs to crawled URLs (D9).
 //! - `gsc`: Search Console (D10).
+//! - `hub`: the one entry point the app and the CLI share.
 
 pub mod cache;
 pub mod credentials;
 mod error;
 pub mod gsc;
 pub mod http;
+pub mod hub;
 pub mod limits;
 pub mod matching;
 pub mod oauth;
