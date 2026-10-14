@@ -7,27 +7,32 @@ All tables are added by one additive migration step (plan D3). Columns that may 
 ```rust
 pub struct AgentData {
     pub forms: Vec<Form>,          // in document order
+    pub fields: Vec<Field>,        // flat, in document order; Field.form points at its form
     pub actions: Vec<Action>,      // capped at 50, plus actions_total
     pub actions_total: u32,
     pub nameless_buttons: u32,     // native buttons and button roles without an accessible name
     pub links: Vec<AgentLink>,     // markdown alternates, service-desc/doc, api-catalog
-    pub challenge_scripts: Vec<&'static str>, // widget ids found in the page
+    pub challenges: Vec<&'static str>, // widget ids found in the page
 }
 pub struct Form {
-    pub pos: u16, pub method: Method /* get|post|dialog|other */, pub action: Option<String>,
-    pub fields: Vec<Field>, pub has_submit: bool, pub is_search: bool, // role=search, type=search input or GET form with one text field
+    pub method: FormMethod /* get|post|dialog|other */, pub action: Option<String>,
+    pub is_search: bool, // role=search, type=search input or GET form with a query-like field
+    pub has_submit: bool,
     pub challenge: Option<&'static str>,
     pub tool: Option<DeclaredTool>,  // WebMCP declarative
 }
 pub struct Field {
+    pub form: Option<u16>,          // index into forms (form ancestor or form= attribute); None = outside any form
     pub name: Option<String>, pub kind: String /* input type, select, textarea */, pub required: bool,
     pub accessible_name: Option<String>, pub name_source: NameSource /* aria_labelledby|aria_label|label|title|placeholder|none */,
     pub description: Option<String>, pub tool_param_description: Option<String>,
 }
 pub struct DeclaredTool { pub name: String, pub description: Option<String>, pub autosubmit: bool }
 pub struct Action { pub kind: ActionKind /* anchor_no_href|anchor_hash|anchor_js|onclick|role_button|role_link */, pub text: String }
-pub struct AgentLink { pub rel: String, pub mime: Option<String>, pub href: String, pub source: RefSource }
+pub struct AgentLink { pub kind: AgentLinkKind /* markdown_alternate|service_desc|service_doc|api_catalog */, pub href: String, pub source: RefSource }
 ```
+
+Link response headers (`Link:`) with the same relations are collected from the response and stored with `via = header`.
 
 Hidden inputs, `type=submit|reset|button|image` and fields inside `<template>` are not fields for labelling purposes (submit and image inputs count as submit controls and need an accessible name).
 
@@ -47,6 +52,7 @@ Hidden inputs, `type=submit|reset|button|image` and fields inside `<template>` a
 | nameless_buttons | INTEGER | |
 | actions_without_link | INTEGER | total, not capped |
 | challenges | INTEGER | forms with a challenge widget |
+| forms_without_submit | INTEGER | forms with no submit control |
 | declared_tools | INTEGER | WebMCP declarative |
 | tools_missing_description | INTEGER | tool or any param undescribed |
 | md_alternate | TEXT | first markdown alternate URL, resolved |
@@ -57,15 +63,19 @@ Primary key `(url_id, source)`. Tab columns read the `raw` row and, when present
 
 ### `page_forms`
 
-`url_id, source, pos, method, action_url, is_search, has_submit, field_count, challenge, tool_name, tool_description, tool_autosubmit`. Index `(url_id, source, pos)`.
+`url_id, source, pos, method, action, is_search, has_submit, field_count, challenge, tool_name, tool_description, tool_autosubmit`. Primary key `(url_id, source, pos)`.
 
 ### `form_fields`
 
-`url_id, source, form_pos, pos, name, kind, required, accessible_name, name_source, description, tool_param_description`. Index `(url_id, source, form_pos, pos)`.
+`url_id, source, pos, form_pos, name, kind, required, accessible_name, name_source, description, tool_param_description`. `pos` is the field's place in the page; `form_pos` is the form's `pos`, NULL for fields outside any form. Primary key `(url_id, source, pos)`.
 
 ### `page_actions`
 
-`url_id, source, pos, kind, text`. At most 50 rows per page and source. Index `(url_id, source, pos)`.
+`url_id, source, pos, kind, text`. At most 50 rows per page and source. Primary key `(url_id, source, pos)`.
+
+### `agent_links`
+
+`url_id, source, pos, kind, href, via`. `kind` is markdown_alternate, service_desc, service_doc or api_catalog; `via` is `html` or `header`. Primary key `(url_id, source, pos)`. The first markdown alternate is also copied to `page_agent.md_alternate`.
 
 ### `agent_entry_points` (per host)
 
@@ -108,7 +118,7 @@ Ids are stable and never reused. Part and weight live in 016's score table (`age
 | agents.nameless_buttons | Acting | 4 | Medium | page | nameless_buttons > 0 | agents |
 | agents.actions_without_link | Acting | 4 | Medium | page | actions_without_link > 0 | agents |
 | agents.form_challenge | Acting | 5 | Medium | page | challenges > 0 | agents |
-| agents.form_no_submit | Acting | 3 | Low | page | a form without a submit control | agents |
+| agents.form_no_submit | Acting | 3 | Low | page | forms_without_submit > 0 | agents |
 | agents.tool_missing_description | Acting | 1 | Low | page | tools_missing_description > 0 | agents |
 | agents.no_search_action | Acting | 1 | Opportunity | site | site has search forms but no `SearchAction` | agents, extraction |
 | agents.search_action_out_of_scope | Acting | 2 | Medium | site | `SearchAction` template resolves outside scope | extraction |
