@@ -362,8 +362,9 @@ export interface Transport {
   setDefaultProfile(name: string | null): Promise<void>;
   exportProfile(name: string, path: string): Promise<void>;
   importProfile(path: string): Promise<LoadedProfile>;
+  /** With JavaScript rendering on, rejects with "browser_unavailable:" plus a message when no browser is usable (spec 014). */
   crawlStart(config: CrawlConfig, startUrl: string | null): Promise<CrawlStarted>;
-  /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:" or "in_use:" plus a message. */
+  /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:", "in_use:" or "browser_unavailable:" plus a message. */
   crawlResume(path: string, options?: ResumeOptions): Promise<CrawlStarted>;
   crawlPause(id: number): Promise<void>;
   crawlStop(id: number): Promise<void>;

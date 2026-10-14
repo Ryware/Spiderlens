@@ -12,7 +12,7 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "rendering" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +34,12 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "rendering",
+    title: "JavaScript rendering",
+    description: "Render each page in a browser, as search engines do, and compare it with the raw HTML. Slower, and needs Google Chrome, Chromium or Microsoft Edge.",
+    prefixes: ["rendering"],
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -369,6 +375,33 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
             help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
           >
             {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
+          </Row>
+        </Group>
+      );
+
+    case "rendering":
+      return (
+        <Group>
+          <Row
+            label="Mode"
+            help={
+              config.rendering.mode === "javascript"
+                ? "Each HTML page is fetched as usual, then rendered in a browser; the tabs show the rendered values."
+                : "Pages are read from their HTML as served. No browser is started."
+            }
+            issues={at("rendering.mode")}
+          >
+            {() => (
+              <Segmented
+                label="Rendering mode"
+                value={config.rendering.mode}
+                options={[
+                  { value: "raw", label: "Raw HTML" },
+                  { value: "javascript", label: "JavaScript rendering" },
+                ]}
+                onChange={(v) => set((c) => ({ ...c, rendering: { ...c.rendering, mode: v } }))}
+              />
+            )}
           </Row>
         </Group>
       );

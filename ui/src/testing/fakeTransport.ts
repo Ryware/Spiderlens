@@ -241,6 +241,9 @@ export function fakeTransport(
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
+      if (!(config.rendering.max_render_secs >= 1 && config.rendering.max_render_secs <= 60)) {
+        issues.push({ path: "rendering.max_render_secs", severity: "error", code: "out_of_range", message: "The maximum render time must be between 1 and 60 seconds." });
+      }
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });
