@@ -6,7 +6,7 @@ Tests come first in each task (constitution VII). `[P]` = can run in parallel wi
 
 ## Phase 1: Setup
 
-- [ ] T001 New crate `crates/schedule` in the workspace (default member); deps `spiderlens-config`, `spiderlens-engine`, `spiderlens-results`, `jiff`, `serde`, `serde_json`, `thiserror`, `tokio`; optional `notify-rust` behind feature `notify`.
+- [ ] T001 New crate `crates/schedule` in the workspace (default member); deps `spiderlens-config`, `spiderlens-engine`, `spiderlens-results`, `jiff`, `serde`, `serde_json`, `thiserror`, `tokio`, `dirs`.
 - [ ] T002 [P] Engine: `Crawler::set_meta(key, value)`; test that `meta.schedule` round-trips and old readers ignore it.
 
 ## Phase 2: Foundation (pure logic)
@@ -41,7 +41,7 @@ Tests come first in each task (constitution VII). `[P]` = can run in parallel wi
 ## Phase 5: US2 History and notifications (P1)
 
 - [ ] T023 Run record counts and step results; reason text for each failure class (FR-018, SC-007).
-- [ ] T024 [P] Notifications via `notify-rust` per level; a test hook records instead of showing (FR-019).
+- [ ] T024 [P] Notifications via OS commands (osascript, PowerShell toast, notify-send) per level; a test hook records instead of showing (FR-019).
 
 ## Phase 6: US3 After-run steps (P2)
 

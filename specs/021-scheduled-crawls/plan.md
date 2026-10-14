@@ -29,9 +29,9 @@ row, no new table or column), so 021 takes **no migration step**.
 - Rust 2024; existing workspace deps `jiff` (time zones, DST), `serde_json`,
   `thiserror`, `clap`, `tempfile`. `std::fs::File::try_lock` for the per-schedule
   run lock (as 006 does for crawl files).
-- New dependency: `notify-rust` (desktop notifications on macOS, Windows and
-  Linux from a plain process) in `crates/schedule` behind a `notify` feature
-  that the CLI and app enable; tests run without it. `dirs` for the config
+- No notification crate: notifications go through the OS's own commands
+  (`osascript` on macOS, a PowerShell toast on Windows, `notify-send` on
+  Linux) behind a `Notifier` trait; tests use a recorder. `dirs` for the config
   directory in the CLI (the app gets it from Tauri; both resolve the same
   folder, D6).
 - No crate for cron or for the OS schedulers: the cron subset is ~200 lines and

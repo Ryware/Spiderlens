@@ -11,7 +11,7 @@
 | `source_profile` | string? | profile it was copied from |
 | `source_hash` | string? | xxh3 of the profile JSON at copy time |
 | `input` | `{ spider: { start_url } }` or `{ list: { path } }` | List file re-read every run |
-| `frequency` | `{ kind, cron }` | kind: `hours`, `daily`, `weekly`, `monthly`, `advanced`; cron always set |
+| `frequency` | `Frequency` enum | `hours {every, minute}`, `daily {time}`, `weekly {days, time}`, `monthly {day: n or last, time}`, `advanced {cron}`; each turns into one 5-field cron |
 | `output_dir` | path | |
 | `catch_up` | bool | default true |
 | `notify` | `always` / `problems` / `never` | default `problems` |
