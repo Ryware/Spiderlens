@@ -31,7 +31,7 @@
 ## Phase 4: Storage and crawl
 
 - [ ] T016 [US1][US2] `migrate.rs` step (number taken at merge time): `custom_rules`, `custom_results`, `custom_values`; `data_features` gains `custom` (data-model.md)
-- [ ] T017 [US1][US2] `store.rs`: write rule rows at crawl start, results with the page in `record_page` (cached statements)
+- [ ] T017 [US1][US2] `store.rs`: write rule rows (with slots) at crawl start, one packed results row and optional values row with the page in `record_page` (cached statements)
 - [ ] T018 [US1] `runner.rs`: compile at start, `Arc<CompiledRules>` into `finish_page`; pause-edit-resume applies new rules and marks old ones stale (FR-011, FR-016)
 
 ## Phase 5: Reruns and tester

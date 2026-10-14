@@ -145,29 +145,33 @@ be slow on large pages").
 
 Three tables, added in one additive `migrate.rs` step:
 
-- `custom_rules(id, kind, name, def_json, pos, last_run_at, run_pages, run_state)`:
+- `custom_rules(id, slot, kind, name, def_json, pos, last_run_at, run_pages, run_state)`:
   the rules of this crawl and their last run (FR-010, FR-026).
-- `custom_results(url_id, rule_id, count, flags, first)` WITHOUT ROWID,
-  primary key `(rule_id, url_id)`: one row per eligible page and rule;
-  `first` is the first value (extractors) for table columns and sort.
-- `custom_values(url_id, rule_id, seq, value)` WITHOUT ROWID: every stored
-  value (extractors, up to 100) or match in context (searches, up to 10).
+- `custom_results(url_id PRIMARY KEY, slots BLOB, firsts TEXT)`: one row
+  per eligible page with every rule's count and flags packed by slot, and
+  the first values as a JSON array.
+- `custom_values(url_id PRIMARY KEY, data BLOB)`: the remaining values and
+  search contexts of a page, zstd-compressed JSON, read only by the detail
+  pane and all-values export.
 
-Rows are written in the same transaction as the page's other rows
-(`record_page`), with cached statements. Keying `custom_results` by
-`(rule_id, url_id)` makes a rule's column and its filters range scans, and
-lets a rerun replace one rule with `DELETE ... WHERE rule_id = ?`.
+Why packed rows: spec 005's benchmarks show the crawl's single SQLite
+writer is the limit, not parsing. One row per page and rule would add 30
+rows per page for a 30-rule set, about as many as the page's links, and
+miss SC-002. Packed, it is one or two rows per page regardless of the rule
+count. Rows are written in the same transaction as the page's other rows
+(`record_page`), with cached statements.
 
-Rule ids are stable for the life of a crawl: a rename keeps the id; an
-edited definition keeps the id and is marked stale until rerun.
+Rule ids and slots are stable for the life of a crawl: a rename keeps
+both; an edited definition keeps them and is marked stale until rerun.
 
 ### D8. Reruns from stored HTML
 
 `custom::rerun(path, rule_ids, progress, cancel)` opens the crawl file for
-writing (refused for read-only files, spec 006), deletes the rules'
-results, then streams `bodies` in `url_id` order, decompresses (zstd),
+writing (refused for read-only files, spec 006), then streams `bodies`
+in `url_id` order, decompresses (zstd),
 decodes, parses and applies the rules on a worker pool (one thread per
-core, bounded channel), committing every 2,000 pages. Progress and cancel
+core, bounded channel), and rewrites each page's packed row with the rerun slots replaced and
+the others kept, committing every 2,000 pages. Progress and cancel
 go through a callback and an atomic flag. Pages without a stored body get
 `not_available`. A cancelled run leaves `run_state = 'partial'` with the
 processed count (FR-014). Reruns parse with the same code path as the
@@ -189,8 +193,10 @@ file's `custom_rules`: **Custom extraction** (Address, then per extractor
 `first` and a hidden "count" column) and **Custom search** (Address, then
 per search its count). Filters: per search "Name: contains / does not
 contain" on `flags & MEETS`; per extractor "Has value", "No match", "More
-matches than stored". Expressions are correlated primary-key lookups into
-`custom_results`, like the existing content columns. Columns are numeric
+matches than stored". Expressions are primary-key lookups into
+`custom_results` read through two registered SQL functions,
+`custom_count(slots, i)` and `custom_flags(slots, i)`, plus
+`json_extract(firsts, '$[i]')`, like the existing content columns. Columns are numeric
 when every non-null value parses as a number (spec Assumptions), decided
 once per data version. The detail pane gets a "Custom" section listing
 all values and search contexts (FR-024). CSV export gains a

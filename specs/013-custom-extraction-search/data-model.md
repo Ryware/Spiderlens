@@ -34,6 +34,7 @@ Rule file: `{ "format": "spiderlens-rules", "version": 1, "extractors": [...], "
 ```sql
 CREATE TABLE custom_rules (
   id          INTEGER PRIMARY KEY,
+  slot        INTEGER NOT NULL UNIQUE,
   kind        TEXT NOT NULL,          -- 'extractor' | 'search'
   name        TEXT NOT NULL,
   def_json    TEXT NOT NULL,          -- the rule as configured
@@ -45,34 +46,42 @@ CREATE TABLE custom_rules (
 );
 
 CREATE TABLE custom_results (
-  rule_id INTEGER NOT NULL,
-  url_id  INTEGER NOT NULL,
-  count   INTEGER NOT NULL,           -- true number of matches
-  flags   INTEGER NOT NULL,           -- bit set below
-  first   TEXT,                       -- first value (extractors)
-  PRIMARY KEY (rule_id, url_id)
-) WITHOUT ROWID;
-CREATE INDEX custom_results_url ON custom_results(url_id, rule_id);
+  url_id  INTEGER PRIMARY KEY,        -- one row per eligible page
+  slots   BLOB NOT NULL,              -- 8 bytes per rule slot: u32 count, u16 flags, u16 0 (little endian)
+  firsts  TEXT NOT NULL               -- JSON array, by slot: first value or null
+);
 
 CREATE TABLE custom_values (
-  rule_id INTEGER NOT NULL,
-  url_id  INTEGER NOT NULL,
-  seq     INTEGER NOT NULL,           -- document order
-  value   TEXT NOT NULL,              -- value, or match with context for searches
-  PRIMARY KEY (rule_id, url_id, seq)
-) WITHOUT ROWID;
+  url_id  INTEGER PRIMARY KEY,
+  data    BLOB NOT NULL               -- zstd JSON: { slot: [values...] } for extractors with
+                                      -- more than one value, { slot: [contexts...] } for searches,
+                                      -- { slot: "error message" } for errors
+);
 ```
+
+`custom_rules.slot` (INTEGER NOT NULL, UNIQUE) is the rule's position in
+`slots` and `firsts`. Slots are assigned when a rule is first stored and
+never reused within a crawl; a deleted rule's slot is left empty. Rows
+exist only for eligible pages (spec 005 extraction set); `custom_values`
+only when a page has something beyond the first values.
+
+Why packed rows (plan D7): the crawl's single SQLite writer is the
+bottleneck (spec 005 benchmarks), and a 30-rule set as one row per page
+and rule would add 30 rows per page, as many as the page's links. Packed,
+it is one or two rows per page whatever the rule count. The results crate
+reads slots with SQL functions `custom_count(slots, i)`,
+`custom_flags(slots, i)` and `json_extract(firsts, '$[i]')`; views
+materialise their order once (spec 007 plan D4), so these run once per
+row per view, not per scroll.
 
 `flags` bits: 1 `meets` (search condition true), 2 `no_match`,
 4 `more_than_stored`, 8 `truncated` (a value was cut at 32,000 chars),
 16 `timed_out`, 32 `error`, 64 `element_not_found`, 128 `not_available`
-(no stored HTML), 256 `bad_json` (a JSON-LD block could not be parsed).
+(no stored HTML), 256 `bad_json` (a JSON-LD block could not be parsed),
+512 `run` (the slot was evaluated for this page; unset = not processed in
+a partial run).
 
-An error message, when `error` is set, is stored as `custom_values` row
-`seq = -1`.
-
-Rows exist only for eligible pages (spec 005 extraction set). A file
-without these tables (older format) reads as "no rules run".
+A file without these tables (older format) reads as "no rules run".
 
 `meta.data_features` gains `custom` when the tables exist, so the results
 crate can explain unavailability like other features.
