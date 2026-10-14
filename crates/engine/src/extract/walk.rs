@@ -91,7 +91,7 @@ struct Walker<'p> {
     heading: Option<Open>,
 }
 
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> PageData {
+pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, keep_text: bool) -> PageData {
     let (doc, cut) = parse(text, budget);
     let mut w = Walker {
         page,
@@ -131,6 +131,9 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration) -> Pag
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
+    if keep_text {
+        w.data.visible_text = Some(visible);
+    }
     w.data
 }
 

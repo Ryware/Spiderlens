@@ -73,6 +73,7 @@ pub fn extract_title(header_charset: Option<&str>, body: &[u8]) -> Title {
         body,
         truncated: false,
         robots_token: "",
+        keep_text: false,
     });
     match data.title() {
         Some(t) if !t.is_empty() => Title::Text(t.to_string()),

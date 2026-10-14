@@ -160,6 +160,10 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// The collapsed visible text, only when [`PageInput::keep_text`] was
+    /// set (spec 014 research R10). `None` in the raw crawl.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_text: Option<String>,
 }
 
 impl PageData {
@@ -195,6 +199,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            visible_text: None,
         }
     }
 }
@@ -210,6 +215,9 @@ pub struct PageInput<'a> {
     pub truncated: bool,
     /// The crawl's robots.txt token, for crawler-specific meta tags.
     pub robots_token: &'a str,
+    /// Keep the visible text in [`PageData::visible_text`] (spec 014, for
+    /// comparing raw and rendered text). The raw crawl passes `false`.
+    pub keep_text: bool,
 }
 
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
@@ -225,10 +233,20 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
         None => encoding_rs::UTF_8,
     };
     if looks_binary(input.body) {
-        return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        let mut data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        if input.keep_text {
+            data.visible_text = Some(String::new());
+        }
+        return data;
     }
     let (text, used, had_errors) = encoding.decode(input.body);
-    let mut data = walk::walk(&text, input.url, input.robots_token, walk::PARSE_BUDGET);
+    let mut data = walk::walk(
+        &text,
+        input.url,
+        input.robots_token,
+        walk::PARSE_BUDGET,
+        input.keep_text,
+    );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
