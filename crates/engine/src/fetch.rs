@@ -316,7 +316,10 @@ async fn read_body_partial(mut response: Response, max_bytes: u64) -> (Vec<u8>, 
         )
         .with_reason(ErrorReason::OverSize)
     };
-    let mut buf = Vec::new();
+    // Sized up front when the length is known, so large bodies (PDFs) are
+    // not copied again as the buffer grows.
+    let hint = response.content_length().unwrap_or(0).min(max_bytes);
+    let mut buf = Vec::with_capacity(hint as usize);
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
