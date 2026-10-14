@@ -49,6 +49,23 @@ test("filters_show_counts_and_explain_unavailable_ones", async () => {
   await waitFor(() => expect(rowCount()).toContain("27 URLs"));
 });
 
+test("crawl_log_opens_from_the_sidebar", async () => {
+  const t = fakeTransport();
+  t.crawlLog = async () => [{ at_ms: 0, kind: "retry", host: "https://example.com", url: "https://example.com/a", message: "503: trying again in 1 s (attempt 2 of 3)." }];
+  await openInternal(t);
+  fireEvent.click(screen.getByRole("button", { name: "Crawl log" }));
+  const log = await screen.findByRole("region", { name: "Crawl log" });
+  expect(await within(log).findByText("503: trying again in 1 s (attempt 2 of 3).")).toBeTruthy();
+});
+
+test("error_class_filters_show_only_when_they_match", async () => {
+  await openInternal();
+  fireEvent.click(screen.getByRole("button", { name: "Response codes" }));
+  const notFound = await screen.findByRole("button", { name: /Not found \(404\)/ });
+  await waitFor(() => expect(notFound.textContent).toBe("Not found (404)3"));
+  expect(screen.queryByRole("button", { name: /Timed out/ })).toBeNull();
+});
+
 test("header_click_sorts_then_reverses_then_clears", async () => {
   const t = await openInternal();
   const header = () => within(grid()).getByRole("columnheader", { name: /Title/ });

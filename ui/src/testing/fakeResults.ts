@@ -53,6 +53,8 @@ export const fakeTabs: TabDef[] = [
     filters: [
       { id: "all", label: "All", need: "base" },
       { id: "client_error", label: "Client error (4xx)", need: "base" },
+      { id: "class_timeout", label: "Timed out", need: "base", hide_when_empty: true },
+      { id: "class_http_404", label: "Not found (404)", need: "base", hide_when_empty: true },
     ],
     search_column: null,
     scoped: true,
@@ -147,6 +149,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
+    if (q.filter === "class_timeout") us = [];
+    if (q.filter === "class_http_404") us = us.filter((u) => u.status === 404);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
