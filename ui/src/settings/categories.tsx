@@ -13,7 +13,7 @@ import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "storage";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -22,7 +22,7 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
-  /** A setting of this computer, not part of the crawl profile (spec 019 FR-025). */
+  /** An app preference, not part of the crawl profile (spec 018 FR-012, spec 019 FR-025). */
   app?: boolean;
 }
 
@@ -39,6 +39,13 @@ export const categories: Category[] = [
     id: "storage",
     title: "Storage",
     description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
+  {
+    id: "appearance",
+    title: "Appearance",
+    description: "Brightness and accent colour. Saved on this computer, not in the crawl profile.",
     prefixes: [],
     app: true,
   },

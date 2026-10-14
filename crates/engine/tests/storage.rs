@@ -576,3 +576,24 @@ async fn fr_021_read_only_files_are_viewed_and_resume_asks_for_a_copy() {
     perms.set_readonly(false);
     std::fs::set_permissions(&path, perms).unwrap();
 }
+
+#[test]
+fn deleting_a_crawl_and_crash_leftovers_leaves_nothing_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let crawl = dir.path().join("gone.spiderlens");
+    std::fs::write(&crawl, b"crawl").unwrap();
+    std::fs::write(file::lock_path(&crawl), b"{}").unwrap();
+    file::remove_crawl_file(&crawl).unwrap();
+    assert!(!file::lock_path(&crawl).exists(), "no orphan lock file");
+
+    // A Save As cut off by a crash, and one still copying.
+    let stale = file::partial_path(&dir.path().join("old.spiderlens"));
+    std::fs::write(&stale, b"half").unwrap();
+    let busy_dest = dir.path().join("busy.spiderlens");
+    let busy = file::partial_path(&busy_dest);
+    std::fs::write(&busy, b"half").unwrap();
+    let _saving = file::WriterLock::acquire(&busy_dest).unwrap();
+    assert_eq!(file::remove_stale_partials(dir.path()), 1);
+    assert!(!stale.exists());
+    assert!(busy.exists(), "a copy in progress is left alone");
+}

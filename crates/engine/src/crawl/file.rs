@@ -355,7 +355,34 @@ pub fn remove_crawl_file(path: &Path) -> std::io::Result<()> {
         name.push(suffix);
         let _ = std::fs::remove_file(path.with_file_name(name));
     }
+    let _ = std::fs::remove_file(lock_path(path));
     Ok(())
+}
+
+/// Deletes the `.<name>.partial` copies a Save As left in `dir` when it was
+/// cut off by a crash. A partial whose destination is locked is a copy in
+/// progress and is left alone. Returns how many were removed.
+pub fn remove_stale_partials(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(dest) = name
+            .strip_prefix('.')
+            .and_then(|n| n.strip_suffix(".partial"))
+            .filter(|n| !n.is_empty())
+        else {
+            continue;
+        };
+        if let Ok(_lock) = WriterLock::acquire(&dir.join(dest))
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// `<stem> (format N backup).spiderlens`, numbered if taken (FR-036).

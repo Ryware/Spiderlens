@@ -55,7 +55,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
   if (run.running && p?.eta_secs != null) figures.push([`~${formatElapsed(p.eta_secs * 1000)}`, "left"]);
   const speed = setup.speedPreset === "polite" ? "Polite" : setup.speedPreset === "fast" ? "Fast" : "Custom speed";
   return (
-    <footer aria-label="Crawl status" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">
+    <footer aria-label="Crawl status" data-region="chrome" className="flex h-statusbar shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-chrome px-3 text-xs whitespace-nowrap text-fg-3 tabular">
       <span className="flex min-w-0 items-center gap-1.5 text-fg-2" role="status" data-phase={run.phase}>
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dots[info.tone], run.running && "motion-safe:animate-pulse")} />
         <span className="truncate">
@@ -226,6 +226,7 @@ function Table({ title, head, children }: { title: string; head: [string, string
 /** Main area before any crawl (FR-008): what to do next, and anything to be careful about. */
 export function StartState({
   setup,
+  error,
   onFocusUrl,
   onOpenSettings,
   library,
@@ -233,6 +234,7 @@ export function StartState({
   onManageCrawls,
 }: {
   setup: CrawlSetup;
+  error?: string | null;
   onFocusUrl: () => void;
   onOpenSettings: () => void;
   /** Recent and unsaved crawls (spec 006 US4). */
@@ -255,6 +257,13 @@ export function StartState({
               : "Add your URLs, then press Start. Only the URLs in the list are crawled."}
           </p>
         </div>
+
+        {/* A crawl file that could not be opened (Open crawl…). */}
+        {error && (
+          <Notice kind="bad" role="alert" className="w-full max-w-md">
+            {error}
+          </Notice>
+        )}
 
         {mode === "spider" && setup.startUrl !== "" && <IssueList issues={urlIssues} />}
 
