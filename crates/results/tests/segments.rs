@@ -228,3 +228,21 @@ async fn page_facts_segment_by_word_count_and_indexability() {
         assert_eq!(s.is_some(), want, "{path}");
     }
 }
+
+#[tokio::test]
+async fn saved_segments_replace_the_crawl_settings_ones() {
+    use SegmentField::*;
+    use SegmentOp::*;
+    let c = crawl(segments()).await;
+    let shop_only = vec![seg(9, "Shop", SegmentMatch::All, &[(Path, StartsWith, "/shop/")])];
+    spiderlens_engine::crawl::file::save_segments(&c.path, &shop_only).unwrap();
+    let mut r = Reader::open(&c.path).unwrap();
+    assert_eq!(r.segments(), shop_only.as_slice());
+    let counts = r.segment_counts().unwrap();
+    assert_eq!(counts.counts.get(&9), Some(&1));
+    assert_eq!(counts.no_segment, 7);
+
+    // A crawl file someone is writing is not changed.
+    let _lock = spiderlens_engine::crawl::WriterLock::acquire(&c.path).unwrap();
+    assert!(spiderlens_engine::crawl::file::save_segments(&c.path, &[]).is_err());
+}

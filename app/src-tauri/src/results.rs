@@ -247,8 +247,9 @@ pub async fn tab_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<Ta
     state.with(&path, |r| r.tab_counts().map_err(err)).await
 }
 
-/// Groups the open crawl's URLs by `segments` (spec 027 FR-B06); the crawl
-/// file is not changed. Open views and counts follow on their next refresh.
+/// Groups the open crawl's URLs by `segments` (spec 027 FR-B06) and saves
+/// them in the crawl file when no crawl is writing it (the UI calls again
+/// when the crawl ends). Open views and counts follow on their next refresh.
 #[tauri::command]
 pub async fn segments_set(
     state: tauri::State<'_, State>,
@@ -259,9 +260,12 @@ pub async fn segments_set(
     if let Some(i) = issues.first() {
         return Err(format!("{}: {}", i.path, i.message));
     }
-    state
+    let counts = state
         .with(&path, move |r| r.set_segments(segments).map_err(err))
-        .await
+        .await?;
+    // Busy (a crawl is writing) or read-only: the grouping still applies here.
+    let _ = spiderlens_engine::crawl::file::save_segments(&path, &counts.segments);
+    Ok(counts)
 }
 
 /// URLs per segment in the open crawl (the segment filter's counts).

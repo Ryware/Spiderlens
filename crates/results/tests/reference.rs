@@ -21,6 +21,7 @@ fn reference_files_show_every_crawled_url() {
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            segment: None,
         };
         let page = r.open_view(&query, 50).unwrap();
         let total = r.materialize(page.view).unwrap();

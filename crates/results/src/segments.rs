@@ -72,18 +72,27 @@ pub(crate) fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// The segments stored with the crawl (its configuration), if any.
+/// The segments stored with the crawl: those saved after it (meta
+/// `segments`), else those of its configuration.
 pub(crate) fn stored(conn: &Connection) -> Vec<Segment> {
     use rusqlite::OptionalExtension;
-    conn.query_row("SELECT value FROM meta WHERE key = 'config'", [], |r| {
-        r.get::<_, String>(0)
-    })
-    .optional()
-    .ok()
-    .flatten()
-    .and_then(|c| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&c).ok())
-    .map(|s| s.config.segments)
-    .unwrap_or_default()
+    let meta = |key: &str| {
+        conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()
+        .ok()
+        .flatten()
+    };
+    if let Some(saved) =
+        meta(spiderlens_engine::crawl::file::SEGMENTS_KEY).and_then(|s| serde_json::from_str(&s).ok())
+    {
+        return saved;
+    }
+    meta("config")
+        .and_then(|c| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&c).ok())
+        .map(|s| s.config.segments)
+        .unwrap_or_default()
 }
 
 fn write_names(conn: &Connection, segments: &[Segment]) -> rusqlite::Result<()> {

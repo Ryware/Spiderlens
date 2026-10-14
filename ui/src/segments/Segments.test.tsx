@@ -174,3 +174,22 @@ test("scope_tester_names_the_segment_a_url_would_be_in", async () => {
   const cells = await screen.findAllByTestId("scope-segment");
   expect(cells.map((c) => c.textContent)).toEqual(["Blog", "No segment"]);
 });
+
+test("segments_edited_while_crawling_are_applied_again_when_it_ends", async () => {
+  // A running crawl holds its file, so the engine saves them once it ends.
+  const t = fakeTransport();
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await screen.findByRole("button", { name: /Pause/ });
+  fireEvent.click(await screen.findByRole("button", { name: "Internal" }));
+  await waitFor(() => expect(rows().length).toBeGreaterThan(0));
+  await addSegment("Ones", "/page-1");
+  await closeSettings();
+  await waitFor(() => expect(t.results.segmentCalls.length).toBeGreaterThan(0));
+  const before = t.results.segmentCalls.length;
+  act(() => t.crawls.finish({ report: fakeReport("completed", 30) }));
+  await waitFor(() => expect(t.results.segmentCalls.length).toBe(before + 1));
+  expect(t.results.segmentCalls.at(-1)?.map((s) => s.name)).toEqual(["Ones"]);
+});

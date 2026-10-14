@@ -73,10 +73,13 @@ export function useResults(transport: Transport, path: string | null, live: bool
   /** Bumped when the segments change, so views and counts reload. */
   const [segmentsRev, setSegmentsRev] = useState(0);
   const applied = useRef(false);
+  /** The segments the open crawl is grouped by, as JSON. */
+  const grouping = useRef<string | null>(null);
   useEffect(() => {
     setSegment(null);
     setSegmentCounts(null);
     applied.current = false;
+    grouping.current = null;
   }, [path]);
   const segmentsKey = segments ? JSON.stringify(segments) : null;
   const opened = features !== null;
@@ -90,7 +93,11 @@ export function useResults(transport: Transport, path: string | null, live: bool
           if (off) return;
           applied.current = applied.current || !keep;
           setSegmentCounts(c);
-          setSegmentsRev((n) => n + 1);
+          // Views reload only when the grouping really changed.
+          const now = JSON.stringify(c.segments);
+          const changed = grouping.current === null ? !keep && c.segments.length > 0 : grouping.current !== now;
+          if (changed) setSegmentsRev((n) => n + 1);
+          grouping.current = now;
           setSegment((v) => (v === null || v === 0 || c.segments.some((s) => s.enabled && s.id === v) ? v : null));
         },
         () => {},
@@ -100,8 +107,9 @@ export function useResults(transport: Transport, path: string | null, live: bool
       off = true;
       clearTimeout(t);
     };
-    // segmentsKey stands for the segments' contents.
-  }, [transport, path, opened, segmentsKey, segmentsValid]);
+    // segmentsKey stands for the segments' contents; `live` ending saves
+    // them into the file, which the running crawl held.
+  }, [transport, path, opened, segmentsKey, segmentsValid, live]);
   const refreshSegmentCounts = useCallback(() => {
     if (!path || !segmentCounts?.segments.some((s) => s.enabled)) return;
     transport.segmentsCounts(path).then(setSegmentCounts, () => {});
