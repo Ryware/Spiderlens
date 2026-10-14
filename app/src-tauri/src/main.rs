@@ -71,6 +71,8 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            results::sitemap_preview,
+            results::sitemap_generate,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

@@ -23,6 +23,8 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { GenerateReport } from "./generated/GenerateReport";
+import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
 
 export interface BuildInfo {
   product: string;
@@ -173,6 +175,8 @@ export interface Transport {
   pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
+  /** A folder to write generated sitemaps into. */
+  pickFolder(): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
   loadProfile(name: string): Promise<LoadedProfile>;
   saveProfile(name: string, config: CrawlConfig, startUrl: string | null, overwrite: boolean): Promise<SaveResult>;
@@ -207,6 +211,9 @@ export interface Transport {
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  // Sitemap generation (spec 011, contracts/desktop-commands.md).
+  sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
+  sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
 }
@@ -231,6 +238,7 @@ export const tauriTransport: Transport = {
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>
     save({ defaultPath: `${name}.spiderlens-profile.json`, filters: [{ name: "SpiderLens profile", extensions: ["json"] }] }),
+  pickFolder: async () => asPath(await open({ directory: true })),
   profiles: () => invoke("profiles_list"),
   loadProfile: (name) => invoke("profile_load", { name }),
   saveProfile: (name, config, startUrl, overwrite) => invoke("profile_save", { name, config, startUrl, overwrite }),
@@ -263,6 +271,8 @@ export const tauriTransport: Transport = {
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
+  sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
 };

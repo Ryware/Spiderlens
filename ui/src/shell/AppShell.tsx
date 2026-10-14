@@ -15,6 +15,7 @@ import { useAppearance, useUiState } from "./useUiState";
 import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
+import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { useResults } from "../results/useResults";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
@@ -80,6 +81,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [sitemapOpen, setSitemapOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
@@ -139,6 +141,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
       { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], enabled: !crawl.active, run: () => void openCrawl() },
+      {
+        id: "generate-sitemap",
+        title: "Generate XML sitemap…",
+        group: "Crawl",
+        keywords: ["sitemap", "xml", "export"],
+        enabled: crawl.path !== null && setup.config !== null,
+        run: () => setSitemapOpen(true),
+      },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -186,7 +196,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen) return;
+      if (settingsOpen || paletteOpen || aboutOpen || sitemapOpen) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -195,7 +205,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, sitemapOpen]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
@@ -264,6 +274,17 @@ export function AppShell({ transport }: { transport: Transport }) {
         onAppearance={updateUi}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
+      {crawl.path && setup.config && (
+        <GenerateSitemapSheet
+          open={sitemapOpen}
+          onOpenChange={setSitemapOpen}
+          transport={transport}
+          path={crawl.path}
+          running={crawl.active}
+          options={setup.config.sitemap_generate}
+          onOptions={(o) => setup.set((c) => ({ ...c, sitemap_generate: o }))}
+        />
+      )}
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
     </div>
   );

@@ -12,10 +12,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
+use spiderlens_config::SitemapGenerateOptions;
 use spiderlens_results::{
     ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabDef, UrlDetail,
     UrlScope, ViewQuery, export_file, tabs,
 };
+use spiderlens_results::{GenerateError, GenerateReport, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -333,4 +335,59 @@ pub fn export_cancel(state: tauri::State<'_, State>, job: u32) {
     if let Some(c) = state.exports.lock().expect("exports lock").get(&job) {
         c.store(true, Ordering::Relaxed);
     }
+}
+
+/// Counts for the Generate sitemap sheet's live preview (spec 011 FR-018);
+/// `existing` lists the files in `folder` that writing would replace.
+#[tauri::command]
+pub async fn sitemap_preview(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    options: SitemapGenerateOptions,
+    folder: Option<PathBuf>,
+) -> Cmd<GenerateReport> {
+    state
+        .with(&path, move |r| {
+            generate_sitemaps(
+                r,
+                &options,
+                SitemapOutput::DryRun {
+                    dir: folder.as_deref(),
+                },
+            )
+            .map_err(err)
+        })
+        .await
+}
+
+/// Writes the sitemaps into `folder` (spec 011 FR-017 to FR-019). Refused
+/// while a crawl runs, so the files describe a finished crawl.
+#[tauri::command]
+pub async fn sitemap_generate(
+    state: tauri::State<'_, State>,
+    crawl: tauri::State<'_, crate::crawl::State>,
+    path: PathBuf,
+    options: SitemapGenerateOptions,
+    folder: PathBuf,
+    replace: bool,
+) -> Cmd<GenerateReport> {
+    if crawl.is_running() {
+        return Err("Sitemaps can be generated once the crawl has finished.".into());
+    }
+    state
+        .with(&path, move |r| {
+            generate_sitemaps(
+                r,
+                &options,
+                SitemapOutput::Folder {
+                    dir: &folder,
+                    replace,
+                },
+            )
+            .map_err(|e| match e {
+                GenerateError::Exists(names) => format!("These files already exist: {}", names.join(", ")),
+                e => e.to_string(),
+            })
+        })
+        .await
 }

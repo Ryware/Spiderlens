@@ -44,6 +44,11 @@ impl State {
             next_id: AtomicU64::new(1),
         }
     }
+
+    /// A crawl is running or paused.
+    pub fn is_running(&self) -> bool {
+        self.active.lock().expect("crawl lock").is_some()
+    }
 }
 
 #[derive(Serialize)]

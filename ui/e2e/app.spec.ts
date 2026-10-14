@@ -228,3 +228,24 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
+  await crawl(page);
+  await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "sitemap", "Generate XML sitemap…");
+  const dialog = page.getByRole("dialog", { name: "Generate XML sitemap" });
+  await expect(dialog).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  await expect(dialog.getByText(/4,500 pages in 1 file/)).toBeVisible();
+  await dialog.getByLabel("URLs per file").fill("1000");
+  await expect(dialog.getByText(/4,500 pages in 6 files/)).toBeVisible();
+  await dialog.getByRole("button", { name: /Choose folder/ }).click();
+  await dialog.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(dialog.getByText(/Wrote 6 files with 4,500 pages to \/site\/public/)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
