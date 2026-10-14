@@ -295,8 +295,40 @@ test("not_collected_group_lists_unavailable_fields", async () => {
   await loaded();
   expect(within(details()).getByRole("heading", { name: "Not collected" })).toBeTruthy();
   expect(within(details()).getByText("Headings, Anchor and alt text.")).toBeTruthy();
-  expect(within(details()).getByText("Page HTML.")).toBeTruthy();
-  expect(within(details()).getByText(/This crawl did not keep page HTML\./, { selector: "p" })).toBeTruthy();
+  // Page HTML is explained in its own section instead.
+  expect(within(details()).queryByText("Page HTML.")).toBeNull();
+  expect(within(details()).queryByText(/This crawl did not keep page HTML\./)).toBeNull();
+});
+
+test("page_html_not_stored_says_how_to_turn_it_on", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).getByRole("heading", { name: "Page HTML" })).toBeTruthy();
+  expect(within(details()).getByText(/Turn on Settings › Page data › Store page HTML and crawl again/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("page_html_missing_for_a_url_without_a_body", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={10} />);
+  await loaded();
+  expect(within(details()).getByText(/None stored for this URL: it is not an HTML page/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("view_source_opens_the_page_html_viewer", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  fireEvent.click(within(details()).getByRole("button", { name: "View source" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText("<!doctype html>")).toBeTruthy();
+  expect(within(dialog).getByText("https://example.com/page-1", { selector: "p" })).toBeTruthy();
+  expect(within(dialog).getByTestId("html-facts").textContent).toMatch(/^\d+ KB · 2,008 lines · UTF-8$/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 test("nothing_missing_hides_the_not_collected_group", async () => {
@@ -337,4 +369,73 @@ test("link_score_while_the_crawl_runs_says_when_it_comes", async () => {
   expect(within(details()).queryByRole("heading", { name: "Link Score" })).toBeNull();
   expect(within(details()).getByText("Link Score.")).toBeTruthy();
   expect(within(details()).getByText(/Calculated when the crawl ends/)).toBeTruthy();
+});
+
+// Copy URL and Show in table on list rows (T027).
+
+test("copy_url_puts_the_row_url_on_the_clipboard_and_says_so", async () => {
+  const t = fakeTransport();
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
+  expect(within(details()).getByRole("status").textContent).toBe("Copied.");
+});
+
+test("copy_failure_shows_the_error", async () => {
+  const t = fakeTransport();
+  t.copyText = async () => {
+    throw "Could not copy: no clipboard";
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("Could not copy: no clipboard"));
+});
+
+test("show_in_table_hands_over_the_row_url_id", async () => {
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  expect(within(details()).getByRole("status").textContent).toBe("");
+});
+
+test("show_in_table_says_when_the_url_is_in_no_table", async () => {
+  const show = vi.fn(async () => false);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
+});
+
+test("show_in_table_is_left_out_without_a_table", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await within(details()).findByRole("button", { name: "Copy https://example.com/" });
+  expect(within(details()).queryByRole("button", { name: /in table$/ })).toBeNull();
+});
+
+test("redirect_hops_have_the_same_actions", async () => {
+  const t = withDetail({
+    redirects: [
+      { id: 2, url: "http://example.com/a", status: 301, final_state: "Redirected" },
+      { id: 4, url: "https://example.com/b", status: 200, final_state: "Crawled" },
+    ],
+  });
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/b in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(4));
+  fireEvent.click(within(details()).getByRole("button", { name: "Copy http://example.com/a" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["http://example.com/a"]));
+});
+
+test("right_click_on_a_row_offers_the_same_actions", async () => {
+  const t = fakeTransport();
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  const row = (await within(details()).findByRole("button", { name: "Copy https://example.com/" })).closest("li")!;
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Show in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy URL" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
 });

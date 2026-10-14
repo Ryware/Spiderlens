@@ -18,9 +18,15 @@ import type {
   LocalError,
   OpenFailure,
   Presets,
+  CleanupRecord,
+  CleanupReport,
+  CrawlBackup,
+  HtmlSize,
+  ManagedCrawl,
   RetryPreview,
   RecentEntry,
   ResumeOptions,
+  StoragePrefs,
   StorageStatus,
   Transport,
 } from "../transport";
@@ -403,6 +409,28 @@ export interface FakeFiles {
   moved(m: Partial<CrawlMoved> & { to: string }): void;
   quitting(pausing?: boolean): void;
   recovered(entries: RecentEntry[]): void;
+  // Crawl data management (spec 019).
+  /** File sizes by path; default 10 MB. */
+  sizes: Map<string, number>;
+  /** Stored HTML by path; default none. */
+  html: Map<string, HtmlSize>;
+  backups: Map<string, CrawlBackup[]>;
+  /** Paths whose drive has no trash. */
+  noTrash: Set<string>;
+  /** Paths in use elsewhere, with the reason shown. */
+  inUse: Map<string, string>;
+  /** Paths without room to compact. */
+  noCompactRoom: Set<string>;
+  running: string | null;
+  trashed: string[];
+  deletedPermanently: string[];
+  purged: { path: string; compact: boolean }[];
+  revealed: string[];
+  prefs: StoragePrefs;
+  history: CleanupRecord[];
+  leftoverBytes: number;
+  cleanupDone(r: Partial<CleanupReport>): void;
+  crawlsChanged(): void;
 }
 
 type FilesApi = Pick<
@@ -427,7 +455,26 @@ type FilesApi = Pick<
   | "onCrawlMoved"
   | "onAppQuitting"
   | "onCrawlsRecovered"
+  | "manageList"
+  | "htmlSize"
+  | "revealPath"
+  | "crawlsDelete"
+  | "crawlsDeletePermanently"
+  | "purgeHtmlCheck"
+  | "purgeHtml"
+  | "storagePrefs"
+  | "setStoragePrefs"
+  | "cleanupHistory"
+  | "onCleanupDone"
+  | "onCrawlsChanged"
 >;
+
+const MB = 1024 ** 2;
+
+/** Storage settings as a fresh install has them. */
+export function defaultStoragePrefs(): StoragePrefs {
+  return { version: 1, cleanup_days: 30, reserve_bytes: 1024 * MB, first_cleanup_announced: null, last_cleanup: null };
+}
 
 function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
   const openFile: Listeners<string> = new Set();
@@ -435,6 +482,8 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
   const moved: Listeners<CrawlMoved> = new Set();
   const quitting: Listeners<{ pausing: boolean }> = new Set();
   const recovered: Listeners<RecentEntry[]> = new Set();
+  const cleanupDone: Listeners<CleanupReport> = new Set();
+  const crawlsChanged: Listeners<void> = new Set();
   const on = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
     return () => void set.delete(cb);
@@ -486,6 +535,68 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     moved: (m) => moved.forEach((cb) => cb({ id: 0, from: "", ...m })),
     quitting: (pausing = true) => quitting.forEach((cb) => cb({ pausing })),
     recovered: (entries) => recovered.forEach((cb) => cb(entries)),
+    sizes: new Map(),
+    html: new Map(),
+    backups: new Map(),
+    noTrash: new Set(),
+    inUse: new Map(),
+    noCompactRoom: new Set(),
+    running: null,
+    trashed: [],
+    deletedPermanently: [],
+    purged: [],
+    revealed: [],
+    prefs: defaultStoragePrefs(),
+    history: [],
+    leftoverBytes: 0,
+    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
+    crawlsChanged: () => crawlsChanged.forEach((cb) => cb()),
+  };
+
+  const sizeOf = (path: string) => files.sizes.get(path) ?? files.unsaved.find((u) => u.entry.path === path)?.size ?? 10 * MB;
+  const managed = (): ManagedCrawl[] => {
+    const paths = [...files.unsaved.map((u) => u.entry.path), ...files.recent.map((r) => r.path)].filter((p, i, a) => a.indexOf(p) === i);
+    return paths.map((path) => {
+      const r = files.recent.find((e) => e.path === path) ?? files.unsaved.find((u) => u.entry.path === path)!.entry;
+      return {
+        path,
+        name: r.name,
+        start_url: r.start_url,
+        status: files.running === path ? "running" : r.status,
+        urls: r.urls,
+        size_bytes: sizeOf(path),
+        created: r.last_used,
+        last_used: r.last_used,
+        available: r.available,
+        view_only: info(path).access.kind === "view_only",
+        backups: files.backups.get(path) ?? [],
+        unsaved: r.unsaved,
+        running: files.running === path,
+        in_recent: files.recent.some((e) => e.path === path),
+      };
+    });
+  };
+  const forget = (path: string) => {
+    files.unsaved = files.unsaved.filter((u) => u.entry.path !== path);
+    files.recent = files.recent.filter((r) => r.path !== path);
+    for (const [k, b] of files.backups) files.backups.set(k, b.filter((x) => x.path !== path));
+  };
+  const remove = (paths: string[], permanently: boolean) => {
+    const report = { deleted: [] as string[], skipped: [] as { path: string; reason: string }[], trash_unavailable: [] as string[], freed_bytes: 0 };
+    for (const path of paths) {
+      if (files.running === path) report.skipped.push({ path, reason: "Stop the crawl before deleting it." });
+      else if (files.inUse.has(path)) report.skipped.push({ path, reason: files.inUse.get(path)! });
+      else if (!permanently && files.noTrash.has(path)) report.trash_unavailable.push(path);
+      else {
+        const backup = [...files.backups.values()].flat().find((b) => b.path === path);
+        report.freed_bytes += backup ? backup.size_bytes : sizeOf(path);
+        report.deleted.push(path);
+        (permanently ? files.deletedPermanently : files.trashed).push(path);
+        files.history.unshift({ at: new Date().toISOString(), path, bytes: sizeOf(path), reason: permanently ? "manual_delete_permanent" : "manual_delete" });
+        forget(path);
+      }
+    }
+    return report;
   };
 
   const api: FilesApi = {
@@ -529,6 +640,7 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     }),
     unsavedDelete: async (path) => {
       files.deleted.push(path);
+      files.trashed.push(path);
       files.unsaved = files.unsaved.filter((u) => u.entry.path !== path);
       files.recent = files.recent.filter((r) => r.path !== path);
     },
@@ -548,6 +660,60 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     onCrawlMoved: (cb) => on(moved, cb),
     onAppQuitting: (cb) => on(quitting, cb),
     onCrawlsRecovered: (cb) => on(recovered, cb),
+    manageList: async () => {
+      const crawls = managed();
+      return {
+        crawls,
+        other_files: [],
+        totals: {
+          all: crawls.reduce((n, c) => n + c.size_bytes + c.backups.reduce((m, b) => m + b.size_bytes, 0), 0),
+          unsaved: crawls.filter((c) => c.unsaved).reduce((n, c) => n + c.size_bytes, 0),
+          leftovers: files.leftoverBytes,
+        },
+        free_bytes: files.storage.free_bytes,
+        unsaved_dir: files.storage.unsaved_dir,
+      };
+    },
+    htmlSize: async (path) => files.html.get(path) ?? { bytes: 0, pages: 0 },
+    revealPath: async (path) => void files.revealed.push(path),
+    crawlsDelete: async (paths) => remove(paths, false),
+    crawlsDeletePermanently: async (paths) => remove(paths, true),
+    purgeHtmlCheck: async (path) => {
+      const h = files.html.get(path) ?? { bytes: 0, pages: 0 };
+      const size = sizeOf(path);
+      return {
+        html_bytes: h.bytes,
+        html_pages: h.pages,
+        file_bytes: size,
+        new_size: size - h.bytes,
+        free_bytes: files.noCompactRoom.has(path) ? 1 * MB : files.storage.free_bytes,
+        can_compact: !files.noCompactRoom.has(path),
+      };
+    },
+    purgeHtml: async (path, compact) => {
+      if (files.running === path) throw "Pause or stop the crawl before removing its stored HTML.";
+      const h = files.html.get(path) ?? { bytes: 0, pages: 0 };
+      files.purged.push({ path, compact });
+      files.html.set(path, { bytes: 0, pages: 0 });
+      const freed = compact ? h.bytes : 0;
+      files.sizes.set(path, sizeOf(path) - freed);
+      return { html_pages: h.pages, html_bytes: h.bytes, freed_bytes: freed, compacted: compact };
+    },
+    storagePrefs: async () => ({ ...files.prefs }),
+    setStoragePrefs: async (prefs) => {
+      const issues = [];
+      if (prefs.reserve_bytes < 256 * MB || prefs.reserve_bytes > 50 * 1024 * MB)
+        issues.push({ path: "storage.reserve_bytes", code: "reserve_range", message: "The safety reserve must be between 256 MB and 50 GB.", severity: "error" });
+      if (prefs.cleanup_days !== null && ![7, 14, 30, 90].includes(prefs.cleanup_days))
+        issues.push({ path: "storage.cleanup_days", code: "cleanup_days", message: "Choose 7, 14, 30 or 90 days, or turn automatic cleanup off.", severity: "error" });
+      if (issues.length) throw JSON.stringify(issues);
+      files.prefs = { ...files.prefs, cleanup_days: prefs.cleanup_days, reserve_bytes: prefs.reserve_bytes };
+      files.storage = { ...files.storage, reserve_bytes: prefs.reserve_bytes };
+      return { ...files.prefs };
+    },
+    cleanupHistory: async () => structuredClone(files.history),
+    onCleanupDone: (cb) => on(cleanupDone, cb),
+    onCrawlsChanged: (cb) => on(crawlsChanged, () => cb()),
   };
   return { files, api };
 }

@@ -12,6 +12,7 @@ fn crawl_file(dir: &tempfile::TempDir, html: bool) -> std::path::PathBuf {
         links_per_page: 12,
         seed: 9,
         html,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();

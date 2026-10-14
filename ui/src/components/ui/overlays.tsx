@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
 import { Dialog } from "@base-ui/react/dialog";
+import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
@@ -77,6 +78,38 @@ export interface MenuEntry {
   destructive?: boolean;
 }
 
+/** The popup and items shared by Menu and ContextMenu. */
+function MenuPopup({ items }: { items: (MenuEntry | null)[] }) {
+  return (
+    <BaseMenu.Popup
+      className={cn(
+        "min-w-48 rounded-lg bg-surface p-1 text-base text-fg shadow-popover outline-none",
+        "origin-(--transform-origin) transition-[opacity,scale] duration-(--dur-fast)",
+        "data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+      )}
+    >
+      {items.map((it, i) =>
+        it === null ? (
+          <BaseMenu.Separator key={`sep-${i}`} className="mx-1 my-1 h-px bg-line" />
+        ) : (
+          <BaseMenu.Item
+            key={it.label}
+            disabled={it.disabled}
+            onClick={it.onSelect}
+            className={cn(
+              "flex h-7 items-center rounded-sm px-2 outline-none select-none",
+              "data-highlighted:bg-accent data-highlighted:text-accent-fg data-disabled:opacity-45",
+              it.destructive && "text-bad",
+            )}
+          >
+            {it.label}
+          </BaseMenu.Item>
+        ),
+      )}
+    </BaseMenu.Popup>
+  );
+}
+
 /** Action menu. `null` entries draw separators. */
 export function Menu({ trigger, items, label }: { trigger: ReactElement<Record<string, unknown>>; items: (MenuEntry | null)[]; label: string }) {
   return (
@@ -84,35 +117,24 @@ export function Menu({ trigger, items, label }: { trigger: ReactElement<Record<s
       <BaseMenu.Trigger render={trigger} aria-label={label} />
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={4} align="start" className="z-50">
-          <BaseMenu.Popup
-            className={cn(
-              "min-w-48 rounded-lg bg-surface p-1 text-base text-fg shadow-popover outline-none",
-              "origin-(--transform-origin) transition-[opacity,scale] duration-(--dur-fast)",
-              "data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
-            )}
-          >
-            {items.map((it, i) =>
-              it === null ? (
-                <BaseMenu.Separator key={`sep-${i}`} className="mx-1 my-1 h-px bg-line" />
-              ) : (
-                <BaseMenu.Item
-                  key={it.label}
-                  disabled={it.disabled}
-                  onClick={it.onSelect}
-                  className={cn(
-                    "flex h-7 items-center rounded-sm px-2 outline-none select-none",
-                    "data-highlighted:bg-accent data-highlighted:text-accent-fg data-disabled:opacity-45",
-                    it.destructive && "text-bad",
-                  )}
-                >
-                  {it.label}
-                </BaseMenu.Item>
-              ),
-            )}
-          </BaseMenu.Popup>
+          <MenuPopup items={items} />
         </BaseMenu.Positioner>
       </BaseMenu.Portal>
     </BaseMenu.Root>
+  );
+}
+
+/** The same menu on right-click over `children`, which it renders as. */
+export function ContextMenu({ children, items }: { children: ReactElement<Record<string, unknown>>; items: (MenuEntry | null)[] }) {
+  return (
+    <BaseContextMenu.Root>
+      <BaseContextMenu.Trigger render={children} />
+      <BaseContextMenu.Portal>
+        <BaseContextMenu.Positioner className="z-50">
+          <MenuPopup items={items} />
+        </BaseContextMenu.Positioner>
+      </BaseContextMenu.Portal>
+    </BaseContextMenu.Root>
   );
 }
 
