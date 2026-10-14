@@ -1,0 +1,16 @@
+{
+  "v2-completed.spiderlens": {
+    "status": "completed",
+    "discovered": 120,
+    "crawled": 120,
+    "sample_url": "http://127.0.0.1:8701/p/3",
+    "sample_title": "Page 3"
+  },
+  "v2-paused.spiderlens": {
+    "status": "paused",
+    "discovered": 228,
+    "crawled": 20,
+    "sample_url": "http://127.0.0.1:8702/p/3",
+    "sample_title": "Page 3"
+  }
+}

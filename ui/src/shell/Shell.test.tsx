@@ -86,11 +86,12 @@ test("palette_lists_result_tabs_only_once_a_crawl_exists", async () => {
   const running = await listed("Internal");
   expect(running).toContain("Internal");
   await closePalette();
-  // While it runs, Start, Open and the mode switches are gone; Pause and Stop are offered.
+  // While it runs, Start and the mode switches are gone; Pause and Stop are
+  // offered. Open stays: it asks to pause the running crawl first (spec 006).
   const controls = await listed("crawl");
   expect(controls).toEqual(expect.arrayContaining(["Pause crawl", "Stop crawl"]));
   expect(controls).not.toContain("Start crawl");
-  expect(controls).not.toContain("Open crawl…");
+  expect(controls).toContain("Open crawl…");
   expect(controls).not.toContain("Resume crawl");
 });
 
@@ -169,15 +170,15 @@ test("palette_edit_start_url_focuses_the_field", async () => {
 
 test("recent_commands_keep_five_newest_without_duplicates", async () => {
   await renderApp();
-  for (const c of ["Appearance: Light", "Appearance: Dark", "Appearance: System", "Speed: Polite", "Hide details", "Appearance: Light"]) {
+  for (const c of ["Brightness: Light", "Brightness: Dark", "Appearance: Follow system", "Speed: Polite", "Hide details", "Brightness: Light"]) {
     await palette(c);
   }
-  expect(stored().recentCommands).toEqual(["theme-light", "toggle-detail", "speed-polite", "theme-system", "theme-dark"]);
+  expect(stored().recentCommands).toEqual(["level-light", "toggle-detail", "speed-polite", "theme-system", "level-dark"]);
   await openPalette();
   const recent = screen.getByText("Recent").parentElement!;
   const items = [...recent.querySelectorAll("[cmdk-item]")].map((i) => i.querySelector("span")?.textContent);
   // "Hide details" now reads "Show details": the recent list shows current titles.
-  expect(items).toEqual(["Appearance: Light", "Show details", "Speed: Polite", "Appearance: System", "Appearance: Dark"]);
+  expect(items).toEqual(["Brightness: Light", "Show details", "Speed: Polite", "Appearance: Follow system", "Brightness: Dark"]);
 });
 
 // --- Sidebar ----------------------------------------------------------------
@@ -313,31 +314,32 @@ function stubMatchMedia(dark: boolean) {
 
 test("appearance_commands_switch_theme", async () => {
   await renderApp();
-  await palette("Appearance: Dark");
-  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
-  await palette("Appearance: Light");
-  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
-  expect(stored().theme).toBe("light");
-  await palette("Appearance: System");
-  // jsdom has no matchMedia: System means light.
-  await waitFor(() => expect(stored().theme).toBe("system"));
-  expect(document.documentElement.dataset.theme).toBe("light");
+  // jsdom has no matchMedia: the system reads as light, so Dark stops following it.
+  await palette("Brightness: Dark");
+  await waitFor(() => expect(document.documentElement.dataset.level).toBe("dark"));
+  expect(document.documentElement.dataset.tone).toBe("dark");
+  await palette("Brightness: Light");
+  await waitFor(() => expect(document.documentElement.dataset.level).toBe("light"));
+  expect(stored()).toMatchObject({ followSystem: false, level: "light" });
+  await palette("Appearance: Follow system");
+  await waitFor(() => expect(stored().followSystem).toBe(true));
+  expect(document.documentElement.dataset.level).toBe("light");
 });
 
 test("system_theme_follows_the_os_live", async () => {
   const mm = stubMatchMedia(true);
   try {
     await renderApp();
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.level).toBe("dark");
     act(() => mm.set(false));
-    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
+    await waitFor(() => expect(document.documentElement.dataset.level).toBe("light"));
     act(() => mm.set(true));
-    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
-    // A fixed choice ignores the system.
-    await palette("Appearance: Light");
-    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
+    await waitFor(() => expect(document.documentElement.dataset.level).toBe("dark"));
+    // A step of the other tone is a fixed choice and ignores the system.
+    await palette("Brightness: Light");
+    await waitFor(() => expect(document.documentElement.dataset.level).toBe("light"));
     act(() => mm.set(true));
-    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.level).toBe("light");
   } finally {
     mm.restore();
   }
@@ -353,11 +355,11 @@ test("corrupt_stored_state_falls_back_to_defaults", async () => {
 });
 
 test("stored_state_from_another_version_is_ignored", async () => {
-  localStorage.setItem("spiderlens.ui", JSON.stringify({ v: 2, sidebarWidth: 300, detailCollapsed: true, theme: "dark" }));
+  localStorage.setItem("spiderlens.ui", JSON.stringify({ v: 3, sidebarWidth: 300, detailCollapsed: true, level: "dark" }));
   await renderApp();
   expect(screen.getByRole("separator", { name: "Resize sidebar" }).getAttribute("aria-valuenow")).toBe("220");
   expect(screen.getByRole("complementary", { name: "Details" })).toBeTruthy();
-  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.dataset.level).toBe("light");
 });
 
 test("storage_that_throws_does_not_break_the_window", async () => {
@@ -370,8 +372,8 @@ test("storage_that_throws_does_not_break_the_window", async () => {
   await renderApp();
   fireEvent.keyDown(window, { key: "i", code: "KeyI", ctrlKey: true, altKey: true });
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "Details" })).toBeNull());
-  await palette("Appearance: Dark");
-  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+  await palette("Brightness: Dark");
+  await waitFor(() => expect(document.documentElement.dataset.level).toBe("dark"));
 });
 
 // --- About ------------------------------------------------------------------

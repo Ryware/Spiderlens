@@ -13,10 +13,16 @@ import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
 import { matches, platform } from "./platform";
-import { useTheme, useUiState } from "./useUiState";
+import { useAppearance, useUiState } from "./useUiState";
+import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { useResults } from "../results/useResults";
+import { useCrawlLibrary } from "../files/useCrawlLibrary";
+import { useCrawlFile } from "../files/useCrawlFile";
+import { CrawlFileDialogs } from "../files/CrawlFileDialogs";
+import { CrawlInfoSheet } from "../files/CrawlInfoSheet";
+import type { CrawlInfo } from "../transport";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
 export const AUTO_COLLAPSE_DETAIL = 1100;
@@ -75,7 +81,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const setup = useCrawlSetup(transport);
   const crawl = useCrawlRun(transport);
   const [ui, updateUi] = useUiState();
-  useTheme(ui.theme);
+  const { level, systemDark } = useAppearance(ui);
   const width = useWindowWidth();
   const [section, setSection] = useState("overview");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -83,6 +89,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
+  const [infoOpen, setInfoOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
@@ -126,11 +133,29 @@ export function AppShell({ transport }: { transport: Transport }) {
     }
   }, [setup, crawl]);
 
-  const openCrawl = useCallback(async () => {
-    if (crawl.active) return;
-    const path = await transport.pickCrawlFile();
-    if (path && (await crawl.open(path))) setSection((s) => (s === "overview" ? "internal" : s));
-  }, [transport, crawl]);
+  const library = useCrawlLibrary(transport);
+  const file = useCrawlFile(transport, crawl, {
+    onOpened: () => setSection((s) => (s === "overview" ? "internal" : s)),
+    onChanged: library.reload,
+  });
+
+  // The crawl's settings go back into the setup, and the window returns to the start screen.
+  const newCrawlFrom = useCallback(
+    (info: CrawlInfo) => {
+      if (!info.config || !crawl.close()) return;
+      const config = info.config;
+      setup.set(() => config);
+      setup.setLoaded(null);
+      if (config.mode === "spider" && info.start_url) setup.setStartUrl(info.start_url);
+      setInfoOpen(false);
+      setSection("overview");
+    },
+    [crawl, setup],
+  );
+  const { resume: resumeFile, saveAs: saveFileAs, open: openFile, openPicker } = file;
+  const resume = useCallback(() => void resumeFile(), [resumeFile]);
+  const saveAs = useCallback(() => void saveFileAs(), [saveFileAs]);
+  const recentOpen = useMemo(() => library.recent.filter((e) => e.available).slice(0, 5), [library.recent]);
 
   const hasInput = setup.config?.mode === "list" || setup.startUrl.trim() !== "";
   const commands: Command[] = useMemo(
@@ -139,10 +164,13 @@ export function AppShell({ transport }: { transport: Transport }) {
       // reach startCrawl, which checks the field as it is now (like Enter).
       { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: hasInput && !crawl.active, run: startCrawl },
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
-      { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: crawl.resume },
+      { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: resume },
       { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
-      { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], enabled: !crawl.active, run: () => void openCrawl() },
+      { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], run: () => void openPicker() },
+      ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
+      { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
+      { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -162,12 +190,18 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...resultTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
-      { id: "theme-system", title: "Appearance: System", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "system" }) },
-      { id: "theme-light", title: "Appearance: Light", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "light" }) },
-      { id: "theme-dark", title: "Appearance: Dark", group: "View", keywords: ["theme"], run: () => updateUi({ theme: "dark" }) },
+      { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
+      ...LEVELS.map((l) => ({
+        id: `level-${l.id}`,
+        title: `Brightness: ${l.name}`,
+        group: "View" as const,
+        keywords: ["theme", "appearance", l.tone],
+        run: () => updateUi(chooseLevel(ui, l.id, systemDark)),
+      })),
+      ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, openCrawl, openSettings, ui.sidebarCollapsed, ui.detailCollapsed, updateUi],
+    [setup, crawl, retry, hasInput, startCrawl, openPicker, openFile, recentOpen, resume, saveAs, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -185,7 +219,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || retryOpen) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -194,16 +228,32 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, retryOpen]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, file.prompt, file.quitting]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <Toolbar ref={urlRef} setup={setup} run={crawl} onStart={startCrawl} onOpenSettings={openSettings} onOpenPalette={() => setPaletteOpen(true)} retry={retry} onRetry={() => setRetryOpen(true)} />
-      <div className="flex min-h-0 flex-1">
-        <div className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
+      <Toolbar
+        ref={urlRef}
+        setup={setup}
+        run={crawl}
+        onStart={startCrawl}
+        onResume={resume}
+        onOpenSettings={openSettings}
+        onOpenPalette={() => setPaletteOpen(true)}
+        appearance={ui}
+        level={level}
+        systemDark={systemDark}
+        onAppearance={updateUi}
+        retry={retry}
+        onRetry={() => setRetryOpen(true)}
+      />
+      <div className="flex min-h-0 flex-1 bg-frame">
+        <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
+        {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
+        <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {section === "log" && crawl.path ? (
             <CrawlLog transport={transport} path={crawl.path} live={crawl.running} />
@@ -222,9 +272,9 @@ export function AppShell({ transport }: { transport: Transport }) {
               onFocusId={onFocusId}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
           ) : (
-            <CrawlOverview run={crawl} />
+            <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} />
           )}
         </main>
         {!detailHidden && (
@@ -235,6 +285,7 @@ export function AppShell({ transport }: { transport: Transport }) {
             </div>
           </>
         )}
+        </div>
       </div>
       <StatusBar setup={setup} run={crawl} />
 
@@ -246,10 +297,16 @@ export function AppShell({ transport }: { transport: Transport }) {
         transport={transport}
         category={ui.settingsCategory as CategoryId}
         onCategory={(c) => updateUi({ settingsCategory: c })}
+        appearance={ui}
+        level={level}
+        systemDark={systemDark}
+        onAppearance={updateUi}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
       <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
+      <CrawlInfoSheet open={infoOpen} onOpenChange={setInfoOpen} transport={transport} path={crawl.path} onNewCrawl={newCrawlFrom} />
+      <CrawlFileDialogs file={file} />
     </div>
   );
 }

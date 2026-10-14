@@ -200,4 +200,9 @@ async fn fr_029_a_dead_network_pauses_the_crawl() {
         d.summary.by_class
     );
     assert!(d.notices.iter().any(|n| n.contains("network")), "{:?}", d.notices);
+    assert_eq!(
+        d.local.map(|l| l.kind),
+        Some(spiderlens_engine::crawl::LocalErrorKind::Network),
+        "the run ends as a local pause (spec 006 FR-028)"
+    );
 }
