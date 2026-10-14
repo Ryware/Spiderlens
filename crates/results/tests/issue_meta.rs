@@ -50,3 +50,33 @@ fn a_file_that_is_not_a_crawl_file_is_not_written() {
         .unwrap();
     assert_eq!(n, 1);
 }
+
+#[test]
+fn a_file_without_page_data_shows_those_rules_unavailable_with_the_reason() {
+    // Synth files list no data features, like files made before extraction
+    // (spec 009 US6).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.spiderlens");
+    Synth {
+        urls: 50,
+        links_per_page: 2,
+        seed: 3,
+    }
+    .write(&path)
+    .unwrap();
+    let mut r = Reader::open(&path).unwrap();
+    let summary = r.issues_summary(false).unwrap();
+    let headings = summary
+        .issues
+        .iter()
+        .find(|i| i.id == "headings.non_sequential")
+        .unwrap();
+    assert_eq!(headings.count, None);
+    assert!(headings.unavailable.as_deref().is_some_and(|m| !m.is_empty()));
+    let status = summary
+        .issues
+        .iter()
+        .find(|i| i.id == "response.internal_4xx")
+        .unwrap();
+    assert!(status.count.is_some() && status.unavailable.is_none());
+}
