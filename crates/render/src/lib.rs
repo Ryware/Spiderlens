@@ -10,28 +10,18 @@
 //! report "no browser" until browser discovery (T009), launch (T010) and
 //! rendering (T016) land.
 
+mod find;
 mod types;
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
+pub use find::{
+    MAJOR_TOLERANCE, PINNED_VERSION, PREFER_DOWNLOAD, data_dir, find_browser, min_major,
+    should_offer_download,
+};
 pub use types::*;
-
-/// User path, then a previous download, then installed Chrome, Chromium, Edge.
-/// Runs `<browser> --version` (or reads the version resource on Windows).
-///
-/// Until T009 this always reports [`NotUsable::NotFound`].
-pub fn find_browser(opts: &FindOptions) -> Result<BrowserInfo, NotUsable> {
-    let _ = opts;
-    Err(NotUsable::NotFound)
-}
-
-/// The SpiderLens data folder shared by the CLI and the desktop app. `None`
-/// until T009.
-pub fn data_dir() -> Option<PathBuf> {
-    None
-}
 
 /// The pinned download for this platform, or `None` where Chrome for
 /// Testing has none. `None` until the pins exist (research R14).
@@ -108,12 +98,7 @@ mod tests {
     use url::Url;
 
     #[test]
-    fn skeleton_reports_no_browser() {
-        let opts = FindOptions {
-            user_path: None,
-            data_dir: std::env::temp_dir(),
-        };
-        assert_eq!(find_browser(&opts), Err(NotUsable::NotFound));
+    fn no_download_plan_until_the_pins_exist() {
         assert!(download_plan().is_none());
     }
 
