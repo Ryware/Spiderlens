@@ -25,6 +25,7 @@ fn live_refresh_keeps_anchor_and_respects_view() {
         urls: 2_000,
         links_per_page: 3,
         seed: 3,
+        html: false,
     }
     .write(&path)
     .unwrap();
@@ -72,6 +73,7 @@ fn reopen_gives_identical_views() {
         urls: 1_500,
         links_per_page: 2,
         seed: 11,
+        html: false,
     }
     .write(&path)
     .unwrap();
