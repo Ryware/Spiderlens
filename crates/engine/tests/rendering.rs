@@ -1,8 +1,8 @@
 //! The render stage inside a crawl (spec 014 T019). Needs a browser: skipped
 //! when none is found, unless `SPIDERLENS_REQUIRE_BROWSER=1`.
 //!
-//! Pages reach the queue here through the store, as a later render of a
-//! finished crawl would (enqueueing from the fetch stage is T021).
+//! The first tests queue pages through the store, as a later render of a
+//! finished crawl would; the others render from the fetch stage (T021).
 
 use std::path::Path;
 
@@ -181,4 +181,99 @@ async fn pages_without_stored_html_are_not_rendered() {
             .unwrap(),
         0
     );
+}
+
+/// One crawl with rendering on from the start (T021).
+async fn crawl_rendering(
+    site: &JsSite,
+    path: &Path,
+    browser: BrowserInfo,
+    edit: impl FnOnce(&mut CrawlConfig),
+) -> String {
+    let mut c = config(false);
+    c.rendering.mode = RenderMode::Javascript;
+    c.rendering.concurrency = Some(2);
+    edit(&mut c);
+    let crawler = Crawler::create(
+        path,
+        c,
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve())
+    .with_browser(browser)
+    .with_render_launch(LaunchOptions::default());
+    let (_tx, rx) = watch::channel(Control::Run);
+    crawler.run(rx, None).await.unwrap().status
+}
+
+fn render_state(store: &CrawlStore, site: &JsSite, p: &str) -> Option<(String, Option<String>)> {
+    let id = store.id_of(&site.url(JS_HOST, p)).unwrap().expect("discovered");
+    store
+        .conn_for_tests()
+        .query_row("SELECT state, reason FROM renders WHERE url_id = ?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .ok()
+}
+
+#[tokio::test]
+async fn the_fetch_stage_queues_eligible_pages() {
+    let Some(browser) = browser() else { return };
+    let page = |links: &str| {
+        format!(
+            "<!doctype html><html><head><title>Page</title></head><body><p>Words.</p>{links}</body></html>"
+        )
+    };
+    let site = JsSiteBuilder::new()
+        .page(
+            "/",
+            &page("<a href=\"/a\">A</a><a href=\"/skip/b\">B</a><a href=\"/gone\">Gone</a><a href=\"/data.json\">J</a>"),
+        )
+        .page("/a", &page(""))
+        .page("/skip/b", &page(""))
+        .json(JS_HOST, "/data.json", "{}")
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.spiderlens");
+    let status = crawl_rendering(&site, &path, browser.clone(), |c| {
+        c.rendering.exclude = vec!["/skip/".into()];
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_state(&store, &site, "/").unwrap().0, "rendered");
+    assert_eq!(render_state(&store, &site, "/a").unwrap().0, "rendered");
+    assert_eq!(
+        render_state(&store, &site, "/skip/b").unwrap(),
+        ("not_rendered".to_string(), Some("outside_rules".to_string()))
+    );
+    // A 404 page (error pages are not rendered by default) and a JSON
+    // response get no row.
+    assert_eq!(render_state(&store, &site, "/gone"), None);
+    assert_eq!(render_state(&store, &site, "/data.json"), None);
+    let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
+    // "Store page HTML" off: inputs waited in render_inputs and are gone.
+    assert_eq!(count("SELECT COUNT(*) FROM render_inputs"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM bodies"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM rendered_bodies"), 0);
+    // Each page was requested once (plan D3).
+    assert_eq!(site.count(JS_HOST, "/a"), 1);
+
+    // With error pages on, the 404 page is rendered too.
+    let path = dir.path().join("errors.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, |c| {
+        c.rendering.render_error_pages = true;
+        c.extraction.store_html = true;
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_state(&store, &site, "/gone").unwrap().0, "rendered");
+    assert_eq!(render_state(&store, &site, "/skip/b").unwrap().0, "rendered");
+    let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM render_inputs"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM rendered_bodies"), 4);
 }

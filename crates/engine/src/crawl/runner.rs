@@ -27,7 +27,7 @@ use super::hosts::{Host, RobotsState};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots};
-use super::render::stage::{MAX_ATTEMPTS, RenderStage, Rendered};
+use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
@@ -412,14 +412,16 @@ struct PageOutcome {
 /// What the extraction step produced for an HTML body.
 struct Extracted {
     data: Result<PageData, String>,
-    /// Compressed body and its size, when raw HTML is kept.
+    /// Compressed body and its size, when raw HTML is stored or the page
+    /// may be rendered.
     html: Option<(Vec<u8>, usize)>,
 }
 
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+/// `keep_html`: compress the body, to store it or to render it later.
+async fn finish_page(o: Once, url: Url, token: String, keep_html: bool, budget: &Semaphore) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -440,7 +442,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     robots_token: &token,
                     keep_text: false,
                 });
-                let html = if store_html {
+                let html = if keep_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
                     None
@@ -2030,14 +2032,16 @@ impl Run {
         let tx = self.tx.clone();
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
-        let store_html = self.c.config.extraction.store_html;
+        // Rendering on: an internal page keeps its body for the render input
+        // (one `Option` check when it is off, plan D2).
+        let keep_html = self.c.config.extraction.store_html || (internal && self.render.is_some());
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, keep_html, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -2697,6 +2701,7 @@ impl Run {
             .record_response(entry.id, entry.check_only, &response, now_ms())?;
         if let Some(o) = outcome {
             let store = &self.c.store;
+            let store_html = self.c.config.extraction.store_html;
             store.record_headers(entry.id, &o.headers)?;
             let meta_count = match &o.page {
                 Some(p) => {
@@ -2705,7 +2710,11 @@ impl Run {
                         &PageRecord {
                             data: p.data.as_ref().ok(),
                             extract_error: p.data.as_ref().err().map(String::as_str),
-                            html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+                            html: p
+                                .html
+                                .as_ref()
+                                .filter(|_| store_html)
+                                .map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
                     p.data.as_ref().map_or(0, |d| d.directives.len())
@@ -2713,6 +2722,25 @@ impl Run {
                 None => 0,
             };
             store.record_directives(entry.id, &o.header_facts.directives, meta_count)?;
+            if let Some(stage) = &mut self.render {
+                let html = o.page.is_some();
+                match stage.eligibility(&entry.url, internal && !entry.check_only, html, o.status) {
+                    Eligibility::No => {}
+                    Eligibility::OutsideRules => store.skip_render(entry.id, "outside_rules", None)?,
+                    Eligibility::Queue => {
+                        // With "Store page HTML" off the input waits in
+                        // `render_inputs` (research R8).
+                        let input = o
+                            .page
+                            .as_ref()
+                            .and_then(|p| p.html.as_ref())
+                            .filter(|_| !store_html)
+                            .map(|(b, n)| (b.as_slice(), *n));
+                        store.enqueue_render(entry.id, input)?;
+                        stage.on_enqueued();
+                    }
+                }
+            }
         }
         Ok(())
     }

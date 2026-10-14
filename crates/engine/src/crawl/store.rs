@@ -2075,7 +2075,7 @@ fn origin_at(o: Option<&Origins>, i: usize) -> &'static str {
 }
 
 /// Spec 014: the render queue and the rendered version of pages. Every table
-/// here comes from migration step 4 and stays empty when a crawl does not
+/// here comes from migration step 5 and stays empty when a crawl does not
 /// render.
 impl CrawlStore {
     fn take_render_seq(&self) -> Result<i64> {
@@ -2201,7 +2201,7 @@ impl CrawlStore {
         )?)
     }
 
-    /// Whether the file has the rendering tables (format 4 and later).
+    /// Whether the file has the rendering tables (format 5 and later).
     fn has_render_tables(&self) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'renders')",

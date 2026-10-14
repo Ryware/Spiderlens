@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use spiderlens_config::{CrawlConfig, UaPreset, WindowPreset};
+use spiderlens_config::{CrawlConfig, UaPreset, UrlFilter, WindowPreset};
 use spiderlens_render::{
     BlockSet, Browser, BrowserInfo, InternalHosts, LaunchError, LaunchOptions, MainResponse, Network,
     RenderJob, RenderOutcome, ScreenshotOptions, Window,
@@ -72,6 +72,20 @@ pub(crate) struct RenderStage {
     pub open: u32,
     /// Renders allowed at once.
     pub limit: u32,
+    /// Rendering include and exclude patterns, compiled once (FR-005).
+    filter: UrlFilter,
+    /// Also render internal 4xx and 5xx HTML pages (FR-004).
+    error_pages: bool,
+}
+
+/// What happens to a fetched page when the crawl renders (plan D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Eligibility {
+    /// Not a page rendering applies to: no `renders` row.
+    No,
+    /// Eligible but outside the rendering patterns: `not_rendered`.
+    OutsideRules,
+    Queue,
 }
 
 /// The rendering window the settings ask for (FR-008): `auto` follows the
@@ -140,8 +154,12 @@ impl RenderStage {
         net: Arc<NetShared>,
         internal: InternalHosts,
     ) -> Result<Self, LaunchError> {
-        let browser = Browser::launch(info, launch).await?;
         let r = &config.rendering;
+        // Validation reports bad patterns before a crawl starts; a file
+        // edited by hand falls back to rendering every eligible page.
+        let filter = UrlFilter::new(&r.include, &r.exclude)
+            .unwrap_or_else(|_| UrlFilter::new(&[], &[]).expect("no patterns"));
+        let browser = Browser::launch(info, launch).await?;
         Ok(Self {
             browser: Arc::new(RwLock::new(browser)),
             restarting: Arc::new(AtomicBool::new(false)),
@@ -169,11 +187,26 @@ impl RenderStage {
                 .concurrency
                 .unwrap_or_else(spiderlens_render::default_concurrency)
                 .max(1),
+            filter,
+            error_pages: r.render_error_pages,
         })
     }
 
+    /// Whether a fetched page is rendered: internal, not a check, HTML,
+    /// 2xx (or 4xx and 5xx when error pages are rendered), and inside the
+    /// rendering patterns (FR-004, FR-005).
+    pub(crate) fn eligibility(&self, url: &str, internal_page: bool, html: bool, status: u16) -> Eligibility {
+        let status_ok = (200..300).contains(&status) || (self.error_pages && status >= 400);
+        if !(internal_page && html && status_ok) {
+            Eligibility::No
+        } else if self.filter.decide(url).crawls() {
+            Eligibility::Queue
+        } else {
+            Eligibility::OutsideRules
+        }
+    }
+
     /// A page was queued for rendering after the last refill.
-    #[expect(dead_code, reason = "called when pages are queued (T021)")]
     pub(crate) fn on_enqueued(&mut self) {
         self.exhausted = false;
     }
