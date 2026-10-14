@@ -6,10 +6,12 @@
 //! crawl's fetch path, and nothing depends on the desktop shell.
 
 pub mod access;
+pub mod analyze;
 pub mod checks;
 pub mod content;
 pub mod llms;
 pub mod rules;
 pub mod score;
 pub mod signals;
+pub mod store;
 pub mod structured;

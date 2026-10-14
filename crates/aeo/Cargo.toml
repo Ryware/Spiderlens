@@ -14,6 +14,7 @@ spiderlens-config.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+rusqlite.workspace = true
 ts-rs.workspace = true
 url.workspace = true
 scraper.workspace = true
@@ -23,6 +24,9 @@ jiff.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
+spiderlens-test-fixtures.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

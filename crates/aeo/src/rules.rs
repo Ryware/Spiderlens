@@ -4,7 +4,7 @@
 //! AI score needs: its part, points and basis. `RuleDef` is a local copy of
 //! 009's fields until that crate lands (task T060 swaps it in).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Spec 009 FR-001 priority.
@@ -54,7 +54,7 @@ pub struct RuleDef {
 }
 
 /// The five parts of the page score (FR-034).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Part {

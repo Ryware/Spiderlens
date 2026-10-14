@@ -8,7 +8,7 @@
 
 use jiff::ToSpan;
 use jiff::civil::Date;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use spiderlens_config::ai_bots::{AiBot, BotPurpose};
 use ts_rs::TS;
@@ -20,7 +20,7 @@ use crate::score::Outcome;
 use crate::structured::{Message, Severity, StructuredFacts, normalise};
 
 /// FR-019 page classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum PageType {
@@ -58,7 +58,7 @@ pub struct RenderFacts {
 }
 
 /// Thresholds from the scoring profile (data-model.md, FR-040).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Thresholds {
     pub direct_answer_words: u32,

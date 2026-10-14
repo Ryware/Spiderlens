@@ -6,19 +6,19 @@
 //! sections of Markdown link lists (`- [name](url): notes`). An H2 named
 //! "Optional" marks links an agent can skip.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use url::Url;
 
 /// One problem with its 1-based line number (0 for the whole file).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LlmsProblem {
     pub line: u32,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LlmsLink {
     pub line: u32,
@@ -31,7 +31,7 @@ pub struct LlmsLink {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LlmsReport {
     pub title: Option<String>,

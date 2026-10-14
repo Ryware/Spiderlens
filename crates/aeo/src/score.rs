@@ -5,13 +5,13 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::rules::{AeoRule, Part};
 
 /// The result of one check on one page or site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Outcome {
@@ -24,7 +24,7 @@ pub enum Outcome {
 }
 
 /// Part weights (maximum points); the default profile uses the part maxima.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Weights {
     pub access: u32,
@@ -190,7 +190,7 @@ pub fn site_score(page_scores: &[u32], site_outcomes: &[(&'static AeoRule, Outco
 }
 
 /// One entry of the top fixes list (FR-039).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Fix {
     pub rule_id: String,

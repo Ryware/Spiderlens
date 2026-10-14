@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spiderlens_config::ai_bots::{AiBot, BotPurpose, Honours};
 use spiderlens_engine::robots::{RobotsPolicy, RobotsTxt};
 use ts_rs::TS;
@@ -25,7 +25,7 @@ pub enum RobotsSource<'a> {
     NotFetched,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Verdict {
@@ -99,7 +99,7 @@ pub fn host_policies<'b>(source: RobotsSource<'_>, bots: &'b [AiBot]) -> Vec<Bot
 }
 
 /// Per-host, per-crawler totals for the access table (`aeo_bot_access`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct BotAccess {
     pub bot: String,
@@ -111,7 +111,7 @@ pub struct BotAccess {
     pub rules: Vec<RuleCount>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RuleCount {
     pub line_no: u32,
@@ -183,7 +183,7 @@ impl<'b> HostTally<'b> {
 }
 
 /// How much of a host one purpose may fetch, for the per-vendor sentence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum PurposeAccess {

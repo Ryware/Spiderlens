@@ -1,11 +1,11 @@
 //! Machine-readable AI usage and licence signals (spec 015 FR-013, FR-014,
 //! research R3). These are preferences: none of them blocks a crawler.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spiderlens_engine::robots::OtherLine;
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum SignalKind {
@@ -30,7 +30,7 @@ impl SignalKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Signal {
     pub line_no: u32,
