@@ -172,3 +172,15 @@ test.each(sources(here).map((p) => [p.slice(here.length + 1), p]))("%s uses toke
   const arbitrary = text.match(/\b[\w:-]+-\[[^\]]*\d(?:px|rem|em|%)?[^\]]*\]/g) ?? [];
   expect({ raw, arbitrary }).toEqual({ raw: [], arbitrary: [] });
 });
+
+test("mac_window_buttons_sit_centred_on_the_toolbar_and_clear_of_it", () => {
+  // AppKit keeps each button 6 pt above the bottom of a title bar that tao
+  // makes 16 + y tall, so a 16 pt button's centre sits at y + 2 from the top.
+  const conf = JSON.parse(readFileSync(join(process.cwd(), "../app/src-tauri/tauri.conf.json"), "utf8"));
+  const pos = conf.app.windows[0].trafficLightPosition as { x: number; y: number };
+  const root = light;
+  const px = (v: string) => Number(v.replace("px", ""));
+  expect(pos.y + 2).toBe(px(root.toolbar) / 2);
+  const lastButtonEnd = pos.x + 2 * 20 + 14;
+  expect(px(root["mac-inset"]) - lastButtonEnd).toBeGreaterThanOrEqual(12);
+});

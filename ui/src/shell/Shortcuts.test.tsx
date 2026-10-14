@@ -61,7 +61,7 @@ test("ctrl_alt_i_hides_and_shows_details", async () => {
   await waitFor(() => expect(details()).toBeTruthy());
 });
 
-test("ctrl_o_opens_a_crawl_only_when_none_is_running", async () => {
+test("ctrl_o_opens_a_crawl_and_asks_first_while_one_is_running", async () => {
   const t = fakeTransport();
   const pick = vi.fn(async () => null);
   t.pickCrawlFile = pick;
@@ -73,9 +73,11 @@ test("ctrl_o_opens_a_crawl_only_when_none_is_running", async () => {
   await waitFor(() => expect(button(/Start$/).disabled).toBe(false));
   fireEvent.click(button(/Start$/));
   await screen.findByRole("button", { name: /Pause/ });
+  // The picker still opens; a chosen file then asks to pause the running
+  // crawl first (spec 006, see files/CrawlFile.test.tsx). Nothing chosen here.
   key("o", "KeyO");
-  await new Promise((r) => setTimeout(r, 50));
-  expect(pick).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(pick).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 test("shortcuts_are_ignored_while_the_palette_is_open", async () => {
