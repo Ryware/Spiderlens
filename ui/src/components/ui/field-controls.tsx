@@ -99,7 +99,8 @@ export function Switch({
       className={cn(
         "relative inline-flex h-4.5 w-8 shrink-0 items-center rounded-full border border-control-border bg-surface-3 p-px",
         "transition-colors duration-(--dur) data-checked:border-accent data-checked:bg-accent",
-        "data-disabled:cursor-not-allowed data-disabled:opacity-50",
+        // :disabled covers a switch inside a disabled fieldset (settings locked while crawling).
+        "data-disabled:cursor-not-allowed data-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50",
       )}
     >
       <BaseSwitch.Thumb className="size-3.5 rounded-full bg-surface shadow-raised transition-transform duration-(--dur) ease-ui data-checked:translate-x-3.5" />

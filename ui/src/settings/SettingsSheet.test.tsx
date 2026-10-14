@@ -106,6 +106,28 @@ test("saving_an_existing_name_asks_to_overwrite", async () => {
   await waitFor(() => expect(screen.getByText('Saved "Weekly".')).toBeTruthy());
 });
 
+test("save_error_is_announced_inside_the_name_dialog", async () => {
+  const transport = fakeTransport();
+  transport.saveProfile = async () => {
+    throw new Error("disk is read-only");
+  };
+  await setup(transport);
+  await openSettings();
+  await saveAs("Weekly");
+  const dialog = await screen.findByRole("dialog", { name: "Save as new profile" });
+  const alert = await within(dialog).findByRole("alert");
+  expect(alert.textContent).toContain("disk is read-only");
+  // The dialog stays open so the name can be fixed or the save retried.
+  expect(within(dialog).getByLabelText("New profile name")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByLabelText("New profile name")).toBeNull());
+  // Reopening the dialog starts clean.
+  fireEvent.click(screen.getByRole("button", { name: "Profile actions" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Save as new profile…" }));
+  const reopened = await screen.findByRole("dialog", { name: "Save as new profile" });
+  expect(within(reopened).queryByRole("alert")).toBeNull();
+});
+
 test("list_mode_shows_counts_and_invalid_lines", async () => {
   await setup();
   fireEvent.click(screen.getByLabelText("List"));

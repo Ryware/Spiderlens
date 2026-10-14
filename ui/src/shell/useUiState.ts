@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { type Accent, type Appearance, applyAppearance, type Level, resolveLevel, toneOf } from "./appearance";
+import { materialAvailable } from "./platform";
 import { loadUiState, saveUiState, type UiState } from "./storage";
 
 /** UI state that survives restarts (FR-004, FR-015). */
@@ -19,7 +20,7 @@ function systemDark(): boolean {
 /** Sets the step and palette before React's first render, so the first frame is right (spec 018 FR-014). */
 export function applyStoredAppearance(): void {
   const s = loadUiState();
-  applyAppearance(document.documentElement, resolveLevel(s, systemDark()), s.accent);
+  applyAppearance(document.documentElement, resolveLevel(s, systemDark()), s.accent, s.translucent && materialAvailable());
 }
 
 /** The native title bar and window controls follow the step's tone (FR-016). Outside Tauri this does nothing. */
@@ -47,9 +48,10 @@ export function useAppearance(a: Appearance): { level: Level; accent: Accent; sy
     return () => mq.removeEventListener?.("change", on);
   }, []);
   const level = resolveLevel(a, dark);
+  const material = a.translucent !== false && materialAvailable();
   useEffect(() => {
-    applyAppearance(document.documentElement, level, a.accent);
-  }, [level, a.accent]);
+    applyAppearance(document.documentElement, level, a.accent, material);
+  }, [level, a.accent, material]);
   const tone = toneOf(level);
   useEffect(() => {
     void setWindowTone(tone);
