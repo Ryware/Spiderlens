@@ -354,7 +354,6 @@ export function CustomRulesPanel({
 
   return (
     <>
-      {crawlRunning && <Notice kind="info">Changes apply to the next crawl. Once this crawl stops, the rules can also run on it.</Notice>}
       <IssueList issues={issues.filter((i) => i.path === "custom.extractors" || i.path === "custom.searches")} />
       <Group title="Extraction">
         <ul className="m-0 flex list-none flex-col divide-y divide-line p-0" aria-label="Extractors">

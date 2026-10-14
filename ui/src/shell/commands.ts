@@ -8,6 +8,8 @@ export interface Command {
   shortcut?: string;
   keywords?: string[];
   enabled?: boolean;
+  /** Why it is disabled. A disabled command with a reason stays listed in the palette, dimmed, with the reason. */
+  reason?: string | null;
   run: () => void;
 }
 

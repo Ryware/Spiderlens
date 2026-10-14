@@ -17,33 +17,6 @@ use crate::extract::body;
 /// Bytes per rule slot in `custom_results.slots`.
 const SLOT_BYTES: usize = 8;
 
-/// Created on first use: files without rules never get these tables.
-/// Moves into a `migrate.rs` step when this feature merges (the step number
-/// is taken then).
-const CUSTOM_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS custom_rules (
-    id INTEGER PRIMARY KEY,
-    slot INTEGER NOT NULL UNIQUE,
-    kind TEXT NOT NULL,
-    name TEXT NOT NULL,
-    def_json TEXT NOT NULL,
-    pos INTEGER NOT NULL,
-    last_run_at TEXT,
-    run_pages INTEGER,
-    run_state TEXT,
-    UNIQUE (kind, name)
-);
-CREATE TABLE IF NOT EXISTS custom_results (
-    url_id INTEGER PRIMARY KEY,
-    slots BLOB NOT NULL,
-    firsts TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS custom_values (
-    url_id INTEGER PRIMARY KEY,
-    data BLOB NOT NULL
-);
-"#;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleKind {
     Extractor,
@@ -127,12 +100,18 @@ impl PageCustom {
 }
 
 impl CrawlStore {
-    pub fn has_custom_tables(&self) -> Result<bool> {
-        has_tables(&self.conn)
+    /// Whether the crawl has stored rules (FR-027: a crawl without rules
+    /// does no rule work, though its file has the empty tables).
+    pub fn has_custom_rules(&self) -> Result<bool> {
+        has_rules(&self.conn)
     }
 
+    /// The tables are created by migration step 6; a file older than that
+    /// gets them here when rules first run on it, without a full upgrade.
     pub fn ensure_custom_schema(&self) -> Result<()> {
-        self.conn.execute_batch(CUSTOM_SCHEMA)?;
+        if !has_tables(&self.conn)? {
+            self.conn.execute_batch(crate::crawl::migrate::CUSTOM_SCHEMA)?;
+        }
         let features = self.meta("data_features")?.unwrap_or_default();
         if !features.split(',').any(|f| f == "custom") {
             let joined = if features.is_empty() {
@@ -396,7 +375,16 @@ impl CrawlStore {
     }
 }
 
-/// Whether the file has the rule tables (a crawl that ever had rules).
+/// Whether the file has stored rules.
+pub fn has_rules(conn: &Connection) -> Result<bool> {
+    Ok(
+        has_tables(conn)?
+            && conn.query_row("SELECT EXISTS (SELECT 1 FROM custom_rules)", [], |r| r.get(0))?,
+    )
+}
+
+/// Whether the file has the rule tables (format 6 and later, or an older
+/// file rules ran on).
 pub fn has_tables(conn: &Connection) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'custom_rules')",

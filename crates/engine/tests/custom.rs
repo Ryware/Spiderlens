@@ -173,7 +173,7 @@ async fn us3_1_rerun_equals_crawl_and_sends_no_requests() {
     let (_a, with_rules) = crawl(&site, |c| c.custom = rules()).await;
     let (_b, plain) = crawl(&site, |_| {}).await;
     assert!(
-        !CrawlStore::open(&plain).unwrap().has_custom_tables().unwrap(),
+        !CrawlStore::open(&plain).unwrap().has_custom_rules().unwrap(),
         "FR-027"
     );
 

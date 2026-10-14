@@ -29,7 +29,7 @@ pub async fn test_url(
     let url = parse_input_url(input)?;
     let client = build_client(opts)?;
     if respect_robots {
-        let fetch = robots::fetch(&client, &url).await;
+        let fetch = robots::fetch(&client, &url, &opts.headers).await;
         if let RobotsFetch::Unreachable(e) = &fetch
             && e.class != ErrorClass::ContentProblem
         {
@@ -38,6 +38,7 @@ pub async fn test_url(
         if let RobotsVerdict::Disallowed(rule) = fetch.policy(&opts.robots_token).check(&url) {
             return Err(CheckError {
                 class: ErrorClass::ContentProblem,
+                reason: None,
                 message: format!("robots.txt does not allow this page ({rule})."),
                 attempts: 0,
             });
@@ -56,6 +57,7 @@ pub async fn test_url(
     if !is_html(fetched.content_type.as_deref(), &body) {
         return Err(CheckError {
             class: ErrorClass::ContentProblem,
+            reason: None,
             message: format!(
                 "The page is not HTML ({}); rules run on HTML pages.",
                 fetched.content_type.as_deref().unwrap_or("no content type")

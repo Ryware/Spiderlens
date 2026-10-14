@@ -31,6 +31,7 @@ regex.workspace = true
 sxd-document.workspace = true
 sxd-xpath.workspace = true
 serde_json_path.workspace = true
+fastrand.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

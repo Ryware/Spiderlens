@@ -1,8 +1,9 @@
 import { useRef } from "react";
+import type { CrawlRun } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { Transport } from "../transport";
-import { Button, cn, Kbd, Sheet, SheetClose } from "../components/ui";
-import { categories, CategoryBody, type CategoryId, issuesFor } from "./categories";
+import { Button, cn, Kbd, Notice, Sheet, SheetClose } from "../components/ui";
+import { categories, CategoryBody, type CategoryId, issuesFor, liveCategories } from "./categories";
 import { IssueList } from "./fields";
 import { ProfilePicker } from "./ProfilePicker";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -12,11 +13,16 @@ import type { Appearance, Level } from "../shell/appearance";
  * Crawl settings as a sheet over the window (US2): profile and categories on
  * the left, the chosen category as grouped rows on the right. Behaviour and
  * validation are spec 002's, unchanged (FR-013).
+ *
+ * While a crawl is open the settings are locked, except Speed and retries
+ * while it runs: those can be changed and sent to it with "Apply to running
+ * crawl" (spec 004 D13).
  */
 export function SettingsSheet({
   open,
   onOpenChange,
   setup,
+  run,
   transport,
   category,
   onCategory,
@@ -30,6 +36,7 @@ export function SettingsSheet({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   setup: CrawlSetup;
+  run: CrawlRun;
   transport: Transport;
   category: CategoryId;
   onCategory: (c: CategoryId) => void;
@@ -47,6 +54,15 @@ export function SettingsSheet({
   const current = visible.find((c) => c.id === category) ?? visible.find((c) => c.id === "speed")!;
   // Issues on a whole category (for example "speed") rather than one setting.
   const general = setup.issues.filter((i) => current.prefixes.includes(i.path));
+  const running = run.phase === "running";
+  const live = running && liveCategories.includes(current.id);
+  const locked = run.active && !live && !current.app;
+  const { config } = setup;
+  const changed = !!config && (!run.applied || JSON.stringify([config.speed, config.retry]) !== JSON.stringify([run.applied.speed, run.applied.retry]));
+  const liveErrors = setup.errors.some((e) => /^(speed|retry)(\.|$)/.test(e.path));
+  const lockNote = running
+    ? "Locked while the crawl runs. Speed and retry settings can still be changed."
+    : "Locked while a crawl is open. Settings can change again once it is stopped or finished.";
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange} title="Crawl settings" className="h-160 w-190 sheet-max-w" initialFocus={navRef}>
@@ -54,7 +70,9 @@ export function SettingsSheet({
         <nav aria-label="Settings categories" className="flex w-56 shrink-0 flex-col gap-3 border-r border-line bg-sidebar p-3">
           <div className="flex flex-col gap-1.5">
             <div className="px-1 text-xs font-semibold text-fg-3">Profile</div>
-            <ProfilePicker transport={transport} setup={setup} />
+            <fieldset disabled={run.active} className="m-0 min-w-0 border-0 p-0">
+              <ProfilePicker transport={transport} setup={setup} />
+            </fieldset>
           </div>
           <div role="tablist" aria-orientation="vertical" className="flex flex-col gap-3">
             {groups.map((group, g) => (
@@ -95,15 +113,26 @@ export function SettingsSheet({
             <p className="m-0 text-sm text-fg-3">{current.description}</p>
           </header>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-4">
+            {locked && <Notice kind="info">{lockNote}</Notice>}
+            {live && current.id === "network" && <Notice kind="info">Retry settings can be applied to the running crawl. Network settings stay as they are until it ends.</Notice>}
             <IssueList issues={general} />
             {current.id === "appearance" ? (
               <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
             ) : (
-              <CategoryBody id={current.id} setup={setup} transport={transport} crawlPath={crawlPath} crawlRunning={crawlRunning} />
+              <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
+                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} crawlRunning={crawlRunning} />
+              </fieldset>
             )}
           </div>
           <footer className="flex items-center gap-2 border-t border-line px-6 py-3">
-            <span className="mr-auto text-sm text-fg-3">{current.app ? "Saved on this computer" : "Checked by the engine as you type"}</span>
+            <span className="mr-auto text-sm text-fg-3" role={live && !current.app ? "status" : undefined}>
+              {current.app ? "Saved on this computer" : live ? (changed ? "Not applied to the running crawl yet" : "In use by the running crawl") : "Checked by the engine as you type"}
+            </span>
+            {live && !current.app && config && (
+              <Button disabled={!changed || liveErrors} onClick={() => void run.applySettings(config.speed, config.retry)}>
+                Apply to running crawl
+              </Button>
+            )}
             <SheetClose render={<Button variant="primary" />}>
               Done <Kbd keys="Escape" onAccent />
             </SheetClose>

@@ -192,7 +192,7 @@ test("run_on_the_open_crawl_shows_progress_stops_and_reports", async () => {
   expect(await screen.findByText(/Stopped after 120 pages/)).toBeTruthy();
 });
 
-test("while_a_crawl_runs_changes_are_for_the_next_one", async () => {
+test("rules_are_locked_while_a_crawl_runs", async () => {
   const t = fakeTransport();
   render(<App transport={t} />);
   fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
@@ -200,5 +200,6 @@ test("while_a_crawl_runs_changes_are_for_the_next_one", async () => {
   fireEvent.click(start());
   await screen.findByRole("button", { name: /Pause/ });
   await openRules(t);
-  expect(screen.getByText(/Changes apply to the next crawl/)).toBeTruthy();
+  expect(screen.getByText(/Locked while the crawl runs/)).toBeTruthy();
+  expect(button(/Add extractor/).matches(":disabled")).toBe(true);
 });

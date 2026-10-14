@@ -5,7 +5,8 @@
 //! actor pattern (one owner of mutable state, messages in), which keeps the
 //! store single-threaded without locks.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +22,9 @@ use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
 use super::file::{self, LocalError, LockError, WriterLock};
+use super::health::{HostHealth, Transition};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Signal, SiteSpeed, parse_retry_after};
@@ -43,7 +46,7 @@ use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, bod
 use crate::fetch::{Once, build_client_with, fetch_once};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
-use crate::{CheckError, CheckOptions, RequestHeader};
+use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, FinalClass, RequestHeader};
 
 const WINDOW: usize = 4096;
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -54,9 +57,17 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 /// loses at most this much work (spec 008 plan D2, FR-024).
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
+/// How often the crawl lets the write-ahead log start over.
+const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
+/// The queue window may grow to this many rows when every host in it is
+/// paused or waiting (spec 004 plan D11).
+const MAX_WINDOW: usize = 64 * 1024;
+/// Network failures in a row, across at least two hosts and with no answer
+/// in between, that mean the local network is down (spec 004 plan D7).
+const NETWORK_DOWN_FAILURES: u32 = 10;
 /// How often free space on the crawl file's drive is checked (spec 006 FR-027).
 const DISK_CHECK_EVERY: Duration = Duration::from_secs(2);
 
@@ -122,6 +133,31 @@ pub enum RunCommand {
         dest: PathBuf,
         reply: oneshot::Sender<Result<PathBuf, String>>,
     },
+    /// End a host's pause now and send it a test request (spec 004 US4.5).
+    ResumeHost(String),
+    /// Apply changed speed or retry settings at once; recorded in the
+    /// crawl's stored configuration (spec 002 FR-040, spec 004 plan D13).
+    Apply(Change),
+}
+
+/// A host that is paused right now (spec 004 FR-028).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PausedHost {
+    pub host: String,
+    /// Why, in words.
+    pub reason: String,
+    /// Seconds until the test request; 0 while it is out.
+    pub seconds_left: u64,
+    pub probing: bool,
+    pub given_up: bool,
+}
+
+/// Something worth telling the user while the crawl runs (spec 004 FR-035).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Notice {
+    pub kind: String,
+    pub host: Option<String>,
+    pub message: String,
 }
 
 /// What the user asked the crawl to do (FR-022).
@@ -158,12 +194,21 @@ pub struct Progress {
     /// Time spent crawling, pauses excluded, across every run of this crawl
     /// file (spec 007 FR-004).
     pub active_ms: u64,
+    /// URLs waiting to be retried (spec 004).
+    pub waiting: u64,
+    /// Hosts paused by the circuit breaker (spec 004 FR-028).
+    pub paused_hosts: Vec<PausedHost>,
+    /// Nothing can be requested because every remaining URL's host is
+    /// paused (US4.4).
+    pub waiting_for_host: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CrawlEvent {
     Progress(Progress),
     Warning(String),
+    /// A host paused, resumed or given up, or a local problem (spec 004).
+    Notice(Notice),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -201,6 +246,21 @@ pub struct CrawlSummary {
     pub failed_by_class: BTreeMap<String, u64>,
     /// Time spent crawling, pauses excluded (spec 007 FR-004).
     pub active_ms: u64,
+    /// Requested URLs by final class, HTTP classes included (spec 004
+    /// FR-036). Successful answers are not listed.
+    pub by_class: BTreeMap<String, u64>,
+    pub transient_errors: u64,
+    pub permanent_errors: u64,
+    /// Automatic retries made.
+    pub retries: u64,
+    /// URLs that needed more than one attempt and ended without an error.
+    pub recovered: u64,
+    /// Hosts the circuit breaker paused at least once.
+    pub hosts_paused: u64,
+    /// "Retry failed URLs" runs.
+    pub manual_retries: u64,
+    /// Why the crawl paused itself (`network`), if it did.
+    pub pause_reason: Option<String>,
 }
 
 impl CrawlSummary {
@@ -240,12 +300,27 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         .meta("warnings")?
         .and_then(|w| serde_json::from_str(&w).ok())
         .unwrap_or_default();
+    let mut by_class = BTreeMap::new();
+    let (mut transient_errors, mut permanent_errors) = (0, 0);
+    for (status, class, reason, n) in store.outcomes()? {
+        let class = class.as_deref().and_then(ErrorClass::parse);
+        let f = FinalClass::of(status, class);
+        if !f.is_error() {
+            continue;
+        }
+        *by_class.entry(f.as_str().to_string()).or_insert(0) += n;
+        if f.is_transient(status, reason.as_deref().and_then(ErrorReason::parse)) {
+            transient_errors += n;
+        } else {
+            permanent_errors += n;
+        }
+    }
     Ok(CrawlSummary {
         status: store.meta("status")?.unwrap_or_else(|| "running".into()),
         discovered: by_state.iter().map(|(_, n)| n).sum(),
         crawled: count(UrlState::Crawled),
         not_crawled: count(UrlState::NotCrawled),
-        queued: count(UrlState::Queued) + count(UrlState::InFlight),
+        queued: count(UrlState::Queued) + count(UrlState::InFlight) + count(UrlState::Waiting),
         by_reason: by_reason.into_iter().collect(),
         external_checked,
         external_blocked,
@@ -255,6 +330,17 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
         warnings,
         failed_by_class: store.error_classes()?.into_iter().collect(),
         active_ms: store.meta("active_ms")?.and_then(|v| v.parse().ok()).unwrap_or(0),
+        by_class,
+        transient_errors,
+        permanent_errors,
+        retries: store.log_count("retry", false)?,
+        recovered: store.recovered()?,
+        hosts_paused: store.log_count("host_paused", true)?,
+        manual_retries: store
+            .meta("manual_retries")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+        pause_reason: store.meta("pause_reason")?.filter(|r| !r.is_empty()),
     })
 }
 
@@ -297,6 +383,8 @@ struct Host {
     next_start: Instant,
     delay: Option<Duration>,
     speed: SiteSpeed,
+    /// Circuit breaker (spec 004 plan D6).
+    health: HostHealth,
 }
 
 impl Host {
@@ -307,16 +395,18 @@ impl Host {
             next_start: Instant::now(),
             delay: None,
             speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
+            health: HostHealth::default(),
         }
     }
 
     /// Requests this host may have open now.
     fn limit(&self) -> u32 {
-        if self.delay.is_some() {
+        let usual = if self.delay.is_some() {
             1
         } else {
             self.speed.allowance()
-        }
+        };
+        self.health.limit().map_or(usual, |l| l.min(usual))
     }
 }
 
@@ -511,9 +601,9 @@ impl Crawler {
         store.set_meta(
             "data_features",
             if config.extraction.store_html {
-                "extraction,timing,raw_html"
+                "extraction,timing,attempts,raw_html"
             } else {
-                "extraction,timing"
+                "extraction,timing,attempts"
             },
         )?;
 
@@ -755,6 +845,35 @@ impl Crawler {
         }
         summarize(&run.c.store)
     }
+
+    /// "Retry failed URLs" (spec 004 US5, plan D12): opens a paused or
+    /// finished crawl and re-queues its transient failures. Run the returned
+    /// crawler to fetch them. The count says how many were re-queued; 0 means
+    /// there was nothing to retry and nothing changed.
+    pub fn retry_failed(path: &Path) -> Result<(Self, u64), CrawlError> {
+        let mut c = Self::open(path)?;
+        let by_class = c.store.transient_failures()?;
+        let n = c.store.requeue_transient()?;
+        if n > 0 {
+            let detail: Vec<String> = by_class.iter().map(|(k, v)| format!("{k} {v}")).collect();
+            c.store.log(
+                now_ms(),
+                "manual_retry",
+                None,
+                None,
+                &format!(
+                    "Retrying {n} URLs that failed for temporary reasons ({}).",
+                    detail.join(", ")
+                ),
+            )?;
+        }
+        Ok((c, n))
+    }
+}
+
+/// What "Retry failed URLs" would re-queue, by class (spec 004 FR-031).
+pub fn retry_preview(path: &Path) -> Result<Vec<(String, u64)>, CrawlError> {
+    Ok(CrawlStore::open(path)?.transient_failures()?)
 }
 
 fn placement_for(verdict: Verdict, limit_reached: bool) -> Placement {
@@ -818,7 +937,19 @@ struct Run {
     custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
+    last_catch_up: Instant,
     commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
+    /// URLs waiting to be retried: (due, row id), soonest first (plan D4).
+    retries: BinaryHeap<Reverse<(Instant, i64)>>,
+    rng: fastrand::Rng,
+    /// Network failures in a row with no answer in between, and the hosts
+    /// they came from (plan D7).
+    net_failures: u32,
+    net_hosts: HashSet<String>,
+    /// The window may grow while hosts are paused (plan D11).
+    window_cap: usize,
+    /// Set while a redirect past the hop limit is being recorded.
+    redirect_over_limit: bool,
     /// A disk problem that is pausing the crawl (spec 006 FR-027).
     local: Option<LocalError>,
     next_disk_check: Instant,
@@ -835,10 +966,26 @@ impl Run {
     ) -> Result<Self, CrawlError> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut c = c;
+        c.store.note_attempts_feature()?;
         c.store.checkpoint_in_background()?;
         c.store.drop_result_indexes()?;
         c.store.requeue_for_resume()?;
         c.store.set_meta("status", "running")?;
+        // URLs that were waiting for a retry keep their remaining wait
+        // (FR-023).
+        let now = Instant::now();
+        let now_wall = now_ms();
+        let retries = c
+            .store
+            .waiting()?
+            .into_iter()
+            .map(|(id, at)| {
+                Reverse((
+                    now + Duration::from_millis(at.saturating_sub(now_wall).max(0) as u64),
+                    id,
+                ))
+            })
+            .collect();
         c.store
             .conn()
             .execute("DELETE FROM meta WHERE key = 'pause_reason'", [])
@@ -878,7 +1025,7 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let custom = if c.config.custom.is_empty() && !c.store.has_custom_tables()? {
+        let custom = if c.config.custom.is_empty() && !c.store.has_custom_rules()? {
             None
         } else {
             if !c.config.custom.is_empty() {
@@ -930,7 +1077,14 @@ impl Run {
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
             custom,
             active_before_ms,
+            last_catch_up: Instant::now(),
             commands,
+            retries,
+            rng: fastrand::Rng::new(),
+            net_failures: 0,
+            net_hosts: HashSet::new(),
+            window_cap: WINDOW,
+            redirect_over_limit: false,
             local: None,
             next_disk_check: Instant::now(),
         })
@@ -964,7 +1118,10 @@ impl Run {
             // Kept by the store as rows change state: counting the table here
             // grows with the crawl and stalls the loop on large crawls.
             let StateCounts {
-                queued, not_crawled, ..
+                queued,
+                not_crawled,
+                waiting,
+                ..
             } = self.c.store.live_counts();
             let (urls_per_sec, avg_urls_per_sec) = self.rates();
             // Under a URL limit, only the pages it still allows are left.
@@ -974,6 +1131,14 @@ impl Run {
                 None => queued,
             };
             let eta_secs = (urls_per_sec > 0.0).then(|| (left as f64 / urls_per_sec).ceil() as u64);
+            let paused_hosts = self.paused_hosts();
+            let waiting_for_host = !paused_hosts.is_empty()
+                && self.in_flight == 0
+                && !self.window.is_empty()
+                && self
+                    .window
+                    .host_heads()
+                    .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -985,8 +1150,65 @@ impl Run {
                 avg_urls_per_sec,
                 eta_secs,
                 active_ms: self.active_ms(),
+                waiting,
+                paused_hosts,
+                waiting_for_host,
             }));
         }
+    }
+
+    fn paused_hosts(&self) -> Vec<PausedHost> {
+        use super::health::HealthState;
+        let now = Instant::now();
+        let mut out: Vec<PausedHost> = self
+            .hosts
+            .iter()
+            .filter_map(|(key, h)| {
+                let (seconds_left, probing, given_up) = match h.health.state() {
+                    HealthState::Active => return None,
+                    HealthState::Paused { until } => (
+                        until.saturating_duration_since(now).as_secs_f64().ceil() as u64,
+                        false,
+                        false,
+                    ),
+                    HealthState::Probing { .. } => (0, true, false),
+                    HealthState::GivenUp => (0, false, true),
+                };
+                let reason = if given_up {
+                    "Given up after repeated failures".to_string()
+                } else if probing {
+                    "Checking whether it has recovered".to_string()
+                } else {
+                    "Too many temporary failures in a row".to_string()
+                };
+                Some(PausedHost {
+                    host: key.clone(),
+                    reason,
+                    seconds_left,
+                    probing,
+                    given_up,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.host.cmp(&b.host));
+        out
+    }
+
+    /// Records a crawl log row and tells the user (spec 004 FR-035).
+    fn notice(
+        &mut self,
+        kind: &str,
+        host: Option<&str>,
+        url_id: Option<i64>,
+        message: String,
+    ) -> Result<(), CrawlError> {
+        self.c.store.log(now_ms(), kind, host, url_id, &message)?;
+        self.emit(CrawlEvent::Notice(Notice {
+            kind: kind.into(),
+            host: host.map(str::to_string),
+            message,
+        }));
+        Ok(())
     }
 
     /// Current (last few seconds) and average requests finished per second.
@@ -1042,9 +1264,40 @@ impl Run {
                 self.commit()?;
                 let result = self.move_to(&dest);
                 let _ = reply.send(result.as_ref().map(|()| dest.clone()).map_err(|e| e.to_string()));
-                Ok(())
+            }
+            RunCommand::ResumeHost(key) => {
+                let resumed = self.hosts.get_mut(&key).is_some_and(|h| h.health.resume_now());
+                if resumed {
+                    self.notice(
+                        "host_resumed",
+                        Some(&key),
+                        None,
+                        format!("{key} was resumed by you; one test request is sent first."),
+                    )?;
+                }
+            }
+            RunCommand::Apply(change) => {
+                match &change {
+                    Change::Speed(speed) => {
+                        self.c.config.speed = *speed;
+                        for h in self.hosts.values_mut() {
+                            h.speed.set_max(speed.max_per_host, speed.adaptive);
+                        }
+                        if speed.max_urls_per_sec.is_none() {
+                            self.next_global = Instant::now();
+                        }
+                    }
+                    Change::Retry(r) => self.c.config.retry = *r,
+                    Change::MaxUrls(m) => self.c.config.limits.max_urls = *m,
+                }
+                self.c.stored.record(jiff::Timestamp::now(), change);
+                self.c.store.set_meta(
+                    "config",
+                    &serde_json::to_string(&self.c.stored).expect("config serializes"),
+                )?;
             }
         }
+        Ok(())
     }
 
     /// Save As while crawling (plan D5): between batches, copy the file,
@@ -1101,6 +1354,10 @@ impl Run {
         }
         if self.write_tx.take().is_some() {
             self.c.store.commit()?;
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
+                self.c.store.catch_up_checkpoint();
+                self.last_catch_up = Instant::now();
+            }
         }
         Ok(())
     }
@@ -1120,11 +1377,16 @@ impl Run {
         loop {
             self.open_tx()?;
             self.check_disk();
-            let mut wake = if self.state() == Control::Run {
+            let running = self.state() == Control::Run;
+            let mut wake = if running {
+                self.requeue_due_retries()?;
                 self.dispatch()?
             } else {
                 None
             };
+            if running && let Some(Reverse((due, _))) = self.retries.peek() {
+                wake = Some(wake.map_or(*due, |w| w.min(*due)));
+            }
             self.progress(false);
             if self.in_flight == 0 {
                 match self.state() {
@@ -1149,7 +1411,10 @@ impl Run {
                     }
                     Control::Run => {
                         self.window.refill(&self.c.store)?;
-                        if self.window.is_empty() && self.window.holds_everything() && !self.sitemaps_pending
+                        if self.window.is_empty()
+                            && self.window.holds_everything()
+                            && !self.sitemaps_pending
+                            && self.retries.is_empty()
                         {
                             self.c.store.set_meta("status", "completed")?;
                             self.c
@@ -1210,6 +1475,7 @@ impl Run {
                 match state {
                     UrlState::Queued => counted.queued = n,
                     UrlState::InFlight => counted.in_flight = n,
+                    UrlState::Waiting => counted.waiting = n,
                     UrlState::Crawled => counted.crawled = n,
                     UrlState::NotCrawled => counted.not_crawled = n,
                 }
@@ -1217,6 +1483,22 @@ impl Run {
             debug_assert_eq!(self.c.store.live_counts(), counted, "live counts match the file");
         }
         self.progress(true);
+        Ok(())
+    }
+
+    /// Waiting URLs whose time has come go to the back of the queue
+    /// (FR-019).
+    fn requeue_due_retries(&mut self) -> Result<(), CrawlError> {
+        let now = Instant::now();
+        while let Some(Reverse((due, id))) = self.retries.peek().copied() {
+            if due > now {
+                break;
+            }
+            self.retries.pop();
+            if let Some(entry) = self.c.store.requeue_waiting(id)? {
+                self.window.on_queued(entry);
+            }
+        }
         Ok(())
     }
 
@@ -1273,11 +1555,43 @@ impl Run {
                 }
             }
 
+            // Hosts given up by the circuit breaker: their URLs end as "Host
+            // unavailable" without a request (FR-026).
+            let given_up: Vec<String> = self
+                .window
+                .host_heads()
+                .filter(|(k, _)| self.hosts.get(*k).is_some_and(|h| h.health.is_given_up()))
+                .map(|(k, _)| k.to_string())
+                .collect();
+            for key in given_up {
+                for e in self.window.take_host(&key) {
+                    self.c.store.set_host_unavailable(
+                        e.id,
+                        e.check_only,
+                        &format!("{key} was given up after it kept failing; this URL was not requested."),
+                        now_ms(),
+                    )?;
+                    if !e.check_only {
+                        self.crawled += 1;
+                        self.errors += 1;
+                    }
+                }
+            }
+
             // The earliest queued URL among hosts that may start now.
             let mut best: Option<QueueKey> = None;
+            let mut held_back = false;
             for (key, head) in self.window.host_heads() {
-                let Some(host) = self.hosts.get(key) else { continue };
+                let Some(host) = self.hosts.get_mut(key) else {
+                    continue;
+                };
                 if !matches!(host.robots, RobotsState::Known(..)) {
+                    continue;
+                }
+                host.health.tick(now);
+                if let Some(until) = host.health.paused_until() {
+                    soonest(until, &mut wake);
+                    held_back = true;
                     continue;
                 }
                 if host.in_flight >= host.limit() {
@@ -1285,13 +1599,24 @@ impl Run {
                 }
                 if host.next_start > now {
                     soonest(host.next_start, &mut wake);
+                    held_back = true;
                     continue;
                 }
                 if best.is_none_or(|b| head < b) {
                     best = Some(head);
                 }
             }
-            let Some(best) = best else { break };
+            let Some(best) = best else {
+                // Every host in the window is paused or waiting: look further
+                // down the queue so other hosts keep moving (plan D11).
+                if held_back && !self.window.holds_everything() && self.window_cap < MAX_WINDOW {
+                    self.window_cap = (self.window_cap * 2).min(MAX_WINDOW);
+                    if self.window.grow(&self.c.store, self.window_cap)? {
+                        continue;
+                    }
+                }
+                break;
+            };
             let e = self.window.get(best).expect("head is in the window").clone();
             let RobotsState::Known(policy, robots_error) = &self.hosts[&e.host_key].robots else {
                 unreachable!("only hosts with known robots.txt are picked");
@@ -1344,6 +1669,7 @@ impl Run {
         self.c.store.mark_in_flight(e.id)?;
         let host = self.hosts.get_mut(&e.host_key).expect("host known before start");
         host.in_flight += 1;
+        host.health.on_start();
         if let Some(d) = host.delay {
             host.next_start = now + d;
         }
@@ -1435,10 +1761,17 @@ impl Run {
         let retry = self.c.config.retry;
         let base = self.c.retry_base;
         let origin = Url::parse(&format!("{key}/")).expect("host keys are URLs");
+        let internal = self.c.rules.is_internal(&origin);
+        let headers: Vec<RequestHeader> = self
+            .headers
+            .iter()
+            .filter(|h| h.all_hosts || internal)
+            .cloned()
+            .collect();
         tokio::spawn(async move {
             let mut attempt = 1;
             let fetch = loop {
-                let f = robots::fetch(&client, &origin).await;
+                let f = robots::fetch(&client, &origin, &headers).await;
                 let retryable = match &f {
                     RobotsFetch::ServerError { status: 429 } => retry.retry_429,
                     RobotsFetch::ServerError { .. } => retry.retry_5xx,
@@ -1543,15 +1876,7 @@ impl Run {
             } => {
                 self.in_flight -= 1;
                 self.finished += 1;
-                if let Some(h) = self.hosts.get_mut(&entry.host_key) {
-                    h.in_flight -= 1;
-                    let signal = signal_of(&result);
-                    let now = Instant::now();
-                    if let Some(until) = h.speed.on_response(took, signal, now) {
-                        h.next_start = h.next_start.max(until);
-                    }
-                }
-                self.on_page(entry, internal, robots_rule, took, result)
+                self.on_result(entry, internal, robots_rule, took, result)
             }
             Msg::SitemapUrls { sitemap, urls } => {
                 for loc in urls {
@@ -1571,6 +1896,201 @@ impl Run {
                 Ok(())
             }
         }
+    }
+
+    /// One finished request: speed signal, circuit breaker, local network
+    /// check, then either a retry (the URL waits) or the recorded result
+    /// (spec 004 plan D1, D4, D6, D7).
+    fn on_result(
+        &mut self,
+        entry: QueueEntry,
+        internal: bool,
+        robots_rule: Option<String>,
+        took: Duration,
+        result: Result<PageOutcome, CheckError>,
+    ) -> Result<(), CrawlError> {
+        use super::health::HealthState;
+        let now = Instant::now();
+        let settings = self.c.config.retry;
+        let attempt = attempt_of(&result, entry.round_attempts + 1);
+        let transient = attempt.is_transient();
+        let max_wait = Duration::from_secs_f64(settings.max_wait_secs);
+
+        let host_blocked = match self.hosts.get_mut(&entry.host_key) {
+            Some(h) => {
+                h.in_flight -= 1;
+                // Retry-After pauses the whole host, up to the maximum wait
+                // (FR-018).
+                // A lone 503 that will be retried says little about load:
+                // treating it as overload halved the host's concurrency for
+                // every flaky page (2% flaky pages took a 100k crawl from 34
+                // to 64 s). A 503 that is still there after the last
+                // attempt, a 429, and any Retry-After still slow the host
+                // down; a real outage trips the host breaker (D6).
+                let mut signal = signal_of(&result);
+                if let Signal::Overloaded { retry_after: None } = signal
+                    && matches!(&result, Ok(o) if o.status == 503)
+                    && settings.retry_5xx
+                    && attempt.round_attempts < settings.attempts
+                {
+                    signal = Signal::Other;
+                }
+                if let Some(until) = h.speed.on_response(took, signal, now) {
+                    h.next_start = h.next_start.max(until.min(now + max_wait));
+                }
+                matches!(
+                    h.health.state(),
+                    HealthState::Paused { .. } | HealthState::GivenUp
+                )
+            }
+            None => false,
+        };
+        // A request that was in flight when its host paused, or when the
+        // network went down, does not use an attempt (FR-027).
+        if transient && (host_blocked || self.local.is_some()) {
+            return self.return_to_queue(entry);
+        }
+
+        if is_network_failure(&result) {
+            self.net_failures += 1;
+            self.net_hosts.insert(entry.host_key.clone());
+            if self.net_failures >= NETWORK_DOWN_FAILURES && self.net_hosts.len() >= 2 {
+                let message = format!(
+                    "Requests to {} different sites failed in a row, so your network connection may be down. \
+                     The crawl was paused; no URL was marked as failed. Resume it when you are back online.",
+                    self.net_hosts.len()
+                );
+                self.notice("local_problem", None, None, message.clone())?;
+                self.local = Some(LocalError::network_down(&self.c.path, message));
+                return self.return_to_queue(entry);
+            }
+        } else if result.is_ok() {
+            self.net_failures = 0;
+            self.net_hosts.clear();
+        }
+
+        let transition = match self.hosts.get_mut(&entry.host_key) {
+            Some(h) if transient => h.health.on_transient_failure(&settings, now),
+            Some(h) => h.health.on_alive(),
+            None => None,
+        };
+        if let Some(t) = transition {
+            let key = entry.host_key.clone();
+            match t {
+                Transition::Paused { pause, failures } => {
+                    let why = if failures > 0 {
+                        format!("{failures} requests in a row failed")
+                    } else {
+                        "its test request failed".to_string()
+                    };
+                    self.notice(
+                        "host_paused",
+                        Some(&key),
+                        Some(entry.id),
+                        format!(
+                            "{key} is paused for {} because {why}; other sites keep being crawled.",
+                            human_duration(pause)
+                        ),
+                    )?;
+                }
+                Transition::Resumed => {
+                    self.notice(
+                        "host_resumed",
+                        Some(&key),
+                        Some(entry.id),
+                        format!("{key} answers again; crawling it resumes."),
+                    )?;
+                }
+                Transition::GivenUp => {
+                    self.notice(
+                        "host_given_up",
+                        Some(&key),
+                        Some(entry.id),
+                        format!(
+                            "{key} kept failing after {} pauses, so its remaining URLs are recorded as \
+                             \"Host unavailable\". Use Retry failed URLs later to try them again.",
+                            settings.host_give_up_after
+                        ),
+                    )?;
+                }
+            }
+        }
+
+        if let Decision::Retry {
+            wait,
+            retry_after_used,
+            capped_from,
+        } = retry::decide(&settings, &attempt, retry::jitter(&mut self.rng))
+        {
+            let attempts = entry.attempts + 1;
+            let wall = now_ms();
+            self.c.store.set_waiting(
+                entry.id,
+                wall + wait.as_millis() as i64,
+                attempts,
+                attempt.round_attempts,
+                wall,
+            )?;
+            self.retries.push(Reverse((now + wait, entry.id)));
+            if retry_after_used && let Some(h) = self.hosts.get_mut(&entry.host_key) {
+                // No other request to the host before the retry (US2.3).
+                h.next_start = h.next_start.max(now + wait);
+            }
+            let class = describe(&attempt);
+            self.c.store.log(
+                wall,
+                "retry",
+                Some(&entry.host_key),
+                Some(entry.id),
+                &format!(
+                    "Attempt {} of {} failed ({class}); trying again in {}{}.",
+                    attempt.round_attempts,
+                    settings.attempts,
+                    human_duration(wait),
+                    if retry_after_used {
+                        " as the server asked (Retry-After)"
+                    } else {
+                        ""
+                    }
+                ),
+            )?;
+            if let Some(asked) = capped_from {
+                self.c.store.log(
+                    wall,
+                    "retry_after_capped",
+                    Some(&entry.host_key),
+                    Some(entry.id),
+                    &format!(
+                        "The server asked to wait {}; the maximum wait of {} was used instead.",
+                        human_duration(asked),
+                        human_duration(max_wait)
+                    ),
+                )?;
+            }
+            return Ok(());
+        }
+        let failed = attempt.class().is_error() && (attempt.error.is_some() || attempt.round_attempts > 1);
+        if failed {
+            self.c.store.log(
+                now_ms(),
+                "failure",
+                Some(&entry.host_key),
+                Some(entry.id),
+                &format!(
+                    "Failed after {} attempt{}: {}.",
+                    entry.attempts + 1,
+                    if entry.attempts == 0 { "" } else { "s" },
+                    describe(&attempt)
+                ),
+            )?;
+        }
+        self.on_page(entry, internal, robots_rule, took, result, attempt.round_attempts)
+    }
+
+    fn return_to_queue(&mut self, entry: QueueEntry) -> Result<(), CrawlError> {
+        self.c.store.return_in_flight(entry.id)?;
+        self.window.on_queued(entry);
+        Ok(())
     }
 
     fn on_robots(&mut self, key: String, fetch: RobotsFetch) -> Result<(), CrawlError> {
@@ -1645,9 +2165,12 @@ impl Run {
         robots_rule: Option<String>,
         took: Duration,
         result: Result<PageOutcome, CheckError>,
+        round_attempts: u32,
     ) -> Result<(), CrawlError> {
         let mut response = Response {
             robots_rule,
+            attempts: entry.attempts + 1,
+            round_attempts,
             ..Response::default()
         };
         if !entry.check_only {
@@ -1657,6 +2180,7 @@ impl Run {
         match result {
             Err(e) => {
                 response.error_class = Some(e.class.as_str().into());
+                response.error_reason = e.reason.map(ErrorReason::as_str);
                 response.error_message = Some(e.message);
             }
             Ok(o) => {
@@ -1667,6 +2191,7 @@ impl Run {
                 response.size_bytes = o.body_len.or(o.content_length);
                 if let Some(p) = &o.body_problem {
                     response.error_class = Some(p.class.as_str().into());
+                    response.error_reason = p.reason.map(ErrorReason::as_str);
                     response.error_message = Some(p.message.clone());
                 }
                 let url = Url::parse(&entry.url).expect("stored URLs parse");
@@ -1675,6 +2200,21 @@ impl Run {
                 if let Some(loc) = o.location.as_deref() {
                     response.redirect_kind = Some("http");
                     let target = self.c.rules.normalize(&url, loc);
+                    if target.is_err() && response.error_class.is_none() {
+                        // US3.6: the redirect itself is the problem.
+                        response.error_class = Some(ErrorClass::RedirectProblem.as_str().into());
+                        response.error_reason = Some(ErrorReason::InvalidTarget.as_str());
+                        response.error_message =
+                            Some(format!("The server redirected to an invalid address: {loc}"));
+                    }
+                    // Stop following at the hop limit (US3.2, plan D8).
+                    let max = self.c.config.network.max_redirects;
+                    let before = if entry.source == DiscoverySource::Redirect {
+                        self.c.store.redirect_depth(entry.id, max)?
+                    } else {
+                        0
+                    };
+                    self.redirect_over_limit = before + 1 > max;
                     let mut seed = false;
                     if entry.source == DiscoverySource::Start
                         && let Ok(t) = &target
@@ -1709,6 +2249,7 @@ impl Run {
                         false,
                         None,
                     )?;
+                    self.redirect_over_limit = false;
                 } else {
                     response.resource_type = Some(if o.page.is_some() { "html" } else { "other" });
                 }
@@ -1847,7 +2388,19 @@ impl Run {
                 );
                 let internal = seed || self.c.rules.is_internal(&url);
                 let host = host_key(&url);
-                let placement = placement_for(verdict, self.limit_reached);
+                let mut placement = placement_for(verdict, self.limit_reached);
+                if kind == LinkKind::Redirect
+                    && self.redirect_over_limit
+                    && matches!(placement, Placement::Queue { .. })
+                {
+                    placement = Placement::NotCrawled {
+                        reason: NotCrawledReason::RedirectLimit,
+                        detail: Some(format!(
+                            "more than {} redirects in a row",
+                            self.c.config.network.max_redirects
+                        )),
+                    };
+                }
                 (url.to_string(), host, internal, placement)
             }
             Err(problem) => {
@@ -1957,6 +2510,64 @@ fn signal_of(result: &Result<PageOutcome, CheckError>) -> Signal {
         Ok(_) => Signal::Answered,
         Err(e) if e.class == crate::ErrorClass::Timeout => Signal::TimedOut,
         Err(_) => Signal::Other,
+    }
+}
+
+/// The facts of one attempt the retry decision needs (spec 004 plan D1).
+fn attempt_of(result: &Result<PageOutcome, CheckError>, round_attempts: u32) -> Attempt {
+    match result {
+        Ok(o) => Attempt {
+            status: Some(o.status),
+            error: o.body_problem.as_ref().map(|p| (p.class, p.reason)),
+            retry_after: o
+                .retry_after
+                .as_deref()
+                .filter(|_| o.status == 429 || o.status == 503)
+                .and_then(|v| parse_retry_after(v, jiff::Timestamp::now())),
+            round_attempts,
+        },
+        Err(e) => Attempt {
+            status: None,
+            error: Some((e.class, e.reason)),
+            retry_after: None,
+            round_attempts,
+        },
+    }
+}
+
+/// Failures that say more about the network than about the site (plan D7).
+fn is_network_failure(result: &Result<PageOutcome, CheckError>) -> bool {
+    matches!(
+        result,
+        Err(CheckError {
+            class: ErrorClass::Connection | ErrorClass::DnsTemporary,
+            ..
+        }) | Err(CheckError {
+            class: ErrorClass::Timeout,
+            reason: Some(ErrorReason::Connect),
+            ..
+        })
+    )
+}
+
+/// "HTTP 503", "timeout (read)": for log messages.
+fn describe(a: &Attempt) -> String {
+    match (a.error, a.status) {
+        (Some((c, Some(r))), _) => format!("{} ({})", c.as_str(), r.as_str()),
+        (Some((c, None)), _) => c.as_str().to_string(),
+        (None, Some(s)) => format!("HTTP {s}"),
+        (None, None) => "no answer".into(),
+    }
+}
+
+fn human_duration(d: Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 10.0 {
+        format!("{secs:.1} s")
+    } else if secs < 120.0 {
+        format!("{} s", secs.round() as u64)
+    } else {
+        format!("{} min", (secs / 60.0).round() as u64)
     }
 }
 
