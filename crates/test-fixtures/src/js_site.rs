@@ -541,7 +541,11 @@ mod tests {
     /// A minimal HTTP/1.1 GET, so the test needs no client crate.
     fn get(site: &JsSite, host: &str, path: &str) -> (u16, String, String) {
         let mut s = TcpStream::connect(site.addr()).expect("connect");
-        write!(s, "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").expect("write");
+        write!(
+            s,
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write");
         let mut buf = String::new();
         s.read_to_string(&mut buf).expect("read");
         let (head, body) = buf.split_once("\r\n\r\n").expect("head");
@@ -571,7 +575,10 @@ mod tests {
         assert_eq!(site.peak_open(JS_HOST), 1);
         let (_, _, stats) = get(&site, JS_HOST, "/__stats");
         assert!(stats.contains("\"cdn.test/lib.js\":1"), "{stats}");
-        assert!(stats.contains("\"log\":[{\"host\":\"js.test\",\"path\":\"/\""), "{stats}");
+        assert!(
+            stats.contains("\"log\":[{\"host\":\"js.test\",\"path\":\"/\""),
+            "{stats}"
+        );
         site.reset();
         assert_eq!(site.requests(), 0);
     }
