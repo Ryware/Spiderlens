@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Copy, MousePointerClick } from "lucide-react";
+import { Copy, Info, MousePointerClick } from "lucide-react";
 import { formatElapsed, type CrawlRun, type Phase } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { BuildInfo, Transport } from "../transport";
-import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, type Tone } from "../components/ui";
+import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, Tooltip, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
+import { LocalErrorNotice } from "../files/LocalErrorNotice";
+import { RecentCrawls, StorageWarning, UnsavedCrawls } from "../files/RecentCrawls";
+import type { CrawlLibrary } from "../files/useCrawlLibrary";
 
 /** Detail panel (FR-001): explains the selected URL once results exist (spec 007). */
 export function DetailPanel() {
@@ -91,7 +94,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
  * why URLs were not crawled, robots.txt per site and sitemaps (spec 003 US2).
  * The URLs themselves are in the result tabs (spec 007).
  */
-export function CrawlOverview({ run }: { run: CrawlRun }) {
+export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlRun; onInfo?: () => void; onResume?: () => void; onSaveAs?: () => void }) {
   const p = run.progress;
   const s = run.report?.summary;
   const info = phaseInfo[run.phase];
@@ -109,6 +112,13 @@ export function CrawlOverview({ run }: { run: CrawlRun }) {
             <h1 className="m-0 min-w-0 truncate text-lg font-semibold tracking-tight">{run.target || "Crawl"}</h1>
             {info.tone === "accent" ? <Badge tone="info">{info.label}</Badge> : <Badge tone={info.tone}>{info.label}</Badge>}
             <span className="ml-auto text-sm text-fg-3 tabular">{formatElapsed(run.elapsedMs)}</span>
+            {run.path && onInfo && (
+              <Tooltip content="Crawl information">
+                <Button variant="quiet" size="sm" icon aria-label="Crawl information" onClick={onInfo}>
+                  <Info className="size-3.5" />
+                </Button>
+              </Tooltip>
+            )}
           </div>
           <Bar value={done} label="URLs handled" tone={run.running ? "accent" : info.tone === "accent" ? "neutral" : info.tone} className="w-full" />
           {run.path && (
@@ -118,6 +128,9 @@ export function CrawlOverview({ run }: { run: CrawlRun }) {
           )}
         </header>
 
+        {run.local && (
+          <LocalErrorNotice error={run.local} onResume={() => onResume?.()} onSaveAs={() => onSaveAs?.()} onKeepPaused={run.dismissLocal} />
+        )}
         {run.error && (
           <Notice kind="bad" role="alert">
             {run.error}
@@ -211,56 +224,80 @@ function Table({ title, head, children }: { title: string; head: [string, string
 }
 
 /** Main area before any crawl (FR-008): what to do next, and anything to be careful about. */
-export function StartState({ setup, error, onFocusUrl, onOpenSettings, onCompare }: { setup: CrawlSetup; error?: string | null; onFocusUrl: () => void; onOpenSettings: () => void; onCompare?: () => void }) {
+export function StartState({
+  setup,
+  error,
+  onFocusUrl,
+  onOpenSettings,
+  library,
+  onOpenRecent,
+  onCompare,
+}: {
+  setup: CrawlSetup;
+  error?: string | null;
+  onFocusUrl: () => void;
+  onOpenSettings: () => void;
+  /** Recent and unsaved crawls (spec 006 US4). */
+  library?: CrawlLibrary;
+  onOpenRecent?: (path: string) => void;
+  /** Opens the comparison setup (spec 012). */
+  onCompare?: () => void;
+}) {
   const mode = setup.config?.mode ?? "spider";
   const urlIssues = setup.issues.filter((i) => i.path === "input.start_url");
   return (
-    <section aria-label="Start" className="flex h-full flex-col items-center justify-center gap-5 overflow-y-auto p-8">
-      <div className="flex max-w-md flex-col items-center gap-2 text-center">
-        <h1 className="m-0 text-xl font-semibold tracking-tight text-balance">{mode === "spider" ? "Crawl a website" : "Crawl a list of URLs"}</h1>
-        <p className="m-0 text-base text-fg-2">
-          {mode === "spider"
-            ? "Enter a start URL above and press Start. SpiderLens follows links from there and lists every page it finds, with its issues."
-            : "Add your URLs, then press Start. Only the URLs in the list are crawled."}
-        </p>
-      </div>
-
-      {/* A crawl file that could not be opened (Open crawl…). */}
-      {error && (
-        <Notice kind="bad" role="alert" className="w-full max-w-md">
-          {error}
-        </Notice>
-      )}
-
-      {mode === "spider" && setup.startUrl !== "" && <IssueList issues={urlIssues} />}
-
-      {setup.warnings.length > 0 && (
-        <div aria-label="Less respectful settings" className="flex w-full max-w-md flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Badge tone="warn">Less respectful settings</Badge>
-            <Button size="sm" variant="quiet" className="ml-auto" onClick={onOpenSettings}>
-              Review
-            </Button>
-          </div>
-          <IssueList issues={setup.warnings} />
+    <section aria-label="Start" className="h-full overflow-y-auto">
+      <div className="flex min-h-full flex-col items-center justify-center gap-5 p-8">
+        {library && <StorageWarning storage={library.storage} />}
+        <div className="flex max-w-md flex-col items-center gap-2 text-center">
+          <h1 className="m-0 text-xl font-semibold tracking-tight text-balance">{mode === "spider" ? "Crawl a website" : "Crawl a list of URLs"}</h1>
+          <p className="m-0 text-base text-fg-2">
+            {mode === "spider"
+              ? "Enter a start URL above and press Start. SpiderLens follows links from there and lists every page it finds, with its issues."
+              : "Add your URLs, then press Start. Only the URLs in the list are crawled."}
+          </p>
         </div>
-      )}
 
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-fg-3">
-        <button type="button" className="rounded-sm hover:text-fg-2" onClick={onFocusUrl}>
-          Start URL <Kbd keys="Mod+L" />
-        </button>
-        <span>
-          Settings <Kbd keys="Mod+," />
-        </span>
-        <span>
-          Commands <Kbd keys="Mod+K" />
-        </span>
-        {onCompare && (
-          <button type="button" className="rounded-sm hover:text-fg-2" onClick={onCompare}>
-            Compare crawls…
-          </button>
+        {/* A crawl file that could not be opened (Open crawl…). */}
+        {error && (
+          <Notice kind="bad" role="alert" className="w-full max-w-md">
+            {error}
+          </Notice>
         )}
+
+        {mode === "spider" && setup.startUrl !== "" && <IssueList issues={urlIssues} />}
+
+        {setup.warnings.length > 0 && (
+          <div aria-label="Less respectful settings" className="flex w-full max-w-md flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Badge tone="warn">Less respectful settings</Badge>
+              <Button size="sm" variant="quiet" className="ml-auto" onClick={onOpenSettings}>
+                Review
+              </Button>
+            </div>
+            <IssueList issues={setup.warnings} />
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-fg-3">
+          <button type="button" className="rounded-sm hover:text-fg-2" onClick={onFocusUrl}>
+            Start URL <Kbd keys="Mod+L" />
+          </button>
+          <span>
+            Settings <Kbd keys="Mod+," />
+          </span>
+          <span>
+            Commands <Kbd keys="Mod+K" />
+          </span>
+          {onCompare && (
+            <button type="button" className="rounded-sm hover:text-fg-2" onClick={onCompare}>
+              Compare crawls…
+            </button>
+          )}
+        </div>
+
+        {library && onOpenRecent && <RecentCrawls library={library} onOpen={onOpenRecent} />}
+        {library && <UnsavedCrawls library={library} />}
       </div>
     </section>
   );

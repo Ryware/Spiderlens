@@ -363,10 +363,11 @@ impl Comparison {
     }
 }
 
-/// The crawl file in `dir` to compare `current` with by default (FR-001):
-/// the most recent other file, no newer than `current`, that starts on the
-/// same origin. Files that cannot be read are skipped.
-pub fn suggest_previous(dir: &Path, current: &Path) -> Option<PathBuf> {
+/// The crawl to compare `current` with by default (FR-001): of the
+/// `candidates` (recent crawls, unsaved crawls), the most recent other file,
+/// no newer than `current`, that starts on the same origin. Files that cannot
+/// be read are skipped.
+pub fn suggest_previous(candidates: impl IntoIterator<Item = PathBuf>, current: &Path) -> Option<PathBuf> {
     let origin = |p: &Path| -> Option<String> {
         let (conn, _) = spiderlens_results::connect_attachable(p).ok()?;
         CrawlInfo::read(&conn, p).ok()?.origin()
@@ -375,11 +376,14 @@ pub fn suggest_previous(dir: &Path, current: &Path) -> Option<PathBuf> {
     let want = origin(current)?;
     let limit = mtime(current);
     let current = current.canonicalize().unwrap_or_else(|_| current.to_path_buf());
-    let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
+    let mut seen = std::collections::HashSet::new();
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = candidates
+        .into_iter()
         .filter(|p| p.extension().is_some_and(|x| x == "spiderlens"))
-        .filter(|p| p.canonicalize().map_or(true, |c| c != current))
+        .filter(|p| {
+            let c = p.canonicalize().unwrap_or_else(|_| p.clone());
+            c != current && seen.insert(c)
+        })
         .filter_map(|p| Some((mtime(&p)?, p)))
         .filter(|(t, _)| limit.is_none_or(|l| *t <= l))
         .collect();
@@ -388,4 +392,11 @@ pub fn suggest_previous(dir: &Path, current: &Path) -> Option<PathBuf> {
         .into_iter()
         .map(|(_, p)| p)
         .find(|p| origin(p).as_deref() == Some(want.as_str()))
+}
+
+/// The crawl files directly inside `dir`.
+pub fn crawl_files(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+        .unwrap_or_default()
 }

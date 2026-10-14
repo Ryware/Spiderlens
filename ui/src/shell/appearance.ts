@@ -37,6 +37,8 @@ export interface Appearance {
   systemLight: Level;
   systemDark: Level;
   accent: Accent;
+  /** macOS: let the system material show through the sidebar and toolbar (spec 017 FR-027). */
+  translucent?: boolean;
 }
 
 export function resolveLevel(a: Appearance, systemDark: boolean): Level {
@@ -57,8 +59,10 @@ export function chooseLevel(a: Appearance, level: Level, systemDark: boolean): P
   return tone === "light" ? { systemLight: level } : { systemDark: level };
 }
 
-export function applyAppearance(root: HTMLElement, level: Level, accent: Accent): void {
+export function applyAppearance(root: HTMLElement, level: Level, accent: Accent, material = false): void {
   root.dataset.level = level;
   root.dataset.tone = toneOf(level);
   root.dataset.accent = accent;
+  if (material) root.dataset.material = "on";
+  else delete root.dataset.material;
 }

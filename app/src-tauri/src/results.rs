@@ -149,6 +149,14 @@ impl State {
         self.exports.lock().expect("exports lock").remove(&job);
     }
 
+    /// Lets go of `path` (before it is deleted or moved by Save As).
+    pub fn close(&self, path: &Path) {
+        let mut actor = self.actor.lock().expect("results lock");
+        if actor.as_ref().is_some_and(|a| a.path == path) {
+            *actor = None;
+        }
+    }
+
     fn interrupt_build(&self) {
         if let Some(a) = self.actor.lock().expect("results lock").as_ref()
             && a.building.load(Ordering::Relaxed)

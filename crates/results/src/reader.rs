@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::features::Features;
 use crate::tabs::Derived;
@@ -29,13 +29,10 @@ pub struct Reader {
 /// Opens a crawl file the way every reader in this crate does: read-only,
 /// with the SQL functions registered.
 pub(crate) fn connect(path: &Path) -> Result<(Connection, Features)> {
-    if !path.exists() {
-        return Err(Error::invalid(format!("{} does not exist", path.display())));
-    }
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
-    )?;
+    // Read-only, with an `immutable=1` retry for read-only media (spec 006
+    // FR-021); a damaged file is reported as such (FR-038).
+    let conn = spiderlens_engine::crawl::store::connect_read_only(path)
+        .map_err(|e| Error::invalid(e.to_string()))?;
     setup(conn, path)
 }
 
@@ -49,8 +46,11 @@ pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
     }
     let conn = Connection::open_with_flags(
         read_only_uri(path),
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     setup(conn, path)
 }
 
@@ -75,7 +75,6 @@ fn read_only_uri(path: &Path) -> String {
 }
 
 fn setup(conn: Connection, path: &Path) -> Result<(Connection, Features)> {
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let format: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
         .optional()

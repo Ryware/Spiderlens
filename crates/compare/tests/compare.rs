@@ -228,11 +228,18 @@ async fn us1_us2_changes_between_two_crawls_of_the_same_site() {
     let p = same_site_pair().await;
     // FR-001: the previous crawl of the same site is suggested.
     assert_eq!(
-        spiderlens_compare::suggest_previous(p.prev.parent().unwrap(), &p.cur).as_deref(),
+        spiderlens_compare::suggest_previous(
+            spiderlens_compare::crawl_files(p.prev.parent().unwrap()),
+            &p.cur
+        )
+        .as_deref(),
         Some(p.prev.as_path())
     );
     assert_eq!(
-        spiderlens_compare::suggest_previous(p.prev.parent().unwrap(), &p.prev),
+        spiderlens_compare::suggest_previous(
+            spiderlens_compare::crawl_files(p.prev.parent().unwrap()),
+            &p.prev
+        ),
         None
     );
     let mut c = run(&p, CompareSettings::default());

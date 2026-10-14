@@ -20,7 +20,7 @@ spiderlens-engine.workspace = true
 spiderlens-config.workspace = true
 spiderlens-results.workspace = true
 spiderlens-compare.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 serde.workspace = true

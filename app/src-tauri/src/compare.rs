@@ -90,14 +90,15 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Cmd<T> + Send + 'static
 }
 
 /// The crawl to compare `current` with by default: the latest earlier
-/// crawl of the same site in the app's crawl folder (FR-001).
+/// crawl of the same site among recent and unsaved crawls (FR-001).
 #[tauri::command]
 pub async fn compare_suggest(
-    crawls: tauri::State<'_, crate::crawl::State>,
+    files: tauri::State<'_, crate::files::State>,
     current: PathBuf,
 ) -> Cmd<Option<PathBuf>> {
-    let dir = crawls.dir().to_path_buf();
-    blocking(move || Ok(spiderlens_compare::suggest_previous(&dir, &current))).await
+    let mut candidates = files.recent_paths();
+    candidates.extend(spiderlens_compare::crawl_files(&files.unsaved_dir));
+    blocking(move || Ok(spiderlens_compare::suggest_previous(candidates, &current))).await
 }
 
 /// Both files described, with the configuration differences (FR-003).
