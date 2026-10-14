@@ -113,6 +113,58 @@ jobs:
             ui/playwright-report
             ui/test-results
 
+  # Crawl files written on each OS open with identical data on the others
+  # (spec 006 SC-008). Only the engine is built: no webview needed.
+  crawl-files-write:
+    name: Crawl files, write (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Write crawl files
+        env:
+          SPIDERLENS_PORTABLE_OUT: ${{ runner.temp }}/crawl-files
+        run: cargo test -p spiderlens-engine --test portability -- --exact write_crawl_files
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crawl-files-${{ matrix.os }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/crawl-files/*.spiderlens
+            ${{ runner.temp }}/crawl-files/expected.json
+
+  crawl-files-read:
+    name: Crawl files, read (${{ matrix.os }})
+    needs: crawl-files-write
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # One folder per writing OS.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: crawl-files-*
+          path: ${{ runner.temp }}/crawl-files
+      - name: Read crawl files from every OS
+        env:
+          SPIDERLENS_PORTABLE_IN: ${{ runner.temp }}/crawl-files
+        run: cargo test -p spiderlens-engine --test portability -- --exact read_crawl_files
+
   # Reduced crawl benchmark (spec 008 FR-034): throughput against a build
   # of the base branch on the same machine, plus the speed caps and 429
   # handling checked from the test site's own counters.
