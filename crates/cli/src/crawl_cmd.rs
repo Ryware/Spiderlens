@@ -823,6 +823,61 @@ pub fn run_page(args: PageArgs) -> ExitCode {
     ExitCode::from(exit::FETCHED)
 }
 
+/// The short Rendering section of `spiderlens page` (spec 014 T026).
+fn print_render_section(out: &mut impl Write, r: &serde_json::Value) {
+    use serde_json::Value;
+    let render = &r["render"];
+    if render.is_null() {
+        return;
+    }
+    let s = |v: &Value| match v {
+        Value::Null => "-".to_string(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let state = match render["reason"].as_str() {
+        Some(reason) => format!("{} ({reason})", s(&render["state"])),
+        None => s(&render["state"]),
+    };
+    let _ = writeln!(out, "  Rendering: {state}");
+    if !render["render_ms"].is_null() {
+        let _ = writeln!(out, "    Render time (ms): {}", s(&render["render_ms"]));
+    }
+    if !render["js_redirect"].is_null() {
+        let _ = writeln!(out, "    JavaScript redirect: {}", s(&render["js_redirect"]));
+    }
+    let p = &r["rendered"]["page"];
+    if !p.is_null() {
+        let _ = writeln!(out, "    Rendered title: {}", s(&p["title"]));
+        let _ = writeln!(out, "    Rendered noindex: {}", s(&p["noindex"]));
+    }
+    let c = &r["comparison"];
+    if !c.is_null() {
+        let _ = writeln!(
+            out,
+            "    Words: {} raw, {} rendered",
+            s(&c["words_raw"]),
+            s(&c["words_rendered"])
+        );
+        let _ = writeln!(
+            out,
+            "    Links only after rendering: {}, gone after rendering: {}",
+            s(&c["links_rendered_only"]),
+            s(&c["links_raw_only"])
+        );
+    }
+    if let Some(d) = r["dependence"]["overall"].as_f64() {
+        let _ = writeln!(out, "    JavaScript dependence: {d:.0}%");
+    }
+    let _ = writeln!(
+        out,
+        "    JavaScript errors: {}, resources failed: {}, blocked: {}",
+        s(&render["console_errors"]),
+        s(&render["resources_failed"]),
+        s(&render["resources_blocked"])
+    );
+}
+
 fn print_page(r: &serde_json::Value) {
     use serde_json::Value;
     let s = |v: &Value| match v {
@@ -888,6 +943,7 @@ fn print_page(r: &serde_json::Value) {
         r["structured_data"].as_array().map_or(0, Vec::len)
     );
     let _ = writeln!(out, "  Raw HTML stored: {}", s(&r["html_stored"]));
+    print_render_section(&mut out, r);
 }
 
 pub fn run_html(args: HtmlArgs) -> ExitCode {

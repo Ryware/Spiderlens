@@ -107,3 +107,116 @@ fn render_crawl_prints_the_renderer_and_the_rendering_block() {
     assert!(summary.get("render").is_none(), "{summary}");
     assert_eq!(summary["crawled"], 7, "script-only pages are not found raw");
 }
+
+fn crawl_with_cli(site: &JsSite, browser: &str, file: &std::path::Path) {
+    let out = spiderlens()
+        .args([
+            "crawl",
+            &site.local_url("/"),
+            "--render",
+            "--speed",
+            "fast",
+            "--browser",
+            browser,
+        ])
+        .arg("--out")
+        .arg(file)
+        .arg("--quiet")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn page_json(file: &std::path::Path, url: &str) -> Value {
+    let out = spiderlens()
+        .arg("page")
+        .arg(file)
+        .args([url, "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+/// `spiderlens page` for a rendered page (T026, contracts/cli.md).
+#[test]
+fn page_shows_the_rendered_version_with_origins() {
+    let Some(browser) = browser_path() else { return };
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("page.spiderlens");
+    crawl_with_cli(&site, &browser, &file);
+
+    let p = page_json(&file, &site.local_url("/title-changed"));
+    assert_eq!(p["title"], "Loading", "the raw values stay");
+    assert_eq!(p["render"]["state"], "rendered");
+    assert_eq!(p["render"]["attempts"], 1);
+    assert_eq!(p["rendered"]["page"]["title"], "Red Shoes | Shop");
+    let titles = p["rendered"]["titles"].as_array().unwrap();
+    assert_eq!(titles[0]["text"], "Red Shoes | Shop");
+    assert_eq!(titles[0]["origin"], "rendered");
+    assert_eq!(titles[1]["text"], "Loading");
+    assert_eq!(titles[1]["origin"], "raw", "what JavaScript removed");
+    assert_eq!(p["comparison"]["title_diff"], "changed");
+    assert!(p["dependence"].is_object());
+    assert!(p["resources"].is_array() && p["console"].is_array());
+
+    let nav = page_json(&file, &site.local_url("/js-nav"));
+    let links = nav["rendered"]["links"].as_array().unwrap();
+    let only: Vec<&str> = links
+        .iter()
+        .filter(|l| l["origin"] == "rendered")
+        .map(|l| l["url"].as_str().unwrap())
+        .collect();
+    assert_eq!(only, [site.local_url("/only-js-1"), site.local_url("/only-js-2")]);
+    assert_eq!(nav["dependence"]["internal_links"], 1.0);
+
+    let jr = page_json(&file, &site.local_url("/js-redirect"));
+    assert_eq!(
+        jr["render"]["js_redirect_url"],
+        site.local_url("/redirect-target")
+    );
+    let ld = page_json(&file, &site.local_url("/jsonld-added"));
+    assert_eq!(ld["rendered"]["structured_data"][0]["origin"], "rendered");
+
+    // The text output has a short Rendering section.
+    spiderlens()
+        .arg("page")
+        .arg(&file)
+        .arg(site.local_url("/title-changed"))
+        .assert()
+        .success()
+        .stdout(contains("  Rendering: rendered"))
+        .stdout(contains("Rendered title: Red Shoes | Shop"));
+
+    // A raw crawl's page report has no rendering keys.
+    let raw = dir.path().join("raw.spiderlens");
+    spiderlens()
+        .args([
+            "crawl",
+            &site.local_url("/"),
+            "--speed",
+            "fast",
+            "--quiet",
+            "--out",
+        ])
+        .arg(&raw)
+        .assert()
+        .success();
+    let p = page_json(&raw, &site.local_url("/title-changed"));
+    for k in [
+        "render",
+        "rendered",
+        "comparison",
+        "dependence",
+        "resources",
+        "console",
+    ] {
+        assert!(p.get(k).is_none(), "{k}");
+    }
+}

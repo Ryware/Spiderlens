@@ -1179,7 +1179,162 @@ impl CrawlStore {
             .prepare_cached("SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)")?
             .query_row([id], |r| r.get(0))?;
         obj.insert("html_stored".into(), json!(stored));
+        if let Some(render) = self.render_report(id)? {
+            for (k, v) in render {
+                obj.insert(k, v);
+            }
+        }
         Ok(Some(response))
+    }
+
+    /// The rendering part of [`Self::page_report`] (spec 014
+    /// contracts/cli.md `spiderlens page`): `render`, `rendered` (each list
+    /// item with its `origin`), `comparison`, `dependence`, `resources`,
+    /// `console`. None for a page without a `renders` row.
+    fn render_report(&self, id: i64) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        use serde_json::{Map, Value};
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        let one = |sql: &str| -> Result<Value> {
+            Ok(self.rows_json(sql, id)?.into_iter().next().unwrap_or(Value::Null))
+        };
+        let render = one(
+            "SELECT r.state, r.reason, r.reason_detail, r.attempts, r.render_ms, r.window_w, r.window_h,
+             r.js_redirect, t.url AS js_redirect_url, r.console_errors, r.console_warnings,
+             r.resources_failed, r.resources_blocked, r.bot_challenge, r.rendered_at
+             FROM renders r LEFT JOIN urls t ON t.id = r.js_redirect_id WHERE r.url_id = ?1",
+        )?;
+        if render.is_null() {
+            return Ok(None);
+        }
+        let mut out = Map::new();
+        out.insert("render".into(), render);
+        let page = one("SELECT * FROM rendered_pages WHERE url_id = ?1")?;
+        let rendered = if page.is_null() {
+            Value::Null
+        } else {
+            // Rendered order first (`both` and `rendered`), then what
+            // JavaScript removed (`raw`, raw order).
+            let order = "CASE origin WHEN 'raw' THEN 1 ELSE 0 END, pos";
+            let texts = self.rows_json(
+                &format!(
+                    "SELECT kind, level, text, in_head, origin FROM rendered_text WHERE url_id = ?1
+                     ORDER BY kind, {order}"
+                ),
+                id,
+            )?;
+            let pick = |kind: &str| -> Value {
+                Value::Array(
+                    texts
+                        .iter()
+                        .filter(|t| t["kind"] == kind)
+                        .map(|t| {
+                            let mut t = t.clone();
+                            let o = t.as_object_mut().expect("rows are objects");
+                            o.remove("kind");
+                            if kind == "heading" {
+                                o.remove("in_head");
+                            } else {
+                                o.remove("level");
+                            }
+                            t
+                        })
+                        .collect(),
+                )
+            };
+            let links =
+                "SELECT l.kind, l.raw, t.url, l.target, l.skip_reason, l.text, l.alt, l.rel, l.nofollow,
+                 l.sponsored, l.ugc, l.page_nofollow, l.followed, l.source, l.in_head, l.noscript, l.lang,
+                 l.width, l.height, l.srcset, l.in_link, t.internal";
+            let mut link_rows = self.rows_json(
+                &format!(
+                    "{links}, CASE WHEN g.pos IS NULL THEN 'both' ELSE 'raw' END AS origin
+                     FROM links l LEFT JOIN urls t ON t.id = l.to_id
+                     LEFT JOIN raw_only_links g ON g.from_id = l.from_id AND g.pos = l.pos
+                     WHERE l.from_id = ?1 AND g.pos IS NULL ORDER BY l.rowid"
+                ),
+                id,
+            )?;
+            link_rows.extend(self.rows_json(
+                &format!(
+                    "{links}, 'rendered' AS origin FROM rendered_links l LEFT JOIN urls t ON t.id = l.to_id
+                     WHERE l.from_id = ?1 ORDER BY l.rpos, l.rowid"
+                ),
+                id,
+            )?);
+            link_rows.extend(self.rows_json(
+                &format!(
+                    "{links}, 'raw' AS origin FROM links l LEFT JOIN urls t ON t.id = l.to_id
+                     JOIN raw_only_links g ON g.from_id = l.from_id AND g.pos = l.pos
+                     WHERE l.from_id = ?1 ORDER BY l.rowid"
+                ),
+                id,
+            )?);
+            let mut r = Map::new();
+            r.insert("page".into(), page);
+            r.insert("titles".into(), pick("title"));
+            r.insert("meta_descriptions".into(), pick("meta_description"));
+            r.insert("headings".into(), pick("heading"));
+            r.insert(
+                "directives".into(),
+                Value::Array(self.rows_json(
+                    &format!(
+                        "SELECT directive, value, known, source, crawler, in_head, origin
+                         FROM rendered_directives WHERE url_id = ?1 ORDER BY {order}"
+                    ),
+                    id,
+                )?),
+            );
+            r.insert("links".into(), Value::Array(link_rows));
+            r.insert(
+                "structured_data".into(),
+                Value::Array(self.rows_json(
+                    &format!(
+                        "SELECT kind, raw, parseable, origin FROM rendered_structured_data
+                         WHERE url_id = ?1 ORDER BY {order}"
+                    ),
+                    id,
+                )?),
+            );
+            Value::Object(r)
+        };
+        out.insert("rendered".into(), rendered);
+        out.insert(
+            "comparison".into(),
+            one(
+                "SELECT words_raw, words_rendered, words_change, links_raw, links_rendered,
+                 links_rendered_only, links_raw_only, title_diff, description_diff, h1_diff, canonical_diff,
+                 noindex_diff, nofollow_diff, hreflang_diff, structured_rendered_only
+                 FROM render_comparisons WHERE url_id = ?1",
+            )?,
+        );
+        out.insert(
+            "dependence".into(),
+            one(
+                "SELECT dependence AS overall, dep_text AS text, dep_headings AS headings,
+                 dep_internal_links AS internal_links, dep_structured AS structured, dep_images AS images,
+                 raw_has_title, raw_has_description, raw_has_canonical, raw_has_directives
+                 FROM render_comparisons WHERE url_id = ?1",
+            )?,
+        );
+        out.insert(
+            "resources".into(),
+            Value::Array(self.rows_json(
+                "SELECT url, type, host, third_party, outcome, status, error, robots_rule, bytes
+                 FROM render_resources WHERE url_id = ?1 ORDER BY pos",
+                id,
+            )?),
+        );
+        out.insert(
+            "console".into(),
+            Value::Array(self.rows_json(
+                "SELECT level, message, source_url, line, col FROM console_entries WHERE url_id = ?1
+                 ORDER BY pos",
+                id,
+            )?),
+        );
+        Ok(Some(out))
     }
 
     /// Runs a query with one id parameter; each row becomes a JSON object
