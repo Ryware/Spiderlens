@@ -282,3 +282,72 @@ test("changing_the_selected_url_loads_its_details", async () => {
   rerender(<Inspector transport={t} path={PATH} id={5} />);
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-4"));
 });
+
+// Copy URL and Show in table on list rows (T027).
+
+test("copy_url_puts_the_row_url_on_the_clipboard_and_says_so", async () => {
+  const t = fakeTransport();
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
+  expect(within(details()).getByRole("status").textContent).toBe("Copied.");
+});
+
+test("copy_failure_shows_the_error", async () => {
+  const t = fakeTransport();
+  t.copyText = async () => {
+    throw "Could not copy: no clipboard";
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("Could not copy: no clipboard"));
+});
+
+test("show_in_table_hands_over_the_row_url_id", async () => {
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  expect(within(details()).getByRole("status").textContent).toBe("");
+});
+
+test("show_in_table_says_when_the_url_is_in_no_table", async () => {
+  const show = vi.fn(async () => false);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
+});
+
+test("show_in_table_is_left_out_without_a_table", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await within(details()).findByRole("button", { name: "Copy https://example.com/" });
+  expect(within(details()).queryByRole("button", { name: /in table$/ })).toBeNull();
+});
+
+test("redirect_hops_have_the_same_actions", async () => {
+  const t = withDetail({
+    redirects: [
+      { id: 2, url: "http://example.com/a", status: 301, final_state: "Redirected" },
+      { id: 4, url: "https://example.com/b", status: 200, final_state: "Crawled" },
+    ],
+  });
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/b in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(4));
+  fireEvent.click(within(details()).getByRole("button", { name: "Copy http://example.com/a" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["http://example.com/a"]));
+});
+
+test("right_click_on_a_row_offers_the_same_actions", async () => {
+  const t = fakeTransport();
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  const row = (await within(details()).findByRole("button", { name: "Copy https://example.com/" })).closest("li")!;
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Show in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy URL" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
+});

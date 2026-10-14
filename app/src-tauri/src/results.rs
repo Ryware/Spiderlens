@@ -266,6 +266,20 @@ pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) ->
     state.with(&path, move |r| r.page_html(id).map_err(err)).await
 }
 
+/// The tabs that list URL `id` unfiltered, for "show in table".
+#[tauri::command]
+pub async fn url_tabs(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<&'static str>> {
+    state.with(&path, move |r| r.tabs_of(id).map_err(err)).await
+}
+
+/// Puts one value (an inspector row's URL) on the clipboard.
+#[tauri::command]
+pub fn copy_text(app: AppHandle, text: String) -> Cmd<()> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| format!("Could not copy: {e}"))
+}
+
 /// Puts the selected rows on the clipboard as TSV with a header (FR-026)
 /// and returns the text; over 10,000 rows is refused. Written from here
 /// because a web view only allows clipboard writes during the click itself.

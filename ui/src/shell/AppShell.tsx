@@ -99,6 +99,27 @@ export function AppShell({ transport }: { transport: Transport }) {
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
+  // "Show in table" from the inspector (T027): the URL is selected in the
+  // current tab when it lists the URL, else in Internal or External, else
+  // in the first tab that does. `n` makes a repeat of the same URL count.
+  const [reveal, setReveal] = useState<{ tab: string; id: number; n: number } | null>(null);
+  useEffect(() => {
+    if (reveal && reveal.tab !== section) setReveal(null);
+  }, [section, reveal]);
+  const showInTable = useCallback(
+    async (id: number) => {
+      if (!crawl.path) return false;
+      const listed = (await transport.urlTabs(crawl.path, id)).filter((t) => results.tabs.some((x) => x.id === t));
+      const tab = resultTab && listed.includes(resultTab.id) ? resultTab.id : (listed.find((t) => t === "internal" || t === "external") ?? listed[0]);
+      if (!tab) return false;
+      results.update(tab, { focusId: id });
+      setSection(tab);
+      setReveal((r) => ({ tab, id, n: (r?.n ?? 0) + 1 }));
+      return true;
+    },
+    [transport, crawl.path, results, resultTab],
+  );
+
   useEffect(() => {
     document.documentElement.dataset.platform = platform;
   }, []);
@@ -286,6 +307,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onSession={onSession}
               onFocusId={onFocusId}
               onInspect={inspect}
+              reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />
@@ -308,7 +330,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} /> : <DetailPanel />}
+              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} onShowInTable={showInTable} /> : <DetailPanel />}
             </div>
           </>
         )}

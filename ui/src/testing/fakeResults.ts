@@ -90,6 +90,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "urlDetail"
   | "urlList"
   | "urlHtml"
+  | "urlTabs"
+  | "copyText"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -258,6 +260,15 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       if (u.title === null) return { ...none, missing: "no_body" };
       const html = fakePageHtml(u);
       return { html, missing: null, bytes: new TextEncoder().encode(html).length, encoding: "UTF-8", encoding_errors: false };
+    },
+    // Internal URLs are in both fake tabs, external ones only in Response
+    // codes; ids outside `urls` (the fake list rows) are in no tab.
+    urlTabs: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id);
+      return !u ? [] : u.internal ? ["internal", "response-codes"] : ["response-codes"];
+    },
+    copyText: async (text) => {
+      results.copied.push(text);
     },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;

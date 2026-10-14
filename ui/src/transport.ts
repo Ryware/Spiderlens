@@ -419,6 +419,10 @@ export interface Transport {
   urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
   /** The page's stored HTML, or why there is none. */
   urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The tabs that list the URL unfiltered, in display order; empty when none does. */
+  urlTabs(path: string, id: number): Promise<string[]>;
+  /** Puts one value on the clipboard. */
+  copyText(text: string): Promise<void>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
@@ -502,6 +506,8 @@ export const tauriTransport: Transport = {
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
   urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlTabs: (path, id) => invoke("url_tabs", { path, id }),
+  copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
