@@ -171,6 +171,11 @@ pub struct FilterDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// Shown only while it matches something (or is the active filter), so
+    /// a long list of rarely used filters does not crowd the strip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub hide_when_empty: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -327,6 +332,7 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         cond,
         need: Need::Base,
         derived: None,
+        hide_when_empty: None,
     }
 }
 
@@ -338,6 +344,10 @@ const fn link_filter(id: &'static str, label: &'static str, cond: &'static str) 
 }
 
 impl FilterDef {
+    const fn when_present(mut self) -> Self {
+        self.hide_when_empty = Some(true);
+        self
+    }
     const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
@@ -849,6 +859,26 @@ fn build() -> Vec<TabDef> {
                 filter("transient", "Failed, may work later", TRANSIENT).needs(Need::Attempts),
                 filter("permanent", "Failed, permanent", PERMANENT).needs(Need::Attempts),
                 filter("retried", "Needed more than one attempt", "u.attempts > 1").needs(Need::Attempts),
+                // One filter per error class (spec 004 FR-012), listed only
+                // when the crawl has such errors.
+                filter("class_dns", "DNS lookup failed", "u.error_class = 'dns'").when_present(),
+                filter("class_dns_temporary", "DNS temporarily unavailable", "u.error_class = 'dns_temporary'")
+                    .when_present(),
+                filter("class_connection", "Connection failed", "u.error_class = 'connection'").when_present(),
+                filter("class_timeout", "Timed out", "u.error_class = 'timeout'").when_present(),
+                filter("class_tls_invalid", "Invalid TLS certificate", "u.error_class = 'tls_invalid'").when_present(),
+                filter(
+                    "class_redirect_problem",
+                    "Redirect problem",
+                    "u.error_class IN ('redirect_problem', 'redirect_loop')",
+                )
+                .when_present(),
+                filter("class_content_problem", "Content problem", "u.error_class = 'content_problem'").when_present(),
+                filter("class_malformed_url", "Malformed URL", "u.error_class = 'malformed_url'").when_present(),
+                filter("class_host_unavailable", "Host unavailable", "u.error_class = 'host_unavailable'")
+                    .when_present(),
+                filter("class_http_429", "Too many requests (429)", "u.error_class IS NULL AND u.status = 429")
+                    .when_present(),
             ],
             search_column: None,
             scoped: true,
