@@ -22,6 +22,10 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 jiff.workspace = true
+spiderlens-integrations.workspace = true
+rusqlite.workspace = true
+secrecy.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 spiderlens-test-fixtures.workspace = true
