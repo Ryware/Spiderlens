@@ -299,6 +299,7 @@ export function StartState({
   library,
   onOpenRecent,
   onCompare,
+  onManageCrawls,
 }: {
   setup: CrawlSetup;
   error?: string | null;
@@ -309,13 +310,15 @@ export function StartState({
   onOpenRecent?: (path: string) => void;
   /** Opens the comparison setup (spec 012). */
   onCompare?: () => void;
+  /** Opens Manage crawls (spec 019 US1, FR-023). */
+  onManageCrawls?: () => void;
 }) {
   const mode = setup.config?.mode ?? "spider";
   const urlIssues = setup.issues.filter((i) => i.path === "input.start_url");
   return (
     <section aria-label="Start" className="h-full overflow-y-auto">
       <div className="flex min-h-full flex-col items-center justify-center gap-5 p-8">
-        {library && <StorageWarning storage={library.storage} />}
+        {library && <StorageWarning storage={library.storage} onManage={onManageCrawls} />}
         <div className="flex max-w-md flex-col items-center gap-2 text-center">
           <h1 className="m-0 text-xl font-semibold tracking-tight text-balance">{mode === "spider" ? "Crawl a website" : "Crawl a list of URLs"}</h1>
           <p className="m-0 text-base text-fg-2">
@@ -364,7 +367,7 @@ export function StartState({
         </div>
 
         {library && onOpenRecent && <RecentCrawls library={library} onOpen={onOpenRecent} />}
-        {library && <UnsavedCrawls library={library} />}
+        {library && <UnsavedCrawls library={library} onManage={onManageCrawls} />}
       </div>
     </section>
   );

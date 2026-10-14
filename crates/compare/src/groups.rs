@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
-use spiderlens_results::{ColumnDef, ValueKind, build_derived, csv_field, tab};
+use spiderlens_results::{ColumnDef, Derived, ValueKind, build_derived, csv_field, tab};
 use ts_rs::TS;
 
 use crate::elements::{Element, ElementKind};
@@ -109,8 +109,9 @@ pub struct GroupPage {
 enum Source {
     /// An expression over the workspace pair (`p`, `c`).
     Ws(String),
-    /// A results column read from one crawl file by URL id.
-    Crawl(usize, &'static ColumnDef),
+    /// A results column read from one crawl file by URL id, with the
+    /// derived table its tab reads as `x`.
+    Crawl(usize, &'static ColumnDef, Option<Derived>),
 }
 
 pub(crate) struct GroupView {
@@ -289,7 +290,7 @@ impl Comparison {
                             sortable: false,
                             width: c.width,
                         });
-                        src.push(Source::Crawl(n, c));
+                        src.push(Source::Crawl(n, c, t.rows));
                     }
                 }
             }
@@ -402,18 +403,18 @@ impl Comparison {
                 });
             }
         }
-        let crawl_cols: Vec<(usize, usize, &'static ColumnDef)> = v
+        let crawl_cols: Vec<(usize, usize, &'static ColumnDef, Option<Derived>)> = v
             .sources
             .iter()
             .enumerate()
             .filter_map(|(i, s)| match s {
-                Source::Crawl(n, c) => Some((i, *n, *c)),
+                Source::Crawl(n, c, x) => Some((i, *n, *c, *x)),
                 Source::Ws(_) => None,
             })
             .collect();
         let (columns, total) = (v.columns.clone(), v.total);
         for side in 0..2 {
-            let cols: Vec<_> = crawl_cols.iter().filter(|(_, n, _)| *n == side).collect();
+            let cols: Vec<_> = crawl_cols.iter().filter(|(_, n, _, _)| *n == side).collect();
             if cols.is_empty() {
                 continue;
             }
@@ -421,14 +422,19 @@ impl Comparison {
                 .iter()
                 .filter_map(|r| if side == 0 { r.prev_id } else { r.cur_id })
                 .collect();
-            let values =
-                self.crawl_values(side, &cols.iter().map(|(_, _, c)| *c).collect::<Vec<_>>(), &ids)?;
+            let x = cols.iter().find_map(|(_, _, _, x)| *x);
+            let values = self.crawl_values(
+                side,
+                &cols.iter().map(|(_, _, c, _)| *c).collect::<Vec<_>>(),
+                x,
+                &ids,
+            )?;
             for r in &mut rows {
                 let Some(id) = (if side == 0 { r.prev_id } else { r.cur_id }) else {
                     continue;
                 };
                 if let Some(vals) = values.get(&id) {
-                    for ((i, _, _), val) in cols.iter().zip(vals) {
+                    for ((i, _, _, _), val) in cols.iter().zip(vals) {
                         r.values[*i] = val.clone();
                     }
                 }
@@ -448,14 +454,13 @@ impl Comparison {
         &mut self,
         side: usize,
         cols: &[&'static ColumnDef],
+        rows: Option<Derived>,
         ids: &[i64],
     ) -> Result<HashMap<i64, Vec<serde_json::Value>>> {
         let s = &mut self.sides[side];
-        for c in cols {
-            if let Some(d) = c.derived
-                && !s.derived.contains(&d)
-            {
-                build_derived(&s.conn, d)?;
+        for d in cols.iter().filter_map(|c| c.derived).chain(rows) {
+            if !s.derived.contains(&d) {
+                build_derived(&s.conn, d, &s.features)?;
                 s.derived.push(d);
             }
         }
@@ -469,8 +474,12 @@ impl Comparison {
         }
         let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
         let mut stmt = s.conn.prepare(&format!(
-            "SELECT u.id, {} FROM urls u WHERE u.id IN ({list})",
-            exprs.join(", ")
+            "SELECT u.id, {} FROM urls u{} WHERE u.id IN ({list})",
+            exprs.join(", "),
+            rows.map_or(String::new(), |d| format!(
+                " LEFT JOIN temp.{} x ON x.id = u.id",
+                d.table()
+            ))
         ))?;
         let mut q = stmt.query([])?;
         while let Some(r) = q.next()? {

@@ -16,6 +16,7 @@ fn pair(dir: &tempfile::TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
             urls: 600,
             links_per_page: 2,
             seed,
+            ..Synth::default()
         }
         .write(path)
         .unwrap();

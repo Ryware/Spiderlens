@@ -98,7 +98,7 @@ function EntryText({ entry: e }: { entry: RecentEntry }) {
 }
 
 /** Crawls kept in the app's own folder until saved somewhere, by size, so space can be freed (spec 006 edge cases). */
-export function UnsavedCrawls({ library, openPath = null }: { library: CrawlLibrary; openPath?: string | null }) {
+export function UnsavedCrawls({ library, openPath = null, onManage }: { library: CrawlLibrary; openPath?: string | null; onManage?: () => void }) {
   const [confirm, setConfirm] = useState<RecentEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const u = library.unsaved;
@@ -118,6 +118,11 @@ export function UnsavedCrawls({ library, openPath = null }: { library: CrawlLibr
         <span className="ml-auto font-normal tabular" data-testid="unsaved-total">
           Unsaved crawls use {formatSize(u.total_bytes)}
         </span>
+        {onManage && (
+          <Button size="sm" variant="quiet" onClick={onManage}>
+            Manage crawls…
+          </Button>
+        )}
       </h2>
       {error && (
         <Notice kind="bad" role="alert">
@@ -138,11 +143,11 @@ export function UnsavedCrawls({ library, openPath = null }: { library: CrawlLibr
         ))}
       </ul>
       {confirm && (
-        <Modal open onOpenChange={(o) => !o && setConfirm(null)} title={`Delete ${title(confirm)}? This can't be undone.`} description="Its results are removed from this computer.">
+        <Modal open onOpenChange={(o) => !o && setConfirm(null)} title={`Move ${title(confirm)} to the Trash?`} description="You can restore it from the Trash.">
           <div className="flex justify-end gap-2">
             <Button onClick={() => setConfirm(null)}>Cancel</Button>
             <Button variant="destructive" onClick={() => void remove(confirm)}>
-              Delete
+              Move to Trash
             </Button>
           </div>
         </Modal>
@@ -152,7 +157,7 @@ export function UnsavedCrawls({ library, openPath = null }: { library: CrawlLibr
 }
 
 /** Little space left where unsaved crawls are kept. */
-export function StorageWarning({ storage }: { storage: StorageStatus | null }) {
+export function StorageWarning({ storage, onManage }: { storage: StorageStatus | null; onManage?: () => void }) {
   if (!storage?.low) return null;
   return (
     <Notice kind="warn" role="alert" className="w-full max-w-xl rounded-lg border border-line bg-surface px-3 py-2">
@@ -160,6 +165,11 @@ export function StorageWarning({ storage }: { storage: StorageStatus | null }) {
         ? `Only ${formatSize(storage.free_bytes)} free on the drive for unsaved crawls (keep at least ${formatSize(storage.reserve_bytes)}).`
         : `Little space is free on the drive for unsaved crawls (keep at least ${formatSize(storage.reserve_bytes)}).`}{" "}
       Save crawls elsewhere or delete ones you no longer need.
+      {onManage && (
+        <Button size="sm" className="ml-2" onClick={onManage}>
+          Manage crawls…
+        </Button>
+      )}
     </Notice>
   );
 }

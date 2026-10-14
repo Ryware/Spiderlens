@@ -26,6 +26,11 @@ tauri-plugin-clipboard-manager = "2"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+jiff.workspace = true
+trash = "5.2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

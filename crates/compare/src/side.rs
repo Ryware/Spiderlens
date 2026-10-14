@@ -92,19 +92,40 @@ fn fill_attached(
     conn.execute_batch("BEGIN")?;
     let mut derived: Vec<Derived> = Vec::new();
     for (k, s) in layout.slots.iter().enumerate() {
-        if let Some(d) = s.filter.derived
-            && filter_available(features, layout, k)
-            && !derived.contains(&d)
-        {
-            derived.push(d);
+        if !filter_available(features, layout, k) {
+            continue;
+        }
+        for d in s.filter.derived.into_iter().chain(s.tab.rows) {
+            if !derived.contains(&d) {
+                derived.push(d);
+            }
         }
     }
-    for d in derived {
-        build_derived(conn, d)?;
+    // A tab that lists the rows of a derived table reads it as `x`; only
+    // one such table exists (page titles).
+    let rows: Vec<Derived> = layout
+        .slots
+        .iter()
+        .filter_map(|s| s.tab.rows)
+        .fold(Vec::new(), |mut v, d| {
+            if !v.contains(&d) {
+                v.push(d);
+            }
+            v
+        });
+    debug_assert!(rows.len() <= 1, "two tabs read different tables as x");
+    let join = rows
+        .first()
+        .filter(|d| derived.contains(d))
+        .map_or(String::new(), |d| {
+            format!(" LEFT JOIN temp.{} x ON x.id = u.id", d.table())
+        });
+    for &d in &derived {
+        build_derived(conn, d, features)?;
     }
 
-    let html_ok = tab("page-titles").expect("page titles tab").eligible;
-    let internal = tab("internal").expect("internal tab").eligible;
+    let html_ok = tab("page-titles").expect("page titles tab").eligible_on_urls();
+    let internal = tab("internal").expect("internal tab").eligible_on_urls();
     let mut names = vec![
         "side", "id", "url", "key", "internal", "html_ok", "reach", "depth",
     ]
@@ -134,7 +155,7 @@ fn fill_attached(
                 let s = &layout.slots[k];
                 format!(
                     "(CASE WHEN ({}) AND ({}) THEN {} ELSE 0 END)",
-                    s.tab.eligible,
+                    s.tab.eligible_on_urls(),
                     s.filter.cond,
                     1i64 << (k % BITS)
                 )
@@ -157,7 +178,7 @@ fn fill_attached(
         }
     }
     let sql = format!(
-        "INSERT INTO cmp.side_rows ({}) SELECT {} FROM main.urls u WHERE u.id BETWEEN ?1 AND ?2",
+        "INSERT INTO cmp.side_rows ({}) SELECT {} FROM main.urls u{join} WHERE u.id BETWEEN ?1 AND ?2",
         names.join(", "),
         exprs.join(",\n  ")
     );
