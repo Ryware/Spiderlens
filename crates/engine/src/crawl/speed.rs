@@ -78,6 +78,17 @@ impl SiteSpeed {
         }
     }
 
+    /// A new cap while the crawl runs (spec 004 plan D13): the allowance is
+    /// clamped to it, and a fixed (non-adaptive) cap applies at once.
+    pub fn set_max(&mut self, max_per_host: u32, adaptive: bool) {
+        self.max = max_per_host.max(1);
+        self.adaptive = adaptive;
+        if !adaptive {
+            self.allowance = self.max;
+        }
+        self.allowance = self.allowance.min(self.max);
+    }
+
     /// Requests this site may have open now.
     pub fn allowance(&self) -> u32 {
         self.allowance

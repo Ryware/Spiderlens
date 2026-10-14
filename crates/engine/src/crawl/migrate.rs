@@ -22,10 +22,11 @@ pub struct Step {
 }
 
 /// Every change to the crawl file after the base, in order. Append only.
-pub const STEPS: &[Step] = &[Step {
-    version: 3,
-    additive: true,
-    sql: "CREATE TABLE events (
+pub const STEPS: &[Step] = &[
+    Step {
+        version: 3,
+        additive: true,
+        sql: "CREATE TABLE events (
         id INTEGER PRIMARY KEY,
         at INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -33,7 +34,27 @@ pub const STEPS: &[Step] = &[Step {
         os TEXT NOT NULL,
         detail TEXT
     );",
-}];
+    },
+    // Spec 004: attempt counts, the error's sub-reason, the retry timer and
+    // the crawl log (data-model.md).
+    Step {
+        version: 4,
+        additive: true,
+        sql: "ALTER TABLE urls ADD COLUMN attempts INTEGER;
+        ALTER TABLE urls ADD COLUMN round_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE urls ADD COLUMN error_reason TEXT;
+        ALTER TABLE urls ADD COLUMN retry_at INTEGER;
+        ALTER TABLE urls ADD COLUMN manual_retry INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE crawl_log (
+            id INTEGER PRIMARY KEY,
+            at INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            host_key TEXT,
+            url_id INTEGER,
+            message TEXT NOT NULL
+        );",
+    },
+];
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();
