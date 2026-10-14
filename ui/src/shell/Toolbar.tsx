@@ -5,6 +5,8 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { RetryAvailability } from "../crawl/RetryFailed";
 import { Button, cn, Input, Kbd, Segmented, Tooltip } from "../components/ui";
 import { platform } from "./platform";
+import type { Appearance, Level } from "./appearance";
+import { BrightnessPopover } from "./BrightnessPopover";
 
 /**
  * The crawl lives here (FR-002): mode, start URL or list, Start, settings and
@@ -18,9 +20,13 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   onStart: () => void;
   onOpenSettings: (category?: "list" | "speed") => void;
   onOpenPalette: () => void;
+  appearance: Appearance;
+  level: Level;
+  systemDark: boolean;
+  onAppearance: (patch: Partial<Appearance>) => void;
   retry: RetryAvailability;
   onRetry: () => void;
-}>(function Toolbar({ setup, run, onStart, onOpenSettings, onOpenPalette, retry, onRetry }, urlRef) {
+}>(function Toolbar({ setup, run, onStart, onOpenSettings, onOpenPalette, appearance, level, systemDark, onAppearance, retry, onRetry }, urlRef) {
   const { config, list } = setup;
   const locked = run.active;
   const mode = config?.mode ?? "spider";
@@ -31,6 +37,7 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   return (
     <header
       data-tauri-drag-region
+      data-region="chrome"
       className={cn("flex h-toolbar shrink-0 items-center gap-2 border-b border-line bg-chrome px-3", platform === "mac" && "pl-mac-inset")}
     >
       <Segmented
@@ -94,6 +101,7 @@ export const Toolbar = forwardRef<HTMLInputElement, {
       <Button onClick={() => onOpenSettings()} aria-label="Configure">
         <SlidersHorizontal aria-hidden className="size-3.5" /> Configure <Kbd keys="Mod+," />
       </Button>
+      <BrightnessPopover appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
       <Tooltip content="Commands">
         <Button variant="quiet" icon onClick={onOpenPalette} aria-label="Open command palette">
           <CommandIcon className="size-4" />

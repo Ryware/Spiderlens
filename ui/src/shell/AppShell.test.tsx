@@ -69,15 +69,23 @@ test("about_shows_error_when_engine_unreachable", async () => {
 });
 
 test("theme_choice_applies_and_persists", async () => {
-  // US3-1, US3-2
+  // spec 017 US3-1, US3-2; spec 018 FR-014, FR-015
   const { unmount } = render(<App transport={fakeTransport()} />);
   await screen.findByLabelText("Start URL");
-  expect(document.documentElement.dataset.theme).toBe("light");
-  await palette("Appearance: Dark");
-  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+  // Follows the system by default; jsdom reports a light system.
+  expect(document.documentElement.dataset.level).toBe("light");
+  expect(document.documentElement.dataset.accent).toBe("teal");
+  await palette("Brightness: Dark");
+  await waitFor(() => expect(document.documentElement.dataset.level).toBe("dark"));
+  expect(document.documentElement.dataset.tone).toBe("dark");
+  await palette("Accent: Cobalt");
+  await waitFor(() => expect(document.documentElement.dataset.accent).toBe("cobalt"));
   unmount();
   await renderApp();
-  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.dataset.level).toBe("dark");
+  expect(document.documentElement.dataset.accent).toBe("cobalt");
+  await palette("Appearance: Follow system");
+  await waitFor(() => expect(document.documentElement.dataset.level).toBe("light"));
 });
 
 test("keyboard_only_configure_and_start", async () => {
@@ -96,8 +104,8 @@ test("keyboard_only_configure_and_start", async () => {
 
 test("recent_commands_come_first", async () => {
   await renderApp();
-  await palette("Appearance: Light");
+  await palette("Brightness: Soft");
   fireEvent.keyDown(window, { key: "k", code: "KeyK", ctrlKey: true });
   const recent = await screen.findByText("Recent");
-  expect(recent.parentElement?.textContent).toContain("Appearance: Light");
+  expect(recent.parentElement?.textContent).toContain("Brightness: Soft");
 });
