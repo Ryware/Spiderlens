@@ -234,11 +234,15 @@ test("columns_reorder_from_the_keyboard_in_the_columns_menu", async ({ page }) =
   const headers = () => grid.getByRole("columnheader").allTextContents();
   await page.getByRole("button", { name: "Columns" }).click();
   const menu = page.getByRole("menu");
-  // Arrow down to Title (Address, Status code, Title), then move it up twice.
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await expect(menu.getByRole("menuitemcheckbox", { name: /^Title/ })).toBeFocused();
+  // Arrow down to Title, then move it up twice. Where the first arrow lands
+  // after a click-open differs by platform (macOS Chromium starts one item
+  // earlier), so step until Title has focus rather than counting presses.
+  const title = menu.getByRole("menuitemcheckbox", { name: /^Title/ });
+  await expect(menu).toBeVisible();
+  for (let i = 0; i < 6 && !(await title.evaluate((el) => el === document.activeElement)); i++) {
+    await page.keyboard.press("ArrowDown");
+  }
+  await expect(title).toBeFocused();
   await page.keyboard.press("Alt+ArrowUp");
   await expect(page.getByRole("status").filter({ hasText: "Title moved to position 2 of 4" })).toHaveCount(1);
   await page.keyboard.press("Alt+ArrowUp");
