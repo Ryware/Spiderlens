@@ -57,7 +57,7 @@
 - [x] T028 [P] [US5] "Retry failed URLs" in the toolbar and command palette, confirmation with counts by class, disabled with reason; Vitest tests
 - [x] T029 [P] Settings › Network and retries: new fields; Speed and Retry editable during a crawl with "Apply to running crawl"; Vitest tests
 - [x] T030 [P] Crawl summary panel: errors by class, transient/permanent, retries, recovered, hosts paused, network pause message; Vitest tests
-- [ ] T031 Results (with the spec 007 owner): Attempts column, class labels incl. sub-reasons and HTTP classes, "Transient errors" / "Permanent errors" / per-class filters in Response codes, detail pane fields, "Waiting to retry" state; Rust and Vitest tests. *Done: Attempts column, transient / permanent / "needed more than one attempt" filters, attempts and manual retry in the detail pane, "Waiting to retry". Open: one filter per class and sub-reason labels in the table.*
+- [x] T031 Results (with the spec 007 owner): Attempts column, class labels incl. sub-reasons and HTTP classes, "Transient errors" / "Permanent errors" / per-class filters in Response codes, detail pane fields, "Waiting to retry" state; Rust and Vitest tests. *Done, including one filter per class (listed only when it matches). Sub-reasons show in the error message.*
 
 ## Phase 9: Polish
 

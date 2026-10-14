@@ -2244,7 +2244,11 @@ impl Run {
                     response.canonical_conflict = Some(distinct.len() > 1);
                 }
 
-                if internal && !entry.check_only {
+                // A 503 or 429 page is the server's "try later" page, not the
+                // page itself: its links are not followed, so a manual retry
+                // that gets the real page leaves nothing behind (spec 004).
+                let try_later = FinalClass::of_status(o.status).is_transient(Some(o.status), None);
+                if internal && !entry.check_only && !try_later {
                     for (pos, (r, b)) in refs.iter().enumerate() {
                         let nofollow = match r.kind {
                             LinkKind::Anchor if r.nofollow => Some(Nofollow::Link),
