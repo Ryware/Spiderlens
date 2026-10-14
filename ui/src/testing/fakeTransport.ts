@@ -59,7 +59,7 @@ export function defaultConfig(): CrawlConfig {
       host_pause_max_secs: 600,
       host_give_up_after: 5,
     },
-    extraction: { store_html: true },
+    extraction: { store_html: true, check_amp: false },
   };
 }
 

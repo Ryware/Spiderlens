@@ -1,7 +1,7 @@
 // One results tab (US1-US4): filters with counts, scope, search, columns,
 // the table, copy and export.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
@@ -68,6 +68,7 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  toolbar,
 }: {
   transport: Transport;
   path: string;
@@ -77,6 +78,8 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Controls for this tab's own pass, such as Check spelling. */
+  toolbar?: ReactNode;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -254,6 +257,7 @@ export function ResultsView({
             />
           </div>
         </div>
+        {toolbar}
         <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
       </header>
 

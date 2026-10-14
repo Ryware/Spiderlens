@@ -266,6 +266,11 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              toolbar={
+                resultTab.id === "amp" ? (
+                  <p className="m-0 text-sm text-fg-3">These checks are a core subset of AMP's rules, not the official AMP validator.</p>
+                ) : undefined
+              }
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} />

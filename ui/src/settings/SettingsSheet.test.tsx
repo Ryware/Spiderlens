@@ -233,5 +233,5 @@ test("store_html_setting_reaches_the_crawl", async () => {
   await waitFor(() => expect(start().disabled).toBe(false));
   fireEvent.click(start());
   await waitFor(() => expect(t.crawls.started).toHaveLength(1));
-  expect(t.crawls.started[0].config.extraction).toEqual({ store_html: false });
+  expect(t.crawls.started[0].config.extraction).toEqual({ store_html: false, check_amp: false });
 });

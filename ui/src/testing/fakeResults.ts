@@ -21,6 +21,8 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** Failed AMP checks, for AMP pages. */
+  ampFailures?: number;
 }
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
@@ -56,9 +58,21 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: true,
   },
+  {
+    id: "amp",
+    title: "AMP",
+    columns: [col("address", "Address", "url", 420, "amp"), col("amp_failures", "Failed checks", "int", 110, "amp")],
+    filters: [
+      { id: "all", label: "All", need: "amp" },
+      { id: "failing", label: "Failing a check", need: "amp" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
+const cell = (u: FakeUrl, c: string) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, amp_failures: u.ampFailures ?? null })[c] ?? null;
 
 export interface FakeResults {
   urls: FakeUrl[];
@@ -116,6 +130,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
     const tab = fakeTabs.find((t) => t.id === q.tab)!;
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    if (q.tab === "amp") us = us.filter((u) => u.ampFailures !== undefined);
+    if (q.tab === "amp" && q.filter === "failing") us = us.filter((u) => (u.ampFailures ?? 0) > 0);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -218,6 +234,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: true,
+        amp: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

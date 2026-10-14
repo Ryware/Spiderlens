@@ -231,3 +231,22 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
     await expect(page.getByPlaceholder("Type a command or a tab name")).toBeHidden();
   }
 });
+
+// Spec 027 part E: the AMP tab lists AMP pages and says its checks are a subset.
+test("amp_tab_lists_amp_pages_with_the_core_subset_note", async ({ page }) => {
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features.push("amp");
+    s.results.urls[1].ampFailures = 0;
+    s.results.urls[2].ampFailures = 3;
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "AMP" }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  const tab = page.getByRole("region", { name: "AMP" });
+  await expect(tab.getByText("These checks are a core subset of AMP's rules, not the official AMP validator.")).toBeVisible();
+  await expect(page.getByTestId("row-count")).toHaveText("2 URLs");
+  await tab.getByRole("button", { name: /^Failing a check/ }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1 URL");
+});

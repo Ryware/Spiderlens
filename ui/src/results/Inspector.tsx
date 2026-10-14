@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CornerDownRight, MousePointerClick } from "lucide-react";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { AmpDetail } from "../generated/AmpDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
@@ -28,6 +29,39 @@ const fieldLabels: Record<string, string> = {
   attempts: "Retry attempts",
   raw_html: "Page HTML",
 };
+
+const ampCheck: Record<string, string> = {
+  runtime: "Runtime script",
+  boilerplate: "Boilerplate style",
+  viewport: "Viewport",
+  canonical: "Canonical",
+  author_script: "Author script",
+  style_size: "Custom CSS size",
+  disallowed: "Disallowed element",
+};
+
+/** What the AMP checks found (spec 027 part E). */
+function AmpSection({ amp }: { amp: AmpDetail }) {
+  const title = amp.format === "email" ? "AMP for email" : "AMP";
+  return (
+    <Section title={`${title} (${amp.failures.length === 0 ? "passes" : `${amp.failures.length} failed`})`}>
+      {amp.paired === false && <Notice kind="warn">The canonical page has no amphtml link back to this page.</Notice>}
+      {amp.failures.length === 0 && amp.paired !== false && <p className="m-0 text-sm text-fg-3">Passes every check SpiderLens runs.</p>}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm" data-selectable>
+        {amp.failures.map((f, i) => (
+          <li key={`${f.check}-${i}`} className="flex flex-col">
+            <span>
+              <span className="font-medium text-bad">{ampCheck[f.check] ?? f.check}</span>
+              {f.pos !== null && <span className="text-xs text-fg-3"> · element {f.pos.toLocaleString()}</span>}
+            </span>
+            <span className="text-xs text-fg-2">{f.detail}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="m-0 text-xs text-fg-3">A core subset of AMP's rules, not the official AMP validator.</p>
+    </Section>
+  );
+}
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -265,6 +299,8 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
       >
         <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} />
       </Section>
+
+      {d.amp && <AmpSection amp={d.amp} />}
 
       {d.headers.length > 0 && (
         <Section title={`Response headers (${d.headers.length})`}>
