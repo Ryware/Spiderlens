@@ -317,6 +317,94 @@ test("dropping_a_header_on_itself_changes_nothing", async () => {
   expect(localStorage.getItem("spiderlens.columns.v1")).toBeNull();
 });
 
+test("alt_arrows_in_the_columns_menu_move_a_column_and_say_where", async () => {
+  await openInternal();
+  await openColumns();
+  const status = () => screen.getAllByRole("status").find((s) => s.className.includes("sr-only"))!;
+  columnItem("Title").focus();
+  fireEvent.keyDown(columnItem("Title"), { key: "ArrowUp", altKey: true });
+  await waitFor(() => expect(headers()).toEqual(["Address", "Title", "Status code", "H1"]));
+  expect(status().textContent).toBe("Title moved to position 2 of 4");
+  // The menu lists shown columns in their order on screen, hidden ones after.
+  expect(screen.getAllByRole("menuitemcheckbox").map((i) => i.textContent?.replace("Not collected", ""))).toEqual(["Address", "Title", "Status code", "H1", "Depth"]);
+  expect(document.activeElement).toBe(columnItem("Title"));
+  fireEvent.keyDown(columnItem("Title"), { key: "ArrowUp", altKey: true });
+  await waitFor(() => expect(headers()).toEqual(["Title", "Address", "Status code", "H1"]));
+  fireEvent.keyDown(columnItem("Title"), { key: "ArrowUp", altKey: true });
+  expect(status().textContent).toBe("Title is already first");
+  fireEvent.keyDown(columnItem("Address"), { key: "ArrowDown", altKey: true });
+  await waitFor(() => expect(headers()).toEqual(["Title", "Status code", "Address", "H1"]));
+  expect(status().textContent).toBe("Address moved to position 3 of 4");
+  // Hidden columns have no place to move to; plain arrows stay the menu's.
+  fireEvent.keyDown(columnItem("Depth"), { key: "ArrowUp", altKey: true });
+  fireEvent.keyDown(columnItem("H1"), { key: "ArrowUp" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(headers()).toEqual(["Title", "Status code", "Address", "H1"]);
+  // Saved like a drag.
+  expect(JSON.parse(localStorage.getItem("spiderlens.columns.v1")!).internal.order).toEqual(["title", "status_code", "address", "h1"]);
+  cleanup();
+  await openInternal();
+  expect(headers()).toEqual(["Title", "Status code", "Address", "H1"]);
+});
+
+// Enter to inspector, Mod+1..9 ------------------------------------------------
+
+const detailsBox = () => details().parentElement!;
+
+test("enter_on_a_row_moves_focus_into_the_details_and_escape_returns", async () => {
+  await openInternal();
+  fireEvent.click(rows()[2]);
+  grid().focus();
+  key("Enter");
+  await waitFor(() => expect(document.activeElement).toBe(detailsBox()));
+  await focusedIs("https://example.com/page-2");
+  fireEvent.keyDown(detailsBox(), { key: "Escape" });
+  expect(document.activeElement).toBe(grid());
+});
+
+test("enter_with_no_row_selected_does_nothing", async () => {
+  await openInternal();
+  grid().focus();
+  key("Enter");
+  await new Promise((r) => setTimeout(r, 20));
+  expect(document.activeElement).toBe(grid());
+});
+
+test("enter_shows_hidden_details_first", async () => {
+  await openInternal();
+  fireEvent.keyDown(window, { key: "i", code: "KeyI", ctrlKey: true, altKey: true });
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Details" })).toBeNull());
+  fireEvent.click(rows()[1]);
+  grid().focus();
+  key("Enter");
+  await waitFor(() => expect(document.activeElement).toBe(detailsBox()));
+});
+
+test("mod_digit_switches_result_tabs", async () => {
+  await openInternal();
+  const tabKey = (n: number) => fireEvent.keyDown(window, { key: String(n), code: `Digit${n}`, ctrlKey: true });
+  // Internal, Links (Link Score), External, Response codes.
+  tabKey(4);
+  await screen.findByRole("region", { name: "Response codes" });
+  expect(screen.getByRole("button", { name: "Response codes" }).getAttribute("aria-current")).toBe("page");
+  tabKey(1);
+  await screen.findByRole("region", { name: "Internal" });
+  // Digits without the modifier, or with Alt, stay with whatever has focus.
+  fireEvent.keyDown(window, { key: "3", code: "Digit3" });
+  fireEvent.keyDown(window, { key: "3", code: "Digit3", ctrlKey: true, altKey: true });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.getByRole("region", { name: "Internal" })).toBeTruthy();
+});
+
+test("mod_digit_does_nothing_before_a_crawl", async () => {
+  render(<App transport={fakeTransport()} />);
+  await screen.findByLabelText("Start URL");
+  fireEvent.keyDown(window, { key: "1", code: "Digit1", ctrlKey: true });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByRole("region", { name: "Internal" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
+});
+
 // Response codes: scope and filters -----------------------------------------
 
 async function openResponseCodes(urls?: FakeUrl[]) {
