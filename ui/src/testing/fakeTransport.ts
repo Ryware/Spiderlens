@@ -14,6 +14,7 @@ import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeAuditTransport, type FakeAudit } from "./fakeAudit";
 import type { FakeIssues } from "./fakeIssues";
 import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
@@ -264,7 +265,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -334,6 +335,7 @@ export function fakeTransport(
     ...schedulesApi,
     schedules,
 
+    ...fakeAuditTransport(),
     saved,
     crawls,
     picks,

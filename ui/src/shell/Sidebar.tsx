@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
+import { Activity, Gauge, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import type { IssuesSummary } from "../generated/IssuesSummary";
 import { IssuesNav } from "../issues/IssuesNav";
@@ -46,6 +46,7 @@ const later: NavItem[] = [
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
 export const customIcon = (id: string): LucideIcon => (id === "custom_search" ? TextSearch : Braces);
+export const reportItem: NavItem = { id: "report", title: "Report", icon: Gauge };
 
 export function Sidebar({
   active,
@@ -121,6 +122,7 @@ export function Sidebar({
     <nav aria-label="Sections" data-material-region className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 flex list-none flex-col gap-px p-0">
         {item({ id: "overview", title: "Overview", icon: Activity }, true)}
+        {item(reportItem, results)}
         {/* Spec 012: the open comparison, alongside the crawl. */}
         {comparison && item({ id: "comparison", title: "Comparison", icon: GitCompareArrows }, true)}
         {item({ id: "schedules", title: "Schedules", icon: CalendarClock }, true)}

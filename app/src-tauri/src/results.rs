@@ -133,7 +133,7 @@ impl State {
     }
 
     /// Runs `f` on the reader of `path` and returns its answer.
-    async fn with<T: Send + 'static>(
+    pub(crate) async fn with<T: Send + 'static>(
         &self,
         path: &Path,
         f: impl FnOnce(&mut Reader) -> Result<T, String> + Send + 'static,
