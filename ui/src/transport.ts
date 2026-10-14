@@ -26,6 +26,11 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
+import type { AnalysisRun } from "./generated/AnalysisRun";
+import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
+import type { PositionRule } from "./generated/PositionRule";
+import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
 
 export interface BuildInfo {
@@ -414,16 +419,34 @@ export interface Transport {
   viewCounts(path: string, tab: string, scope: UrlScope): Promise<FilterCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
   /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
   vizScene(path: string, view: ViewState): Promise<Scene>;
+  /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
+  analysisRun(path: string): Promise<AnalysisRun>;
+  /** Starts Crawl Analysis in the background: progress and done arrive as events. */
+  analysisStart(path: string): Promise<void>;
+  /** Cancels the running Crawl Analysis; earlier results stay. */
+  analysisCancel(): Promise<void>;
+  onAnalysisProgress(cb: (p: AnalysisProgressEvent) => void): Promise<() => void>;
+  onAnalysisDone(cb: (d: AnalysisDone) => void): Promise<() => void>;
+  /** Uses these link analysis settings for the open file from now on. */
+  analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
+  /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
+  positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
 }
+
+/** `analysis-progress` (spec 023 FR-013). */
+export type AnalysisProgressEvent = AnalysisProgress & { path: string };
+/** `analysis-done`: `run` is null when cancelled or failed. */
+export type AnalysisDone = { path: string; run: AnalysisRun | null; cancelled: boolean; error: string | null };
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
 
@@ -497,11 +520,18 @@ export const tauriTransport: Transport = {
   viewCounts: (path, tab, scope) => invoke("view_counts", { path, tab, scope }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),
+  analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisStart: (path) => invoke("analysis_start", { path }),
+  analysisCancel: () => invoke("analysis_cancel"),
+  onAnalysisProgress: (cb) => listen<AnalysisProgressEvent>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisDone: (cb) => listen<AnalysisDone>("analysis-done", (e) => cb(e.payload)),
+  analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
+  positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
 };

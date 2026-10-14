@@ -110,6 +110,9 @@ pub enum Derived {
     VizCrawlTree,
     /// `temp.viz_dirs` and `temp.viz_dir_urls`: the directory tree.
     VizDirs,
+    /// `link_positions`: where on its page each body link sits (spec 023
+    /// US4), from the stored HTML.
+    LinkPositions,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -716,6 +719,17 @@ fn build() -> Vec<TabDef> {
                     "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id \
                      AND l.kind = 'anchor' AND t.internal = 1 AND (l.nofollow = 1 OR l.page_nofollow = 1))",
                 ),
+                // Positions 1, 2 and 5: navigation, header, footer (US4).
+                filter(
+                    "boilerplate_only",
+                    "Linked only from navigation, header or footer",
+                    "EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'anchor' AND l.from_id <> u.id) \
+                     AND NOT EXISTS (SELECT 1 FROM links l LEFT JOIN link_positions p \
+                     ON p.from_id = l.from_id AND p.pos = l.pos WHERE l.to_id = u.id AND l.kind = 'anchor' \
+                     AND l.from_id <> u.id AND COALESCE(p.position, 0) NOT IN (1, 2, 5))",
+                )
+                .needs(Need::Analysis)
+                .reads(Derived::LinkPositions),
             ],
             search_column: None,
             scoped: false,
@@ -1003,7 +1017,11 @@ fn build() -> Vec<TabDef> {
 }
 
 /// Builds a derived table on `conn` (dropping an older copy).
-pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite::Result<()> {
+pub(crate) fn build_derived(
+    conn: &rusqlite::Connection,
+    d: Derived,
+    links: &spiderlens_config::LinkAnalysisSettings,
+) -> rusqlite::Result<()> {
     match d {
         Derived::OccTitle => conn.execute_batch(&format!(
             "DROP TABLE IF EXISTS temp.occ_title;
@@ -1027,7 +1045,12 @@ pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
-        Derived::LinkMetrics => crate::analysis::link_metrics::build(conn).map(|_| ()),
+        Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+        }),
+        Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+        }),
         Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
         Derived::VizDirs => crate::viz::dirs::build(conn),
     }

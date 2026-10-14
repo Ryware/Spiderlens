@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
+import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
@@ -92,6 +93,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const results = useResults(transport, crawl.path, crawl.running);
+  const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const onFocusId = results.setFocusId;
@@ -100,6 +102,18 @@ export function AppShell({ transport }: { transport: Transport }) {
   useEffect(() => {
     document.documentElement.dataset.platform = platform;
   }, []);
+
+  // Edited link analysis settings apply to the open crawl file too, which
+  // then works out positions and Link Score again (spec 023 FR-023). The
+  // file's own settings stand until the user changes them.
+  const links = setup.config?.links;
+  const linksKey = links ? JSON.stringify(links) : null;
+  const lastLinks = useRef<string | null>(null);
+  useEffect(() => {
+    const before = lastLinks.current;
+    lastLinks.current = linksKey;
+    if (links && crawl.path && before !== null && before !== linksKey) void transport.analysisSettings(crawl.path, links).catch(() => {});
+  }, [linksKey, crawl.path, transport]);
 
   // Focus the start URL once the window is ready (US1-2).
   const configReady = setup.config !== null;
@@ -172,6 +186,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
+      {
+        id: "analyse",
+        title: "Work out Link Score",
+        group: "Crawl",
+        keywords: ["analysis", "link positions", "pagerank"],
+        enabled: crawl.path !== null && !crawl.running && analysis.status !== "running",
+        run: analysis.start,
+      },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -202,7 +224,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, openPicker, openFile, recentOpen, resume, saveAs, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, retry, hasInput, startCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -288,7 +310,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         )}
         </div>
       </div>
-      <StatusBar setup={setup} run={crawl} />
+      <StatusBar setup={setup} run={crawl} analysis={analysis} />
 
       <SettingsSheet
         open={settingsOpen}
@@ -302,6 +324,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         level={level}
         systemDark={systemDark}
         onAppearance={updateUi}
+        crawlPath={crawl.path}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />

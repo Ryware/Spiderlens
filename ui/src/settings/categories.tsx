@@ -8,11 +8,12 @@ import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
 import { HeadersEditor } from "./HeadersEditor";
+import { LinkAnalysisBody } from "./LinkAnalysisSettings";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "links" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -34,6 +35,7 @@ export const categories: Category[] = [
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "links", title: "Link analysis", description: "Link Score, and where on the page each link sits.", prefixes: ["links"] },
   {
     id: "appearance",
     title: "Appearance",
@@ -54,7 +56,20 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 }
 
 /** `live`: a crawl is running and only the settings it can take on at once are editable. */
-export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
+export function CategoryBody({
+  id,
+  setup,
+  transport,
+  live,
+  crawlPath = null,
+}: {
+  id: CategoryId;
+  setup: CrawlSetup;
+  transport: Transport;
+  live?: boolean;
+  /** The open crawl file, for testers that read it. */
+  crawlPath?: string | null;
+}): ReactNode {
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
@@ -372,5 +387,8 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
           </Row>
         </Group>
       );
+
+    case "links":
+      return <LinkAnalysisBody links={config.links} issues={issues} transport={transport} path={crawlPath} onChange={(links) => set((c) => ({ ...c, links }))} />;
   }
 }
