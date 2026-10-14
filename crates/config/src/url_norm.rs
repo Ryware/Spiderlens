@@ -155,6 +155,20 @@ pub fn tidy_percent(s: &str) -> String {
 }
 
 fn tidy(s: &str) -> String {
+    // Decoding can create a new escape (`%%30a` gives `%0a`), so repeat until
+    // nothing changes. Each pass that changes anything only shortens the text
+    // or upper-cases hex, so this stops after a few passes.
+    let mut out = tidy_once(s);
+    loop {
+        let next = tidy_once(&out);
+        if next == out {
+            return out;
+        }
+        out = next;
+    }
+}
+
+fn tidy_once(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -351,6 +365,13 @@ mod tests {
             link("https://a.test/", "/a?B=1&a=2").unwrap().as_str(),
             "https://a.test/a?B=1&a=2"
         );
+    }
+
+    #[test]
+    fn decoding_that_forms_a_new_escape_is_stable() {
+        let once = link("https://a.test/", "/%%30a").unwrap();
+        assert_eq!(once.as_str(), "https://a.test/%0A");
+        assert_eq!(link("https://a.test/", once.as_str()).unwrap(), once);
     }
 
     #[test]
