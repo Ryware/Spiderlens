@@ -14,6 +14,14 @@ test("saved_state_round_trips_and_fills_new_fields", () => {
   expect(loadUiState()).toEqual({ ...defaults, detailCollapsed: true });
 });
 
+test("translucent_defaults_on_and_survives_a_bad_value", () => {
+  expect(defaults.translucent).toBe(true);
+  saveUiState({ ...defaults, translucent: false });
+  expect(loadUiState().translucent).toBe(false);
+  localStorage.setItem("spiderlens.ui", JSON.stringify({ v: 2, translucent: "yes" }));
+  expect(loadUiState().translucent).toBe(true);
+});
+
 test("corrupt_or_other_version_state_gives_defaults", () => {
   localStorage.setItem("spiderlens.ui", "{oops");
   expect(loadUiState()).toEqual(defaults);

@@ -86,11 +86,12 @@ test("palette_lists_result_tabs_only_once_a_crawl_exists", async () => {
   const running = await listed("Internal");
   expect(running).toContain("Internal");
   await closePalette();
-  // While it runs, Start, Open and the mode switches are gone; Pause and Stop are offered.
+  // While it runs, Start and the mode switches are gone; Pause and Stop are
+  // offered. Open stays: it asks to pause the running crawl first (spec 006).
   const controls = await listed("crawl");
   expect(controls).toEqual(expect.arrayContaining(["Pause crawl", "Stop crawl"]));
   expect(controls).not.toContain("Start crawl");
-  expect(controls).not.toContain("Open crawl…");
+  expect(controls).toContain("Open crawl…");
   expect(controls).not.toContain("Resume crawl");
 });
 
