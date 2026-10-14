@@ -8,8 +8,7 @@
 //! - `crawl-warning` once per warning,
 //! - `crawl-notice` when a host pauses, resumes or is given up, or the
 //!   network drops (spec 004),
-//! - `crawl-finished` when it completes, pauses, stops or fails; the near
-//!   duplicate analysis then runs on the same thread (spec 020).
+//! - `crawl-finished` when it completes, pauses, stops or fails.
 //!
 //! One crawl runs at a time, as in other desktop crawlers.
 
@@ -471,12 +470,6 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                 .expect("crawl lock")
                 .take()
                 .map_or(file, |a| a.path);
-            // Claimed before `crawl-finished` so the window never sees the
-            // file as "not analysed" in between.
-            let analysis = match &result {
-                Ok(summary) if summary.crawled > 0 => crate::near_dup::after_crawl(&app, &file),
-                _ => None,
-            };
             let (report, error, local) = match result {
                 Ok(summary) => (Some(Report::new(file.clone(), summary)), None, None),
                 Err(CrawlError::Local(l)) => (
@@ -500,9 +493,6 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                     local,
                 },
             );
-            if let Some(analyse) = analysis {
-                analyse();
-            }
             if state.quitting.load(Ordering::SeqCst) {
                 app.exit(0);
             }

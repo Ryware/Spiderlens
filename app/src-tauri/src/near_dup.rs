@@ -142,14 +142,6 @@ fn analyse_writable(app: &AppHandle, path: &Path, settings: Option<ContentSettin
     finish(app, path, result, cancel);
 }
 
-/// Called on the crawl's thread once a crawl has stopped with pages in it
-/// (FR-012): the analysis belongs to the crawl, as in `spiderlens crawl`.
-pub fn after_crawl(app: &AppHandle, path: &Path) -> Option<impl FnOnce() + use<>> {
-    let cancel = app.state::<State>().claim(path)?;
-    let (app, path) = (app.clone(), path.to_path_buf());
-    Some(move || analyse_writable(&app, &path, None, &cancel))
-}
-
 #[tauri::command]
 pub async fn near_dup_status(
     results: tauri::State<'_, results::State>,
