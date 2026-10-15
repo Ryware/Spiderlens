@@ -9,6 +9,7 @@ import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ViewState } from "../generated/ViewState";
+import type { ExportOptions } from "../generated/ExportOptions";
 import { fakeScene, fakeTermLinks } from "./fakeViz";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
@@ -120,6 +121,8 @@ export interface FakeResults {
   progress(p: Partial<ExportProgress>): void;
   /** Visualisation states asked for (spec 022). */
   viz: ViewState[];
+  /** Visualisation exports asked for, in order. */
+  vizExports: { view: ViewState; options: ExportOptions; file: string }[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
   /** Link analysis settings sent for the open file (spec 023). */
@@ -148,6 +151,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "urlList"
   | "vizScene"
   | "vizTermLinks"
+  | "vizExport"
   | "cookiesList"
   | "cookieUrls"
   | "urlHtml"
@@ -180,6 +184,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     cookies: [],
     copied: [],
     viz: [],
+    vizExports: [],
     linkSettings: [],
     analyses: [],
     analysisCancels: 0,
@@ -283,6 +288,11 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return fakeScene(results.urls, state);
     },
     vizTermLinks: async (_p, state, term, limit) => fakeTermLinks(results.urls, state, term, limit ?? 500),
+    vizExport: async (_p, view, options, file) => {
+      results.vizExports.push({ view, options, file });
+      if (file.includes("too-big")) throw new Error("the picture would be 20000 x 900 pixels, over the 16000 pixel limit: export it as SVG, or export a focused view");
+      return { files: options.format === "csv" ? [file, file.replace(/\.csv$/, "-links.csv")] : [file] };
+    },
     urlDetail: async (_p, id) => {
       const u = results.urls.find((x) => x.id === id)!;
       const d: UrlDetail = {

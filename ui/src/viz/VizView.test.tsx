@@ -19,7 +19,7 @@ const last = (t: ReturnType<typeof fakeTransport>) => t.results.viz[t.results.vi
 test("first_scene_is_the_default_state", async () => {
   const { t } = setup();
   await screen.findByRole("application");
-  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "uniform", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {}, terms: "words", stop_words: true, followed_only: false });
+  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "score", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {}, terms: "words", stop_words: true, followed_only: false });
   expect(canvas().getAttribute("aria-label")).toMatch(/^Crawl tree: \d+ nodes/);
 });
 
@@ -219,4 +219,48 @@ test("a_term_lists_its_links_and_a_source_drives_the_details", async () => {
   expect(onFocusId).toHaveBeenCalledWith(1);
   fireEvent.click(within(list).getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("region", { name: /^Links using/ })).toBeNull();
+});
+
+test("export_asks_format_size_and_theme_then_saves_the_view", async () => {
+  const { t } = setup();
+  await screen.findByRole("application");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  const dialog = await screen.findByRole("dialog", { name: "Export view" });
+  fireEvent.click(within(dialog).getByRole("radio", { name: "4x" }));
+  fireEvent.click(within(dialog).getByRole("radio", { name: "Dark" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Export…" }));
+  expect(await screen.findByText("Saved /exports/example.com-crawl-tree.png")).toBeTruthy();
+  const e = t.results.vizExports[0];
+  expect(e.file).toBe("/exports/example.com-crawl-tree.png");
+  expect(e.options).toMatchObject({ format: "png", scale: 4, theme: "dark", palette: {} });
+  // The export is of the state on screen.
+  expect(e.view).toEqual(last(t));
+});
+
+test("export_as_shown_sends_the_window_colours_and_csv_names_both_files", async () => {
+  const { t } = setup();
+  await screen.findByRole("application");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  const dialog = await screen.findByRole("dialog", { name: "Export view" });
+  fireEvent.click(within(dialog).getByRole("radio", { name: "SVG" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Export…" }));
+  await screen.findByText(/^Saved .*\.svg$/);
+  expect(t.results.vizExports[0].options.format).toBe("svg");
+  expect(t.results.vizExports[0].options.theme).toBe("light");
+  expect(Object.keys(t.results.vizExports[0].options.palette)).not.toContain("--font-ui");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  const again = await screen.findByRole("dialog", { name: "Export view" });
+  fireEvent.click(within(again).getByRole("radio", { name: "Nodes and links (CSV)" }));
+  expect(within(again).queryByRole("radio", { name: "Dark" })).toBeNull();
+  fireEvent.click(within(again).getByRole("button", { name: "Export…" }));
+  expect(await screen.findByText("Saved /exports/example.com-crawl-tree.csv and /exports/example.com-crawl-tree-links.csv")).toBeTruthy();
+});
+
+test("a_refused_export_says_why", async () => {
+  const { t } = setup();
+  t.pickVizPath = async () => "/exports/too-big.png";
+  await screen.findByRole("application");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Export view" })).getByRole("button", { name: "Export…" }));
+  expect(await screen.findByText(/export it as SVG/)).toBeTruthy();
 });

@@ -370,7 +370,10 @@ pub fn scene(conn: &Connection, state: &ViewState) -> Result<Scene> {
             "Every word of the anchor text is a stop word: turn Stop words off to see them.".to_string()
         }
     });
-    let mut size_legend = format!("Size: links that use the term ({} with anchor text)", with_text);
+    let mut size_legend = format!(
+        "Size: links that use the term ({} with anchor text)",
+        super::thousands(with_text.into())
+    );
     if state.terms == Terms::Words && !terming.words {
         size_legend.push_str(". Whole anchors: this language has no spaces between words");
     }

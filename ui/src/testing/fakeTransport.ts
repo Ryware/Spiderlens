@@ -206,6 +206,7 @@ export function fakeTransport(
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
+    pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",

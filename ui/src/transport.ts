@@ -24,6 +24,9 @@ import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
+import type { ExportDone } from "./generated/ExportDone";
+import type { ExportFormat } from "./generated/ExportFormat";
+import type { ExportOptions } from "./generated/ExportOptions";
 import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
@@ -631,6 +634,9 @@ export interface Transport {
   vizScene(path: string, view: ViewState): Promise<Scene>;
   /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
   vizTermLinks(path: string, view: ViewState, term: string, limit?: number): Promise<TermLinks>;
+  /** Writes the view to `file` as SVG, PNG or CSV (spec 022 FR-024). */
+  vizExport(path: string, view: ViewState, options: ExportOptions, file: string): Promise<ExportDone>;
+  pickVizPath(name: string, format: ExportFormat): Promise<string | null>;
   /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
   analysisRun(path: string): Promise<AnalysisRun>;
   /** Starts Crawl Analysis in the background: progress and done arrive as events. */
@@ -778,6 +784,12 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),
   vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
+  vizExport: (path, view, options, file) => invoke("viz_export", { path, view, options, file }),
+  pickVizPath: (name, format) =>
+    save({
+      defaultPath: `${name}.${format}`,
+      filters: [{ name: format === "csv" ? "CSV" : `${format.toUpperCase()} image`, extensions: [format] }],
+    }),
   analysisRun: (path) => invoke("analysis_run", { path }),
   analysisStart: (path) => invoke("analysis_start", { path }),
   analysisCancel: () => invoke("analysis_cancel"),

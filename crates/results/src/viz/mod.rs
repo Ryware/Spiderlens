@@ -10,11 +10,16 @@
 
 pub mod anchors;
 pub mod crawl_tree;
+pub mod csv;
 pub mod dirs;
+pub mod export;
 pub mod force;
 pub mod graph;
 pub mod layout;
 pub mod lod;
+pub mod palette;
+pub mod png;
+pub mod svg;
 
 use std::collections::BTreeMap;
 
@@ -346,9 +351,33 @@ impl Reader {
     }
 }
 
+/// `1711179` → `1,711,179`, for text in scenes and exports.
+pub fn thousands(v: u64) -> String {
+    let d = v.to_string();
+    let mut out = String::with_capacity(d.len() + d.len() / 3);
+    for (i, c) in d.chars().enumerate() {
+        if i > 0 && (d.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Milliseconds since the epoch, for `snapshot_at`.
 pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn thousands_groups_digits() {
+        assert_eq!(super::thousands(0), "0");
+        assert_eq!(super::thousands(999), "999");
+        assert_eq!(super::thousands(1000), "1,000");
+        assert_eq!(super::thousands(1_711_179), "1,711,179");
+    }
 }
