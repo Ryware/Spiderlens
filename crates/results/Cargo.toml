@@ -15,8 +15,17 @@ rusqlite = { workspace = true, features = ["functions", "collation"] }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
 ts-rs.workspace = true
 url.workspace = true
+quick-xml.workspace = true
+flate2.workspace = true
+jiff.workspace = true
+unicode-segmentation.workspace = true
+resvg.workspace = true
+scraper.workspace = true
+ego-tree.workspace = true
+rust_xlsxwriter.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -25,6 +34,8 @@ spiderlens-test-fixtures.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 proptest.workspace = true
+calamine.workspace = true
+csv.workspace = true
 
 [lints]
 workspace = true

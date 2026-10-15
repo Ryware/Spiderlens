@@ -17,6 +17,8 @@ fn ours(body: &[u8]) -> Value {
         body,
         truncated: false,
         robots_token: "SpiderLens",
+        a11y: false,
+        hook: None,
     });
     let raws = |kind: LinkKind| -> Vec<String> {
         d.refs

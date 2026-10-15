@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control, Crawler};
-use spiderlens_results::{ListKind, Need, Reader, UrlScope, ViewQuery, tabs};
+use spiderlens_results::{HtmlMissing, ListKind, Need, Reader, UrlScope, ViewQuery, tabs};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
 
@@ -237,6 +237,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     }
 }
 
@@ -396,14 +397,21 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     assert!(cell(&mut r, &c, "internal", "/", "response_time").is_i64());
 
     // Every filter is available, and its count equals the rows it lists.
-    // This crawl does not read PDFs (spec 027 part C has its own test).
+    // The AI checks (spec 015) run after the crawl and have their own tests;
+    // this crawl does not read PDFs (spec 027 part C has its own test).
     for tab in tabs() {
-        let counts = r.counts(tab.id, UrlScope::All).unwrap();
-        for f in tab.filters.iter().filter(|f| f.need != Need::Pdf) {
-            let n = counts.counts[f.id].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
+        let counts = r.counts(&tab.id, UrlScope::All).unwrap();
+        for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks && f.need != Need::Pdf) {
+            // Integration data is fetched after a crawl (spec 024), not by it.
+            if f.need == Need::SearchConsole {
+                assert!(counts.counts[f.id.as_ref()].is_none());
+                continue;
+            }
+            let n = counts.counts[f.id.as_ref()].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
+
             assert_eq!(
                 n,
-                paths(&mut r, &c, &q(tab.id, f.id)).len() as u64,
+                paths(&mut r, &c, &q(&tab.id, &f.id)).len() as u64,
                 "{}/{}",
                 tab.id,
                 f.id
@@ -450,6 +458,29 @@ async fn detail_shows_headers_headings_and_link_text() {
 }
 
 #[tokio::test]
+async fn page_html_reads_the_stored_source() {
+    let c = crawl(true).await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let home = id_of(&mut r, &c, "/");
+    let h = r.page_html(home).unwrap();
+    assert_eq!(h.missing, None);
+    let html = h.html.unwrap();
+    assert!(html.starts_with("<!doctype html><html><head><title>"), "{html}");
+    assert!(html.contains("<img src=\"/a.png\" alt=\"A photo\">"));
+    assert!(html.ends_with("</body></html>"));
+    assert_eq!(h.bytes, html.len() as u64);
+    assert_eq!(h.encoding.as_deref(), Some("UTF-8"));
+    assert!(!h.encoding_errors);
+
+    // An image has no stored body.
+    let img = id_of(&mut r, &c, "/a.png");
+    let h = r.page_html(img).unwrap();
+    assert_eq!((h.html, h.missing), (None, Some(HtmlMissing::NoBody)));
+
+    assert!(r.page_html(999_999).is_err());
+}
+
+#[tokio::test]
 async fn crawl_without_stored_html_says_so() {
     let c = crawl(false).await;
     let r = Reader::open(&c.path).unwrap();
@@ -460,4 +491,6 @@ async fn crawl_without_stored_html_says_so() {
     let d = r.detail(home).unwrap();
     assert!(!d.html_stored);
     assert!(d.unavailable.contains_key("raw_html"));
+    let h = r.page_html(home).unwrap();
+    assert_eq!((h.html, h.missing), (None, Some(HtmlMissing::NotStored)));
 }

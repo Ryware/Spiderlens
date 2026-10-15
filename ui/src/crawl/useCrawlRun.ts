@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
-import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, Transport } from "../transport";
+import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, SitePace, SpeedLimit, Transport } from "../transport";
 
 /**
  * Where the crawl is in its life. "pausing" and "stopping" last while the
@@ -48,6 +49,8 @@ export interface CrawlRunState {
   applied: { speed: SpeedSettings; retry: RetrySettings } | null;
   /** The disk, write or network problem that paused the crawl (spec 006 US5, spec 004 FR-015). */
   local: LocalError | null;
+  /** The Crawl Analysis pass running after the crawl (spec 009 plan D12). */
+  analysis: PassProgress | null;
 }
 
 const initial: CrawlRunState = {
@@ -62,6 +65,7 @@ const initial: CrawlRunState = {
   notices: [],
   applied: null,
   local: null,
+  analysis: null,
 };
 
 /** Only the newest notices stay on screen; the crawl log keeps them all. */
@@ -97,7 +101,7 @@ export function useCrawlRun(transport: Transport) {
   const finish = useCallback((f: CrawlFinished) => {
     endSegment();
     idRef.current = null;
-    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error, local: f.local ?? null }));
+    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error, local: f.local ?? null, analysis: null }));
   }, []);
 
   useEffect(() => {
@@ -112,6 +116,11 @@ export function useCrawlRun(transport: Transport) {
       transport.onCrawlWarning((w) => {
         if (w.id !== idRef.current) return;
         setState((s) => (s.warnings.includes(w.message) ? s : { ...s, warnings: [...s.warnings, w.message] }));
+      }),
+      transport.onPassProgress((p) => {
+        // Passes on an opened file end with their last event.
+        const done = p.total > 0 && p.done >= p.total;
+        setState((s) => ({ ...s, analysis: done && s.id === null ? null : p }));
       }),
       transport.onCrawlNotice((n) => {
         if (n.id !== idRef.current) return;
@@ -302,6 +311,14 @@ export function useCrawlRun(transport: Transport) {
       ? { probing: waiting.some((h) => h.probing || h.seconds_left === 0), secondsLeft: waiting.length ? Math.min(...waiting.map((h) => h.seconds_left)) : null }
       : null;
 
+  // What keeps the crawl from going faster, and each site's pace (spec 008
+  // FR-028, FR-029). Waits count down like pauses.
+  const countdown = <T extends { seconds_left: number | null }>(x: T): T =>
+    x.seconds_left === null ? x : { ...x, seconds_left: Math.max(0, x.seconds_left - ticked) };
+  const speedLimit: SpeedLimit | null = running && p?.limit ? countdown(p.limit) : null;
+  const sites: SitePace[] = running ? (p?.sites ?? []).map(countdown) : [];
+  const sitesTotal = running ? (p?.sites_total ?? sites.length) : 0;
+
   return {
     ...state,
     active: activePhases.includes(state.phase),
@@ -310,6 +327,9 @@ export function useCrawlRun(transport: Transport) {
     rate,
     pausedHosts,
     waitingForHost,
+    speedLimit,
+    sites,
+    sitesTotal,
     start,
     open,
     pause,

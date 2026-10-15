@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Draft
+**Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
 **Input**: Product backlog entry 011, started on the owner's approval of 2026-10-13 to open specs for every feature gap found in the comparison with Screaming Frog (gap report rows 3 and 4). Three parts: an XML sitemap audit (URLs in sitemaps compared with what was crawled, non-indexable URLs in sitemaps, errors in the sitemap files themselves, `lastmod` sanity), orphan pages (URLs known from a sitemap or another source but not linked from any crawled page), and XML sitemap generation from a crawl with options (images, hreflang, `lastmod`, exclusions, splitting at the 50,000 URL limit).
 

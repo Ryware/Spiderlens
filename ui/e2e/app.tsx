@@ -5,13 +5,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "../src/App";
-import { fakeReport, fakeTransport } from "../src/testing/fakeTransport";
-import { fakePdf, fakeUrls } from "../src/testing/fakeResults";
+import { fakeReport, fakeSitemapFile, fakeTransport } from "../src/testing/fakeTransport";
+import { fakeCookie, fakePdf, fakeUrls } from "../src/testing/fakeResults";
 import "../src/styles/app.css";
 
 const transport = fakeTransport(fakeUrls(5000));
 transport.pickCrawlFile = async () => "/crawls/example.com.spiderlens";
-const handle = Object.assign(transport, { fakeReport, fakePdf });
+const handle = Object.assign(transport, { fakeReport, fakeSitemapFile, fakeCookie, fakePdf });
 export type E2eHandle = typeof handle;
 (window as unknown as { spiderlens: E2eHandle }).spiderlens = handle;
 
