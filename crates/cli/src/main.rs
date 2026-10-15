@@ -3,6 +3,7 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod aeo_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;
@@ -35,6 +36,9 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
+    /// A quality gate failed (`aeo run --fail-under`); shared with spec 009's
+    /// `issues --fail-on`, which assigns the number at merge.
+    pub const QUALITY_GATE: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -78,6 +82,9 @@ enum Command {
     /// Link Score and link positions of a crawl file.
     #[command(subcommand)]
     Links(links_cmd::LinksCommand),
+    /// AI search checks (AEO and GEO) on a crawl file.
+    #[command(subcommand)]
+    Aeo(aeo_cmd::AeoCommand),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -175,6 +182,7 @@ fn main() -> ExitCode {
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
+        Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

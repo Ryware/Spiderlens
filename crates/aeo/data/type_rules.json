@@ -1,0 +1,257 @@
+{
+ "version": "2026-10-13",
+ "types": {
+  "Article": {
+   "required": [
+    "headline"
+   ],
+   "recommended": [
+    "image",
+    "datePublished",
+    "dateModified",
+    "author"
+   ]
+  },
+  "NewsArticle": {
+   "parent": "Article"
+  },
+  "BlogPosting": {
+   "parent": "Article"
+  },
+  "TechArticle": {
+   "parent": "Article"
+  },
+  "Organization": {
+   "required": [
+    "name"
+   ],
+   "recommended": [
+    "url",
+    "logo",
+    "sameAs"
+   ]
+  },
+  "Corporation": {
+   "parent": "Organization"
+  },
+  "NewsMediaOrganization": {
+   "parent": "Organization"
+  },
+  "LocalBusiness": {
+   "required": [
+    "name",
+    "address"
+   ],
+   "recommended": [
+    "telephone",
+    "openingHoursSpecification",
+    "geo",
+    "url"
+   ]
+  },
+  "Restaurant": {
+   "parent": "LocalBusiness"
+  },
+  "Store": {
+   "parent": "LocalBusiness"
+  },
+  "Person": {
+   "required": [
+    "name"
+   ],
+   "recommended": [
+    "url",
+    "sameAs"
+   ]
+  },
+  "WebSite": {
+   "required": [
+    "name",
+    "url"
+   ],
+   "recommended": []
+  },
+  "WebPage": {
+   "required": [],
+   "recommended": []
+  },
+  "BreadcrumbList": {
+   "required": [
+    "itemListElement"
+   ],
+   "recommended": []
+  },
+  "ListItem": {
+   "required": [
+    "position"
+   ],
+   "recommended": [
+    "name",
+    "item"
+   ]
+  },
+  "FAQPage": {
+   "required": [
+    "mainEntity"
+   ],
+   "recommended": []
+  },
+  "QAPage": {
+   "required": [
+    "mainEntity"
+   ],
+   "recommended": []
+  },
+  "Question": {
+   "required": [
+    "name"
+   ],
+   "recommended": [
+    "acceptedAnswer"
+   ]
+  },
+  "Answer": {
+   "required": [
+    "text"
+   ],
+   "recommended": []
+  },
+  "HowTo": {
+   "required": [
+    "name",
+    "step"
+   ],
+   "recommended": [
+    "image",
+    "totalTime"
+   ]
+  },
+  "Product": {
+   "required": [
+    "name"
+   ],
+   "recommended": [
+    "image",
+    "description",
+    "offers",
+    "aggregateRating",
+    "review",
+    "brand"
+   ]
+  },
+  "Offer": {
+   "required": [
+    "priceCurrency"
+   ],
+   "one_of": [
+    [
+     "price",
+     "priceSpecification"
+    ]
+   ],
+   "recommended": [
+    "availability",
+    "url"
+   ]
+  },
+  "AggregateRating": {
+   "required": [
+    "ratingValue"
+   ],
+   "one_of": [
+    [
+     "ratingCount",
+     "reviewCount"
+    ]
+   ],
+   "recommended": [
+    "bestRating"
+   ]
+  },
+  "Review": {
+   "required": [
+    "author",
+    "reviewRating"
+   ],
+   "recommended": [
+    "itemReviewed",
+    "datePublished"
+   ]
+  },
+  "Rating": {
+   "required": [
+    "ratingValue"
+   ],
+   "recommended": []
+  },
+  "Event": {
+   "required": [
+    "name",
+    "startDate",
+    "location"
+   ],
+   "recommended": [
+    "endDate",
+    "image",
+    "description",
+    "eventStatus"
+   ]
+  },
+  "Recipe": {
+   "required": [
+    "name",
+    "image"
+   ],
+   "recommended": [
+    "recipeIngredient",
+    "recipeInstructions",
+    "author",
+    "datePublished"
+   ]
+  },
+  "VideoObject": {
+   "required": [
+    "name",
+    "thumbnailUrl",
+    "uploadDate"
+   ],
+   "recommended": [
+    "description",
+    "duration",
+    "contentUrl"
+   ]
+  },
+  "SoftwareApplication": {
+   "required": [
+    "name"
+   ],
+   "recommended": [
+    "offers",
+    "aggregateRating",
+    "operatingSystem",
+    "applicationCategory"
+   ]
+  }
+ },
+ "kinds": {
+  "date": [
+   "datePublished",
+   "dateModified",
+   "dateCreated",
+   "uploadDate",
+   "startDate",
+   "endDate",
+   "validFrom",
+   "priceValidUntil"
+  ],
+  "url": [
+   "url",
+   "logo",
+   "sameAs",
+   "image",
+   "thumbnailUrl",
+   "contentUrl",
+   "item"
+  ]
+ }
+}

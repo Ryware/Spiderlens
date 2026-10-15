@@ -57,6 +57,19 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
         let s: Option<String> = ctx.get(0)?;
         Ok(s.map(|s| readable_url(&s)))
     })?;
+    // Spec 015: the AI crawlers in a stored `aeo_pages.blocked_bots` mask.
+    conn.create_scalar_function("ai_bot_names", 1, FLAGS, |ctx| {
+        let Some(mask) = ctx.get::<Option<i64>>(0)? else {
+            return Ok(None);
+        };
+        let mask = mask as u64;
+        let names: Vec<&str> = spiderlens_config::ai_bots::all()
+            .iter()
+            .filter(|b| b.index < 64 && mask & (1 << b.index) != 0)
+            .map(|b| b.name.as_str())
+            .collect();
+        Ok(Some(names.join(", ")))
+    })?;
     conn.create_scalar_function("indexability", 7, FLAGS, |ctx| {
         Ok(indexability(&IndexabilityArgs {
             state: ctx.get::<String>(0)?,

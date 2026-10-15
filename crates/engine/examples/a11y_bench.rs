@@ -61,6 +61,7 @@ fn time(pages: &[String], a11y: bool, rounds: usize) -> Duration {
                 truncated: false,
                 robots_token: "SpiderLens",
                 a11y,
+                hook: None,
             }));
         }
     }
