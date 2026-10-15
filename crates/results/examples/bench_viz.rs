@@ -51,6 +51,14 @@ fn main() {
         .expect("graph");
     print(t, &s);
     eprintln!("          {} edges, settled: {}", s.edges.len(), s.settled);
+    let t = Instant::now();
+    let s = r
+        .viz_scene(&ViewState {
+            view: ViewKind::Anchors,
+            ..ViewState::default()
+        })
+        .expect("anchors");
+    print(t, &s);
 }
 
 fn print(t: Instant, s: &spiderlens_results::viz::Scene) {

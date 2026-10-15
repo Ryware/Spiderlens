@@ -20,6 +20,8 @@ url.workspace = true
 quick-xml.workspace = true
 flate2.workspace = true
 jiff.workspace = true
+unicode-segmentation.workspace = true
+resvg.workspace = true
 scraper.workspace = true
 ego-tree.workspace = true
 

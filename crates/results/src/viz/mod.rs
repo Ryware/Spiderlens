@@ -8,12 +8,18 @@
 //! folded, and long child lists show a page at a time behind a "+N more"
 //! node (plan D4).
 
+pub mod anchors;
 pub mod crawl_tree;
+pub mod csv;
 pub mod dirs;
+pub mod export;
 pub mod force;
 pub mod graph;
 pub mod layout;
 pub mod lod;
+pub mod palette;
+pub mod png;
+pub mod svg;
 
 use std::collections::BTreeMap;
 
@@ -40,6 +46,8 @@ pub enum ViewKind {
     CrawlTree,
     DirectoryTree,
     LinkGraph,
+    /// Anchor text cloud for a page (`focus`) or the whole site.
+    Anchors,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -51,6 +59,19 @@ pub enum Layout {
     Radial,
     /// Force-directed; the link graph always uses it.
     Force,
+    /// Word cloud; the anchor text view always uses it.
+    Cloud,
+}
+
+/// What a term of an anchor text cloud is (FR-016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Terms {
+    #[default]
+    Words,
+    /// The whole anchor text, whitespace collapsed and lower case.
+    Whole,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -91,12 +112,18 @@ pub struct ViewState {
     /// Most nodes to show; None for [`TREE_BUDGET`] or [`GRAPH_BUDGET`].
     pub budget: Option<u32>,
     /// Link graph: the page to centre on (`u:<id>`), with its neighbours
-    /// up to `distance` links away (1 or 2). None: the whole site.
+    /// up to `distance` links away (1 or 2). Anchor text: the page whose
+    /// inlinks make the cloud. None: the whole site.
     pub focus: Option<String>,
     pub distance: u8,
     /// Link graph: nodes the user dragged, by key, and where to.
     #[ts(type = "Record<string, [number, number]>")]
     pub pinned: BTreeMap<String, [f32; 2]>,
+    /// Anchor text: words or whole anchors, stop words left out, and
+    /// followed links only (FR-016, FR-017).
+    pub terms: Terms,
+    pub stop_words: bool,
+    pub followed_only: bool,
 }
 
 impl Default for ViewState {
@@ -112,6 +139,9 @@ impl Default for ViewState {
             focus: None,
             distance: 1,
             pinned: BTreeMap::new(),
+            terms: Terms::Words,
+            stop_words: true,
+            followed_only: false,
         }
     }
 }
@@ -199,7 +229,10 @@ pub struct SceneNode {
     pub url_id: Option<i64>,
     pub x: f32,
     pub y: f32,
+    /// Radius; for an anchor term, half its height.
     pub r: f32,
+    /// Anchor terms: the width of the text box, centred on (x, y).
+    pub width: Option<f32>,
     pub category: Category,
     pub depth: u32,
     pub score: Option<f32>,
@@ -275,6 +308,10 @@ pub struct Scene {
     /// running crawl on their own (FR-006).
     #[ts(type = "number")]
     pub snapshot_at: i64,
+    /// Said instead of an empty picture (anchor text with nothing to show).
+    pub note: Option<String>,
+    /// Anchor text: the language whose stop words apply.
+    pub language: Option<String>,
 }
 
 impl Reader {
@@ -287,6 +324,7 @@ impl Reader {
                 let scores = self.has_derived(Derived::LinkMetrics)?;
                 return graph::scene(&self.conn, state, scores);
             }
+            ViewKind::Anchors => return anchors::scene(&self.conn, state),
         };
         self.ensure_derived([derived])?;
         // Link Score sizes and orders nodes only once worked out: a view
@@ -295,10 +333,35 @@ impl Reader {
         let tree = match state.view {
             ViewKind::CrawlTree => crawl_tree::load(&self.conn, scores)?,
             ViewKind::DirectoryTree => dirs::load(&self.conn, scores)?,
-            ViewKind::LinkGraph => unreachable!("handled above"),
+            ViewKind::LinkGraph | ViewKind::Anchors => unreachable!("handled above"),
         };
         lod::scene(&self.conn, &tree, state, scores)
     }
+}
+
+impl Reader {
+    /// The links behind one term of an anchor text cloud (FR-018).
+    pub fn viz_term_links(
+        &mut self,
+        state: &ViewState,
+        term: &str,
+        limit: usize,
+    ) -> Result<anchors::TermLinks> {
+        anchors::term_links(&self.conn, state, term, limit)
+    }
+}
+
+/// `1711179` → `1,711,179`, for text in scenes and exports.
+pub fn thousands(v: u64) -> String {
+    let d = v.to_string();
+    let mut out = String::with_capacity(d.len() + d.len() / 3);
+    for (i, c) in d.chars().enumerate() {
+        if i > 0 && (d.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Milliseconds since the epoch, for `snapshot_at`.
@@ -306,4 +369,15 @@ pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn thousands_groups_digits() {
+        assert_eq!(super::thousands(0), "0");
+        assert_eq!(super::thousands(999), "999");
+        assert_eq!(super::thousands(1000), "1,000");
+        assert_eq!(super::thousands(1_711_179), "1,711,179");
+    }
 }

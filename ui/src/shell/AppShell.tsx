@@ -120,6 +120,12 @@ export function AppShell({ transport }: { transport: Transport }) {
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
+  // Opening the anchor text cloud from the details starts a fresh view for the selected page.
+  const [anchorOpens, setAnchorOpens] = useState(0);
+  const openAnchorCloud = useCallback(() => {
+    setAnchorOpens((n) => n + 1);
+    setSection("anchor-text");
+  }, []);
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   // "Show in table" from the inspector (T027): the URL is selected in the
@@ -402,7 +408,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           ) : section === "sitemap-files" && crawl.path ? (
             <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
           ) : vizView && crawl.path ? (
-            <VizView key={`${crawl.path}\n${vizView.id}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
+            <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
@@ -432,6 +438,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                   path={crawl.path}
                   id={results.focusId}
                   onShowInTable={showInTable}
+                  onAnchorCloud={openAnchorCloud}
                   aiChecks={results.features?.available.includes("ai_checks") ?? false}
                 />
               ) : (

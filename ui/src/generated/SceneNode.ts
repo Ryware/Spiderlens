@@ -10,7 +10,15 @@ key: string, label: string,
 /**
  * The URL, for URL nodes.
  */
-url: string | null, url_id: number | null, x: number, y: number, r: number, category: Category, depth: number, score: number | null, inlinks: number | null, 
+url: string | null, url_id: number | null, x: number, y: number, 
+/**
+ * Radius; for an anchor term, half its height.
+ */
+r: number, 
+/**
+ * Anchor terms: the width of the text box, centred on (x, y).
+ */
+width: number | null, category: Category, depth: number, score: number | null, inlinks: number | null, 
 /**
  * URLs at or below this node (a folder's pages, a branch's URLs).
  */

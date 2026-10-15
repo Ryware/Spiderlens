@@ -12,6 +12,7 @@ mod links_cmd;
 mod options;
 mod schedule_cmd;
 mod sitemap_cmd;
+mod viz_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -81,6 +82,8 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Write a visualisation of a crawl file as SVG, PNG or CSV (same as the app's export).
+    Viz(Box<viz_cmd::VizArgs>),
     /// Link Score and link positions of a crawl file.
     #[command(subcommand)]
     Links(links_cmd::LinksCommand),
@@ -191,6 +194,7 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
