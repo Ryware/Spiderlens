@@ -256,7 +256,9 @@ pub(crate) async fn fetch_once(
                 response = request.send().await.map_err(|e| classify(&e))?;
                 if response.status() == StatusCode::UNAUTHORIZED {
                     auth = Some(match net.on_unauthorized(url, response.headers(), sent) {
-                        AuthOutcome::Required { schemes, supported } => AuthNote::Required { schemes, supported },
+                        AuthOutcome::Required { schemes, supported } => {
+                            AuthNote::Required { schemes, supported }
+                        }
                         AuthOutcome::Rejected { method } => AuthNote::Rejected { method },
                         // A second stale nonce in a row counts as refused.
                         AuthOutcome::RetryWithCredentials | AuthOutcome::UseNtlm => {
@@ -272,7 +274,9 @@ pub(crate) async fn fetch_once(
                 }
             }
             AuthOutcome::Rejected { method } => auth = Some(AuthNote::Rejected { method }),
-            AuthOutcome::Required { schemes, supported } => auth = Some(AuthNote::Required { schemes, supported }),
+            AuthOutcome::Required { schemes, supported } => {
+                auth = Some(AuthNote::Required { schemes, supported })
+            }
         }
     }
     read_once(response, url, read_body, max_bytes, pdf_max_bytes, auth).await

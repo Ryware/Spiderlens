@@ -22,12 +22,12 @@ use spiderlens_config::{
     AccessSettings, AuthMethod, Change, CrawlConfig, Mode, ModeInput, ProxySettings, RetrySettings, Secret,
     Severity, SignIn, SpeedSettings, validate,
 };
-use spiderlens_engine::net::{ProxyInEffect, ProxyProblem};
 use spiderlens_engine::crawl::{
     Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LocalError, LogEntry,
     NotCrawledReason, Notice, Progress, ResumeOptions, RunCommand, Upgrade, default_file_name,
     retry_preview as engine_retry_preview,
 };
+use spiderlens_engine::net::{ProxyInEffect, ProxyProblem};
 use spiderlens_render::{BrowserInfo, FindOptions, NotUsable};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -388,7 +388,11 @@ pub async fn crawl_add_sign_in(
         return Err("Enter the site's address, such as https://staging.example.com.".into());
     }
     let (reply, answer) = oneshot::channel();
-    command(&app.state::<State>(), id, RunCommand::AddSignIn { sign_in, reply });
+    command(
+        &app.state::<State>(),
+        id,
+        RunCommand::AddSignIn { sign_in, reply },
+    );
     answer.await.map_err(|_| "The crawl is not running.".to_string())
 }
 
@@ -407,14 +411,17 @@ pub struct ProxyTest {
 /// screen.
 #[tauri::command]
 pub async fn proxy_test(proxy: ProxySettings, probe_url: String) -> Cmd<ProxyTest> {
-    let start = spiderlens_config::normalize_url(&probe_url).map_err(|_| "Enter a start URL to test the proxy with.".to_string())?;
+    let start = spiderlens_config::normalize_url(&probe_url)
+        .map_err(|_| "Enter a start URL to test the proxy with.".to_string())?;
     let probe = start.join("/robots.txt").map_err(|e| e.to_string())?;
     let access = AccessSettings {
         proxy,
         ..AccessSettings::default()
     };
     Ok(
-        match spiderlens_engine::net::test_proxy(&access, &spiderlens_engine::CheckOptions::default(), &probe).await {
+        match spiderlens_engine::net::test_proxy(&access, &spiderlens_engine::CheckOptions::default(), &probe)
+            .await
+        {
             Ok(in_effect) => ProxyTest {
                 ok: true,
                 in_effect: Some(in_effect),

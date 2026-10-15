@@ -747,11 +747,7 @@ fn validate_sign_ins(c: &CrawlConfig, i: &mut Issues) {
             );
         }
         if s.user.trim().is_empty() {
-            i.error(
-                format!("{path}.user"),
-                "sign_in_user",
-                "Enter the user name.",
-            );
+            i.error(format!("{path}.user"), "sign_in_user", "Enter the user name.");
         }
         if !s.password.is_set() {
             i.error(
@@ -819,7 +815,9 @@ fn bypass_entry_ok(entry: &str) -> bool {
         return false;
     }
     if let Some((ip, bits)) = e.split_once('/') {
-        let Ok(ip) = ip.parse::<std::net::IpAddr>() else { return false };
+        let Ok(ip) = ip.parse::<std::net::IpAddr>() else {
+            return false;
+        };
         let max = if ip.is_ipv4() { 32 } else { 128 };
         return bits.parse::<u8>().is_ok_and(|b| b <= max);
     }
@@ -1344,9 +1342,7 @@ mod tests {
 
     #[test]
     fn sign_ins_login_and_proxy() {
-        use crate::{
-            AuthMethod, CheckCondition, LoginSettings, ProxyMode, Secret, SignIn, SignedOutCheck,
-        };
+        use crate::{AuthMethod, CheckCondition, LoginSettings, ProxyMode, Secret, SignIn, SignedOutCheck};
         let si = |origin: &str, user: &str, pw: Option<&str>| SignIn {
             origin: origin.into(),
             user: user.into(),
@@ -1370,7 +1366,12 @@ mod tests {
         c.access.proxy.mode = ProxyMode::Manual;
         c.access.proxy.host = "http://proxy".into();
         c.access.proxy.user = Some("ann".into());
-        c.access.proxy.bypass = vec!["localhost".into(), "*.corp.example".into(), "10.0.0.0/8".into(), "bad host".into()];
+        c.access.proxy.bypass = vec![
+            "localhost".into(),
+            "*.corp.example".into(),
+            "10.0.0.0/8".into(),
+            "bad host".into(),
+        ];
         let got: Vec<_> = validate_config(&c)
             .into_iter()
             .map(|i| (i.path, i.code))
@@ -1389,10 +1390,7 @@ mod tests {
             ("access.proxy.password", "proxy_password_missing"),
             ("access.proxy.bypass[3]", "proxy_bypass"),
         ];
-        assert_eq!(
-            got,
-            want.map(|(p, c)| (p.to_string(), c.to_string()))
-        );
+        assert_eq!(got, want.map(|(p, c)| (p.to_string(), c.to_string())));
     }
 
     #[test]

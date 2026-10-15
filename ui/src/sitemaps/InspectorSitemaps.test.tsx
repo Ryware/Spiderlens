@@ -14,14 +14,14 @@ test("sitemap_entries_list_each_file_and_its_lastmod", () => {
     />,
   );
   const list = screen.getByRole("list", { name: "Sitemaps listing this URL" });
-  expect(list).toHaveTextContent("lastmod 2026-01-02");
-  expect(list).toHaveTextContent("yesterday (not a valid date)");
-  expect(list).toHaveTextContent("no lastmod");
+  expect(list.textContent).toContain("lastmod 2026-01-02");
+  expect(list.textContent).toContain("yesterday (not a valid date)");
+  expect(list.textContent).toContain("no lastmod");
 });
 
 test("sitemap_entries_say_when_no_sitemap_lists_the_url", () => {
   render(<SitemapEntryList entries={[]} />);
-  expect(screen.getByText("Not listed in any sitemap the crawl read.")).toBeInTheDocument();
+  expect(screen.getByText("Not listed in any sitemap the crawl read.")).toBeTruthy();
 });
 
 test("sitemap_entries_load_for_the_selected_url", async () => {

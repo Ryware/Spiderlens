@@ -50,7 +50,11 @@ impl ProxyInEffect {
                 format!(
                     "{}://{user}{h}:{p} ({})",
                     self.kind.unwrap_or("http"),
-                    if self.source == "manual" { "entered" } else { "from the system settings" }
+                    if self.source == "manual" {
+                        "entered"
+                    } else {
+                        "from the system settings"
+                    }
                 )
             }
             _ if self.mode == "system" => "No proxy (the system has none set)".into(),
@@ -141,7 +145,12 @@ impl Resolved {
         {
             proxy = proxy.basic_auth(user, self.password.as_deref().unwrap_or_default());
         }
-        let bypass: Vec<&str> = self.bypass.iter().map(|b| b.trim()).filter(|b| !b.is_empty()).collect();
+        let bypass: Vec<&str> = self
+            .bypass
+            .iter()
+            .map(|b| b.trim())
+            .filter(|b| !b.is_empty())
+            .collect();
         Ok(proxy.no_proxy(NoProxy::from_string(&bypass.join(","))))
     }
 }
@@ -182,7 +191,10 @@ pub(crate) fn resolve(settings: &ProxySettings) -> Result<Option<Resolved>, Prox
 
 /// Builder settings for the proxy in effect. Without one, connections go
 /// direct, ignoring the environment.
-pub(crate) fn apply(builder: ClientBuilder, resolved: Option<&Resolved>) -> Result<ClientBuilder, ProxyProblem> {
+pub(crate) fn apply(
+    builder: ClientBuilder,
+    resolved: Option<&Resolved>,
+) -> Result<ClientBuilder, ProxyProblem> {
     match resolved {
         None => Ok(builder.no_proxy()),
         Some(r) => Ok(builder.proxy(r.proxy()?)),
@@ -212,7 +224,11 @@ pub(crate) fn parse_proxy_url(value: &str, source: &'static str) -> Option<Resol
         ProxyKind::Https => 443,
         ProxyKind::Socks5 => 1080,
     };
-    let host = url.host_str()?.trim_start_matches('[').trim_end_matches(']').to_string();
+    let host = url
+        .host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
     Some(Resolved {
         kind,
         host,
@@ -245,11 +261,21 @@ fn percent_decode(s: &str) -> String {
 
 /// `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` (either case) and `NO_PROXY`.
 pub(crate) fn from_env(get: &dyn Fn(&str) -> Option<String>) -> Option<Resolved> {
-    let var = |name: &str| get(name).or_else(|| get(&name.to_ascii_lowercase())).filter(|v| !v.trim().is_empty());
-    let value = var("HTTPS_PROXY").or_else(|| var("HTTP_PROXY")).or_else(|| var("ALL_PROXY"))?;
+    let var = |name: &str| {
+        get(name)
+            .or_else(|| get(&name.to_ascii_lowercase()))
+            .filter(|v| !v.trim().is_empty())
+    };
+    let value = var("HTTPS_PROXY")
+        .or_else(|| var("HTTP_PROXY"))
+        .or_else(|| var("ALL_PROXY"))?;
     let mut r = parse_proxy_url(&value, "env")?;
     if let Some(no) = var("NO_PROXY") {
-        r.bypass = no.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        r.bypass = no
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
     }
     Some(r)
 }
@@ -257,7 +283,11 @@ pub(crate) fn from_env(get: &dyn Fn(&str) -> Option<String>) -> Option<Resolved>
 /// Checks the proxy by requesting `probe` (the start URL's robots.txt)
 /// through `client`, with a 10 s limit (FR-022).
 pub(crate) async fn check(client: &reqwest::Client, probe: &Url) -> Result<(), ProxyProblem> {
-    let sent = client.get(probe.clone()).timeout(Duration::from_secs(10)).send().await;
+    let sent = client
+        .get(probe.clone())
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await;
     match sent {
         Ok(r) if r.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED => Err(ProxyProblem::Rejected),
         Ok(_) => Ok(()),
@@ -304,7 +334,12 @@ mod os {
                 .args(["get", schema, key])
                 .output()
                 .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_string())
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .trim_matches('\'')
+                        .to_string()
+                })
         };
         match get("mode", "org.gnome.system.proxy").as_deref() {
             Some("manual") => {}
@@ -317,7 +352,9 @@ mod os {
             ("org.gnome.system.proxy.socks", "socks5"),
         ] {
             let host = get("host", schema).unwrap_or_default();
-            let port = get("port", schema).and_then(|p| p.parse::<u16>().ok()).unwrap_or(0);
+            let port = get("port", schema)
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0);
             if !host.is_empty() && port > 0 {
                 let mut r = super::parse_proxy_url(&format!("{kind}://{host}:{port}"), "os");
                 if let Some(r) = &mut r {
@@ -396,11 +433,18 @@ pub(crate) fn parse_windows_registry(text: &str) -> Result<Option<Resolved>, Pro
     if value("ProxyEnable").as_deref() != Some("0x1") {
         return Ok(None);
     }
-    let Some(server) = value("ProxyServer") else { return Ok(None) };
+    let Some(server) = value("ProxyServer") else {
+        return Ok(None);
+    };
     // Either one proxy for everything or "http=h:p;https=h:p;socks=h:p".
     let pick = if server.contains('=') {
         let parts: Vec<(&str, &str)> = server.split(';').filter_map(|p| p.split_once('=')).collect();
-        let find = |k: &str| parts.iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map(|(_, v)| *v);
+        let find = |k: &str| {
+            parts
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(k))
+                .map(|(_, v)| *v)
+        };
         find("https")
             .map(|v| format!("http://{v}"))
             .or_else(|| find("http").map(|v| format!("http://{v}")))
@@ -439,7 +483,10 @@ mod tests {
     #[test]
     fn proxy_urls_from_settings_and_environment() {
         let r = parse_proxy_url("http://ann:p%40ss@proxy.corp:8080", "env").unwrap();
-        assert_eq!((r.kind, r.host.as_str(), r.port), (ProxyKind::Http, "proxy.corp", 8080));
+        assert_eq!(
+            (r.kind, r.host.as_str(), r.port),
+            (ProxyKind::Http, "proxy.corp", 8080)
+        );
         assert_eq!(r.user.as_deref(), Some("ann"));
         assert_eq!(r.password.as_deref(), Some("p@ss"));
         let s = parse_proxy_url("socks5://10.0.0.2", "env").unwrap();
@@ -485,14 +532,23 @@ mod tests {
         let r = parse_scutil(mac).unwrap().unwrap();
         assert_eq!((r.host.as_str(), r.port), ("proxy.corp", 8080));
         assert_eq!(r.bypass, ["*.local", "169.254/16"]);
-        assert_eq!(parse_scutil("ProxyAutoConfigEnable : 1"), Err(ProxyProblem::PacUnsupported));
+        assert_eq!(
+            parse_scutil("ProxyAutoConfigEnable : 1"),
+            Err(ProxyProblem::PacUnsupported)
+        );
 
         let win = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=p1:80;https=p2:443\n    ProxyOverride    REG_SZ    *.corp;<local>\n";
         let r = parse_windows_registry(win).unwrap().unwrap();
         assert_eq!((r.host.as_str(), r.port), ("p2", 443));
         assert_eq!(r.bypass, ["*.corp"]);
-        assert_eq!(parse_windows_registry("    ProxyEnable    REG_DWORD    0x0\n").unwrap(), None);
+        assert_eq!(
+            parse_windows_registry("    ProxyEnable    REG_DWORD    0x0\n").unwrap(),
+            None
+        );
 
-        assert_eq!(parse_gsettings_list("['localhost', '127.0.0.0/8']"), ["localhost", "127.0.0.0/8"]);
+        assert_eq!(
+            parse_gsettings_list("['localhost', '127.0.0.0/8']"),
+            ["localhost", "127.0.0.0/8"]
+        );
     }
 }

@@ -221,11 +221,11 @@ impl Reader {
             .conn
             .query_row("SELECT value FROM meta WHERE key = 'status'", [], |r| r.get(0))
             .optional()?;
-        let not_crawled = self
-            .conn
-            .query_row(&format!("SELECT COUNT(*) FROM urls WHERE {NOT_REACHED}"), [], |r| {
-                r.get::<_, i64>(0)
-            })? as u64;
+        let not_crawled = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM urls WHERE {NOT_REACHED}"),
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as u64;
         Ok(OrphanSummary {
             available,
             reason,

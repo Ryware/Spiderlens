@@ -69,12 +69,10 @@ macro_rules! problem {
     };
 }
 
-pub const CLIENT_ERROR: &str =
-    "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL AND u.status BETWEEN 400 AND 499";
+pub const CLIENT_ERROR: &str = "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL AND u.status BETWEEN 400 AND 499";
 pub const SERVER_ERROR: &str = "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL \
      AND (u.error_class IS NOT NULL OR u.status IS NULL OR u.status >= 500)";
-pub const REDIRECT: &str =
-    "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL AND u.status BETWEEN 300 AND 399";
+pub const REDIRECT: &str = "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL AND u.status BETWEEN 300 AND 399";
 pub const NOINDEX: &str = "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND u.noindex = 1";
 pub const CANONICALISED: &str = "u.in_sitemap = 1 AND u.fetched_at IS NOT NULL AND u.error_class IS NULL \

@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use spiderlens_config::{
-    AuthMethod, CheckCondition, CookiePolicy, CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, LoginSettings,
-    Mode, ProxyKind, ProxyMode, ProxySettings, QueryMode, RobotsMode, Secret, SignIn, SignedOutCheck, SpeedSettings,
-    SubdomainMode, SuppliedCookie, UaPreset, import_profile,
+    AuthMethod, CheckCondition, CookiePolicy, CrawlConfig, CustomHeader, HeaderTarget, HeaderValue,
+    LoginSettings, Mode, ProxyKind, ProxyMode, ProxySettings, QueryMode, RobotsMode, Secret, SignIn,
+    SignedOutCheck, SpeedSettings, SubdomainMode, SuppliedCookie, UaPreset, import_profile,
 };
 
 #[derive(Args, Debug, Default)]
@@ -71,14 +71,23 @@ pub struct AccessArgs {
     pub signed_out_check: Option<String>,
     /// When the check URL means signed out: redirects-to:TEXT, status:N or
     /// contains:TEXT.
-    #[arg(long, value_name = "CONDITION", requires = "signed_out_check", help_heading = "Login")]
+    #[arg(
+        long,
+        value_name = "CONDITION",
+        requires = "signed_out_check",
+        help_heading = "Login"
+    )]
     pub when: Option<String>,
     /// A site sign-in; the password comes from SPIDERLENS_PASSWORD_<HOST>.
     /// Repeatable.
     #[arg(long = "auth", value_name = "ORIGIN=USER", help_heading = "Sign-in")]
     pub sign_ins: Vec<String>,
     /// Restricts a sign-in's method. Repeatable.
-    #[arg(long = "auth-method", value_name = "ORIGIN=basic|digest|ntlm", help_heading = "Sign-in")]
+    #[arg(
+        long = "auth-method",
+        value_name = "ORIGIN=basic|digest|ntlm",
+        help_heading = "Sign-in"
+    )]
     pub auth_methods: Vec<String>,
     /// Allow a sign-in on an http:// origin, where the password is sent
     /// unencrypted.
@@ -86,7 +95,12 @@ pub struct AccessArgs {
     pub allow_insecure_auth: bool,
     /// The proxy: http://, https:// or socks5://host:port, user in the URL;
     /// the password comes from SPIDERLENS_PROXY_PASSWORD.
-    #[arg(long, value_name = "URL", conflicts_with = "proxy_system", help_heading = "Proxy")]
+    #[arg(
+        long,
+        value_name = "URL",
+        conflicts_with = "proxy_system",
+        help_heading = "Proxy"
+    )]
     pub proxy: Option<String>,
     /// Use the operating system's proxy settings.
     #[arg(long, help_heading = "Proxy")]
@@ -116,7 +130,11 @@ fn check_condition(raw: &str) -> Result<CheckCondition, String> {
     match kind.trim().to_ascii_lowercase().as_str() {
         "redirects-to" if !value.is_empty() => Ok(CheckCondition::RedirectsTo(value.to_string())),
         "contains" if !value.is_empty() => Ok(CheckCondition::Contains(value.to_string())),
-        "status" => value.trim().parse().map(CheckCondition::Status).map_err(|_| bad()),
+        "status" => value
+            .trim()
+            .parse()
+            .map(CheckCondition::Status)
+            .map_err(|_| bad()),
         _ => Err(bad()),
     }
 }
@@ -124,13 +142,22 @@ fn check_condition(raw: &str) -> Result<CheckCondition, String> {
 /// `--proxy URL` into manual proxy settings. A password in the URL is
 /// refused: secrets are never plain arguments.
 fn proxy_from_url(raw: &str) -> Result<ProxySettings, String> {
-    let with_scheme = if raw.contains("://") { raw.trim().to_string() } else { format!("http://{}", raw.trim()) };
-    let url = reqwest::Url::parse(&with_scheme).map_err(|_| format!("--proxy: '{raw}' is not a proxy address"))?;
+    let with_scheme = if raw.contains("://") {
+        raw.trim().to_string()
+    } else {
+        format!("http://{}", raw.trim())
+    };
+    let url =
+        reqwest::Url::parse(&with_scheme).map_err(|_| format!("--proxy: '{raw}' is not a proxy address"))?;
     let kind = match url.scheme() {
         "http" => ProxyKind::Http,
         "https" => ProxyKind::Https,
         "socks5" | "socks5h" => ProxyKind::Socks5,
-        other => return Err(format!("--proxy: {other}:// is not supported; use http, https or socks5")),
+        other => {
+            return Err(format!(
+                "--proxy: {other}:// is not supported; use http, https or socks5"
+            ));
+        }
     };
     if url.password().is_some() {
         return Err("--proxy: put the password in SPIDERLENS_PROXY_PASSWORD, not in the URL".into());
@@ -263,8 +290,11 @@ impl AccessArgs {
                 ));
             }
             let var = CrawlConfig::secret_env_var(&format!("sign_in:{origin}"));
-            let password = std::env::var(&var).map_err(|_| format!("set {var} to the password for {origin}"))?;
-            c.access.sign_ins.retain(|s| s.origin_key().as_deref() != Some(origin.as_str()));
+            let password =
+                std::env::var(&var).map_err(|_| format!("set {var} to the password for {origin}"))?;
+            c.access
+                .sign_ins
+                .retain(|s| s.origin_key().as_deref() != Some(origin.as_str()));
             c.access.sign_ins.push(SignIn {
                 origin,
                 user: user.to_string(),
@@ -274,8 +304,8 @@ impl AccessArgs {
         }
         for raw in &self.auth_methods {
             let (origin, m) = origin_pair(raw, "--auth-method", "basic|digest|ntlm")?;
-            let method =
-                AuthMethod::parse(m).ok_or_else(|| format!("--auth-method: '{m}' is not basic, digest or ntlm"))?;
+            let method = AuthMethod::parse(m)
+                .ok_or_else(|| format!("--auth-method: '{m}' is not basic, digest or ntlm"))?;
             let s = c
                 .access
                 .sign_ins
@@ -288,26 +318,37 @@ impl AccessArgs {
     }
 
     fn apply_login(&self, c: &mut CrawlConfig) -> Result<(), String> {
-        let wants_login = self.cookies_file.is_some()
-            || !self.sign_out_patterns.is_empty()
+        // A cookies file alone needs no stored login settings: the crawl
+        // skips the default sign-out links for any login session.
+        let wants_login = !self.sign_out_patterns.is_empty()
             || self.no_default_sign_out_patterns
             || self.signed_out_check.is_some();
         if !wants_login {
             return Ok(());
         }
-        let source = self
-            .cookies_file
+        if self.cookies_file.is_none() && c.access.login.is_none() {
+            return Err("--sign-out-pattern and --signed-out-check need --cookies-file".into());
+        }
+        // The stored login page must be a web address, never the cookies
+        // file's path (spec 025 FR-015): the profile's, else the check URL.
+        let source = c
+            .access
+            .login
             .as_ref()
-            .map(|p| p.display().to_string())
-            .or_else(|| c.access.login.as_ref().map(|l| l.login_url.clone()))
-            .ok_or("--sign-out-pattern and --signed-out-check need --cookies-file")?;
-        let login = c.access.login.get_or_insert_with(|| LoginSettings::new(source.clone()));
-        login.login_url = source;
+            .map(|l| l.login_url.clone())
+            .or_else(|| self.signed_out_check.as_ref().map(|u| u.trim().to_string()))
+            .ok_or("--sign-out-pattern with --cookies-file needs --signed-out-check or a profile with a login page")?;
+        let login = c.access.login.get_or_insert_with(|| LoginSettings::new(source));
         if self.no_default_sign_out_patterns {
             login.sign_out_patterns.clear();
         }
         for p in &self.sign_out_patterns {
-            if !p.trim().is_empty() && !login.sign_out_patterns.iter().any(|q| q.eq_ignore_ascii_case(p.trim())) {
+            if !p.trim().is_empty()
+                && !login
+                    .sign_out_patterns
+                    .iter()
+                    .any(|q| q.eq_ignore_ascii_case(p.trim()))
+            {
                 login.sign_out_patterns.push(p.trim().to_string());
             }
         }
