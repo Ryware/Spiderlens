@@ -425,6 +425,59 @@ test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) =
   await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
 });
 
+test("pasted_cookies_reach_the_crawl_and_the_cookie_audit_fits_the_window", async ({ page }) => {
+  // Spec 025 US3 and US5: cookies from a signed-in browser, then the audit.
+  await page.getByLabel("Start URL").fill("example.com");
+  await page.keyboard.press("Control+Comma");
+  const nav = page.getByRole("navigation", { name: "Settings categories" });
+  await nav.getByRole("tab", { name: /^Sign-in and cookies/ }).click();
+  await page.getByRole("button", { name: "Paste a Cookie line" }).click();
+  await page.getByLabel("Cookie line").fill("Cookie: sid=abc; theme=dark");
+  await page.getByRole("button", { name: "Add cookies" }).click();
+  await expect(page.getByLabel("Cookie 1 value")).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Cookie 2 domain")).toHaveValue("example.com");
+  await page.getByRole("radiogroup", { name: "Cookies the site sets" }).getByRole("radio", { name: "Keep" }).click();
+  await page.keyboard.press("Escape");
+  await expect(nav).toBeHidden();
+
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features = ["base", "extraction", "cookies"];
+    s.results.cookies = [
+      s.fakeCookie("sid", Array.from({ length: 300 }, (_, i) => i + 1)),
+      s.fakeCookie("ad_id", [7], { domain: "ads.example.net", third_party: true, same_site: "none" }),
+    ];
+  });
+  await page.getByLabel("Start URL").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  const config = await page.evaluate(() => window.spiderlens.crawls.started[0].config.access);
+  expect(config.cookie_policy).toBe("keep");
+  expect(config.cookies.map((c) => [c.name, c.value])).toEqual([
+    ["sid", { secret: true, value: "abc" }],
+    ["theme", { secret: true, value: "dark" }],
+  ]);
+  await page.evaluate(() => window.spiderlens.crawls.finish({ report: window.spiderlens.fakeReport("completed", 5000) }));
+  await expect(page.getByRole("status").filter({ hasText: "Completed" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cookies" }).click();
+  const table = page.getByRole("table", { name: /^Cookies/ });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await table.getByRole("row").nth(1).focus();
+  await page.keyboard.press("Enter");
+  const urls = page.getByRole("region", { name: "URLs that set sid" });
+  await expect(urls).toContainText("(300)");
+  // The URL list scrolls inside its pane; the window itself never scrolls.
+  const vp = page.viewportSize()!;
+  const box = (await urls.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(await page.evaluate(() => document.scrollingElement!.scrollHeight <= window.innerHeight)).toBe(true);
+  await urls.getByText("https://example.com/page-6", { exact: true }).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-6");
+  await expect(details.getByRole("list", { name: "Cookies set" })).toContainText("sid");
+});
+
 test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.evaluate(() => {
