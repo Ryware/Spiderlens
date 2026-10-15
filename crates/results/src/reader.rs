@@ -152,7 +152,8 @@ impl Reader {
         self.version += 1;
     }
 
-    /// Makes sure each derived table is current for this data version.
+    /// Makes sure each derived table is current for this crawl data,
+    /// updating it in place when it can (see `tabs::update_derived`).
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
         self.version()?;
         let g = self.data_gen;
@@ -161,7 +162,12 @@ impl Reader {
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
                 } else {
-                    crate::tabs::build_derived(&self.conn, d)?;
+                    // Forgotten first: a build that fails or is interrupted
+                    // half way is rebuilt from scratch next time.
+                    let built = self.derived.remove(&d).is_some();
+                    if !(built && crate::tabs::update_derived(&self.conn, d, &self.features)?) {
+                        crate::tabs::build_derived(&self.conn, d, &self.features)?;
+                    }
                 }
                 self.derived.insert(d, g);
             }

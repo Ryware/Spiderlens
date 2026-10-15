@@ -519,6 +519,7 @@ mod tests {
             urls: 20_000,
             links_per_page: 3,
             seed: 9,
+            ..Default::default()
         }
         .write(&path)
         .unwrap();

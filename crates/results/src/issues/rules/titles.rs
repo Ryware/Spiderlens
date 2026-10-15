@@ -1,11 +1,11 @@
-//! Page titles. The 007 Page titles filters use these same conditions
-//! (FR-005).
+//! Page titles. The 007 Page titles filters check the same conditions
+//! on `temp.titles` (FR-005).
 
 use crate::issues::{Category::PageTitles as C, Priority::*, Rule, Scope, Unit, rule};
 use crate::tabs::{Derived, Need};
 
 pub const MISSING: &str = "(u.title IS NULL OR norm_ws(u.title) = '')";
-pub const DUPLICATE: &str = "norm_ws(u.title) IN (SELECT o.v FROM temp.occ_title o WHERE o.n > 1)";
+pub const DUPLICATE: &str = "u.id IN (SELECT x.id FROM temp.titles x WHERE x.n > 1)";
 pub const OVER: &str = "length(norm_ws(u.title)) > thr('title.over')";
 pub const BELOW: &str = "norm_ws(u.title) <> '' AND length(norm_ws(u.title)) < thr('title.below')";
 pub const SAME_AS_H1: &str = "norm_ws(u.title) <> '' AND lower(norm_ws(u.title)) = lower((SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id))";
@@ -23,8 +23,8 @@ pub const RULES: &[Rule] = &[
         ),
     rule("title.duplicate", "Page title: duplicate", C, Medium, Scope::Pages, DUPLICATE)
         .site_wide()
-        .reads(&[Derived::OccTitle])
-        .evidence("(SELECT o.n FROM temp.occ_title o WHERE o.v = norm_ws(u.title)) || ' pages share this title'")
+        .reads(&[Derived::Titles])
+        .evidence("(SELECT x.n FROM temp.titles x WHERE x.id = u.id) || ' pages share this title'")
         .explain(
             "Pages with the same title compete with each other in search results and look the same to users choosing a result.",
             "Give each page a title that names what makes it different. If the pages are the same content, keep one and canonicalise or redirect the others.",

@@ -13,6 +13,7 @@ fn settings_and_rules_version_are_recorded_and_read_back() {
         urls: 50,
         links_per_page: 2,
         seed: 3,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();
@@ -61,6 +62,7 @@ fn a_file_without_page_data_shows_those_rules_unavailable_with_the_reason() {
         urls: 50,
         links_per_page: 2,
         seed: 3,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();

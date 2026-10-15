@@ -12,8 +12,9 @@ import { IssueSettingsPanel } from "../issues/IssueSettingsPanel";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "issues" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "issues" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -22,7 +23,7 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
-  /** An app preference, not part of the crawl profile (spec 018 FR-012). */
+  /** An app preference, not part of the crawl profile (spec 018 FR-012, spec 019 FR-025). */
   app?: boolean;
 }
 
@@ -36,6 +37,13 @@ export const categories: Category[] = [
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
   { id: "issues", title: "Issues", description: "Which checks run on the results, how urgent each is, and their limits. Changes apply to the open crawl right away.", prefixes: ["issues"] },
+  {
+    id: "storage",
+    title: "Storage",
+    description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -57,6 +65,7 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 
 /** `live`: a crawl is running and only the settings it can take on at once are editable. */
 export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
+  if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);

@@ -3,7 +3,7 @@ import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
-import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, Transport } from "../transport";
+import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, SitePace, SpeedLimit, Transport } from "../transport";
 
 /**
  * Where the crawl is in its life. "pausing" and "stopping" last while the
@@ -311,6 +311,14 @@ export function useCrawlRun(transport: Transport) {
       ? { probing: waiting.some((h) => h.probing || h.seconds_left === 0), secondsLeft: waiting.length ? Math.min(...waiting.map((h) => h.seconds_left)) : null }
       : null;
 
+  // What keeps the crawl from going faster, and each site's pace (spec 008
+  // FR-028, FR-029). Waits count down like pauses.
+  const countdown = <T extends { seconds_left: number | null }>(x: T): T =>
+    x.seconds_left === null ? x : { ...x, seconds_left: Math.max(0, x.seconds_left - ticked) };
+  const speedLimit: SpeedLimit | null = running && p?.limit ? countdown(p.limit) : null;
+  const sites: SitePace[] = running ? (p?.sites ?? []).map(countdown) : [];
+  const sitesTotal = running ? (p?.sites_total ?? sites.length) : 0;
+
   return {
     ...state,
     active: activePhases.includes(state.phase),
@@ -319,6 +327,9 @@ export function useCrawlRun(transport: Transport) {
     rate,
     pausedHosts,
     waitingForHost,
+    speedLimit,
+    sites,
+    sitesTotal,
     start,
     open,
     pause,

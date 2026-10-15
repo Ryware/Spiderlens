@@ -13,6 +13,7 @@ fn issues_column_shows_highest_priority_and_count_per_url() {
         urls: 300,
         links_per_page: 2,
         seed: 4,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();
@@ -64,6 +65,7 @@ fn with_issues_filter_keeps_exactly_the_urls_that_have_issues() {
         urls: 300,
         links_per_page: 2,
         seed: 4,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();

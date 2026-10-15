@@ -50,9 +50,9 @@ ignored tests now and enabled when spec 005 lands.
 ## Phase 5: US3 inspector (P2)
 
 - [x] T026 [US3] `detail.rs`: response details, redirect chain with loop and over-limit flags, counts; inlinks and outlinks paged (anchor text and rel **after 005**)
-- [ ] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (open: copy and "show in table" on list rows)
-- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component)
-- [ ] T029 [US3] Headers, images, headings, raw HTML sections: UI and queries behind `needs` (**after 005** for data)
+- [x] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (link, image and redirect rows: Copy URL and Show in table on hover, focus and right-click; show in table picks a tab from `url_tabs` and clears a filter or search that hides the URL)
+- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component; the lists live inside the scrolling inspector with rows of varying height, so windowing them needs their own fixed-height scroller first)
+- [x] T029 [US3] Headers, images, headings, raw HTML sections: UI and queries behind `needs` (**after 005** for data). Raw HTML: `Reader::page_html` (decoded through the engine's one `bodies` reader, `extract::body::unpack`, in the encoding extraction used) and `url_html`; the detail pane's Page HTML section opens a windowed, line-numbered, searchable source viewer with Copy, and explains the Store page HTML setting when the crawl did not keep it
 
 ## Phase 6: US4 copy and export (P2)
 
@@ -64,11 +64,11 @@ ignored tests now and enabled when spec 005 lands.
 
 ## Phase 7: US5 scale (P2)
 
-- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries; thresholds not asserted yet)
+- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries, and `-- <file> page-titles` the Page titles tab before and after a commit; `gen_crawl --pages [--result-indexes]` writes page content; thresholds not asserted yet)
 - [ ] T036 [US5] UI scroll test in the real webview (Playwright on Linux CI; manual run on Ryware's Mac): drag top to bottom, frame times, row fill ≤ 200 ms
 - [ ] T037 [US5] Memory check 100k vs 1M (SC-008)
 - [ ] T038 [US5] Live: crawl the 100k bench site with the app open and a sorted view, compare to CLI speed (SC-007 ≥ 95%)
-- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget)
+- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget) (partly: Page titles reads `temp.titles`, built once and appended to per data version, 3–10× faster, see research R8; other content tabs still scan per query; open: T036–T038 findings on the Mac)
 - [ ] T040 [US5] Record the numbers in research.md, including a run on Ryware's Mac
 
 ## Phase 8: Polish

@@ -53,6 +53,8 @@ export const fakeTabs: TabDef[] = [
     filters: [
       { id: "all", label: "All", need: "base" },
       { id: "client_error", label: "Client error (4xx)", need: "base" },
+      { id: "class_timeout", label: "Timed out", need: "base", hide_when_empty: true },
+      { id: "class_http_404", label: "Not found (404)", need: "base", hide_when_empty: true },
     ],
     search_column: null,
     scoped: true,
@@ -90,6 +92,9 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "urlHtml"
+  | "urlTabs"
+  | "copyText"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -130,6 +135,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     let us = rule ? hits(rule, results.urls) : results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
+    if (q.filter === "class_timeout") us = [];
+    if (q.filter === "class_http_404") us = us.filter((u) => u.status === 404);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
@@ -234,11 +241,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           ["x-robots-tag", "noarchive"],
         ],
         headings: 2,
-        html_stored: true,
+        html_stored: results.features.includes("raw_html") && u.title !== null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
-        unavailable: results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." },
+        unavailable: {
+          ...(results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." }),
+          ...(results.features.includes("raw_html") ? {} : { raw_html: "This crawl does not store page HTML." }),
+        },
       };
       return d;
     },
@@ -256,6 +266,23 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
                 unavailable: null,
               }
             : { total: 0, from, rows: [], headings: [], unavailable: null },
+    urlHtml: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id)!;
+      const none = { html: null, bytes: 0, encoding: null, encoding_errors: false };
+      if (!results.features.includes("raw_html")) return { ...none, missing: "not_stored" };
+      if (u.title === null) return { ...none, missing: "no_body" };
+      const html = fakePageHtml(u);
+      return { html, missing: null, bytes: new TextEncoder().encode(html).length, encoding: "UTF-8", encoding_errors: false };
+    },
+    // Internal URLs are in both fake tabs, external ones only in Response
+    // codes; ids outside `urls` (the fake list rows) are in no tab.
+    urlTabs: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id);
+      return !u ? [] : u.internal ? ["internal", "response-codes"] : ["response-codes"];
+    },
+    copyText: async (text) => {
+      results.copied.push(text);
+    },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;
       const cols = columns.map((c) => v.tab.columns.findIndex((x) => x.id === c));
@@ -290,4 +317,10 @@ export function fakeUrls(n: number): FakeUrl[] {
     depth: i === 0 ? 0 : 1,
     internal: true,
   }));
+}
+
+/** The stored source of a fake page: long enough to need windowing. */
+export function fakePageHtml(u: FakeUrl, paragraphs = 2000): string {
+  const body = Array.from({ length: paragraphs }, (_, i) => `    <p>Paragraph ${i + 1} of ${u.url}</p>`);
+  return ["<!doctype html>", "<html>", "  <head>", `    <title>${u.title}</title>`, "  </head>", "  <body>", ...body, "  </body>", "</html>", ""].join("\n");
 }

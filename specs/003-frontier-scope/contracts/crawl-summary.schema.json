@@ -20,6 +20,15 @@
     "url_limit_reached": { "type": "boolean" },
     "failed_by_class": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 }, "description": "Spec 007 FR-005: failed URLs per error class." },
     "active_ms": { "type": "integer", "minimum": 0, "description": "Spec 007 FR-004: time spent crawling, pauses excluded, across runs." },
+    "speed_events": {
+      "type": "array",
+      "description": "Spec 008 FR-021: sites that slowed down, asked to wait or paused, one entry per run.",
+      "items": {
+        "type": "object",
+        "required": ["host", "summary"],
+        "properties": { "host": { "type": "string" }, "summary": { "type": "string" } }
+      }
+    },
     "hosts": {
       "type": "array",
       "items": {

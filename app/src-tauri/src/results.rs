@@ -16,8 +16,8 @@ use spiderlens_config::IssueSettings;
 use spiderlens_results::analysis::{AnalysisProgress, AnalysisReport};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabCounts, TabDef,
-    UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
+    ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts,
+    TabDef, UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
 };
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -109,6 +109,15 @@ impl State {
         answer
             .await
             .map_err(|_| "The results reader stopped.".to_string())?
+    }
+
+    /// The crawl the results window reads, if any.
+    pub fn open_path(&self) -> Option<PathBuf> {
+        self.actor
+            .lock()
+            .expect("results lock")
+            .as_ref()
+            .map(|a| a.path.clone())
     }
 
     /// Lets go of `path` (before it is deleted or moved by Save As).
@@ -268,6 +277,26 @@ pub async fn url_list(
     state
         .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
         .await
+}
+
+/// A page's stored HTML for the source viewer (T029).
+#[tauri::command]
+pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageHtml> {
+    state.with(&path, move |r| r.page_html(id).map_err(err)).await
+}
+
+/// The tabs that list URL `id` unfiltered, for "show in table".
+#[tauri::command]
+pub async fn url_tabs(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<&'static str>> {
+    state.with(&path, move |r| r.tabs_of(id).map_err(err)).await
+}
+
+/// Puts one value (an inspector row's URL) on the clipboard.
+#[tauri::command]
+pub fn copy_text(app: AppHandle, text: String) -> Cmd<()> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| format!("Could not copy: {e}"))
 }
 
 /// Puts the selected rows on the clipboard as TSV with a header (FR-026)

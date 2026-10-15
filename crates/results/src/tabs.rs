@@ -101,8 +101,16 @@ impl ValueKind {
 /// version (plan D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Derived {
-    /// `temp.occ_title(v, n)`: each normalised title and how many pages use it.
-    OccTitle,
+    /// `temp.titles(id, t, len, k, n, same_h1, count)`: one row per Page
+    /// titles row (an HTML page fetched successfully) with its normalised
+    /// title `t`, that title's length, the natural sort key of the title as
+    /// written `k`, how many of those pages use `t` (NULL when empty),
+    /// whether `t` equals the first H1 ignoring case, and how many titles
+    /// the page has (NULL without page content); and `temp.title_occ(v, n)`:
+    /// each non-empty `t` and how many of those pages use it. Built in one scan, so the tab's sorts, filters
+    /// and counts read stored values instead of calling `norm_ws`, `natkey`
+    /// and `content_kind` and probing `pages` per row on every query (T039).
+    Titles,
     /// `temp.redirects(id, hops, final_id, is_loop)`: each redirect chain.
     Redirects,
     /// `temp.occ_md(v, n)`: each meta description and how many pages use it.
@@ -123,6 +131,36 @@ pub enum Derived {
     IssueHits,
 }
 
+impl Derived {
+    pub(crate) fn table(self) -> &'static str {
+        match self {
+            Self::Titles => "titles",
+            Self::Redirects => "redirects",
+            Self::OccMeta => "occ_md",
+            Self::OccH1 => "occ_h1",
+            Self::OccH2 => "occ_h2",
+            Self::OccText => "occ_text",
+            Self::PageFlags => "page_flags",
+            Self::IssueHits => "issue_hits",
+        }
+    }
+
+    /// The `urls u` condition that picks exactly the rows this table holds
+    /// when it is a tab's row source.
+    pub(crate) fn rows_eligible(self) -> &'static str {
+        match self {
+            Self::Titles => HTML_OK,
+            Self::Redirects
+            | Self::OccMeta
+            | Self::OccH1
+            | Self::OccH2
+            | Self::OccText
+            | Self::PageFlags
+            | Self::IssueHits => "1",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct ColumnDef {
@@ -138,6 +176,10 @@ pub struct ColumnDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// A stored `natkey(expr)` to order by instead of computing it per row.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub key: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -157,6 +199,11 @@ pub struct FilterDef {
     #[serde(skip)]
     #[ts(skip)]
     pub threshold: Option<(&'static str, &'static str)>,
+    /// Shown only while it matches something (or is the active filter), so
+    /// a long list of rarely used filters does not crowd the strip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub hide_when_empty: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -173,9 +220,38 @@ pub struct TabDef {
     pub search_column: Option<&'static str>,
     /// Offers the internal / external switch (Response codes).
     pub scoped: bool,
+    /// The tab's rows are the rows of this derived table, `x`, joined to
+    /// `urls u` (its `eligible` is then already applied).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub rows: Option<Derived>,
 }
 
 impl TabDef {
+    /// The FROM clause that lists the tab's candidate rows as `u` (and `x`).
+    pub(crate) fn source_sql(&self) -> String {
+        match self.rows {
+            // CROSS JOIN keeps the derived table outermost: it is the
+            // smaller one and already in id order.
+            Some(d) => format!("temp.{} x CROSS JOIN urls u ON u.id = x.id", d.table()),
+            None => "urls u NOT INDEXED".into(),
+        }
+    }
+
+    /// The join that adds `x` to rows already picked by id as `t`.
+    pub(crate) fn join_sql(&self) -> String {
+        match self.rows {
+            Some(d) => format!(" LEFT JOIN temp.{} x ON x.id = t.id", d.table()),
+            None => String::new(),
+        }
+    }
+
+    /// The `urls u` condition for the tab's rows without its row source,
+    /// for one-pass counts over `urls` (T014).
+    pub(crate) fn eligible_on_urls(&self) -> &'static str {
+        self.rows.map_or(self.eligible, Derived::rows_eligible)
+    }
+
     pub fn column(&self, id: &str) -> Option<&ColumnDef> {
         self.columns.iter().find(|c| c.id == id)
     }
@@ -241,6 +317,7 @@ const fn col(
         default_visible: true,
         need: Need::Base,
         derived: None,
+        key: None,
     }
 }
 
@@ -257,6 +334,10 @@ impl ColumnDef {
         self.derived = Some(d);
         self
     }
+    const fn sorted_by(mut self, key: &'static str) -> Self {
+        self.key = Some(key);
+        self
+    }
 }
 
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -267,6 +348,7 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         need: Need::Base,
         derived: None,
         threshold: None,
+        hide_when_empty: None,
     }
 }
 
@@ -283,6 +365,10 @@ impl FilterDef {
     }
     const fn thr(mut self, rule: &'static str, template: &'static str) -> Self {
         self.threshold = Some((rule, template));
+        self
+    }
+    const fn when_present(mut self) -> Self {
+        self.hide_when_empty = Some(true);
         self
     }
     const fn needs(mut self, need: Need) -> Self {
@@ -419,14 +505,6 @@ mod c {
     pub const SOURCE: ColumnDef = col("source", "Discovered via", "u.source", ValueKind::Text, 120).hidden();
     pub const IN_SITEMAP: ColumnDef =
         col("in_sitemap", "In sitemap", "u.in_sitemap", ValueKind::Bool, 100).hidden();
-    pub const OCCURRENCES_TITLE: ColumnDef = col(
-        "occurrences",
-        "Occurrences",
-        "(SELECT o.n FROM temp.occ_title o WHERE o.v = norm_ws(u.title))",
-        ValueKind::Int,
-        110,
-    )
-    .reads(Derived::OccTitle);
 }
 
 /// Filters by content type (Internal and External tabs).
@@ -462,6 +540,7 @@ fn content_tab(
         filters: fs,
         search_column: Some(search_column),
         scoped: false,
+        rows: None,
     }
 }
 
@@ -644,11 +723,29 @@ fn build_issue_tabs() -> Vec<TabDef> {
             // The columns of the rule's own 007 tab, such as the title and
             // its length for title rules (FR-015), then the common ones.
             if let Some(home) = home_tab(r.category).and_then(|id| tabs().iter().find(|t| t.id == id)) {
+                // Issue tabs list `urls u` only, so a column that reads the
+                // home tab's row table `x` looks its row up instead.
                 columns.extend(
                     home.columns
                         .iter()
                         .filter(|c| c.id != "address" && c.id != "issues")
-                        .cloned(),
+                        .map(|c| match home.rows {
+                            Some(d) => ColumnDef {
+                                expr: if c.expr.contains("x.") {
+                                    leak(format!(
+                                        "(SELECT {} FROM temp.{} x WHERE x.id = u.id)",
+                                        c.expr,
+                                        d.table()
+                                    ))
+                                } else {
+                                    c.expr
+                                },
+                                derived: if c.expr.contains("x.") { Some(d) } else { c.derived },
+                                key: None,
+                                ..c.clone()
+                            },
+                            None => c.clone(),
+                        }),
                 );
             }
             let mut common = vec![c::STATUS_CODE];
@@ -673,6 +770,7 @@ fn build_issue_tabs() -> Vec<TabDef> {
                 filters: vec![all],
                 search_column: Some("evidence"),
                 scoped: false,
+                rows: None,
             }
         })
         .collect()
@@ -682,9 +780,7 @@ fn build() -> Vec<TabDef> {
     use ValueKind::*;
     // Filters that test what an issue rule tests share its condition
     // (spec 009 FR-005).
-    use crate::issues::rules::{
-        canonicals as ca, headings as hd, images as im, meta as me, titles as ti, url as ur,
-    };
+    use crate::issues::rules::{canonicals as ca, headings as hd, images as im, meta as me, url as ur};
     vec![
         TabDef {
             id: "internal",
@@ -716,6 +812,7 @@ fn build() -> Vec<TabDef> {
             filters: TYPE_FILTERS.to_vec(),
             search_column: Some("title"),
             scoped: false,
+            rows: None,
         },
         TabDef {
             id: "external",
@@ -739,6 +836,7 @@ fn build() -> Vec<TabDef> {
             },
             search_column: None,
             scoped: false,
+            rows: None,
         },
         TabDef {
             id: "response-codes",
@@ -786,9 +884,30 @@ fn build() -> Vec<TabDef> {
                 filter("transient", "Failed, may work later", TRANSIENT).needs(Need::Attempts),
                 filter("permanent", "Failed, permanent", PERMANENT).needs(Need::Attempts),
                 filter("retried", "Needed more than one attempt", "u.attempts > 1").needs(Need::Attempts),
+                // One filter per error class (spec 004 FR-012), listed only
+                // when the crawl has such errors.
+                filter("class_dns", "DNS lookup failed", "u.error_class = 'dns'").when_present(),
+                filter("class_dns_temporary", "DNS temporarily unavailable", "u.error_class = 'dns_temporary'")
+                    .when_present(),
+                filter("class_connection", "Connection failed", "u.error_class = 'connection'").when_present(),
+                filter("class_timeout", "Timed out", "u.error_class = 'timeout'").when_present(),
+                filter("class_tls_invalid", "Invalid TLS certificate", "u.error_class = 'tls_invalid'").when_present(),
+                filter(
+                    "class_redirect_problem",
+                    "Redirect problem",
+                    "u.error_class IN ('redirect_problem', 'redirect_loop')",
+                )
+                .when_present(),
+                filter("class_content_problem", "Content problem", "u.error_class = 'content_problem'").when_present(),
+                filter("class_malformed_url", "Malformed URL", "u.error_class = 'malformed_url'").when_present(),
+                filter("class_host_unavailable", "Host unavailable", "u.error_class = 'host_unavailable'")
+                    .when_present(),
+                filter("class_http_429", "Too many requests (429)", "u.error_class IS NULL AND u.status = 429")
+                    .when_present(),
             ],
             search_column: None,
             scoped: true,
+            rows: None,
         },
         TabDef {
             id: "url",
@@ -819,16 +938,18 @@ fn build() -> Vec<TabDef> {
             ],
             search_column: None,
             scoped: false,
+            rows: None,
         },
         TabDef {
             id: "page-titles",
             title: "Page titles",
-            eligible: HTML_OK,
+            // temp.titles holds exactly the HTML_OK rows.
+            eligible: "1",
             columns: vec![
                 c::ADDRESS,
-                c::TITLE,
-                col("title_length", "Title length", "length(norm_ws(u.title))", Int, 100),
-                c::OCCURRENCES_TITLE,
+                c::TITLE.sorted_by("x.k"),
+                col("title_length", "Title length", "x.len", Int, 100),
+                col("occurrences", "Occurrences", "x.n", Int, 110),
                 ext(
                     "title_2",
                     "Title (second)",
@@ -842,15 +963,17 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing", "Missing", ti::MISSING),
-                filter("duplicate", "Duplicate", ti::DUPLICATE).reads(Derived::OccTitle),
-                filter("over_60", "Over 60 characters", ti::OVER).thr("title.over", "Over {n} characters"),
-                filter("below_30", "Below 30 characters", ti::BELOW).thr("title.below", "Below {n} characters"),
-                filter("same_as_h1", "Same as H1", ti::SAME_AS_H1).needs(Need::Extraction),
-                filter("multiple", "Multiple", ti::MULTIPLE).needs(Need::Extraction),
+                filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
+                filter("duplicate", "Duplicate", "x.n > 1"),
+                filter("over_60", "Over 60 characters", "x.len > thr('title.over')").thr("title.over", "Over {n} characters"),
+                filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < thr('title.below')")
+                    .thr("title.below", "Below {n} characters"),
+                filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
+                filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
             search_column: Some("title"),
             scoped: false,
+            rows: Some(Derived::Titles),
         },
         content_tab(
             "meta-description",
@@ -915,6 +1038,7 @@ fn build() -> Vec<TabDef> {
             ],
             search_column: Some("alt"),
             scoped: false,
+            rows: None,
         },
         content_tab(
             "canonicals",
@@ -964,14 +1088,22 @@ fn build() -> Vec<TabDef> {
 }
 
 /// Builds a derived table on `conn` (dropping an older copy).
-pub(crate) fn build_derived(conn: &rusqlite::Connection, d: Derived) -> rusqlite::Result<()> {
+pub(crate) fn build_derived(
+    conn: &rusqlite::Connection,
+    d: Derived,
+    features: &crate::Features,
+) -> rusqlite::Result<()> {
     match d {
-        Derived::OccTitle => conn.execute_batch(&format!(
-            "DROP TABLE IF EXISTS temp.occ_title;
-             CREATE TEMP TABLE occ_title(v TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
-             INSERT INTO temp.occ_title SELECT {NORM_TITLE}, COUNT(*) FROM urls u
-               WHERE {HTML_OK} AND {NORM_TITLE} <> '' GROUP BY 1;"
-        )),
+        Derived::Titles => {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS temp.titles;
+                 DROP TABLE IF EXISTS temp.title_occ;
+                 CREATE TEMP TABLE titles(id INTEGER PRIMARY KEY, t TEXT, len INTEGER, k TEXT, n INTEGER,
+                   same_h1 INTEGER, count INTEGER);
+                 CREATE TEMP TABLE title_occ(v TEXT PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;",
+            )?;
+            append_titles(conn, features)
+        }
         Derived::Redirects => conn.execute_batch(
             "DROP TABLE IF EXISTS temp.redirects;
              CREATE TEMP TABLE redirects(id INTEGER PRIMARY KEY, hops INTEGER NOT NULL, final_id INTEGER, is_loop INTEGER NOT NULL);
@@ -1275,6 +1407,52 @@ fn page_flags_with(conn: &rusqlite::Connection, min_parallel: i64) -> rusqlite::
         }
     }
     conn.execute_batch("RELEASE page_flags;")
+}
+
+/// Brings a derived table built from older data up to date without
+/// rebuilding it, when it can be; false when it must be rebuilt.
+pub(crate) fn update_derived(
+    conn: &rusqlite::Connection,
+    d: Derived,
+    features: &crate::Features,
+) -> rusqlite::Result<bool> {
+    match d {
+        Derived::Titles => append_titles(conn, features).map(|()| true),
+        _ => Ok(false),
+    }
+}
+
+/// Adds the pages not yet in `temp.titles`, counts their titles in
+/// `temp.title_occ`, and updates the count of listed pages that share one. Rows already listed never need a second look: the
+/// engine writes a response, with its page content in the same
+/// transaction, only to a URL in flight, so an HTML page fetched
+/// successfully keeps its title, H1 and status for good. A live crawl's
+/// refresh then costs one probe per URL plus the new pages.
+fn append_titles(conn: &rusqlite::Connection, features: &crate::Features) -> rusqlite::Result<()> {
+    // Files without page content may not have the `pages` table.
+    let (h1, count, pages) = if features.has(Need::Extraction) {
+        ("p.h1_1", "p.title_count", "LEFT JOIN pages p ON p.url_id = u.id")
+    } else {
+        ("NULL", "NULL", "")
+    };
+    // Counting with a window function would sort every row twice;
+    // grouping the new titles and looking the counts up costs a fifth.
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS temp.titles_new;
+         CREATE TEMP TABLE titles_new AS
+           SELECT u.id AS id, {NORM_TITLE} AS t, natkey(u.title) AS k, {h1} AS h1, {count} AS count
+           FROM urls u NOT INDEXED {pages}
+           WHERE NOT EXISTS (SELECT 1 FROM temp.titles x WHERE x.id = u.id) AND {HTML_OK};
+         INSERT INTO temp.title_occ SELECT t, COUNT(*) FROM temp.titles_new WHERE t <> '' GROUP BY t
+           ON CONFLICT(v) DO UPDATE SET n = n + excluded.n;
+         UPDATE temp.titles SET n = (SELECT o.n FROM temp.title_occ o WHERE o.v = titles.t)
+           WHERE t IN (SELECT t FROM temp.titles_new WHERE t <> '');
+         INSERT INTO temp.titles
+           SELECT id, t, length(t), k, (SELECT o.n FROM temp.title_occ o WHERE o.v = t),
+             t <> '' AND lower(t) = lower(h1), count
+           FROM temp.titles_new ORDER BY id;
+         DROP TABLE temp.titles_new;"
+    ))
 }
 
 /// `temp.<table>(v, n)`: each non-empty value of `pages.<field>` on the

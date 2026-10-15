@@ -5,7 +5,8 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { BuildInfo, Transport } from "../transport";
 import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, Tooltip, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
-import { PausedSites } from "./PausedSites";
+import { PausedSites, siteName } from "./PausedSites";
+import { CrawlSpeed } from "./CrawlSpeed";
 import { classLabel } from "../crawl/errorClasses";
 import { LocalErrorNotice } from "../files/LocalErrorNotice";
 import { RecentCrawls, StorageWarning, UnsavedCrawls } from "../files/RecentCrawls";
@@ -89,6 +90,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
         </span>
       ))}
       <PausedSites run={run} />
+      <CrawlSpeed run={run} />
       <span className="ml-auto">
         {setup.loaded ? `${setup.loaded.name} · ` : ""}
         {speed}
@@ -239,6 +241,18 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlR
             ))}
           </Table>
         )}
+        {s?.speed_events && s.speed_events.length > 0 && (
+          <Table title="Slowdowns" head={["Site", "What slowed it down"]}>
+            {s.speed_events.map((e, i) => (
+              <tr key={`${e.host}-${i}`} data-speed-host={e.host}>
+                <td className="px-3 py-1.5 font-code" title={e.host}>
+                  {siteName(e.host)}
+                </td>
+                <td className="px-3 py-1.5 text-right">{e.summary.replace(`${e.host}: `, "")}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
         {s && s.hosts.length > 0 && (
           <Table title="robots.txt" head={["Site", "robots.txt"]}>
             {s.hosts.map((h) => (
@@ -304,6 +318,7 @@ export function StartState({
   onOpenSettings,
   library,
   onOpenRecent,
+  onManageCrawls,
 }: {
   setup: CrawlSetup;
   error?: string | null;
@@ -312,13 +327,15 @@ export function StartState({
   /** Recent and unsaved crawls (spec 006 US4). */
   library?: CrawlLibrary;
   onOpenRecent?: (path: string) => void;
+  /** Opens Manage crawls (spec 019 US1, FR-023). */
+  onManageCrawls?: () => void;
 }) {
   const mode = setup.config?.mode ?? "spider";
   const urlIssues = setup.issues.filter((i) => i.path === "input.start_url");
   return (
     <section aria-label="Start" className="h-full overflow-y-auto">
       <div className="flex min-h-full flex-col items-center justify-center gap-5 p-8">
-        {library && <StorageWarning storage={library.storage} />}
+        {library && <StorageWarning storage={library.storage} onManage={onManageCrawls} />}
         <div className="flex max-w-md flex-col items-center gap-2 text-center">
           <h1 className="m-0 text-xl font-semibold tracking-tight text-balance">{mode === "spider" ? "Crawl a website" : "Crawl a list of URLs"}</h1>
           <p className="m-0 text-base text-fg-2">
@@ -362,7 +379,7 @@ export function StartState({
         </div>
 
         {library && onOpenRecent && <RecentCrawls library={library} onOpen={onOpenRecent} />}
-        {library && <UnsavedCrawls library={library} />}
+        {library && <UnsavedCrawls library={library} onManage={onManageCrawls} />}
       </div>
     </section>
   );

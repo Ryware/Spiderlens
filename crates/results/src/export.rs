@@ -193,7 +193,7 @@ pub fn write_csv_with(
         None => vec![],
     };
     let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM urls u NOT INDEXED WHERE {}", c.where_sql),
+        &format!("SELECT COUNT(*) {}", c.source_where()),
         params.as_slice(),
         |r| r.get(0),
     )?;
@@ -209,8 +209,8 @@ pub fn write_csv_with(
     progress(0, total);
     for (a, b) in ranges {
         let sql = format!(
-            "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {} OFFSET {a}",
-            c.where_sql,
+            "SELECT {select} {} ORDER BY {} LIMIT {} OFFSET {a}",
+            c.source_where(),
             c.order_sql,
             b.saturating_sub(a)
         );

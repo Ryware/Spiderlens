@@ -10,6 +10,7 @@ fn crawl_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
         urls: 600,
         links_per_page: 2,
         seed: 9,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();

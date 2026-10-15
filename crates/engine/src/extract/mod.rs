@@ -2,6 +2,7 @@
 //! (plan D1). Everything here is a pure function of the response: bytes and
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
+pub mod a11y;
 pub mod body;
 pub mod directives;
 mod link_header;
@@ -164,6 +165,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// Static accessibility checks (spec 026), when asked for.
+    pub a11y: Option<a11y::A11yStatic>,
 }
 
 impl PageData {
@@ -201,6 +204,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            a11y: None,
         }
     }
 }
@@ -216,6 +220,8 @@ pub struct PageInput<'a> {
     pub truncated: bool,
     /// The crawl's robots.txt token, for crawler-specific meta tags.
     pub robots_token: &'a str,
+    /// Run the static accessibility checks (spec 026).
+    pub a11y: bool,
 }
 
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
@@ -234,7 +240,13 @@ pub fn extract_page(input: &PageInput<'_>) -> PageData {
         return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
     }
     let (text, used, had_errors) = encoding.decode(input.body);
-    let mut data = walk::walk(&text, input.url, input.robots_token, walk::PARSE_BUDGET);
+    let mut data = walk::walk(
+        &text,
+        input.url,
+        input.robots_token,
+        walk::PARSE_BUDGET,
+        input.a11y,
+    );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;

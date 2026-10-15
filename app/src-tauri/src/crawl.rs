@@ -532,7 +532,7 @@ fn run(
         Open::Resume(c) => *c,
         Open::RetryFailed => Crawler::retry_failed(path)?.0,
     };
-    let reserve = app.state::<crate::files::State>().disk_reserve;
+    let reserve = app.state::<crate::files::State>().disk_reserve();
     let crawler = crawler.with_disk_reserve(Some(reserve));
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

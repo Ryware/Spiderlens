@@ -73,6 +73,7 @@ export function ResultsView({
   issue = null,
   onIssueSettings,
   onInspect,
+  reveal,
 }: {
   transport: Transport;
   path: string;
@@ -87,6 +88,8 @@ export function ResultsView({
   onIssueSettings?: () => void;
   /** Enter on a row: bring the inspector up and move focus into it. */
   onInspect?: () => void;
+  /** A URL to select and scroll to ("show in table"); a new `n` asks again. */
+  reveal?: { id: number; n: number } | null;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -167,6 +170,30 @@ export function ResultsView({
     };
     // Once per opened view.
   }, [view.view, view.ready]);
+
+  // "Show in table": select the URL here, first clearing the filter, scope
+  // or search when they hide it.
+  const revealed = useRef(0);
+  useEffect(() => {
+    if (!reveal || revealed.current === reveal.n || !view.ready || view.view === null) return;
+    let off = false;
+    transport.viewLocate(path, view.view, [reveal.id]).then(([i]) => {
+      if (off) return;
+      if (i != null) {
+        revealed.current = reveal.n;
+        setSelection(single(i));
+        grid.current?.reveal(i);
+        grid.current?.focus();
+      } else if (session.filter !== "all" || session.search || session.scope !== "all") {
+        setSearchText("");
+        onSession({ filter: "all", search: "", scope: "all" });
+      } else revealed.current = reveal.n;
+    }, () => {});
+    return () => {
+      off = true;
+    };
+    // Once per request and opened view.
+  }, [reveal, view.view, view.ready]);
 
   // The focused row's id feeds the inspector and is remembered per tab.
   const focusRow = selection.focus !== null ? view.row(selection.focus) : undefined;

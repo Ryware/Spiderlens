@@ -228,7 +228,7 @@ pub(crate) fn build_hits(
     eval_rules(conn, &ready, &mut counts, progress)?;
     if !waiting.is_empty() {
         for d in missing {
-            crate::tabs::build_derived(conn, *d)?;
+            crate::tabs::build_derived(conn, *d, features)?;
         }
         eval_rules(conn, &waiting, &mut counts, progress)?;
     }
@@ -578,7 +578,7 @@ pub(crate) fn build_derived_with(
         }
     }
     for d in all {
-        crate::tabs::build_derived(conn, d)?;
+        crate::tabs::build_derived(conn, d, features)?;
     }
     if hits {
         build_hits(conn, features, settings, &mut |_| {}, &[])?;
