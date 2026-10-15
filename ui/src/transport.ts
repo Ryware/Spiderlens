@@ -112,6 +112,41 @@ export interface CrawlProgress {
   paused_hosts: PausedHost[];
   /** Every remaining URL's site is paused: nothing can be requested (US4.4). */
   waiting_for_host: boolean;
+  /** What keeps the crawl from going faster, if anything (spec 008 FR-028). */
+  limit: SpeedLimit | null;
+  /** Sites with work in progress, busiest first; at most 50 (FR-029). */
+  sites: SitePace[];
+  /** Sites with work in progress in all. */
+  sites_total: number;
+}
+
+/** The main limit on the crawl's speed (spec 008 FR-028). */
+export interface SpeedLimit {
+  kind: "concurrency" | "rate" | "per_site" | "site_slowdown" | "site_overload" | "requested_wait" | "crawl_delay" | "site_paused" | "starting_up" | "connection" | "computer" | "saving";
+  /** The engine's host key, when it is about one site. */
+  host: string | null;
+  /** For a requested wait or a pause: seconds until it ends. */
+  seconds_left: number | null;
+  /** In plain language. */
+  message: string;
+}
+
+/** One row of the per-site speed breakdown (spec 008 FR-029). */
+export interface SitePace {
+  host: string;
+  state: "speeding_up" | "steady" | "slowed_down" | "waiting" | "paused";
+  /** Requests it may have open now, and the most it ever gets. */
+  allowance: number;
+  max: number;
+  in_flight: number;
+  /** Recent average response time. */
+  response_ms: number | null;
+  crawled: number;
+  /** URLs waiting for it, counted in the part of the queue held in memory; more on disk when `waiting_more`. */
+  waiting: number;
+  waiting_more: boolean;
+  reason: string;
+  seconds_left: number | null;
 }
 
 /** A site the crawl has paused (spec 004 FR-028). `host` is the engine's host key. */
@@ -187,6 +222,8 @@ export interface CrawlSummary {
   manual_retries: number;
   /** Why the crawl paused itself, if it did: "network" or "local". */
   pause_reason: string | null;
+  /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
+  speed_events?: { host: string; summary: string }[];
 }
 
 export interface CrawlReport {
