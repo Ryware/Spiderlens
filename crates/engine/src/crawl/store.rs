@@ -510,11 +510,12 @@ impl CrawlStore {
     /// into memory. Run between transactions, this passive checkpoint copies
     /// only the little the background thread has not, so the next commit
     /// writes from the start of the log again. Never waits: when the
-    /// background thread is busy checkpointing, it is skipped.
-    pub fn catch_up_checkpoint(&self) {
-        let _ = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    /// background thread is busy checkpointing, it returns false and the
+    /// caller tries again after its next commit.
+    pub fn catch_up_checkpoint(&self) -> bool {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0))
+            .is_ok_and(|busy| busy == 0)
     }
 
     /// Opens a crawl file for reading only: nothing is written, not even the
