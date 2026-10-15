@@ -21,6 +21,7 @@ spiderlens-config.workspace = true
 spiderlens-results.workspace = true
 spiderlens-aeo.workspace = true
 rusqlite.workspace = true
+spiderlens-schedule.workspace = true
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
