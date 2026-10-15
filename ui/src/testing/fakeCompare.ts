@@ -138,6 +138,8 @@ function detail(id: number, title: string): UrlDetail {
     headers: [],
     headings: 1,
     html_stored: false,
+    link_metrics: null,
+    cookies: [],
     unavailable: {},
   };
 }

@@ -7,9 +7,12 @@
 mod aeo;
 mod compare;
 mod crawl;
+mod custom;
 mod files;
+mod integrations;
 mod manage;
 mod results;
+mod schedules;
 mod settings;
 
 use spiderlens_engine::BuildInfo;
@@ -27,6 +30,12 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // The system scheduler starts the app with these flags; no window opens
+    // (spec 021 plan D1).
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(code) = schedules::headless(&args) {
+        std::process::exit(code);
+    }
     let smoke_file = std::env::var_os(SMOKE_TEST_ENV);
 
     tauri::Builder::default()
@@ -40,6 +49,8 @@ fn main() {
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
             app.manage(compare::State::default());
+            app.manage(custom::State::default());
+            app.manage(integrations::State::open()?);
             app.manage(aeo::State::default());
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
@@ -50,6 +61,9 @@ fn main() {
                 }
             }
             files::recover_at_launch(app.handle());
+            if let Some(s) = schedules::State::new() {
+                app.manage(s);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -120,6 +134,11 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::viz_scene,
+            results::viz_term_links,
+            results::viz_export,
+            results::cookies_list,
+            results::cookie_urls,
             results::url_html,
             results::url_tabs,
             results::copy_text,
@@ -143,6 +162,63 @@ fn main() {
             compare::compare_close,
             compare::compare_settings_load,
             compare::compare_settings_save,
+            results::rule_catalogue,
+            results::issues_apply,
+            results::passes_run,
+            results::issues_summary,
+            results::url_issues,
+            results::url_custom,
+            custom::custom_validate,
+            custom::custom_test_page,
+            custom::custom_test_url,
+            custom::custom_rules_of_crawl,
+            custom::custom_run,
+            custom::custom_cancel,
+            custom::custom_import,
+            custom::custom_export,
+            integrations::integrations_status,
+            integrations::integrations_settings_save,
+            integrations::integrations_google_client,
+            integrations::integrations_connect_google,
+            integrations::integrations_connect_cancel,
+            integrations::integrations_save_key,
+            integrations::integrations_forget,
+            integrations::integrations_properties,
+            integrations::integrations_default_request,
+            integrations::integrations_run_search_console,
+            integrations::integrations_run_resume,
+            integrations::integrations_run_pause,
+            integrations::integrations_run_cancel,
+            integrations::integrations_runs,
+            integrations::integrations_queries,
+            integrations::integrations_orphans,
+            integrations::integrations_remove,
+            integrations::integrations_cache_info,
+            integrations::integrations_cache_clear,
+            integrations::integrations_open_terms,
+            results::sitemap_files,
+            results::sitemap_preview,
+            results::sitemap_generate,
+            results::analysis_run,
+            results::analysis_start,
+            results::analysis_cancel,
+            results::analysis_settings,
+            results::positions_test,
+            schedules::schedules_list,
+            schedules::schedule_get,
+            schedules::schedule_preview,
+            schedules::schedule_validate,
+            schedules::schedule_save,
+            schedules::schedule_set_enabled,
+            schedules::schedule_duplicate,
+            schedules::schedule_delete,
+            schedules::schedule_run_now,
+            schedules::schedule_stop,
+            schedules::schedule_history,
+            schedules::schedule_update_from_profile,
+            schedules::schedules_repair,
+            schedules::schedules_remove_all,
+            schedules::schedule_default_output,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

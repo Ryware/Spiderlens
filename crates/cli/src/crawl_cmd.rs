@@ -218,6 +218,20 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                 }
             }
         }
+        // Secret cookie values come back from the environment, as on a
+        // first run (spec 025 contracts/cli.md).
+        if let Ok(info) = file::info(path) {
+            for key in &info.missing_secrets {
+                if let Some(name) = key
+                    .strip_prefix("cookie:")
+                    .and_then(|k| k.rsplit_once('/'))
+                    .map(|(_, n)| n)
+                    && let Ok(v) = std::env::var(crate::options::cookie_env(name))
+                {
+                    secrets.push((key.clone(), v));
+                }
+            }
+        }
         let mut changes = Vec::new();
         if let Ok(info) = file::info(path)
             && let Some(stored) = &info.config
@@ -295,6 +309,16 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             Err(code) => return code,
         };
         if print_issues(&validate(&resolved.config, &input)) {
+            return ExitCode::from(exit::USAGE);
+        }
+        // The profile's issue settings get the app's validation before the
+        // crawl starts (spec 009 FR-028).
+        let (_, notices) = spiderlens_results::issues::resolve(&resolved.config.issues);
+        for n in &notices {
+            let level = if n.error { "error" } else { "notice" };
+            eprintln!("{level}: issues: {}: {}", n.rule, n.message);
+        }
+        if notices.iter().any(|n| n.error) {
             return ExitCode::from(exit::USAGE);
         }
         let out = cmd.out.clone().unwrap_or_else(|| default_out(&input));
@@ -409,6 +433,15 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         }
     };
     print_summary(&summary, json, &file);
+    record_issue_settings(&file);
+    // The Crawl Analysis phase, while this process still owns the file
+    // (spec 009 plan D12).
+    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
+        eprintln!(
+            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+            file.display()
+        );
+    }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
     }
@@ -450,6 +483,17 @@ fn duration(secs: u64) -> String {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
         s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Records the rule set version and issue settings in the file at run end
+/// (spec 009 FR-013). The issues themselves are evaluated when read.
+fn record_issue_settings(file: &Path) {
+    let stored = spiderlens_results::Reader::open(file).and_then(|r| r.stored_issue_settings());
+    if let Ok(Some(s)) = stored
+        && let Err(e) = spiderlens_results::issues::record_issue_settings(file, &s)
+    {
+        eprintln!("warning: could not record the issue settings: {e}");
     }
 }
 
@@ -699,7 +743,7 @@ fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
         .find(|c| matches!(store.id_of(c), Ok(Some(_))))
 }
 
-fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
+pub(crate) fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
     let store = CrawlStore::open_read_only(file).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::from(exit::USAGE)

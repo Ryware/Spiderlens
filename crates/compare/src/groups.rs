@@ -277,7 +277,7 @@ impl Comparison {
                     .filter(|c| c.default_visible && c.id != "address")
                 {
                     if let Some(e) = self.elements.iter().find(|e| e.id == c.id && e.expr == c.expr) {
-                        pair(&mut cols, &mut src, e, c.label);
+                        pair(&mut cols, &mut src, e, &c.label);
                         continue;
                     }
                     for (n, word, side) in [(0, "previous", Which::Previous), (1, "current", Which::Current)]
@@ -466,7 +466,7 @@ impl Comparison {
         }
         let exprs: Vec<&str> = cols
             .iter()
-            .map(|c| if s.features.has(c.need) { c.expr } else { "NULL" })
+            .map(|c| if s.features.has(c.need) { &*c.expr } else { "NULL" })
             .collect();
         let mut out = HashMap::new();
         if ids.is_empty() {

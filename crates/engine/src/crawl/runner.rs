@@ -28,16 +28,25 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::site_files::{self, SiteFileRow};
-use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
+use super::sitemap::{self, MAX_INDEX_DEPTH, Root};
 use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
+use super::store::custom::{EncodedCustom, Slots, encode_custom};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
-    Response, SitemapRow, StateCounts, StoreError,
+    Response, SitemapEntryRecord, SitemapFileRecord, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
+use crate::custom::CompiledRules;
+
+/// A crawl's compiled rules and the stored slot of each.
+struct CustomRun {
+    rules: CompiledRules,
+    slots: Slots,
+}
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
-use crate::fetch::{Once, build_client_with, fetch_once};
+use crate::fetch::{Once, fetch_once};
+use crate::net::NetSession;
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, FinalClass, RequestHeader};
@@ -52,7 +61,7 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
 /// How often the crawl lets the write-ahead log start over.
-const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
+const CATCH_UP_EVERY: Duration = Duration::from_millis(250);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
@@ -84,7 +93,7 @@ pub enum CrawlError {
     )]
     NeedsUpgrade { from: i64 },
     /// Header values that are never stored must be entered again (FR-034).
-    #[error("enter the secret value of these headers to resume: {}", .0.join(", "))]
+    #[error("enter these secret values to resume: {}", .0.join(", "))]
     NeedsSecrets(Vec<String>),
     /// Read-only file or media: save a copy elsewhere to resume (FR-021).
     #[error("{} cannot be changed here (read-only); save a copy to another folder to resume it", .0.display())]
@@ -108,7 +117,8 @@ pub struct ResumeOptions {
     pub upgrade: Option<Upgrade>,
     /// Speed and URL-limit changes, recorded in the configuration history.
     pub changes: Vec<Change>,
-    /// Header name and value for secrets that were not stored.
+    /// Values for secrets that were not stored, keyed as in
+    /// `CrawlConfig::missing_secrets` (a header name, or `cookie:domain/name`).
     pub secrets: Vec<(String, String)>,
 }
 
@@ -452,11 +462,8 @@ enum Msg {
         host_key: String,
         fetch: RobotsFetch,
     },
-    SitemapUrls {
-        sitemap: Url,
-        urls: Vec<String>,
-    },
-    SitemapDone(SitemapRow),
+    /// One sitemap file read, with every entry up to the limit (spec 011).
+    SitemapFile(Box<SitemapRead>),
     SitemapsFinished,
     SiteFile(SiteFileRow),
     SiteFilesFinished,
@@ -468,6 +475,137 @@ enum SiteFiles {
     NotStarted,
     Pending,
     Done,
+}
+
+struct SitemapRead {
+    file: SitemapFileRecord,
+    /// The location of the index that listed it.
+    parent: Option<String>,
+    /// What the entries resolve against: the final URL, or the address a
+    /// local file will have.
+    base: Option<Url>,
+    entries: Vec<sitemap::Entry>,
+}
+
+/// Where a sitemap comes from (spec 011 FR-001, FR-002).
+enum SitemapSource {
+    Url(Url),
+    Local { path: std::path::PathBuf, base: Url },
+}
+
+struct SitemapJob {
+    at: SitemapSource,
+    source: &'static str,
+    parent: Option<String>,
+    level: u32,
+}
+
+impl SitemapSource {
+    fn location(&self) -> String {
+        match self {
+            Self::Url(u) => u.to_string(),
+            Self::Local { path, .. } => format!("file:{}", path.display()),
+        }
+    }
+}
+
+/// Reads one sitemap file. None for a default location that is not there.
+async fn read_sitemap(client: &Client, job: &SitemapJob, optional: bool) -> Option<SitemapRead> {
+    let mut file = SitemapFileRecord {
+        location: job.at.location(),
+        source: job.source,
+        level: job.level,
+        read_at: jiff::Timestamp::now().as_millisecond(),
+        ..Default::default()
+    };
+    let (bytes, base) = match &job.at {
+        SitemapSource::Url(url) => match sitemap::fetch(client, url).await {
+            Ok(f) => {
+                file.http_status = f.status;
+                file.final_url = Some(f.final_url.to_string());
+                file.redirected = f.redirected;
+                (Some(f.bytes), Some(f.final_url))
+            }
+            Err(_) if optional => return None,
+            Err(e) => {
+                file.http_status = e.status;
+                file.final_url = e.final_url.as_ref().map(Url::to_string);
+                file.error_class = Some(e.class.to_string());
+                file.error = Some(e.message);
+                (None, Some(url.clone()))
+            }
+        },
+        SitemapSource::Local { path, base } => {
+            file.base_url = Some(base.to_string());
+            let p = path.clone();
+            let read = tokio::task::spawn_blocking(move || std::fs::read(p))
+                .await
+                .unwrap_or_else(|e| Err(std::io::Error::other(e)));
+            match read {
+                Ok(b) => (Some(b), Some(base.clone())),
+                Err(e) => {
+                    file.error_class = Some("file_unreadable".into());
+                    file.error = Some(format!("could not read {}: {e}", path.display()));
+                    (None, Some(base.clone()))
+                }
+            }
+        }
+    };
+    let mut entries = Vec::new();
+    if let Some(bytes) = bytes {
+        match sitemap::read(&bytes, |e| entries.push(e)) {
+            Ok(facts) => {
+                file.kind = Some(match facts.root {
+                    Root::Urlset => "urlset",
+                    Root::Index => "index",
+                });
+                file.compressed = facts.compressed;
+                file.bytes = facts.bytes;
+                file.entry_count = facts.entries;
+                file.over_limit = facts.over_limit;
+            }
+            Err(e) => {
+                file.error_class = Some(e.class.as_str().to_string());
+                file.error = Some(e.message);
+                file.error_line = e.line;
+                file.entry_count = e.entries;
+                file.bytes = bytes.len() as u64;
+            }
+        }
+    }
+    Some(SitemapRead {
+        file,
+        parent: job.parent.clone(),
+        base,
+        entries,
+    })
+}
+
+/// Queues the files an index lists, up to the depth limit.
+fn expand_index(read: &mut SitemapRead, job: &SitemapJob, todo: &mut Vec<SitemapJob>) {
+    if read.file.kind != Some("index") {
+        return;
+    }
+    if job.level + 1 >= MAX_INDEX_DEPTH {
+        read.file.error_class = Some("too_deep".into());
+        read.file.error = Some(format!(
+            "sitemap index nested deeper than {MAX_INDEX_DEPTH} levels"
+        ));
+        return;
+    }
+    let Some(base) = &read.base else { return };
+    for e in read.entries.iter().rev() {
+        if let Ok(child) = base.join(&e.loc)
+            && matches!(child.scheme(), "http" | "https")
+        {
+            todo.push(SitemapJob {
+                at: SitemapSource::Url(child),
+                source: job.source,
+                parent: Some(read.file.location.clone()),
+                level: job.level + 1,
+            });
+        }
+    }
 }
 
 struct PageOutcome {
@@ -488,6 +626,8 @@ struct PageOutcome {
 /// What the extraction step produced for an HTML body.
 struct Extracted {
     data: Result<PageData, String>,
+    /// Rule results, encoded for the store.
+    custom: Option<EncodedCustom>,
     /// Compressed body and its size, when raw HTML is kept.
     html: Option<(Vec<u8>, usize)>,
 }
@@ -500,6 +640,7 @@ async fn finish_page(
     url: Url,
     token: String,
     store_html: bool,
+    custom: Option<Arc<CustomRun>>,
     hook: Option<PageHook>,
     budget: &Semaphore,
 ) -> PageOutcome {
@@ -515,25 +656,34 @@ async fn finish_page(
                 .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let data = extract::extract_page_caught(&PageInput {
-                    url: &url,
-                    charset: charset.as_deref(),
-                    body: &bytes,
-                    truncated,
-                    robots_token: &token,
-                    // Spec 026: stored once the crawl file has the tables.
-                    a11y: false,
-                    hook: hook.as_ref(),
-                });
+                let mut data = extract::extract_page_caught(
+                    &PageInput {
+                        url: &url,
+                        charset: charset.as_deref(),
+                        body: &bytes,
+                        truncated,
+                        robots_token: &token,
+                        // Spec 026: stored once the crawl file has the tables.
+                        a11y: false,
+                        hook: hook.as_ref(),
+                    },
+                    custom.as_deref().map(|c| &c.rules),
+                );
+                // Encoded here, so the single writer only inserts.
+                let custom = match (data.as_mut().ok().and_then(|d| d.custom.take()), &custom) {
+                    (Some(out), Some(c)) => encode_custom(&c.slots, &out).ok(),
+                    _ => None,
+                };
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
                     None
                 };
-                Extracted { data, html }
+                Extracted { data, custom, html }
             });
             Some(job.await.unwrap_or_else(|e| Extracted {
                 data: Err(format!("Page extraction failed: {e}")),
+                custom: None,
                 html: None,
             }))
         }
@@ -636,9 +786,9 @@ impl Crawler {
         store.set_meta(
             "data_features",
             if config.extraction.store_html {
-                "extraction,timing,attempts,raw_html"
+                "extraction,timing,attempts,raw_html,readability,sitemap_entries"
             } else {
-                "extraction,timing,attempts"
+                "extraction,timing,attempts,readability,sitemap_entries"
             },
         )?;
 
@@ -718,19 +868,7 @@ impl Crawler {
             .and_then(|c| serde_json::from_str(&c).ok())
             .ok_or_else(|| CrawlError::Config("the crawl file has no readable configuration".into()))?;
         // Secrets are never stored (FR-034): the caller supplies them again.
-        let mut missing = Vec::new();
-        for h in &mut stored.config.identity.headers {
-            if h.value.is_secret() && h.value.expose().is_none() {
-                match options
-                    .secrets
-                    .iter()
-                    .find(|(n, _)| n.eq_ignore_ascii_case(&h.name))
-                {
-                    Some((_, v)) => h.value = HeaderValue::secret(v.clone()),
-                    None => missing.push(h.name.clone()),
-                }
-            }
-        }
+        let missing = stored.config.fill_secrets(&options.secrets);
         if !missing.is_empty() {
             return Err(CrawlError::NeedsSecrets(missing));
         }
@@ -851,6 +989,12 @@ impl Crawler {
         Ok(self)
     }
 
+    /// Stores a key in the crawl file's `meta` table, for callers that add
+    /// their own context, such as the schedule that started a run (spec 021).
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CrawlError> {
+        Ok(self.store.set_meta(key, value)?)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
@@ -868,8 +1012,14 @@ impl Crawler {
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
-        let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, events, commands)?;
+        let net = NetSession::new(
+            &opts,
+            &self.config.access,
+            self.rules.internal().clone(),
+            &self.resolve,
+        )
+        .map_err(CrawlError::Client)?;
+        let mut run = Run::new(self, opts, net, control, events, commands)?;
         match run.main_loop().await {
             Ok(()) => {}
             // A write failed: nothing of the open batch reached the file, so
@@ -944,6 +1094,7 @@ struct Run {
     c: Crawler,
     opts: CheckOptions,
     client: Client,
+    net: NetSession,
     headers: Arc<Vec<RequestHeader>>,
     control: watch::Receiver<Control>,
     control_closed: bool,
@@ -957,6 +1108,8 @@ struct Run {
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    /// Ids of the sitemap files stored so far, by location.
+    sitemap_ids: HashMap<String, i64>,
     site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
@@ -971,6 +1124,8 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Custom rules and where their results go (spec 013).
+    custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     last_catch_up: Instant,
@@ -1004,7 +1159,7 @@ impl Run {
     fn new(
         c: Crawler,
         opts: CheckOptions,
-        client: Client,
+        net: NetSession,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -1071,11 +1226,35 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        let custom = if c.config.custom.is_empty() && !c.store.has_custom_rules()? {
+            None
+        } else {
+            if !c.config.custom.is_empty() {
+                c.store.sync_custom_rules(&c.config.custom)?;
+            }
+            let (set, slots) = c.store.stored_rule_set()?;
+            match crate::custom::compile(&set) {
+                Ok(None) => None,
+                Ok(Some(rules)) => {
+                    c.store.mark_new_custom_rules_running()?;
+                    Some(Arc::new(CustomRun { rules, slots }))
+                }
+                Err(errors) => {
+                    let joined = errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(CrawlError::Config(format!("custom rules: {joined}")));
+                }
+            }
+        };
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
             opts,
-            client,
+            client: net.client().clone(),
+            net,
             control,
             control_closed: false,
             events,
@@ -1088,6 +1267,7 @@ impl Run {
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            sitemap_ids: HashMap::new(),
             site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
@@ -1099,6 +1279,7 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            custom,
             active_before_ms,
             last_catch_up: Instant::now(),
             commands,
@@ -1479,8 +1660,7 @@ impl Run {
         if self.write_tx.take().is_some() {
             let t = Instant::now();
             self.c.store.commit()?;
-            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
-                self.c.store.catch_up_checkpoint();
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY && self.c.store.catch_up_checkpoint() {
                 self.last_catch_up = Instant::now();
             }
             self.load.saving(t.elapsed());
@@ -1606,6 +1786,7 @@ impl Run {
         self.record_speed_summaries()?;
         self.commit()?;
         self.c.store.build_result_indexes()?;
+        self.c.store.link_sitemap_refs()?;
         #[cfg(debug_assertions)]
         {
             let mut counted = StateCounts::default();
@@ -1826,6 +2007,8 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // Rules run on the pages spec 005 extracts for the results: internal ones.
+        let rules = self.custom.as_ref().filter(|_| internal).map(Arc::clone);
         // The hook's facts stand in for stored HTML, so it runs only when the
         // HTML is kept (a crawl without it has no content checks either).
         let hook = self.c.page_hook.clone().filter(|_| store_html);
@@ -1835,7 +2018,7 @@ impl Run {
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1990,7 +2173,8 @@ impl Run {
     }
 
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
-        if !self.c.config.scope.use_sitemaps || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
+        if !self.c.config.scope.sitemaps.read
+            || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
         {
             return Ok(());
         }
@@ -2003,64 +2187,155 @@ impl Run {
         else {
             return Ok(());
         };
-        let roots: Vec<Url> = policy
+        let listed: Vec<Url> = policy
             .sitemaps
             .iter()
             .filter_map(|s| Url::parse(s).ok())
             .collect();
+        let settings = &self.c.config.scope.sitemaps;
+        let mut roots: Vec<SitemapJob> = listed
+            .into_iter()
+            .map(|u| SitemapJob {
+                at: SitemapSource::Url(u),
+                source: "robots",
+                parent: None,
+                level: 0,
+            })
+            .collect();
+        // Spec 011 FR-001: robots.txt lists none, so try the usual places.
+        let defaults: Vec<Url> = if roots.is_empty() {
+            ["/sitemap.xml", "/sitemap_index.xml"]
+                .iter()
+                .filter_map(|p| start.join(p).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        roots.extend(
+            settings
+                .urls
+                .iter()
+                .filter_map(|u| Url::parse(u.trim()).ok())
+                .map(|u| SitemapJob {
+                    at: SitemapSource::Url(u),
+                    source: "user",
+                    parent: None,
+                    level: 0,
+                }),
+        );
+        roots.extend(settings.files.iter().filter_map(|f| {
+            Some(SitemapJob {
+                at: SitemapSource::Local {
+                    path: f.path.clone().into(),
+                    base: Url::parse(f.base_url.trim()).ok()?,
+                },
+                source: "local",
+                parent: None,
+                level: 0,
+            })
+        }));
         self.c.store.set_meta("sitemaps_read", "true")?;
-        if roots.is_empty() {
+        if roots.is_empty() && defaults.is_empty() {
             return Ok(());
         }
         self.sitemaps_pending = true;
         let client = self.client.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let mut todo: Vec<(Url, Option<String>, u32)> =
-                roots.into_iter().rev().map(|u| (u, None, 0)).collect();
+            let mut todo: Vec<SitemapJob> = roots.into_iter().rev().collect();
             let mut seen = std::collections::HashSet::new();
-            while let Some((url, parent, level)) = todo.pop() {
-                if !seen.insert(url.clone()) {
+            for url in defaults {
+                let job = SitemapJob {
+                    at: SitemapSource::Url(url),
+                    source: "default",
+                    parent: None,
+                    level: 0,
+                };
+                if let Some(mut read) = read_sitemap(&client, &job, true).await {
+                    seen.insert(job.at.location());
+                    expand_index(&mut read, &job, &mut todo);
+                    let _ = tx.send(Msg::SitemapFile(Box::new(read)));
+                    break;
+                }
+            }
+            while let Some(job) = todo.pop() {
+                if !seen.insert(job.at.location()) {
                     continue;
                 }
-                let mut row = SitemapRow {
-                    url: url.to_string(),
-                    parent,
-                    url_count: 0,
-                    error: None,
+                let Some(mut read) = read_sitemap(&client, &job, false).await else {
+                    continue;
                 };
-                match sitemap::fetch(&client, &url)
-                    .await
-                    .and_then(|b| sitemap::parse(&b))
-                {
-                    Ok(Sitemap::Urls(urls)) => {
-                        row.url_count = urls.len() as i64;
-                        let _ = tx.send(Msg::SitemapUrls {
-                            sitemap: url.clone(),
-                            urls,
-                        });
-                    }
-                    Ok(Sitemap::Index(children)) => {
-                        row.url_count = children.len() as i64;
-                        if level + 1 >= MAX_INDEX_DEPTH {
-                            row.error = Some(format!(
-                                "sitemap index nested deeper than {MAX_INDEX_DEPTH} levels"
-                            ));
-                        } else {
-                            for child in children.iter().rev() {
-                                match url.join(child) {
-                                    Ok(c) => todo.push((c, Some(url.to_string()), level + 1)),
-                                    Err(_) => row.error = Some(format!("invalid sitemap address {child}")),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => row.error = Some(e),
-                }
-                let _ = tx.send(Msg::SitemapDone(row));
+                expand_index(&mut read, &job, &mut todo);
+                let _ = tx.send(Msg::SitemapFile(Box::new(read)));
             }
             let _ = tx.send(Msg::SitemapsFinished);
         });
+        Ok(())
+    }
+
+    /// Stores a sitemap file and its entries; URL entries are discovered as
+    /// before (spec 003) and matched to their `urls` rows (spec 011 FR-006).
+    fn on_sitemap(&mut self, read: SitemapRead) -> Result<(), CrawlError> {
+        let SitemapRead {
+            mut file,
+            parent,
+            base,
+            entries,
+        } = read;
+        file.parent_id = parent.as_ref().and_then(|p| self.sitemap_ids.get(p).copied());
+        if let Some(e) = &file.error {
+            self.warn(format!("Sitemap {} could not be used: {e}", file.location))?;
+        }
+        self.c.store.upsert_sitemap(&SitemapRow {
+            url: file.location.clone(),
+            parent,
+            url_count: entries.len() as i64,
+            error: file.error.clone(),
+        })?;
+        let file_id = self.c.store.insert_sitemap_file(&file)?;
+        self.sitemap_ids.insert(file.location.clone(), file_id);
+        let urls = file.kind != Some("index");
+        let mut image_urls = Vec::new();
+        let mut alternate_urls = Vec::new();
+        for e in &entries {
+            let (url_id, invalid) = match &base {
+                Some(base) if urls => {
+                    let parsed = self.c.rules.normalize(base, &e.loc);
+                    let invalid = match &parsed {
+                        Ok(_) => None,
+                        Err(LinkProblem::SelfReference) => Some("no address".to_string()),
+                        Err(LinkProblem::Malformed { message, .. }) => Some(message.clone()),
+                        Err(LinkProblem::UnsupportedScheme { scheme, .. }) => {
+                            Some(format!("{scheme}: address"))
+                        }
+                        Err(LinkProblem::TooLong { length, .. }) => Some(format!("{length} characters long")),
+                    };
+                    let id =
+                        self.discover(None, &e.loc, LinkKind::Anchor, parsed, 1, None, false, true, None)?;
+                    (id, invalid)
+                }
+                Some(base) => (None, base.join(&e.loc).err().map(|x| x.to_string())),
+                None => (None, None),
+            };
+            image_urls.clear();
+            alternate_urls.clear();
+            if let Some(base) = &base {
+                let norm = |raw: &str| self.c.rules.normalize(base, raw).ok().map(String::from);
+                image_urls.extend(e.images.iter().map(|r| norm(r)));
+                alternate_urls.extend(e.alternates.iter().map(|a| norm(&a.href)));
+            }
+            self.c.store.insert_sitemap_entry(
+                file_id,
+                &SitemapEntryRecord {
+                    entry: e,
+                    kind: if urls { "url" } else { "sitemap" },
+                    url_id,
+                    invalid: invalid.as_deref(),
+                    image_urls: &image_urls,
+                    alternate_urls: &alternate_urls,
+                },
+            )?;
+        }
         Ok(())
     }
 
@@ -2078,19 +2353,7 @@ impl Run {
                 self.finished += 1;
                 self.on_result(entry, internal, robots_rule, took, result)
             }
-            Msg::SitemapUrls { sitemap, urls } => {
-                for loc in urls {
-                    let parsed = self.c.rules.normalize(&sitemap, &loc);
-                    self.discover(None, &loc, LinkKind::Anchor, parsed, 1, None, false, true, None)?;
-                }
-                Ok(())
-            }
-            Msg::SitemapDone(row) => {
-                if let Some(e) = &row.error {
-                    self.warn(format!("Sitemap {} could not be used: {e}", row.url))?;
-                }
-                Ok(self.c.store.upsert_sitemap(&row)?)
-            }
+            Msg::SitemapFile(read) => self.on_sitemap(*read),
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
                 Ok(())
@@ -2503,6 +2766,7 @@ impl Run {
                         && self.c.rules.adopt_start_redirect(t)
                     {
                         seed = true;
+                        self.net.adopt_host(t);
                         self.c.stored.resolved_hosts = self.c.rules.internal_hosts().to_vec();
                         self.c.store.set_meta(
                             "config",
@@ -2619,6 +2883,15 @@ impl Run {
         if let Some(o) = outcome {
             let store = &self.c.store;
             store.record_headers(entry.id, &o.headers)?;
+            // The cookie audit costs nothing on responses without cookies.
+            if o.headers.iter().any(|(n, _)| n == "set-cookie")
+                && let Ok(url) = Url::parse(&entry.url)
+            {
+                store.record_cookies(
+                    entry.id,
+                    &super::cookies::from_headers(&url, &o.headers, now_ms()),
+                )?;
+            }
             let meta_count = match &o.page {
                 Some(p) => {
                     store.record_page(
@@ -2629,6 +2902,9 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
+                    if let Some(c) = &p.custom {
+                        store.record_custom(entry.id, c)?;
+                    }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }
                 None => 0,
@@ -2681,6 +2957,24 @@ impl Run {
                             "more than {} redirects in a row",
                             self.c.config.network.max_redirects
                         )),
+                    };
+                }
+                // Spec 011 FR-009: with "Crawl URLs found only in sitemaps"
+                // off, a sitemap URL waits for a link before it is queued.
+                if in_sitemap
+                    && internal
+                    && !self.c.config.scope.sitemaps.crawl_sitemap_only
+                    && matches!(
+                        placement,
+                        Placement::Queue {
+                            check_only: false,
+                            ..
+                        }
+                    )
+                {
+                    placement = Placement::NotCrawled {
+                        reason: NotCrawledReason::SitemapOnly,
+                        detail: None,
                     };
                 }
                 (url.to_string(), host, internal, placement)

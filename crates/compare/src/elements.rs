@@ -15,7 +15,7 @@ use crate::{Error, Result};
 /// How two values of an element are compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
+#[ts(export, rename = "CompareElementKind")]
 pub enum ElementKind {
     /// Text after whitespace normalisation, case-sensitive (FR-017).
     Text,
@@ -70,6 +70,15 @@ const CONTENT: &str = "(SELECT p.text_hash FROM pages p WHERE p.url_id = u.id)";
 const INTERNAL_OUTLINKS: &str = "(SELECT COUNT(*) FROM links l JOIN urls t ON t.id = l.to_id \
      WHERE l.from_id = u.id AND l.kind = 'anchor' AND t.internal = 1)";
 
+/// A results column's SQL, which is always a static string for the
+/// built-in columns the elements reuse.
+fn expr(col: spiderlens_results::ColumnDef) -> &'static str {
+    match col.expr {
+        std::borrow::Cow::Borrowed(s) => s,
+        std::borrow::Cow::Owned(_) => unreachable!("built-in columns have static SQL"),
+    }
+}
+
 const fn el(
     id: &'static str,
     label: &'static str,
@@ -97,23 +106,23 @@ pub(crate) fn defaults() -> Vec<Element> {
     use Applies::*;
     use ElementKind::*;
     let mut v = vec![
-        el("title", "Page title", Text, c::TITLE.expr, Need::Base, Content),
+        el("title", "Page title", Text, expr(c::TITLE), Need::Base, Content),
         el(
             "meta_description",
             "Meta description",
             Text,
-            c::META_DESCRIPTION.expr,
+            expr(c::META_DESCRIPTION),
             Need::Extraction,
             Content,
         ),
-        el("h1", "First H1", Text, c::H1.expr, Need::Extraction, Content),
+        el("h1", "First H1", Text, expr(c::H1), Need::Extraction, Content),
         el("h1_all", "All H1s", Set, H1_ALL, Need::Extraction, Content),
         el("h2", "First H2", Text, H2, Need::Extraction, Content),
         el(
             "word_count",
             "Word count",
             Percent,
-            c::WORD_COUNT.expr,
+            expr(c::WORD_COUNT),
             Need::Extraction,
             Content,
         ),
@@ -121,7 +130,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "status_code",
             "Status code",
             Exact,
-            c::STATUS_CODE.expr,
+            expr(c::STATUS_CODE),
             Need::Base,
             Response,
         ),
@@ -129,7 +138,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "final_state",
             "Final state",
             Text,
-            c::FINAL_STATE.expr,
+            expr(c::FINAL_STATE),
             Need::Base,
             Response,
         ),
@@ -137,7 +146,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "indexability",
             "Indexability",
             Text,
-            c::INDEXABILITY.expr,
+            expr(c::INDEXABILITY),
             Need::Extraction,
             Response,
         ),
@@ -161,7 +170,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "redirect_target",
             "Redirect target",
             Text,
-            c::REDIRECT_TARGET.expr,
+            expr(c::REDIRECT_TARGET),
             Need::Base,
             Response,
         ),
@@ -182,7 +191,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "depth",
             "Crawl depth",
             Absolute,
-            c::DEPTH.expr,
+            expr(c::DEPTH),
             Need::Base,
             Response,
         ),
@@ -190,7 +199,7 @@ pub(crate) fn defaults() -> Vec<Element> {
             "inlinks",
             "Unique inlinks",
             Percent,
-            c::INLINKS.expr,
+            expr(c::INLINKS),
             Need::Base,
             Content,
         ),
@@ -208,7 +217,7 @@ pub(crate) fn defaults() -> Vec<Element> {
                 "response_time",
                 "Response time",
                 Factor,
-                c::RESPONSE_TIME.expr,
+                expr(c::RESPONSE_TIME),
                 Need::Timing,
                 Response,
             )

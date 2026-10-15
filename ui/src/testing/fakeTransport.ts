@@ -1,13 +1,23 @@
 // In-memory Transport for UI tests. Validation here is a small stand-in; the
 // real rules are tested in Rust (spiderlens-config).
 
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
+import type { GenerateReport } from "../generated/GenerateReport";
+import type { SitemapFileRow } from "../generated/SitemapFileRow";
+import type { SitemapFiles } from "../generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
+import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import type { FakeIssues } from "./fakeIssues";
+import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
+import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
+
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -36,6 +46,26 @@ import type {
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
 const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per_sec: null, adaptive: true };
 
+/** The engine's defaults for sitemap generation (spec 011 Assumptions). */
+export function defaultGenerateOptions(): SitemapGenerateOptions {
+  return {
+    include_noindex: false,
+    include_canonicalised: false,
+    include: [],
+    exclude: [],
+    lastmod: { kind: "last_modified_header" },
+    changefreq: null,
+    priority: { kind: "off" },
+    images: "off",
+    image_hosts: [],
+    hreflang: false,
+    max_urls_per_file: 50000,
+    gzip: false,
+    base_url: "",
+    file_prefix: "sitemap",
+  };
+}
+
 export function defaultConfig(): CrawlConfig {
   return {
     mode: "spider",
@@ -50,7 +80,7 @@ export function defaultConfig(): CrawlConfig {
       follow_external_nofollow: false,
       query_params: { mode: "keep", names: [], sort: false },
       max_url_length: 2000,
-      use_sitemaps: false,
+      sitemaps: { read: true, crawl_sitemap_only: true, urls: [], files: [] },
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
@@ -68,7 +98,13 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    issues: { rules: {} },
+    custom: { extractors: [], searches: [] },
+    sitemap_generate: defaultGenerateOptions(),
+    links: { auto_analyse: true, position_rules: [], weighting: null },
+    access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
+
   };
 }
 
@@ -138,19 +174,107 @@ export interface FakeCrawls {
   preview: RetryPreview;
   progress(p: Partial<CrawlProgress>): void;
   warn(message: string): void;
+  analyse(p: Partial<PassProgress>): void;
+  /** Files `passesRun` was called for. */
+  analysed: string[];
   notice(n: Partial<CrawlNotice> & { message: string }): void;
   finish(f: Partial<CrawlFinished>): void;
 }
 
+/** What the fake file pickers return; tests set these before clicking. */
+export interface FakePicks {
+  sitemapFile: string | null;
+  folder: string | null;
+}
+
+/** A sitemap file row with defaults, for tests. */
+export function fakeSitemapFile(id: number, location: string, patch: Partial<SitemapFileRow> = {}): SitemapFileRow {
+  return {
+    id,
+    location,
+    source: "robots",
+    parent_id: null,
+    level: 0,
+    kind: "urlset",
+    http_status: 200,
+    final_url: location,
+    redirected: false,
+    compressed: false,
+    bytes: 1200,
+    entries: 10,
+    over_limit: false,
+    error_class: null,
+    error: null,
+    error_line: null,
+    invalid_entries: 0,
+    children: 0,
+    base_url: null,
+    ...patch,
+  };
+}
+
+/** Sitemap generation and files as the tests see them. */
+export interface FakeSitemaps {
+  /** What the Sitemap files view reads. */
+  files: SitemapFiles;
+  /** File names already in each folder. */
+  existing: Map<string, string[]>;
+  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
+  previews: number;
+  /** When set, the next generate fails with this message. */
+  fail: string | null;
+}
+
+/** A stand-in for the engine's report: internal 200 pages, split by the URL limit. */
+function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: string[]): GenerateReport {
+  const re = (p: string) => {
+    try {
+      return new RegExp(p);
+    } catch {
+      return null;
+    }
+  };
+  const kept = urls.filter((u) => u.internal && u.status === 200);
+  const pages = kept.filter(
+    (u) => (o.include.length === 0 || o.include.some((p) => re(p)?.test(u.url))) && !o.exclude.some((p) => re(p)?.test(u.url)),
+  );
+  const ext = o.gzip ? ".xml.gz" : ".xml";
+  const n = Math.ceil(pages.length / Math.max(1, o.max_urls_per_file));
+  const files =
+    pages.length === 0
+      ? []
+      : n === 1
+        ? [{ name: `${o.file_prefix}${ext}`, kind: "pages" as const, urls: pages.length, images: 0, bytes: pages.length * 80 }]
+        : [
+            { name: `${o.file_prefix}_index${ext}`, kind: "index" as const, urls: n, images: 0, bytes: n * 90 },
+            ...Array.from({ length: n }, (_, i) => {
+              const c = Math.min(o.max_urls_per_file, pages.length - i * o.max_urls_per_file);
+              return { name: `${o.file_prefix}-${i + 1}${ext}`, kind: "pages" as const, urls: c, images: 0, bytes: c * 80 };
+            }),
+          ];
+  return {
+    files,
+    pages: pages.length,
+    images: 0,
+    skipped_by_pattern: kept.length - pages.length,
+    existing: files.map((f) => f.name).filter((name) => existingIn.includes(name)),
+    base_url: o.base_url || "https://example.com/",
+  };
+}
+
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; compare: FakeCompare; aeo: FakeAeo } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom } {
+  const picks: FakePicks = { sitemapFile: null, folder: null };
+  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
+
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
   const onProgress: Listeners<CrawlProgress> = new Set();
   const onWarning: Listeners<{ id: number; message: string }> = new Set();
   const onFinished: Listeners<CrawlFinished> = new Set();
+  const onAnalysis: Listeners<PassProgress> = new Set();
   const onNotice: Listeners<CrawlNotice> = new Set();
   const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
@@ -188,21 +312,51 @@ export function fakeTransport(
         }),
       ),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
+    analyse: (p) => onAnalysis.forEach((cb) => cb({ pass: "link_score", label: "Link Score", done: 0, total: 100, ...p })),
+    analysed: [],
     notice: (n) => onNotice.forEach((cb) => cb({ id: nextId - 1, kind: "host_paused", host: null, ...n })),
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
   const compareApi = fakeCompareTransport(resultsApi.results.progress);
+  const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
     ...compareApi,
+    ...fakeCustomTransport(),
+    ...integrationsApi,
+    integrations,
     ...aeoApi,
+    ...schedulesApi,
+    schedules,
+
     saved,
     crawls,
+    picks,
+    sitemaps,
+    pickFolder: async () => picks.folder,
+    sitemapFiles: async () => structuredClone(sitemaps.files),
+    sitemapPreview: async (_path, options, folder) => {
+      sitemaps.previews += 1;
+      const r = fakeReport_(resultsApi.results.urls, options, folder ? (sitemaps.existing.get(folder) ?? []) : []);
+      if (r.pages === 0) throw "No page matches these options.";
+      return r;
+    },
+    sitemapGenerate: async (_path, options, folder, replace) => {
+      if (sitemaps.fail) throw sitemaps.fail;
+      const r = fakeReport_(resultsApi.results.urls, options, sitemaps.existing.get(folder) ?? []);
+      if (r.pages === 0) throw "No page matches these options.";
+      if (r.existing.length > 0 && !replace) throw `These files already exist: ${r.existing.join(", ")}`;
+      sitemaps.generated.push({ folder, options, replace });
+      sitemaps.existing.set(folder, [...new Set([...(sitemaps.existing.get(folder) ?? []), ...r.files.map((f) => f.name)])]);
+      return { ...r, existing: [] };
+    },
     pickCsvPath: async (name) => `/exports/${name}.csv`,
+    pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",
@@ -234,6 +388,11 @@ export function fakeTransport(
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      config.links.position_rules.forEach((r, i) => {
+        // Stand-in for the CSS parser: an unclosed bracket is invalid.
+        if (r.selector.trim() === "" || r.selector.split("[").length !== r.selector.split("]").length)
+          issues.push({ path: `links.position_rules[${i}].selector`, severity: "error", code: "selector_syntax", message: "Not a valid CSS selector." });
+      });
       const r = config.retry;
       if (!(r.base_wait_secs >= 0.1 && r.base_wait_secs <= 60)) {
         issues.push({ path: "retry.base_wait_secs", severity: "error", code: "out_of_range", message: "The first wait must be between 0.1 and 60 seconds." });
@@ -241,6 +400,15 @@ export function fakeTransport(
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
+      // Custom rules (spec 013): a few of the engine's checks, enough for the UI paths.
+      config.custom.extractors.forEach((e, i) => {
+        if (!e.expr.trim()) issues.push({ path: `custom.extractors[${i}].expr`, severity: "error", code: "custom_expr_empty", message: "Enter what to extract." });
+        if (config.custom.extractors.findIndex((x) => x.name === e.name) !== i)
+          issues.push({ path: `custom.extractors[${i}].name`, severity: "error", code: "custom_name_taken", message: `Another extractor is already called "${e.name}".` });
+      });
+      config.custom.searches.forEach((x, i) => {
+        if (!x.term) issues.push({ path: `custom.searches[${i}].term`, severity: "error", code: "custom_term_empty", message: "Enter what to search for." });
+      });
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });
@@ -288,6 +456,7 @@ export function fakeTransport(
     },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
+    pickSitemapFile: async () => picks.sitemapFile,
     pickProfileFile: async () => null,
     pickExportPath: async () => null,
     profiles: async () => [...saved.keys()].map((name) => ({ name, is_default: false, error: null })),
@@ -315,6 +484,11 @@ export function fakeTransport(
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
+    onPassProgress: (cb) => subscribe(onAnalysis, cb),
+    passesRun: async (path) => {
+      crawls.analysed.push(path);
+      return { ran: [], skipped: [], saved: true };
+    },
     onCrawlFinished: (cb) => subscribe(onFinished, cb),
     onCrawlNotice: (cb) => subscribe(onNotice, cb),
     crawlResumeHost: async (id, host) => void crawls.resumedHosts.push(`${id} ${host}`),

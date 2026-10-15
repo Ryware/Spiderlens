@@ -46,8 +46,8 @@ export function useExport(transport: Transport) {
   );
 
   const start = useCallback(
-    (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string) =>
-      run(() => transport.exportStart(path, query, columns, ranges, dest), dest),
+    (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null) =>
+      run(() => transport.exportStart(path, query, columns, ranges, dest, allValues), dest),
     [transport, run],
   );
 

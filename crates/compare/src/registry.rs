@@ -56,7 +56,7 @@ mod tests {
         assert!(l.slots.len() > 40);
         assert_eq!(l.columns(), l.slots.len().div_ceil(BITS));
         assert_eq!(
-            l.find("page-titles", "missing").map(|k| l.slots[k].filter.id),
+            l.find("page-titles", "missing").map(|k| &*l.slots[k].filter.id),
             Some("missing")
         );
         assert_eq!(Layout::bit(BITS), ("fb1".into(), 0));

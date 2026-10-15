@@ -319,10 +319,10 @@ pub(crate) fn filter_deltas(ws: &Connection, sides: &[Side; 2], layout: &Layout)
             let comparable = avail[0] && avail[1];
             let g = &groups[k * 5..k * 5 + 5];
             FilterDelta {
-                tab: s.tab.id.into(),
-                tab_title: s.tab.title.into(),
-                filter: s.filter.id.into(),
-                filter_label: s.filter.label.into(),
+                tab: s.tab.id.to_string(),
+                tab_title: s.tab.title.to_string(),
+                filter: s.filter.id.to_string(),
+                filter_label: s.filter.label.to_string(),
                 previous: avail[0].then_some(totals[0][k]),
                 current: avail[1].then_some(totals[1][k]),
                 new: g[0],
