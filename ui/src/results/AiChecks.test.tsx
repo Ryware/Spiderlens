@@ -111,9 +111,9 @@ test("provisional_pages_are_explained", async () => {
 test("results_read_the_data_list_again_when_the_checks_finish", async () => {
   const t = fakeTransport();
   const { result } = renderHook(() => useResults(t, PATH, false));
-  await waitFor(() => expect(result.current.features?.available).toEqual(["base"]));
+  await waitFor(() => expect(result.current.features?.available).toEqual(["base", "analysis"]));
   await t.aeoRun(PATH);
-  t.results.features = ["base", "ai_checks"];
+  t.results.features = ["base", "analysis", "ai_checks"];
   act(() => t.aeo.finish());
   await waitFor(() => expect(result.current.features?.available).toContain("ai_checks"));
 });

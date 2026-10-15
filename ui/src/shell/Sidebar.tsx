@@ -1,4 +1,4 @@
-import { Activity, CalendarClock, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Cookie, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, CalendarClock, Cookie, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -12,6 +12,7 @@ export interface NavItem {
 
 export const resultTabs: NavItem[] = [
   { id: "internal", title: "Internal", icon: Globe },
+  { id: "links", title: "Links", icon: Network },
   { id: "external", title: "External", icon: ExternalLink },
   { id: "response-codes", title: "Response codes", icon: ListOrdered },
   { id: "url", title: "URL", icon: Link2 },

@@ -60,9 +60,23 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: true,
   },
+  {
+    id: "links",
+    title: "Links",
+    columns: [col("address", "Address", "url", 420), col("link_score", "Link Score", "score", 100, "analysis"), col("depth", "Crawl depth", "int", 100), col("followed_inlinks", "Unique followed inlinks", "int", 170, "analysis")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "depth_4", label: "Crawl depth 4 or more", need: "base" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
-const cell = (u: FakeUrl, c: string) => ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth })[c] ?? null;
+/** A made-up Link Score: the start URL is the strongest page. */
+const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
+const cell = (u: FakeUrl, c: string) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7 })[c] ?? null;
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
 export interface FakeCookie extends Omit<CookieRow, "urls"> {
@@ -139,7 +153,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     exports: [],
     opened: [],
     tabCountCalls: 0,
-    features: ["base"],
+    features: ["base", "analysis"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
     },
@@ -155,6 +169,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
+    if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
     if (q.filter === "class_timeout") us = [];
     if (q.filter === "class_http_404") us = us.filter((u) => u.status === 404);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -261,6 +276,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: results.features.includes("raw_html") && u.title !== null,
+        link_metrics: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
