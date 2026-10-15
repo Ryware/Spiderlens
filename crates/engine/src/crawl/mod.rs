@@ -9,11 +9,13 @@
 pub mod cookies;
 pub mod file;
 mod health;
+mod hosts;
 pub mod manage;
 pub mod migrate;
 pub mod pace;
 pub mod reason;
 pub mod redact;
+pub mod render;
 pub mod retry;
 mod runner;
 pub mod scope;
@@ -30,8 +32,8 @@ pub use file::{
 pub use reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 pub use runner::{
     Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, Opened, PausedHost,
-    Progress, ResumeOptions, RunCommand, SitemapSummary, SpeedNote, Upgrade, default_file_name, host_key,
-    retry_preview,
+    Progress, RenderSummary, RendererInfo, ResumeOptions, RunCommand, SitemapSummary, SpeedNote, Upgrade,
+    default_file_name, host_key, retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
 pub use spelling::{SpellFindingRow, SpellPage, SpellPageRow, open_for_spelling};

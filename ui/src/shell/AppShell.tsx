@@ -486,6 +486,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              values={results.values}
+              onValues={results.setValues}
               toolbar={
                 resultTab.id === "spelling" ? (
                   <SpellingBar spelling={spelling} live={crawl.running} />

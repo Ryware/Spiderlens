@@ -219,7 +219,9 @@ export interface FakeResults {
   cookies: FakeCookie[];
   copied: string[];
   exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null; segments?: Segment[] }[];
-  opened: { tab: string; filter: string; search: string; sort: string | null; segment?: number }[];
+  opened: { tab: string; filter: string; search: string; sort: string | null; segment?: number; values?: string }[];
+  /** The `values` of each counts call, in order (spec 014). */
+  counted: (string | undefined)[];
   /** How often the sidebar asked for its tab counts. */
   tabCountCalls: number;
   /** Segments applied to the open crawl (segmentsSet). */
@@ -319,6 +321,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     exports: [],
     opened: [],
+    counted: [],
     tabCountCalls: 0,
     segments: [],
     segmentCalls: [],
@@ -408,6 +411,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         filter: q.filter,
         search: q.search,
         sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null,
+        ...(q.values ? { values: q.values } : {}),
         ...(q.segment !== undefined && q.segment !== null ? { segment: q.segment } : {}),
       });
       views.set(view, { ...select(q), version });
@@ -433,7 +437,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return segmentCounts();
     },
     segmentsCounts: async () => segmentCounts(),
-    viewCounts: async (_p, tab, scope, segment) => {
+    viewCounts: async (_p, tab, scope, segment, values) => {
+      results.counted.push(values);
       const t = tabOf(tab);
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};

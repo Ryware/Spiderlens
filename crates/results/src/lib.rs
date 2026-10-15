@@ -27,6 +27,7 @@ mod sql;
 #[doc(hidden)]
 pub mod synth;
 pub(crate) mod tabs;
+mod values;
 pub(crate) mod view;
 pub mod viz;
 
@@ -56,6 +57,7 @@ pub use tabs::{
     ColumnDef, Derived, FilterDef, Need, TabDef, ValueKind, build_derived, c as columns, issue_tabs, tab,
     tabs,
 };
+pub use values::Values;
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
 
 #[derive(Debug, thiserror::Error)]

@@ -26,6 +26,7 @@ use spiderlens_engine::crawl::{
     NotCrawledReason, Notice, Progress, ResumeOptions, RunCommand, Upgrade, default_file_name,
     retry_preview as engine_retry_preview,
 };
+use spiderlens_render::{BrowserInfo, FindOptions, NotUsable};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -218,7 +219,7 @@ pub fn free_path(dir: &Path, name: &str) -> PathBuf {
 /// How the crawl file is reached: created new, reopened to resume, or
 /// reopened with its transient failures queued again (spec 004 US5).
 enum Open {
-    Create(Box<(CrawlConfig, ModeInput)>),
+    Create(Box<(CrawlConfig, ModeInput, Option<BrowserInfo>)>),
     Resume(Box<Crawler>),
     RetryFailed,
 }
@@ -258,10 +259,17 @@ pub fn crawl_start(
     {
         return Err(e.message);
     }
+    // Before the file exists: no browser, no crawl file (spec 014 FR-045).
+    let browser = browser_for(&config)?;
     std::fs::create_dir_all(&state.dir)
         .map_err(|e| format!("Could not create {}: {e}", state.dir.display()))?;
     let path = free_path(&state.dir, &default_file_name(&input));
-    launch(app, &state, path, Open::Create(Box::new((config, input))))
+    launch(
+        app,
+        &state,
+        path,
+        Open::Create(Box::new((config, input, browser))),
+    )
 }
 
 /// Continues a paused, stopped or recovered crawl with the settings stored
@@ -303,8 +311,49 @@ pub async fn crawl_resume(
             CrawlError::Lock(l) => format!("in_use: {l}"),
             other => other.to_string(),
         })?;
+    let crawler = match browser_for(crawler.config())? {
+        Some(b) => crawler.with_browser(b),
+        None => crawler,
+    };
     let state = app.state::<State>();
     launch(app.clone(), &state, path, Open::Resume(Box::new(crawler)))
+}
+
+/// The browser a rendering crawl uses, found before anything starts (spec
+/// 014 FR-045, plan D12). Raw crawls need none. Errors carry the
+/// `browser_unavailable` code the window answers with a prompt.
+fn browser_for(config: &CrawlConfig) -> Cmd<Option<BrowserInfo>> {
+    if !config.rendering.is_on() {
+        return Ok(None);
+    }
+    let data_dir = spiderlens_render::data_dir().unwrap_or_else(std::env::temp_dir);
+    spiderlens_render::find_browser(&FindOptions {
+        user_path: None,
+        data_dir,
+    })
+    .map(Some)
+    .map_err(|e| format!("browser_unavailable: {}", browser_message(&e)))
+}
+
+/// Why rendering cannot start, in the window's words.
+fn browser_message(e: &NotUsable) -> String {
+    const FIX: &str = "Install Google Chrome, Chromium or Microsoft Edge, or turn JavaScript rendering off.";
+    match e {
+        NotUsable::NotFound => {
+            format!("JavaScript rendering needs a Chromium-based browser and none was found. {FIX}")
+        }
+        NotUsable::TooOld { found, min_major } => format!(
+            "JavaScript rendering needs a Chromium-based browser version {min_major} or newer; {} {} is too old. {FIX}",
+            found.name.label(),
+            found.version
+        ),
+        NotUsable::Broken { path, message } => {
+            format!(
+                "The browser at {} cannot be used: {message} {FIX}",
+                path.display()
+            )
+        }
+    }
 }
 
 /// Finish the requests in flight, keep the queue, save as paused.
@@ -535,8 +584,11 @@ fn run(
 ) -> Result<(CrawlSummary, bool), CrawlError> {
     let crawler = match open {
         Open::Create(new) => {
-            let (config, input) = *new;
-            let c = Crawler::create(path, config, &input)?;
+            let (config, input, browser) = *new;
+            let mut c = Crawler::create(path, config, &input)?;
+            if let Some(b) = browser {
+                c = c.with_browser(b);
+            }
             app.state::<crate::files::State>().touch(path, None);
             c
         }
@@ -619,6 +671,23 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_crawls_need_no_browser() {
+        assert_eq!(browser_for(&CrawlConfig::default()).unwrap(), None);
+    }
+
+    #[test]
+    fn browser_messages_name_the_way_out() {
+        let none = browser_message(&NotUsable::NotFound);
+        assert!(none.starts_with("JavaScript rendering needs a Chromium-based browser and none was found."));
+        assert!(none.ends_with("or turn JavaScript rendering off."));
+        let broken = browser_message(&NotUsable::Broken {
+            path: PathBuf::from("/nope"),
+            message: "No browser at this path.".into(),
+        });
+        assert!(broken.contains("/nope") && broken.contains("No browser at this path."));
+    }
 
     #[test]
     fn free_path_never_reuses_a_name() {

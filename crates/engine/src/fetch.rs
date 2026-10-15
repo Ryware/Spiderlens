@@ -313,6 +313,96 @@ pub(crate) async fn fetch_once(
     })
 }
 
+/// A page resource the renderer asked for (spec 014 plan D4 step 5).
+pub(crate) struct ResourceResponse {
+    pub status: u16,
+    /// Names lowercase, in received order. The body is decoded, so a
+    /// `Content-Encoding` header describes the wire, not `body`.
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    /// Raw `Retry-After`, read on 429 and 503.
+    pub retry_after: Option<String>,
+}
+
+/// Browser request headers not forwarded: the client sets them itself, or
+/// they describe the browser's own connection.
+const NOT_FORWARDED: &[&str] = &[
+    "host",
+    "user-agent",
+    "cookie",
+    "content-length",
+    "connection",
+    "keep-alive",
+    "accept-encoding",
+    "upgrade",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "proxy-connection",
+    "proxy-authorization",
+];
+
+/// Fetches one resource for the renderer with the crawl's client, without
+/// following redirects (the browser follows them, so each hop is a request
+/// that goes through the same permits). The crawl's custom headers are
+/// added as for pages.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fetch_resource(
+    client: &Client,
+    url: &Url,
+    method: &str,
+    browser_headers: &[(String, String)],
+    body: Option<Vec<u8>>,
+    crawl_headers: &[RequestHeader],
+    internal: bool,
+    max_bytes: u64,
+) -> Result<ResourceResponse, CheckError> {
+    let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
+    let mut request = client.request(method, url.clone());
+    for (n, v) in browser_headers {
+        if !NOT_FORWARDED.iter().any(|x| n.eq_ignore_ascii_case(x)) {
+            request = request.header(n.as_str(), v.as_str());
+        }
+    }
+    for h in crawl_headers.iter().filter(|h| h.all_hosts || internal) {
+        request = request.header(&h.name, &h.value);
+    }
+    if let Some(b) = body {
+        request = request.body(b);
+    }
+    let response = request.send().await.map_err(|e| classify(&e))?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
+        .collect();
+    let retry_after = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let (body, problem) = read_body_partial(response, max_bytes).await;
+    // A body cut by a timeout fails the request; otherwise what was received
+    // is passed on, as a browser would get it.
+    if let Some(p) = problem
+        && p.class == ErrorClass::Timeout
+    {
+        return Err(p);
+    }
+    Ok(ResourceResponse {
+        status,
+        headers,
+        body,
+        retry_after,
+    })
+}
+
 /// Reads up to `max_bytes`. Unlike [`read_body`], a body over the limit or
 /// cut off by the connection keeps what was received, so the page can
 /// still be extracted (spec 005 FR-008); the problem is returned with it.

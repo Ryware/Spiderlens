@@ -42,6 +42,7 @@ fn cli_csv_equals_desktop_export_for_the_same_view() {
         filter: "duplicate".into(),
         scope: UrlScope::All,
         search: String::new(),
+        values: None,
         sort: Some(Sort {
             column: "title".into(),
             desc: true,

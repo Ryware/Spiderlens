@@ -145,6 +145,7 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
             ScopeArg::External => UrlScope::External,
         },
         search: a.search,
+        values: None,
         sort,
         segment,
     };

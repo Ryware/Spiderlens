@@ -1,5 +1,5 @@
 // How cell values read (plan D8).
-import { cellTone, formatBytes, formatCell, formatCompact, numeric } from "./format";
+import { cellTone, formatBytes, formatCell, formatCompact, needReason, numeric } from "./format";
 
 test("format_bytes_picks_a_unit", () => {
   expect(formatBytes(0)).toBe("0 B");
@@ -45,6 +45,14 @@ test("numeric_kinds_align_right", () => {
   expect(["int", "bytes", "ms", "status", "score", "percent"].every((k) => numeric(k as never))).toBe(true);
   expect(numeric("text")).toBe(false);
   expect(numeric("url")).toBe(false);
+});
+
+describe("needReason", () => {
+  it("explains the rendering needs (spec 014)", () => {
+    expect(needReason.rendering).toBe("This crawl was not rendered.");
+    expect(needReason.rendered_html).toMatch(/rendered HTML/);
+    expect(needReason.screenshots).toMatch(/screenshots/);
+  });
 });
 
 test("issues_cells_read_as_highest_priority_and_count", () => {

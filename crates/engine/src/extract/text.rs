@@ -32,6 +32,12 @@ pub fn word_count(text: &str) -> u32 {
     count
 }
 
+/// The words [`word_count`] counts, in order (spec 014 research R10).
+pub fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || is_mark(c)))
+        .filter(|w| !w.is_empty())
+}
+
 /// Sentences and English syllables in visible text, for Flesch reading ease
 /// (spec 009 FR-031, plan D11a). A sentence ends at `.`, `!` or `?`
 /// followed by whitespace or the end; text with words has at least one.
@@ -130,6 +136,19 @@ mod tests {
         assert_eq!(word_count("שָׁלוֹם עולם"), 2);
         assert_eq!(word_count("  — … "), 0);
         assert_eq!(word_count("naïve café"), 2);
+        for t in [
+            "Hello, world!",
+            "don't e-mail 3.5",
+            "שָׁלוֹם עולם",
+            "  — … ",
+            "a\u{a0}b",
+        ] {
+            assert_eq!(words(t).count() as u32, word_count(t), "{t}");
+        }
+        assert_eq!(
+            words("don't e-mail").collect::<Vec<_>>(),
+            ["don", "t", "e", "mail"]
+        );
     }
 
     #[test]

@@ -20,7 +20,7 @@ import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "appearance" | "assistants";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "rendering" | "appearance" | "assistants";
 
 export interface Category {
   id: CategoryId;
@@ -59,6 +59,12 @@ export const categories: Category[] = [
     title: "Spelling",
     description: "Spelling is checked after the crawl, from the stored pages, so it never slows crawling. Dictionaries stay on this computer.",
     prefixes: ["spelling"],
+  },
+  {
+    id: "rendering",
+    title: "JavaScript rendering",
+    description: "Render each page in a browser, as search engines do, and compare it with the raw HTML. Slower, and needs Google Chrome, Chromium or Microsoft Edge.",
+    prefixes: ["rendering"],
   },
   {
     id: "appearance",
@@ -460,6 +466,32 @@ export function CategoryBody({
         </>
       );
 
+    case "rendering":
+      return (
+        <Group>
+          <Row
+            label="Mode"
+            help={
+              config.rendering.mode === "javascript"
+                ? "Each HTML page is fetched as usual, then rendered in a browser; the tabs show the rendered values."
+                : "Pages are read from their HTML as served. No browser is started."
+            }
+            issues={at("rendering.mode")}
+          >
+            {() => (
+              <Segmented
+                label="Rendering mode"
+                value={config.rendering.mode}
+                options={[
+                  { value: "raw", label: "Raw HTML" },
+                  { value: "javascript", label: "JavaScript rendering" },
+                ]}
+                onChange={(v) => set((c) => ({ ...c, rendering: { ...c.rendering, mode: v } }))}
+              />
+            )}
+          </Row>
+        </Group>
+      );
     case "extraction": {
       const pdf = config.extraction.pdf;
       const setPdf = (p: Partial<typeof pdf>) => set((c) => ({ ...c, extraction: { ...c.extraction, pdf: { ...c.extraction.pdf, ...p } } }));

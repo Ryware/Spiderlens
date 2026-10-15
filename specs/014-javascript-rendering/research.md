@@ -138,6 +138,8 @@ The tabs of spec 007 are static SQL over `urls u`, `pages p`, `links l`, `direct
 
 **Risk**: a view over `urls` may stop SQLite from using the `urls_state` index in some tab conditions. The results benchmark (`crates/results/examples/bench.rs`) is run with and without the views; the fallback is to rewrite only the affected expressions with a `{pages}` placeholder.
 
+**Found during implementation (T028)**: the `urls` and `pages` views are plain LEFT JOINs of `rendered_pages`, which SQLite flattens, so lookups by key stay index lookups. The list tables cannot be shadowed the same way: `links`, `page_text`, `directives` and `structured_data` would need a UNION ALL of raw and rendered rows, and SQLite (3.53) does not push a correlated subquery's key into a compound view, so every row scanned the whole view. Those tables are not shadowed. The few tab expressions that read them (Inlinks, Outlinks, image alt and "Found on", second title, HTML canonical, meta robots and the directive filters) carry a written-out rendered variant (`ColumnDef::with_rendered`) that reads `links` minus `raw_only_links` plus `rendered_links`, or `rendered_text` and `rendered_directives`, each through its own index.
+
 ## R12. Closing the browser when SpiderLens dies (FR-046, SC-009)
 
 Normal exits (completion, pause, stop, Ctrl-C, window close) close the browser from Rust. A crash or a kill of SpiderLens is harder: the workspace forbids `unsafe` code (`Cargo.toml:57`), which rules out `prctl(PR_SET_PDEATHSIG)` on Linux and Job Objects on Windows through raw system calls.
@@ -150,7 +152,7 @@ The spike (T001) checks option 1 for chromiumoxide and chromey.
 
 ## R13. Browsers on CI runners
 
-GitHub's hosted images for `ubuntu-24.04`, `windows-latest` and `macos-14` list Google Chrome as preinstalled, and Windows also has Edge *(from the runner image documentation, unverified for the exact images this repository pins)*. Task T002 adds a CI step that prints the browser found on each runner, so this is verified before any render test depends on it. Render integration tests read `SPIDERLENS_REQUIRE_BROWSER=1` in CI: without a browser they fail instead of being skipped silently. Locally they skip with a message.
+GitHub's hosted images for `ubuntu-24.04`, `windows-latest` and `macos-14` list Google Chrome as preinstalled, and Windows also has Edge *(from the runner image documentation, unverified for the exact images this repository pins)*. Task T002 adds a CI step that prints the browser found on each runner, so this is verified before any render test depends on it. *Status 2026-10-14: the step and `scripts/find-browser.sh` exist on the branch, but the branch has not run in CI yet, so what each runner has is still to be recorded here from the first run's job summary.* Render integration tests read `SPIDERLENS_REQUIRE_BROWSER=1` in CI: without a browser they fail instead of being skipped silently. Locally they skip with a message.
 
 ## R14. Integrity of the downloaded browser
 
@@ -160,13 +162,41 @@ Chrome for Testing publishes download URLs but no checksums. **Decision**: each 
 
 | Crate | Where | Why |
 |---|---|---|
-| `chromiumoxide` 0.9 (`tokio-runtime`, no default fetcher) | `crates/render` | Typed CDP client (R1). `chromey` is the fallback if the spike fails. |
+| `chromiumoxide` 0.9 (no default features, so no fetcher) | `crates/render` | Typed CDP client (R1), chosen by the spike (R16). `chromey` is the fallback. |
 | `sysinfo` | `crates/render`, `crates/engine` | Free system memory and the browser process tree's memory for the guard (FR-038) and the orphan guard (R12). |
 | `zip` | `crates/render` | Unpacking the `chrome-headless-shell` archive. |
 | `sha2` | `crates/render` | Download integrity (R14). |
 | `similar` | `crates/results` | Line diff for the raw versus rendered pane (FR-028), shared by the desktop app and `spiderlens html --diff`. |
 
 Binary size: the generated CDP types are large. The desktop and CLI binaries are measured before and after in `benchmarks.md`; the budget is 8 MB added per binary *(target, to be confirmed by the spike)*.
+
+## R16. Spike results (T001, 2026-10-14)
+
+**Decision: `chromiumoxide` 0.9.1, as R1 recommended.** Both crates performed the same within run-to-run noise, so the choice rests on the rest: `chromiumoxide` adds fewer crates (43 against 72 in a small probe program), its handler leaves every paused request to us without any crawler-specific logic of its own (`chromey`'s network manager carries ad blocking, caching and request heuristics for the `spider` crawler that we would have to keep switched off), and it changes less often. `chromey` stays the fallback.
+
+**Setup.** `cargo run --release -p spiderlens-render --features spike --example spike` (source: `crates/render/examples/spike.rs` and `spike/driver.rs`). All numbers come from a **4-core cloud container** (16 GB, no swap), not the reference laptop, with the browser, the fixture server and the spike sharing the same 4 cores. Browser: Playwright's `chromium_headless_shell` 141.0.7390.37 (the same build as Chrome for Testing's `chrome-headless-shell`, old headless mode). Fixture: `JsSiteBuilder::app_pages(2000)` from `spiderlens-test-fixtures`, 2,000 client-rendered pages, each with 3 scripts (one of them 150 KB), 1 stylesheet and 2 JSON requests. Per page: the main document is fetched once with `reqwest`, then a fresh browser context and page are created, and `Fetch` interception pauses every request. The main document is fulfilled from memory and every other request is fetched by `reqwest` from the fixture and fulfilled with `Fetch.fulfillRequest`. The page counts as rendered when the client-rendered title is in `content()`. Each configuration ran twice, alternating the crates, 10 s apart. Memory is the summed resident memory of the browser process tree sampled every 250 ms (this counts shared pages more than once, so it overstates real use); "steady" is the median of the second half of the run. In the table, memory, paused peak and maximum pause are the higher of the two runs; means are the average of the two.
+
+| Crate | Tabs | Pages/s (run 1, run 2) | Page time p50 | Memory peak / steady | Paused requests: peak, mean | Pause time mean / max | Paused > 5 s |
+|---|---|---|---|---|---|---|---|
+| chromiumoxide | 4 | 19.9, 20.7 | 191 to 198 ms | 668 / 582 MB | 13, 0.8 | 5.3 / 41 ms | 0 |
+| chromey | 4 | 20.0, 20.7 | 190 to 198 ms | 663 / 576 MB | 12, 0.9 | 5.5 / 93 ms | 0 |
+| chromiumoxide | 8 | 22.1, 22.1 | 358 to 359 ms | 1,006 / 883 MB | 19, 1.5 | 9.9 / 41 ms | 0 |
+| chromey | 8 | 23.2, 22.7 | 342 to 349 ms | 1,009 / 882 MB | 18, 1.7 | 10.1 / 59 ms | 0 |
+| chromiumoxide | 16 | 22.3, 21.8 | 711 to 727 ms | 1,734 / 1,493 MB | 37, 2.9 | 19.4 / 78 ms | 0 |
+| chromey | 16 | 21.5, 22.1 | 719 to 739 ms | 1,711 / 1,481 MB | 37, 3.4 | 21.5 / 81 ms | 0 |
+
+All numbers: 4-core container. Every run rendered all 2,000 pages with no failure, and the fixture saw exactly 7 requests per page (14,000 per run), so nothing was answered twice or lost.
+
+What this shows:
+
+- **No back-pressure or deadlock.** Across 12 runs and 168,000 intercepted requests, no request stayed paused longer than 93 ms and none came near 5 s. The number of paused requests over time (largest count in each 10 s window) stayed flat for the whole run, for example 5 to 12 at 8 tabs, with no growth towards the end. Both crates deliver events to listeners over unbounded channels, so a slow consumer would grow memory rather than block the connection; the render code must keep its own per-page bounds.
+- **Throughput levels off at 8 tabs on 4 cores** (about 22 pages/s); 16 tabs only doubles page time and adds about 70% memory. Per page at 4 tabs, creating the browser context and page took about 85 ms, navigation 62 ms, waiting for the client-rendered content 32 ms, `content()` 4 ms and closing 8 ms. The default render concurrency of 4 (plan D2) is sensible; on this container 8 is the useful maximum.
+- **Fulfilling from Rust is cheap.** Base64 adds 0.20 MB per page crossing the DevTools connection, and encoding it took 0.22 to 0.32 ms per page in total. With `--mode continue` (Chrome fetches the subresources itself through `--host-resolver-rules`; the main document is continued too, because a page fulfilled from memory has no address and Chrome 141 then fails its requests to 127.0.0.1 with `net::ERR_FAILED` under its Local Network Access checks), 8 tabs gave 23.5 and 22.5 pages/s with chromiumoxide and 23.2 and 22.7 with chromey, against 22.1 (chromiumoxide) and 23.0 (chromey) on average with fulfilment. The fulfil path costs at most about 4% of throughput here, far below the 20% that would trigger the R6 fallback. R6 stands.
+- **Full Chrome is much slower than the headless shell.** The same 2,000 pages with the full Chromium 141 binary in new headless mode (`--headless=new`) at 8 tabs gave 4.2 pages/s with both crates (page time p50 1.9 s, 2.1 GB peak), five times slower; creating the context and page alone took about 0.9 s per page. This matters for R2, which prefers an installed Chrome or Edge (full browsers) over downloading `chrome-headless-shell`: see the note below.
+- **Pipe transport (R12 option 1): not supported by either crate.** Both connect only over a WebSocket (`chromiumoxide` 0.9.1 `src/conn.rs` and `chromey` 2.58.2 `src/conn.rs` are built on `async_tungstenite`/`tokio-tungstenite` streams), and neither has a launch option for `--remote-debugging-pipe`. R12 option 2, the guard process, is therefore the plan of record for T010.
+- **Binary size.** A small release program (same profile as the workspace: thin LTO, one codegen unit, stripped) that launches a browser, intercepts, fulfils and reads `content()` grew from 4,092,280 bytes without a CDP client to 9,127,480 bytes with `chromiumoxide` (+5.0 MB) and 9,137,520 bytes with `chromey` (+5.0 MB). Both are within the 8 MB budget of R15. The real increase in the `spiderlens` binary is measured again in T080.
+
+**Note for the plan (R2, plan D1).** Because a full Chrome or Edge rendered five times slower than the headless shell here, SC-002 (10 pages/s with defaults) may not be reachable on the reference machine with an installed browser. This is one container measurement with a Chromium build, not Google Chrome or Edge, and needs confirming on the reference laptop in T080. If it holds, the owner may want to revisit decision 1 of "Decisions for the owner" (prefer a downloaded `chrome-headless-shell` once one exists, and use an installed browser only until then).
 
 ## Sources
 

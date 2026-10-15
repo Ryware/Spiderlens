@@ -194,3 +194,21 @@ fn version_reports_build_identity() {
             env!("CARGO_PKG_VERSION")
         )));
 }
+
+/// The binary is also the browser's guard process (spec 014 research R12):
+/// `--render-guard` runs the given program and exits with its status.
+#[cfg(unix)]
+#[test]
+fn render_guard_runs_the_browser_command() {
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_spiderlens"))
+        .args([
+            "--render-guard",
+            &std::process::id().to_string(),
+            "sh",
+            "-c",
+            "exit 7",
+        ])
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(7));
+}

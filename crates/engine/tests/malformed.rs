@@ -17,6 +17,7 @@ fn ours(body: &[u8]) -> Value {
         body,
         truncated: false,
         robots_token: "SpiderLens",
+        keep_text: false,
         a11y: false,
         hook: None,
     });

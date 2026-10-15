@@ -10,7 +10,7 @@ use ts_rs::TS;
 
 use crate::patterns::{Decision, UrlFilter, check_pattern};
 use crate::presets::{UaPreset, suggest_robots_token};
-use crate::{CrawlConfig, HeaderValue, Mode, ModeInput, RobotsMode, normalize_url};
+use crate::{CrawlConfig, HeaderValue, Mode, ModeInput, RobotsMode, WindowPreset, normalize_url};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -635,6 +635,7 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    validate_rendering(c, &mut i);
     // Link analysis (spec 023)
     for (index, rule) in c.links.position_rules.iter().enumerate() {
         if let Err(message) = crate::check_selector(&rule.selector) {
@@ -660,6 +661,96 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
     i.0.extend(crate::segments::validate_segments(&c.segments));
 
     i.0
+}
+
+/// JavaScript rendering (spec 014, data-model.md "Settings"). Ranges are
+/// checked whatever the mode, so a saved profile is never half valid.
+fn validate_rendering(c: &CrawlConfig, i: &mut Issues) {
+    let r = &c.rendering;
+    let cap = r.max_render_secs;
+    let cap_ok = cap.is_finite() && (1.0..=60.0).contains(&cap);
+    if !cap_ok {
+        i.error(
+            "rendering.max_render_secs",
+            "out_of_range",
+            "The maximum render time must be between 1 and 60 seconds.",
+        );
+    }
+    let wait = r.min_wait_secs;
+    if !(wait.is_finite() && wait >= 0.0 && (!cap_ok || wait <= cap)) {
+        i.error(
+            "rendering.min_wait_secs",
+            "out_of_range",
+            "The minimum wait must be between 0 seconds and the maximum render time.",
+        );
+    }
+    if r.window.preset == WindowPreset::Custom {
+        match r.window.width {
+            Some(w) if (320..=3_840).contains(&w) => {}
+            _ => i.error(
+                "rendering.window.width",
+                "out_of_range",
+                "A custom window width must be between 320 and 3,840 pixels.",
+            ),
+        }
+        match r.window.height {
+            Some(h) if (480..=4_320).contains(&h) => {}
+            _ => i.error(
+                "rendering.window.height",
+                "out_of_range",
+                "A custom window height must be between 480 and 4,320 pixels.",
+            ),
+        }
+    }
+    for (group, list) in [("include", &r.include), ("exclude", &r.exclude)] {
+        for (index, p) in list.iter().enumerate() {
+            if let Err(message) = check_pattern(p) {
+                i.error(format!("rendering.{group}[{index}]"), "pattern_syntax", message);
+            }
+        }
+    }
+    if r.concurrency.is_some_and(|n| !(1..=16).contains(&n)) {
+        i.error(
+            "rendering.concurrency",
+            "out_of_range",
+            "Pages rendered at once must be between 1 and 16. Leave it blank for automatic.",
+        );
+    }
+    if r.memory_budget_mb.is_some_and(|n| !(256..=65_536).contains(&n)) {
+        i.error(
+            "rendering.memory_budget_mb",
+            "out_of_range",
+            "The browser memory budget must be between 256 and 65,536 MB. Leave it blank for automatic.",
+        );
+    }
+    if !(1..=1_000).contains(&r.js_content_min_percent) {
+        i.error(
+            "rendering.js_content_min_percent",
+            "out_of_range",
+            "The JavaScript content threshold must be between 1 and 1,000 percent.",
+        );
+    }
+    if r.js_content_min_words > 100_000 {
+        i.error(
+            "rendering.js_content_min_words",
+            "out_of_range",
+            "The JavaScript content word threshold must be between 0 and 100,000 words.",
+        );
+    }
+    if !(1..=100).contains(&r.hidden_content_percent) {
+        i.error(
+            "rendering.hidden_content_percent",
+            "out_of_range",
+            "The hidden content threshold must be between 1 and 100 percent.",
+        );
+    }
+    if r.is_on() && c.robots.mode == RobotsMode::Ignore {
+        i.warn(
+            "rendering.mode",
+            "rendering_robots_ignored",
+            "robots.txt is not read, so pages will load scripts and other files that robots.txt may disallow.",
+        );
+    }
 }
 
 /// RFC 9110 token characters.
@@ -945,6 +1036,41 @@ mod tests {
     }
 
     #[test]
+    fn rendering_defaults_are_clean_and_ranges_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.rendering.mode = crate::RenderMode::Javascript;
+        assert!(validate_config(&c).is_empty());
+        c.rendering.max_render_secs = 61.0;
+        c.rendering.min_wait_secs = -1.0;
+        c.rendering.concurrency = Some(17);
+        c.rendering.memory_budget_mb = Some(255);
+        c.rendering.js_content_min_percent = 0;
+        c.rendering.js_content_min_words = 100_001;
+        c.rendering.hidden_content_percent = 101;
+        let got = validate_config(&c);
+        assert_eq!(
+            codes(&got),
+            vec![
+                ("rendering.max_render_secs", "out_of_range", Severity::Error),
+                ("rendering.min_wait_secs", "out_of_range", Severity::Error),
+                ("rendering.concurrency", "out_of_range", Severity::Error),
+                ("rendering.memory_budget_mb", "out_of_range", Severity::Error),
+                (
+                    "rendering.js_content_min_percent",
+                    "out_of_range",
+                    Severity::Error
+                ),
+                ("rendering.js_content_min_words", "out_of_range", Severity::Error),
+                (
+                    "rendering.hidden_content_percent",
+                    "out_of_range",
+                    Severity::Error
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn cookies() {
         use crate::{HeaderValue, SuppliedCookie};
         let ck = |name: &str, value: HeaderValue, domain: &str, path: &str| SuppliedCookie {
@@ -980,6 +1106,89 @@ mod tests {
                 ),
                 ("access.cookies[3].path".to_string(), "cookie_path".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn rendering_range_edges_are_allowed() {
+        let mut c = CrawlConfig::default();
+        let r = &mut c.rendering;
+        r.max_render_secs = 60.0;
+        r.min_wait_secs = 60.0;
+        r.concurrency = Some(16);
+        r.memory_budget_mb = Some(65_536);
+        r.js_content_min_percent = 1_000;
+        r.js_content_min_words = 0;
+        r.hidden_content_percent = 1;
+        r.window.preset = WindowPreset::Custom;
+        r.window.width = Some(320);
+        r.window.height = Some(4_320);
+        assert!(validate_config(&c).is_empty());
+        c.rendering.max_render_secs = 1.0;
+        c.rendering.min_wait_secs = 1.5;
+        c.rendering.concurrency = Some(1);
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![("rendering.min_wait_secs", "out_of_range", Severity::Error)]
+        );
+    }
+
+    #[test]
+    fn custom_window_needs_both_sizes_in_range() {
+        let mut c = CrawlConfig::default();
+        c.rendering.window.preset = WindowPreset::Custom;
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("rendering.window.width", "out_of_range", Severity::Error),
+                ("rendering.window.height", "out_of_range", Severity::Error),
+            ]
+        );
+        c.rendering.window.width = Some(3_841);
+        c.rendering.window.height = Some(479);
+        assert_eq!(validate_config(&c).len(), 2);
+        // Sizes are ignored for a preset.
+        c.rendering.window.preset = WindowPreset::Desktop;
+        assert!(validate_config(&c).is_empty());
+    }
+
+    #[test]
+    fn rendering_patterns_use_the_scope_pattern_rules() {
+        let mut c = CrawlConfig::default();
+        c.rendering.include = vec!["/app/".into(), "(".into()];
+        c.rendering.exclude = vec!["[".into()];
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("rendering.include[1]", "pattern_syntax", Severity::Error),
+                ("rendering.exclude[0]", "pattern_syntax", Severity::Error),
+            ]
+        );
+    }
+
+    #[test]
+    fn rendering_with_robots_ignored_warns() {
+        let mut c = CrawlConfig::default();
+        c.robots.mode = RobotsMode::Ignore;
+        assert!(
+            !validate_config(&c)
+                .iter()
+                .any(|i| i.code == "rendering_robots_ignored")
+        );
+        c.rendering.mode = crate::RenderMode::Javascript;
+        let got = validate_config(&c);
+        let warning = got
+            .iter()
+            .find(|i| i.code == "rendering_robots_ignored")
+            .expect("warning");
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.path, "rendering.mode");
+        // Respecting robots.txt (or ignoring it but reporting) gives no warning.
+        c.robots.mode = RobotsMode::IgnoreReport;
+        assert!(
+            !validate_config(&c)
+                .iter()
+                .any(|i| i.code == "rendering_robots_ignored")
         );
     }
 

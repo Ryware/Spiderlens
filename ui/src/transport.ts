@@ -26,6 +26,7 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { Values } from "./generated/Values";
 import type { CacheInfo } from "./generated/CacheInfo";
 import type { Connection } from "./generated/Connection";
 import type { OrphanPage } from "./generated/OrphanPage";
@@ -688,8 +689,9 @@ export interface Transport {
   setDefaultProfile(name: string | null): Promise<void>;
   exportProfile(name: string, path: string): Promise<void>;
   importProfile(path: string): Promise<LoadedProfile>;
+  /** With JavaScript rendering on, rejects with "browser_unavailable:" plus a message when no browser is usable (spec 014). */
   crawlStart(config: CrawlConfig, startUrl: string | null): Promise<CrawlStarted>;
-  /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:" or "in_use:" plus a message. */
+  /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:", "in_use:" or "browser_unavailable:" plus a message. */
   crawlResume(path: string, options?: ResumeOptions): Promise<CrawlStarted>;
   crawlPause(id: number): Promise<void>;
   crawlStop(id: number): Promise<void>;
@@ -756,8 +758,8 @@ export interface Transport {
   viewRows(path: string, view: number, from: number, count: number): Promise<RowPage>;
   viewLocate(path: string, view: number, ids: number[]): Promise<(number | null)[]>;
   viewRefresh(path: string, view: number, anchors: number[]): Promise<Refresh | null>;
-  /** `segment`: only URLs in that segment; 0 means in no segment (spec 027). */
-  viewCounts(path: string, tab: string, scope: UrlScope, segment?: number): Promise<FilterCounts>;
+  /** `segment`: only URLs in that segment; 0 means in no segment (spec 027). `values`: raw or rendered values of a rendered crawl (spec 014); omitted means rendered when it has rendering. */
+  viewCounts(path: string, tab: string, scope: UrlScope, segment?: number, values?: Values): Promise<FilterCounts>;
   /** URLs each result tab lists, for the sidebar. */
   tabCounts(path: string): Promise<TabCounts>;
   /** Groups the open crawl's URLs by these segments; the file is not changed. */
@@ -1029,7 +1031,7 @@ export const tauriTransport: Transport = {
   viewRows: (path, view, from, count) => invoke("view_rows", { path, view, from, count }),
   viewLocate: (path, view, ids) => invoke("view_locate", { path, view, ids }),
   viewRefresh: (path, view, anchors) => invoke("view_refresh", { path, view, anchors }),
-  viewCounts: (path, tab, scope, segment) => invoke("view_counts", { path, tab, scope, segment: segment ?? null }),
+  viewCounts: (path, tab, scope, segment, values) => invoke("view_counts", { path, tab, scope, segment: segment ?? null, values: values ?? null }),
   tabCounts: (path) => invoke("tab_counts", { path }),
   segmentsSet: (path, segments) => invoke("segments_set", { path, segments }),
   segmentsCounts: (path) => invoke("segments_counts", { path }),

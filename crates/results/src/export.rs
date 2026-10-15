@@ -204,6 +204,7 @@ pub fn write_csv_in(
     let (conn, features, _) = connect(crawl, settings)?;
     let custom = crate::custom::tabs(&conn)?;
     let c = compile(q, &features, &custom)?;
+    crate::values::apply(&conn, c.values)?;
     let grouped = crate::segments::prepare(&conn, segments, &features)?;
     let mut cols = pick_columns(&c.tab, columns)?;
     if columns.is_empty() && grouped {
@@ -249,7 +250,7 @@ pub fn write_csv_in(
             } else if let Some(e) = all_values.and_then(|sep| crate::custom::all_values_expr(col, sep)) {
                 Cow::Owned(e)
             } else {
-                Cow::Borrowed(col.expr.as_ref())
+                Cow::Borrowed(col.sql(c.values))
             }
         })
         .collect::<Vec<_>>()

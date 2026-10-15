@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 spiderlens-engine.workspace = true
 spiderlens-config.workspace = true
 spiderlens-results.workspace = true
+spiderlens-render.workspace = true
 spiderlens-mcp.workspace = true
 spiderlens-compare.workspace = true
 spiderlens-integrations.workspace = true

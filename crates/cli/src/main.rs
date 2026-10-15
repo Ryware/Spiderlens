@@ -3,6 +3,7 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod browser;
 mod aeo_cmd;
 mod compare_cmd;
 mod cookies_cmd;
@@ -56,6 +57,10 @@ pub(crate) mod exit {
     /// A quality gate failed (`aeo run --fail-under`); the same number as
     /// `ISSUES_FOUND`, both being "the checks found what you asked to fail on".
     pub const QUALITY_GATE: u8 = 7;
+    /// No usable browser for JavaScript rendering (spec 014). The rendering
+    /// contract asked for 6, which spec 006 already uses, and 7 and 8 are
+    /// taken by specs 009 and 012.
+    pub const NO_BROWSER: u8 = 9;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -219,6 +224,7 @@ struct ConfigArgs {
 }
 
 fn main() -> ExitCode {
+    spiderlens_engine::run_render_guard_if_asked();
     let matches = Cli::command().version(BuildInfo::VERSION_LINE).get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     match cli.command {

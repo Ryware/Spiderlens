@@ -15,6 +15,7 @@ use crate::features::Features;
 use crate::issues::ResolvedSettings;
 use crate::sql::Thresholds;
 use crate::tabs::{Derived, TabDef};
+use crate::values::{self, Values};
 use crate::view::View;
 use crate::{Error, Result, sql};
 
@@ -27,6 +28,8 @@ pub struct Reader {
     /// Crawl data generation each derived table was built from. A settings
     /// change removes the issue hits itself; the other tables stay.
     pub(crate) derived: HashMap<Derived, u64>,
+    /// The values the connection's temporary views show now.
+    values: Values,
     /// Issue settings in force, and the values `thr()` reads (spec 009).
     pub(crate) issue_settings: ResolvedSettings,
     pub(crate) thresholds: Arc<RwLock<Thresholds>>,
@@ -172,6 +175,7 @@ impl Reader {
             views: HashMap::new(),
             next_view: 1,
             derived: HashMap::new(),
+            values: Values::Raw,
             issue_settings,
             thresholds,
             partial: None,
@@ -212,6 +216,18 @@ impl Reader {
             self.data_gen += 1;
         }
         Ok(self.version)
+    }
+
+    /// Switches the connection to raw or rendered values (spec 014). The
+    /// derived tables were built from the other values, so they are built
+    /// again when next needed.
+    pub(crate) fn use_values(&mut self, values: Values) -> Result<()> {
+        if values != self.values {
+            values::apply(&self.conn, values)?;
+            self.values = values;
+            self.derived.clear();
+        }
+        Ok(())
     }
 
     /// Marks everything shown as changed without new crawl data (a settings

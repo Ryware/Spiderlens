@@ -109,7 +109,7 @@ pub(super) fn walk(
     a11y: bool,
     hook: Option<(&super::PageHook, usize)>,
 ) -> PageData {
-    walk_doc(text, page, token, budget, a11y, hook, false, None).1
+    walk_doc(text, page, token, budget, a11y, hook, false, None, false).1
 }
 
 /// [`walk`], also returning the document and, when `track` is set, the
@@ -124,6 +124,7 @@ pub(super) fn walk_doc(
     hook: Option<(&super::PageHook, usize)>,
     track: bool,
     rules: Option<&crate::custom::CompiledRules>,
+    keep_text: bool,
 ) -> (Html, PageData, Vec<NodeId>) {
     let (doc, cut) = parse(text, budget);
     // Spec 026: only created when asked for, so "Off" costs this test.
@@ -209,6 +210,9 @@ pub(super) fn walk_doc(
             .flatten();
     }
     w.data.agents = w.agents.finish(&doc);
+    if keep_text {
+        w.data.visible_text = Some(visible);
+    }
     (doc, w.data, w.nodes)
 }
 

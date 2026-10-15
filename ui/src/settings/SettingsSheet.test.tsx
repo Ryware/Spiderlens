@@ -256,3 +256,33 @@ test("pdf_settings_reach_the_crawl", async () => {
   await waitFor(() => expect(t.crawls.started).toHaveLength(1));
   expect(t.crawls.started[0].config.extraction.pdf).toEqual({ crawl: true, follow_links: false, max_mb: 50, time_limit_secs: 10 });
 });
+
+test("rendering_category_switches_the_mode", async () => {
+  // Spec 014 T027: the mode switch writes rendering.mode and reaches the crawl.
+  const t = await setup();
+  await openSettings("JavaScript rendering");
+  const raw = screen.getByRole("radio", { name: "Raw HTML" });
+  expect(raw.getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByText("Pages are read from their HTML as served. No browser is started.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("radio", { name: "JavaScript rendering" }));
+  await waitFor(() => expect(screen.getByRole("radio", { name: "JavaScript rendering" }).getAttribute("aria-checked")).toBe("true"));
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.rendering.mode).toBe("javascript");
+});
+
+test("rendering_issues_count_in_the_rendering_category", async () => {
+  const transport = fakeTransport();
+  const config = defaultConfig();
+  config.rendering.max_render_secs = 0;
+  transport.saved.set("Broken render", { name: "Broken render", config, start_url: null, ignored: [] });
+  await setup(transport);
+  await openSettings("Limits");
+  await screen.findByRole("option", { name: "Broken render" });
+  fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "Broken render" } });
+  await waitFor(() => expect(screen.getByRole("tab", { name: /^JavaScript rendering/ }).textContent).toContain("1 error"));
+  expect(screen.getByRole("tab", { name: /^Limits/ }).textContent).toBe("Limits");
+});

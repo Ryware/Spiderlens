@@ -133,6 +133,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         filter: filter.into(),
         scope: UrlScope::All,
         search: String::new(),
+        values: None,
         sort: None,
         segment: None,
     }

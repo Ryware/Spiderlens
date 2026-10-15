@@ -6,6 +6,8 @@ pub mod agents;
 pub mod a11y;
 pub mod amp;
 pub mod body;
+pub mod challenge;
+pub mod compare;
 pub mod directives;
 mod link_header;
 mod microdata;
@@ -113,7 +115,7 @@ pub struct MetaRefresh {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredKind {
     JsonLd,
@@ -175,6 +177,10 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// The collapsed visible text, only when [`PageInput::keep_text`] was
+    /// set (spec 014 research R10). `None` in the raw crawl.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_text: Option<String>,
     /// Forms, actions and agent links (spec 016).
     pub agents: AgentData,
     /// AMP checks, for pages marked as AMP (spec 027 part E).
@@ -258,6 +264,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            visible_text: None,
             agents: AgentData::default(),
             amp: None,
             custom: None,
@@ -278,6 +285,9 @@ pub struct PageInput<'a> {
     pub truncated: bool,
     /// The crawl's robots.txt token, for crawler-specific meta tags.
     pub robots_token: &'a str,
+    /// Keep the visible text in [`PageData::visible_text`] (spec 014, for
+    /// comparing raw and rendered text). The raw crawl passes `false`.
+    pub keep_text: bool,
     /// Run the static accessibility checks (spec 026).
     pub a11y: bool,
     pub hook: Option<&'a PageHook>,
@@ -326,6 +336,9 @@ fn extract(
     if looks_binary(input.body) {
         let mut data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
         data.custom = rules.map(crate::custom::CompiledRules::on_empty_page);
+        if input.keep_text {
+            data.visible_text = Some(String::new());
+        }
         return (None, data, Vec::new());
     }
     let (text, used, had_errors) = encoding.decode(input.body);
@@ -339,6 +352,7 @@ fn extract(
         hook,
         track,
         rules,
+        input.keep_text,
     );
     data.encoding = used.name();
     data.encoding_errors = had_errors;

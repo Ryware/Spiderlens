@@ -17,6 +17,7 @@ fn page_bytes(url: &str, charset: Option<&str>, body: &[u8], truncated: bool) ->
         body,
         truncated,
         robots_token: "SpiderLens",
+        keep_text: false,
         a11y: false,
         hook: None,
     })
@@ -404,6 +405,44 @@ fn svg_title_and_links_are_not_html() {
 fn extraction_is_deterministic() {
     let html = r#"<title>x</title><a href="/a">a</a><img src="/i"><h2>h</h2>"#;
     assert_eq!(p(html), p(html));
+}
+
+#[test]
+fn visible_text_is_kept_only_when_asked() {
+    let html = "<html><head><title>T</title><script>var x = 1;</script></head>\
+                <body><h1>Hello  there</h1><p>Some <b>bold</b> words.</p>\
+                <a href='/x'>link</a><div hidden>still text</div></body></html>";
+    let url = Url::parse("https://example.com/").unwrap();
+    let input = |keep_text| PageInput {
+        url: &url,
+        charset: None,
+        body: html.as_bytes(),
+        truncated: false,
+        robots_token: "SpiderLens",
+        keep_text,
+        a11y: false,
+        hook: None,
+    };
+    let raw = extract_page(&input(false));
+    assert_eq!(raw.visible_text, None);
+    let kept = extract_page(&input(true));
+    let text = kept.visible_text.clone().expect("kept");
+    assert!(text.contains("Hello there"), "{text}");
+    assert!(!text.contains("var x"), "{text}");
+    assert_eq!(text::word_count(&text), kept.word_count);
+    assert_eq!(text::hash(&text), kept.text_hash);
+    // Every other field is identical with either value.
+    let mut without = kept.clone();
+    without.visible_text = None;
+    assert_eq!(without, raw);
+    // Serialised output of the raw crawl is unchanged.
+    assert!(serde_json::to_value(&raw).unwrap().get("visible_text").is_none());
+    // A body that is not a document keeps an empty text.
+    let empty = extract_page(&PageInput {
+        body: b"   ",
+        ..input(true)
+    });
+    assert_eq!(empty.visible_text.as_deref(), Some(""));
 }
 
 // --- Spec 016: forms, actions and agent links ---

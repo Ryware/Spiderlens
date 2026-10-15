@@ -307,6 +307,11 @@ pub struct CrawlArgs {
     /// Do not fetch llms.txt, llms-full.txt and tdmrep.json per site.
     #[arg(long, help_heading = "AI search")]
     pub no_site_files: bool,
+
+    /// Render pages in a headless Chromium browser and store the rendered
+    /// version next to the raw HTML (spec 014).
+    #[arg(long, help_heading = "Rendering")]
+    pub render: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -655,6 +660,9 @@ impl CrawlArgs {
             let more =
                 spiderlens_config::import_rules(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             spiderlens_config::merge_rules(&mut c.custom, more);
+        }
+        if self.render {
+            c.rendering.mode = spiderlens_config::RenderMode::Javascript;
         }
         Ok(Resolved { config: c, notices })
     }

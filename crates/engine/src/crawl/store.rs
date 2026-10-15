@@ -16,6 +16,7 @@ pub mod custom;
 
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use crate::extract::agents::{AgentLink, AgentLinkKind, FormMethod};
+use crate::extract::compare::{Comparison, Origin, Origins};
 use crate::extract::{AgentData, Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
@@ -40,7 +41,7 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-const SCHEMA: &str = r#"
+pub(crate) const SCHEMA: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE urls (
     id INTEGER PRIMARY KEY,
@@ -389,6 +390,8 @@ pub struct CrawlStore {
     /// never has to count the table (spec 008 plan D3).
     live: Cell<StateCounts>,
     checkpointer: Option<Checkpointer>,
+    /// Next render queue number; read from the file on first use.
+    render_seq: Cell<Option<i64>>,
 }
 
 /// Copies the write-ahead log into the database file on its own thread, so
@@ -516,6 +519,7 @@ impl CrawlStore {
             next_seq: 1,
             live: Cell::default(),
             checkpointer: None,
+            render_seq: Cell::new(None),
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
@@ -554,6 +558,7 @@ impl CrawlStore {
             next_seq: max_seq + 1,
             live: Cell::default(),
             checkpointer: None,
+            render_seq: Cell::new(None),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -607,6 +612,7 @@ impl CrawlStore {
             next_seq: 0,
             live: Cell::default(),
             checkpointer: None,
+            render_seq: Cell::new(None),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -1485,7 +1491,162 @@ impl CrawlStore {
             .prepare_cached("SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)")?
             .query_row([id], |r| r.get(0))?;
         obj.insert("html_stored".into(), json!(stored));
+        if let Some(render) = self.render_report(id)? {
+            for (k, v) in render {
+                obj.insert(k, v);
+            }
+        }
         Ok(Some(response))
+    }
+
+    /// The rendering part of [`Self::page_report`] (spec 014
+    /// contracts/cli.md `spiderlens page`): `render`, `rendered` (each list
+    /// item with its `origin`), `comparison`, `dependence`, `resources`,
+    /// `console`. None for a page without a `renders` row.
+    fn render_report(&self, id: i64) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        use serde_json::{Map, Value};
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        let one = |sql: &str| -> Result<Value> {
+            Ok(self.rows_json(sql, id)?.into_iter().next().unwrap_or(Value::Null))
+        };
+        let render = one(
+            "SELECT r.state, r.reason, r.reason_detail, r.attempts, r.render_ms, r.window_w, r.window_h,
+             r.js_redirect, t.url AS js_redirect_url, r.console_errors, r.console_warnings,
+             r.resources_failed, r.resources_blocked, r.bot_challenge, r.rendered_at
+             FROM renders r LEFT JOIN urls t ON t.id = r.js_redirect_id WHERE r.url_id = ?1",
+        )?;
+        if render.is_null() {
+            return Ok(None);
+        }
+        let mut out = Map::new();
+        out.insert("render".into(), render);
+        let page = one("SELECT * FROM rendered_pages WHERE url_id = ?1")?;
+        let rendered = if page.is_null() {
+            Value::Null
+        } else {
+            // Rendered order first (`both` and `rendered`), then what
+            // JavaScript removed (`raw`, raw order).
+            let order = "CASE origin WHEN 'raw' THEN 1 ELSE 0 END, pos";
+            let texts = self.rows_json(
+                &format!(
+                    "SELECT kind, level, text, in_head, origin FROM rendered_text WHERE url_id = ?1
+                     ORDER BY kind, {order}"
+                ),
+                id,
+            )?;
+            let pick = |kind: &str| -> Value {
+                Value::Array(
+                    texts
+                        .iter()
+                        .filter(|t| t["kind"] == kind)
+                        .map(|t| {
+                            let mut t = t.clone();
+                            let o = t.as_object_mut().expect("rows are objects");
+                            o.remove("kind");
+                            if kind == "heading" {
+                                o.remove("in_head");
+                            } else {
+                                o.remove("level");
+                            }
+                            t
+                        })
+                        .collect(),
+                )
+            };
+            let links =
+                "SELECT l.kind, l.raw, t.url, l.target, l.skip_reason, l.text, l.alt, l.rel, l.nofollow,
+                 l.sponsored, l.ugc, l.page_nofollow, l.followed, l.source, l.in_head, l.noscript, l.lang,
+                 l.width, l.height, l.srcset, l.in_link, t.internal";
+            let mut link_rows = self.rows_json(
+                &format!(
+                    "{links}, CASE WHEN g.pos IS NULL THEN 'both' ELSE 'raw' END AS origin
+                     FROM links l LEFT JOIN urls t ON t.id = l.to_id
+                     LEFT JOIN raw_only_links g ON g.from_id = l.from_id AND g.pos = l.pos
+                     WHERE l.from_id = ?1 AND g.pos IS NULL ORDER BY l.rowid"
+                ),
+                id,
+            )?;
+            link_rows.extend(self.rows_json(
+                &format!(
+                    "{links}, 'rendered' AS origin FROM rendered_links l LEFT JOIN urls t ON t.id = l.to_id
+                     WHERE l.from_id = ?1 ORDER BY l.rpos, l.rowid"
+                ),
+                id,
+            )?);
+            link_rows.extend(self.rows_json(
+                &format!(
+                    "{links}, 'raw' AS origin FROM links l LEFT JOIN urls t ON t.id = l.to_id
+                     JOIN raw_only_links g ON g.from_id = l.from_id AND g.pos = l.pos
+                     WHERE l.from_id = ?1 ORDER BY l.rowid"
+                ),
+                id,
+            )?);
+            let mut r = Map::new();
+            r.insert("page".into(), page);
+            r.insert("titles".into(), pick("title"));
+            r.insert("meta_descriptions".into(), pick("meta_description"));
+            r.insert("headings".into(), pick("heading"));
+            r.insert(
+                "directives".into(),
+                Value::Array(self.rows_json(
+                    &format!(
+                        "SELECT directive, value, known, source, crawler, in_head, origin
+                         FROM rendered_directives WHERE url_id = ?1 ORDER BY {order}"
+                    ),
+                    id,
+                )?),
+            );
+            r.insert("links".into(), Value::Array(link_rows));
+            r.insert(
+                "structured_data".into(),
+                Value::Array(self.rows_json(
+                    &format!(
+                        "SELECT kind, raw, parseable, origin FROM rendered_structured_data
+                         WHERE url_id = ?1 ORDER BY {order}"
+                    ),
+                    id,
+                )?),
+            );
+            Value::Object(r)
+        };
+        out.insert("rendered".into(), rendered);
+        out.insert(
+            "comparison".into(),
+            one(
+                "SELECT words_raw, words_rendered, words_change, links_raw, links_rendered,
+                 links_rendered_only, links_raw_only, title_diff, description_diff, h1_diff, canonical_diff,
+                 noindex_diff, nofollow_diff, hreflang_diff, structured_rendered_only
+                 FROM render_comparisons WHERE url_id = ?1",
+            )?,
+        );
+        out.insert(
+            "dependence".into(),
+            one(
+                "SELECT dependence AS overall, dep_text AS text, dep_headings AS headings,
+                 dep_internal_links AS internal_links, dep_structured AS structured, dep_images AS images,
+                 raw_has_title, raw_has_description, raw_has_canonical, raw_has_directives
+                 FROM render_comparisons WHERE url_id = ?1",
+            )?,
+        );
+        out.insert(
+            "resources".into(),
+            Value::Array(self.rows_json(
+                "SELECT url, type, host, third_party, outcome, status, error, robots_rule, bytes
+                 FROM render_resources WHERE url_id = ?1 ORDER BY pos",
+                id,
+            )?),
+        );
+        out.insert(
+            "console".into(),
+            Value::Array(self.rows_json(
+                "SELECT level, message, source_url, line, col FROM console_entries WHERE url_id = ?1
+                 ORDER BY pos",
+                id,
+            )?),
+        );
+        Ok(Some(out))
     }
 
     /// Runs a query with one id parameter; each row becomes a JSON object
@@ -2401,6 +2562,802 @@ impl CrawlStore {
     }
 }
 
+/// Response headers as stored: names and values in received order.
+pub type Headers = Vec<(String, String)>;
+
+/// Written to `meta.render_version` when a crawl renders (spec 014).
+pub const RENDER_VERSION: &str = "1";
+
+/// Render state of one page (spec 014 data-model.md, `renders.state`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderStatus {
+    Queued,
+    Rendering,
+    Rendered,
+    TimedOut,
+    Failed,
+    NotRendered,
+}
+
+impl RenderStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Rendering => "rendering",
+            Self::Rendered => "rendered",
+            Self::TimedOut => "timed_out",
+            Self::Failed => "failed",
+            Self::NotRendered => "not_rendered",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "queued" => Self::Queued,
+            "rendering" => Self::Rendering,
+            "rendered" => Self::Rendered,
+            "timed_out" => Self::TimedOut,
+            "failed" => Self::Failed,
+            "not_rendered" => Self::NotRendered,
+            _ => return None,
+        })
+    }
+}
+
+/// What [`CrawlStore::render_totals`] counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderTotals {
+    pub by_state: Vec<(RenderStatus, u64)>,
+    pub by_reason: Vec<(String, u64)>,
+    pub avg_render_ms: Option<u64>,
+    pub max_render_ms: Option<u64>,
+    pub js_errors: u64,
+    pub failed_resources: u64,
+    pub blocked_resources: u64,
+}
+
+/// One page waiting in the render queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderEntry {
+    pub url_id: i64,
+    pub url: String,
+    pub host_key: String,
+    pub seq: i64,
+    pub attempts: u32,
+    /// The page's depth; references found by rendering are one deeper.
+    pub depth: u32,
+}
+
+/// One `render_resources` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceRow<'a> {
+    pub url: &'a str,
+    /// Lowercase CDP resource type.
+    pub kind: &'a str,
+    pub host: &'a str,
+    pub third_party: bool,
+    /// `loaded`, `cached`, `failed`, `blocked_setting`, `blocked_robots`.
+    pub outcome: &'a str,
+    pub status: Option<u16>,
+    pub error: Option<&'a str>,
+    pub robots_rule: Option<&'a str>,
+    pub bytes: u64,
+}
+
+/// One `console_entries` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsoleRow<'a> {
+    /// `error`, `warning`, `exception`.
+    pub level: &'a str,
+    pub message: &'a str,
+    pub source: Option<(&'a str, u32, u32)>,
+}
+
+/// What rendering produced for a page that has a rendered version.
+pub struct RenderedPageRecord<'a> {
+    /// Rendered extraction; None when it failed.
+    pub data: Option<&'a PageData>,
+    pub extract_error: Option<&'a str>,
+    /// Raw extraction, for the rows of elements gone after rendering.
+    pub raw: Option<&'a PageData>,
+    pub comparison: Option<&'a Comparison>,
+    /// Rendered meta directives combined with the header directives.
+    pub noindex: bool,
+    pub nofollow: bool,
+    pub canonical: Option<&'a str>,
+    pub canonical_count: u32,
+    pub canonical_conflict: bool,
+    /// Compressed serialised DOM and its size, when HTML is kept.
+    pub html: Option<(&'a [u8], usize)>,
+    /// Raw `links.pos` of references gone after rendering.
+    pub raw_only_links: &'a [u32],
+}
+
+/// The final result of one render, for [`CrawlStore::record_render`].
+pub struct RenderRecord<'a> {
+    pub status: RenderStatus,
+    pub reason: Option<&'a str>,
+    pub reason_detail: Option<&'a str>,
+    pub render_ms: Option<u32>,
+    pub window: Option<(u32, u32)>,
+    pub js_redirect: Option<&'a str>,
+    pub js_redirect_id: Option<i64>,
+    /// Errors and warnings in total, including those over the stored limit.
+    pub console_totals: (u32, u32),
+    pub resources_failed: u32,
+    pub resources_blocked: u32,
+    pub bot_challenge: bool,
+    pub rendered_at: i64,
+    pub page: Option<RenderedPageRecord<'a>>,
+    /// At most 500 are stored.
+    pub resources: &'a [ResourceRow<'a>],
+    /// At most 50 are stored.
+    pub console: &'a [ConsoleRow<'a>],
+    /// WebP bytes, width and height.
+    pub screenshot: Option<(&'a [u8], u32, u32)>,
+}
+
+/// Rows of one page kept in `render_resources`.
+pub const MAX_RESOURCE_ROWS: usize = 500;
+/// Rows of one page kept in `console_entries`.
+pub const MAX_CONSOLE_ROWS: usize = 50;
+
+fn origin_at(o: Option<&Origins>, i: usize) -> &'static str {
+    o.and_then(|o| o.rendered.get(i))
+        .copied()
+        .unwrap_or(Origin::Rendered)
+        .as_str()
+}
+
+/// Spec 014: the render queue and the rendered version of pages. Every table
+/// here comes from migration step 6 and stays empty when a crawl does not
+/// render.
+impl CrawlStore {
+    fn take_render_seq(&self) -> Result<i64> {
+        let next = match self.render_seq.get() {
+            Some(n) => n,
+            None => {
+                self.conn
+                    .query_row("SELECT COALESCE(MAX(queue_seq), 0) FROM renders", [], |r| {
+                        r.get::<_, i64>(0)
+                    })?
+                    + 1
+            }
+        };
+        self.render_seq.set(Some(next + 1));
+        Ok(next)
+    }
+
+    /// Queues a page for rendering. `input` is the compressed raw body and
+    /// its size, kept only until the render is final, when the crawl does
+    /// not store page HTML (research R8).
+    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<()> {
+        let seq = self.take_render_seq()?;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO renders (url_id, state, queue_seq) VALUES (?1, 'queued', ?2)
+                 ON CONFLICT(url_id) DO NOTHING",
+            )?
+            .execute(params![url_id, seq])?;
+        if let Some((packed, size)) = input {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO render_inputs (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![url_id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+
+    /// Records a page that is not rendered at all (`outside_rules`,
+    /// `html_not_stored`, `browser_unavailable`).
+    pub fn skip_render(&self, url_id: i64, reason: &str, detail: Option<&str>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO renders (url_id, state, reason, reason_detail) VALUES (?1, 'not_rendered', ?2, ?3)
+                 ON CONFLICT(url_id) DO UPDATE SET state = 'not_rendered', reason = ?2, reason_detail = ?3,
+                 queue_seq = NULL",
+            )?
+            .execute(params![url_id, reason, detail])?;
+        self.conn
+            .prepare_cached("DELETE FROM render_inputs WHERE url_id = ?1")?
+            .execute([url_id])?;
+        Ok(())
+    }
+
+    /// Up to `limit` queued renders after `after`, in queue order.
+    pub fn renders_after(&self, after: Option<i64>, limit: usize) -> Result<Vec<RenderEntry>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT r.url_id, u.url, u.host_key, r.queue_seq, r.attempts, u.depth FROM renders r
+             JOIN urls u ON u.id = r.url_id
+             WHERE r.state = 'queued' AND r.queue_seq > ?1 ORDER BY r.queue_seq LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![after.unwrap_or(i64::MIN), limit as i64], |r| {
+            Ok(RenderEntry {
+                url_id: r.get(0)?,
+                url: r.get(1)?,
+                host_key: r.get(2)?,
+                seq: r.get(3)?,
+                attempts: r.get(4)?,
+                depth: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// A queued render starts: `queued → rendering`, one more attempt.
+    pub fn mark_rendering(&self, url_id: i64) -> Result<bool> {
+        let n = self
+            .conn
+            .prepare_cached(
+                "UPDATE renders SET state = 'rendering', attempts = attempts + 1
+                 WHERE url_id = ?1 AND state = 'queued'",
+            )?
+            .execute([url_id])?;
+        Ok(n == 1)
+    }
+
+    /// A render to try again (after a crash): `rendering → queued`, keeping
+    /// its place in the queue.
+    pub fn requeue_render(&self, url_id: i64) -> Result<()> {
+        self.conn
+            .prepare_cached("UPDATE renders SET state = 'queued' WHERE url_id = ?1 AND state = 'rendering'")?
+            .execute([url_id])?;
+        Ok(())
+    }
+
+    /// Resume: renders left running by a pause or a crash, and renders the
+    /// crawl stopped, go back to the queue. Returns how many.
+    pub fn requeue_rendering(&self) -> Result<usize> {
+        if !self.has_render_tables()? {
+            return Ok(0);
+        }
+        let a = self.conn.execute(
+            "UPDATE renders SET state = 'queued' WHERE state = 'rendering'",
+            [],
+        )?;
+        let b = self.conn.execute(
+            "UPDATE renders SET state = 'queued', reason = NULL, reason_detail = NULL
+             WHERE state = 'not_rendered' AND reason = 'crawl_stopped' AND queue_seq IS NOT NULL",
+            [],
+        )?;
+        Ok(a + b)
+    }
+
+    /// Stop: every queued render becomes "Crawl stopped". Their queue place
+    /// and input are kept so a resume can render them.
+    pub fn stop_renders(&self) -> Result<usize> {
+        if !self.has_render_tables()? {
+            return Ok(0);
+        }
+        Ok(self.conn.execute(
+            "UPDATE renders SET state = 'not_rendered', reason = 'crawl_stopped'
+             WHERE state IN ('queued', 'rendering')",
+            [],
+        )?)
+    }
+
+    /// Whether the file has the rendering tables (format 6 and later).
+    fn has_render_tables(&self) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'renders')",
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Renders per state, for progress and the summary.
+    pub fn render_counts(&self) -> Result<Vec<(RenderStatus, u64)>> {
+        if !self.has_render_tables()? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT state, COUNT(*) FROM renders GROUP BY state")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (s, n) = row?;
+            if let Some(s) = RenderStatus::parse(&s) {
+                out.push((s, n as u64));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Totals for the summary's Rendering block (FR-041): renders per
+    /// state, final reasons, render times, and JavaScript errors and
+    /// resource problems over every page. None when nothing was queued.
+    pub fn render_totals(&self) -> Result<Option<RenderTotals>> {
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        let by_state = self.render_counts()?;
+        if by_state.is_empty() {
+            return Ok(None);
+        }
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT reason, COUNT(*) FROM renders WHERE reason IS NOT NULL GROUP BY reason ORDER BY reason",
+        )?;
+        let by_reason = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<std::result::Result<_, _>>()?;
+        let (avg, max, errors, failed, blocked) = self.conn.query_row(
+            "SELECT AVG(render_ms) FILTER (WHERE state IN ('rendered', 'timed_out')),
+                    MAX(render_ms) FILTER (WHERE state IN ('rendered', 'timed_out')),
+                    COALESCE(SUM(console_errors), 0), COALESCE(SUM(resources_failed), 0),
+                    COALESCE(SUM(resources_blocked), 0)
+             FROM renders",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, Option<f64>>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+        Ok(Some(RenderTotals {
+            by_state,
+            by_reason,
+            avg_render_ms: avg.map(|a| a.round() as u64),
+            max_render_ms: max.map(|m| m as u64),
+            js_errors: errors as u64,
+            failed_resources: failed as u64,
+            blocked_resources: blocked as u64,
+        }))
+    }
+
+    /// The raw HTML a render starts from: the temporary input, or the stored
+    /// page HTML.
+    pub fn render_input(&self, url_id: i64) -> Result<Option<Vec<u8>>> {
+        let row: Option<(String, i64, Vec<u8>)> = self
+            .conn
+            .prepare_cached("SELECT codec, size, body FROM render_inputs WHERE url_id = ?1")?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        match row {
+            Some((codec, size, packed)) => unpack(&codec, size, &packed).map(Some),
+            None => self.page_html(url_id),
+        }
+    }
+
+    /// The stored status and response headers of a page, which a render
+    /// replays as the main document (plan D3).
+    pub fn render_main(&self, url_id: i64) -> Result<Option<(u16, Headers)>> {
+        let row: Option<(Option<u16>, Option<String>)> = self
+            .conn
+            .prepare_cached(
+                "SELECT u.status, h.headers FROM urls u LEFT JOIN headers h ON h.url_id = u.id WHERE u.id = ?1",
+            )?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        Ok(row.and_then(|(status, headers)| {
+            let headers = headers
+                .and_then(|h| serde_json::from_str(&h).ok())
+                .unwrap_or_default();
+            status.map(|s| (s, headers))
+        }))
+    }
+
+    /// The serialised DOM of a rendered page, when HTML was kept (FR-032).
+    pub fn rendered_html(&self, url_id: i64) -> Result<Option<Vec<u8>>> {
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        let row: Option<(String, i64, Vec<u8>)> = self
+            .conn
+            .prepare_cached("SELECT codec, size, body FROM rendered_bodies WHERE url_id = ?1")?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        row.map(|(codec, size, packed)| unpack(&codec, size, &packed))
+            .transpose()
+    }
+
+    /// The screenshot of a rendered page: WebP bytes, width, height (FR-033).
+    pub fn screenshot(&self, url_id: i64) -> Result<Option<(Vec<u8>, u32, u32)>> {
+        if !self.has_render_tables()? {
+            return Ok(None);
+        }
+        Ok(self
+            .conn
+            .prepare_cached("SELECT image, width, height FROM screenshots WHERE url_id = ?1")?
+            .query_row([url_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?)
+    }
+
+    /// Records the browser in `meta.renderer` (FR-003) and marks the file
+    /// as rendered (`meta.render_version`).
+    pub fn set_renderer(&self, renderer_json: &str) -> Result<()> {
+        self.set_meta("renderer", renderer_json)?;
+        self.set_meta("render_version", RENDER_VERSION)
+    }
+
+    /// Adds feature ids to `meta.data_features` (spec 007 plan D3), once.
+    pub fn add_data_features(&self, features: &[&str]) -> Result<()> {
+        let mut list: Vec<String> = self
+            .meta("data_features")?
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .map(String::from)
+            .collect();
+        for f in features {
+            if !list.iter().any(|x| x == f) {
+                list.push((*f).to_string());
+            }
+        }
+        self.set_meta("data_features", &list.join(","))
+    }
+
+    /// A reference found only in the rendered page (through `discover()`),
+    /// with `rpos`, its position in the rendered document.
+    pub fn add_rendered_link(&self, link: &NewLink, rpos: u32) -> Result<()> {
+        let c = link.context;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO rendered_links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed, pos,
+                 target, skip_reason, text, alt, rel, sponsored, ugc, source, in_head, noscript, lang, width,
+                 height, srcset, in_link, rpos)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
+                 ?20, ?21, ?22, ?23, ?24)",
+            )?
+            .execute(params![
+                link.from,
+                link.to,
+                link.raw,
+                link.kind.as_str(),
+                link.nofollow,
+                link.page_nofollow,
+                link.followed,
+                link.pos,
+                link.target,
+                link.skip_reason,
+                c.and_then(|c| c.text.as_deref()),
+                c.and_then(|c| c.alt.as_deref()),
+                c.and_then(|c| c.rel.as_deref()),
+                c.is_some_and(|c| c.sponsored),
+                c.is_some_and(|c| c.ugc),
+                c.map_or("html", |c| c.source.as_str()),
+                c.and_then(|c| c.in_head),
+                c.is_some_and(|c| c.noscript),
+                c.and_then(|c| c.lang.as_deref()),
+                c.and_then(|c| c.width),
+                c.and_then(|c| c.height),
+                c.is_some_and(|c| c.srcset),
+                c.is_some_and(|c| c.in_link),
+                rpos,
+            ])?;
+        Ok(())
+    }
+
+    /// Stores the final result of one render (data-model.md "Write path"):
+    /// the `renders` row and, for a rendered page, every rendered row. The
+    /// temporary input is dropped.
+    pub fn record_render(&self, url_id: i64, r: &RenderRecord<'_>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE renders SET state = ?2, reason = ?3, reason_detail = ?4, queue_seq = NULL,
+                 render_ms = ?5, window_w = ?6, window_h = ?7, js_redirect = ?8, js_redirect_id = ?9,
+                 console_errors = ?10, console_warnings = ?11, resources_failed = ?12,
+                 resources_blocked = ?13, bot_challenge = ?14, rendered_at = ?15
+                 WHERE url_id = ?1",
+            )?
+            .execute(params![
+                url_id,
+                r.status.as_str(),
+                r.reason,
+                r.reason_detail,
+                r.render_ms,
+                r.window.map(|w| w.0),
+                r.window.map(|w| w.1),
+                r.js_redirect,
+                r.js_redirect_id,
+                r.console_totals.0,
+                r.console_totals.1,
+                r.resources_failed,
+                r.resources_blocked,
+                r.bot_challenge,
+                r.rendered_at,
+            ])?;
+        if let Some(p) = &r.page {
+            self.record_rendered_page(url_id, p)?;
+        }
+        let mut res = self.conn.prepare_cached(
+            "INSERT INTO render_resources (url_id, pos, url, type, host, third_party, outcome, status, error,
+             robots_rule, bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        for (pos, x) in r.resources.iter().take(MAX_RESOURCE_ROWS).enumerate() {
+            res.execute(params![
+                url_id,
+                pos as i64,
+                x.url,
+                x.kind,
+                x.host,
+                x.third_party,
+                x.outcome,
+                x.status,
+                x.error,
+                x.robots_rule,
+                x.bytes as i64,
+            ])?;
+        }
+        let mut con = self.conn.prepare_cached(
+            "INSERT INTO console_entries (url_id, pos, level, message, source_url, line, col)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for (pos, c) in r.console.iter().take(MAX_CONSOLE_ROWS).enumerate() {
+            con.execute(params![
+                url_id,
+                pos as i64,
+                c.level,
+                c.message,
+                c.source.map(|s| s.0),
+                c.source.map(|s| s.1),
+                c.source.map(|s| s.2),
+            ])?;
+        }
+        if let Some((image, w, h)) = r.screenshot {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO screenshots (url_id, format, width, height, image)
+                     VALUES (?1, 'webp', ?2, ?3, ?4)",
+                )?
+                .execute(params![url_id, w, h, image])?;
+        }
+        self.conn
+            .prepare_cached("DELETE FROM render_inputs WHERE url_id = ?1")?
+            .execute([url_id])?;
+        Ok(())
+    }
+
+    fn record_rendered_page(&self, id: i64, p: &RenderedPageRecord<'_>) -> Result<()> {
+        let empty;
+        let d = match p.data {
+            Some(d) => d,
+            None => {
+                empty = PageData::failed();
+                &empty
+            }
+        };
+        let h = |level: u8, n: usize| {
+            d.headings
+                .iter()
+                .filter(|x| x.level == level)
+                .nth(n)
+                .map(|x| x.text.as_str())
+        };
+        let count = |level: u8| d.headings.iter().filter(|x| x.level == level).count() as i64;
+        let heading_counts = (1..=6)
+            .map(|l| count(l).to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO rendered_pages (url_id, title_count, meta_description,
+                 meta_description_count, h1_1, h1_2, h1_count, h2_1, h2_2, h2_count, heading_counts,
+                 word_count, lang, text_hash, title_hash, meta_description_hash, meta_refresh_delay,
+                 meta_refresh_url, extract_error, no_content, title, noindex, nofollow, canonical,
+                 canonical_count, canonical_conflict, rendered_html_stored)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                 ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+            )?
+            .execute(params![
+                id,
+                d.titles.len() as i64,
+                d.meta_description(),
+                d.meta_descriptions.len() as i64,
+                h(1, 0),
+                h(1, 1),
+                count(1),
+                h(2, 0),
+                h(2, 1),
+                count(2),
+                heading_counts,
+                d.word_count,
+                d.lang,
+                p.data.map(|d| d.text_hash),
+                d.title().map(text::hash),
+                d.meta_description().map(text::hash),
+                d.meta_refresh.as_ref().map(|r| r.delay),
+                d.meta_refresh.as_ref().and_then(|r| r.url.as_deref()),
+                p.extract_error,
+                d.no_content,
+                d.title(),
+                p.noindex,
+                p.nofollow,
+                p.canonical,
+                p.canonical_count,
+                p.canonical_conflict,
+                p.html.is_some(),
+            ])?;
+        let o = p.comparison.map(|c| &c.origins);
+        let mut text_row = self.conn.prepare_cached(
+            "INSERT INTO rendered_text (url_id, kind, level, pos, text, in_head, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for (pos, t) in d.titles.iter().enumerate() {
+            let origin = origin_at(o.map(|o| &o.titles), pos);
+            text_row.execute(params![
+                id, "title", None::<u8>, pos as i64, t.text, t.in_head, origin
+            ])?;
+        }
+        for (pos, t) in d.meta_descriptions.iter().enumerate() {
+            let origin = origin_at(o.map(|o| &o.descriptions), pos);
+            text_row.execute(params![
+                id,
+                "meta_description",
+                None::<u8>,
+                pos as i64,
+                t.text,
+                t.in_head,
+                origin
+            ])?;
+        }
+        for (pos, x) in d.headings.iter().enumerate() {
+            let origin = origin_at(o.map(|o| &o.headings), pos);
+            text_row.execute(params![
+                id,
+                "heading",
+                x.level,
+                pos as i64,
+                x.text,
+                None::<bool>,
+                origin
+            ])?;
+        }
+        let mut dir = self.conn.prepare_cached(
+            "INSERT INTO rendered_directives (url_id, pos, directive, value, known, source, crawler, in_head,
+             origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )?;
+        let mut put_directive = |pos: usize, x: &Directive, origin: &str| {
+            dir.execute(params![
+                id,
+                pos as i64,
+                x.directive,
+                x.value,
+                x.known,
+                x.source.as_str(),
+                x.crawler,
+                x.in_head,
+                origin
+            ])
+        };
+        for (pos, x) in d.directives.iter().enumerate() {
+            put_directive(pos, x, origin_at(o.map(|o| &o.directives), pos))?;
+        }
+        let mut sd = self.conn.prepare_cached(
+            "INSERT INTO rendered_structured_data (url_id, pos, kind, raw, parseable, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (pos, b) in d.structured.iter().enumerate() {
+            let origin = origin_at(o.map(|o| &o.structured), pos);
+            sd.execute(params![
+                id,
+                pos as i64,
+                b.kind.as_str(),
+                b.raw,
+                b.parseable,
+                origin
+            ])?;
+        }
+        // What JavaScript removed: raw rows with origin `raw`, raw positions.
+        if let (Some(raw), Some(o)) = (p.raw, o) {
+            let raw_origin = Origin::Raw.as_str();
+            for &i in &o.titles.raw_only {
+                let t = &raw.titles[i];
+                text_row.execute(params![
+                    id, "title", None::<u8>, i as i64, t.text, t.in_head, raw_origin
+                ])?;
+            }
+            for &i in &o.descriptions.raw_only {
+                let t = &raw.meta_descriptions[i];
+                text_row.execute(params![
+                    id,
+                    "meta_description",
+                    None::<u8>,
+                    i as i64,
+                    t.text,
+                    t.in_head,
+                    raw_origin
+                ])?;
+            }
+            for &i in &o.headings.raw_only {
+                let x = &raw.headings[i];
+                text_row.execute(params![
+                    id,
+                    "heading",
+                    x.level,
+                    i as i64,
+                    x.text,
+                    None::<bool>,
+                    raw_origin
+                ])?;
+            }
+            for &i in &o.directives.raw_only {
+                put_directive(i, &raw.directives[i], raw_origin)?;
+            }
+            for &i in &o.structured.raw_only {
+                let b = &raw.structured[i];
+                sd.execute(params![
+                    id,
+                    i as i64,
+                    b.kind.as_str(),
+                    b.raw,
+                    b.parseable,
+                    raw_origin
+                ])?;
+            }
+        }
+        if let Some(c) = p.comparison {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO render_comparisons (url_id, words_raw, words_rendered, words_change,
+                     links_raw, links_rendered, links_rendered_only, links_raw_only, title_diff,
+                     description_diff, h1_diff, canonical_diff, noindex_diff, nofollow_diff, hreflang_diff,
+                     structured_rendered_only, dep_text, dep_headings, dep_internal_links, dep_structured,
+                     dep_images, raw_has_title, raw_has_description, raw_has_canonical, raw_has_directives,
+                     dependence)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                     ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                )?
+                .execute(params![
+                    id,
+                    c.words_raw,
+                    c.words_rendered,
+                    c.words_change,
+                    c.links_raw,
+                    c.links_rendered,
+                    c.links_rendered_only,
+                    c.links_raw_only,
+                    c.title_diff.as_str(),
+                    c.description_diff.as_str(),
+                    c.h1_diff.as_str(),
+                    c.canonical_diff.as_str(),
+                    c.noindex_diff.as_str(),
+                    c.nofollow_diff.as_str(),
+                    c.hreflang_diff.as_str(),
+                    c.structured_rendered_only,
+                    c.dep_text,
+                    c.dep_headings,
+                    c.dep_internal_links,
+                    c.dep_structured,
+                    c.dep_images,
+                    c.raw_has_title,
+                    c.raw_has_description,
+                    c.raw_has_canonical,
+                    c.raw_has_directives,
+                    c.dependence,
+                ])?;
+        }
+        let mut gone = self
+            .conn
+            .prepare_cached("INSERT OR IGNORE INTO raw_only_links (from_id, pos) VALUES (?1, ?2)")?;
+        for pos in p.raw_only_links {
+            gone.execute(params![id, pos])?;
+        }
+        if let Some((packed, size)) = p.html {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO rendered_bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+}
+
+fn unpack(codec: &str, size: i64, packed: &[u8]) -> Result<Vec<u8>> {
+    if codec != body::CODEC {
+        return Err(StoreError::Format(format!("unknown body codec {codec}")));
+    }
+    body::decompress(packed, size as usize)
+        .map_err(|e| StoreError::Format(format!("stored HTML is damaged: {e}")))
+}
+
 /// The engine's version, recorded with every event.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -2608,5 +3565,371 @@ mod tests {
             total += page.len();
         }
         assert_eq!(total, 200_000);
+    }
+
+    fn extracted(html: &str) -> PageData {
+        let url = url::Url::parse("https://a.test/a").unwrap();
+        crate::extract::extract_page(&crate::extract::PageInput {
+            url: &url,
+            charset: None,
+            body: html.as_bytes(),
+            truncated: false,
+            robots_token: "SpiderLens",
+            keep_text: true,
+        })
+    }
+
+    fn count(s: &CrawlStore, table: &str) -> i64 {
+        s.conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Every table of the rendering step (spec 014 data-model.md).
+    pub(crate) const RENDER_TABLES: &[&str] = &[
+        "renders",
+        "render_inputs",
+        "rendered_pages",
+        "rendered_text",
+        "rendered_directives",
+        "rendered_structured_data",
+        "rendered_links",
+        "raw_only_links",
+        "render_comparisons",
+        "render_resources",
+        "console_entries",
+        "rendered_bodies",
+        "screenshots",
+    ];
+
+    #[test]
+    fn render_queue_moves_through_its_states() {
+        let (_d, mut s) = store();
+        let a = s.record(&disc("https://a.test/a", 0, QUEUE)).unwrap().id();
+        let b = s.record(&disc("https://a.test/b", 1, QUEUE)).unwrap().id();
+        let packed = body::compress(b"<p>raw a</p>").unwrap();
+        s.enqueue_render(a, Some((&packed, 12))).unwrap();
+        s.enqueue_render(b, None).unwrap();
+        s.enqueue_render(a, None).unwrap();
+        let q = s.renders_after(None, 10).unwrap();
+        assert_eq!(
+            q.iter().map(|e| e.url_id).collect::<Vec<_>>(),
+            [a, b],
+            "queued once, in order"
+        );
+        assert_eq!(s.renders_after(Some(q[0].seq), 10).unwrap().len(), 1);
+        assert_eq!(s.render_input(a).unwrap().unwrap(), b"<p>raw a</p>");
+        assert!(
+            s.render_input(b).unwrap().is_none(),
+            "no stored HTML and no input"
+        );
+
+        assert!(s.mark_rendering(a).unwrap());
+        assert!(!s.mark_rendering(a).unwrap(), "only from queued");
+        s.requeue_render(a).unwrap();
+        assert_eq!(s.renders_after(None, 10).unwrap()[0].url_id, a, "keeps its place");
+        assert!(s.mark_rendering(a).unwrap());
+        assert_eq!(s.renders_after(None, 10).unwrap()[0].attempts, 0);
+
+        // Stop, then resume: both come back, the input is kept.
+        assert_eq!(s.stop_renders().unwrap(), 2);
+        assert!(s.renders_after(None, 10).unwrap().is_empty());
+        assert_eq!(count(&s, "render_inputs"), 1);
+        assert_eq!(s.requeue_rendering().unwrap(), 2);
+        let q = s.renders_after(None, 10).unwrap();
+        assert_eq!(
+            q.iter().map(|e| (e.url_id, e.attempts)).collect::<Vec<_>>(),
+            [(a, 2), (b, 0)]
+        );
+
+        s.skip_render(b, "outside_rules", None).unwrap();
+        let counts = s.render_counts().unwrap();
+        assert!(counts.contains(&(RenderStatus::Queued, 1)));
+        assert!(counts.contains(&(RenderStatus::NotRendered, 1)));
+    }
+
+    #[test]
+    fn a_rendered_page_round_trips_through_every_table() {
+        let (_d, mut s) = store();
+        let a = s.record(&disc("https://a.test/a", 0, QUEUE)).unwrap().id();
+        let input = body::compress(b"raw").unwrap();
+        s.enqueue_render(a, Some((&input, 3))).unwrap();
+        s.mark_rendering(a).unwrap();
+        let raw = extracted(
+            "<html><head><title>Loading</title><meta name=robots content=noarchive></head>\
+             <body><h1>Old</h1></body></html>",
+        );
+        let rendered = extracted(
+            r#"<html><head><title>Shop</title><meta name="description" content="Things">
+            <script type="application/ld+json">{"@type":"Thing"}</script></head>
+            <body><h1>Shop</h1><h2>More</h2><a href="/b">B</a></body></html>"#,
+        );
+        let internal = |u: &url::Url| u.host_str() == Some("a.test");
+        let cmp = crate::extract::compare::compare(&raw, &rendered, "SpiderLens", &internal);
+        let dom = "<!DOCTYPE html><html><body>rendered</body></html>";
+        let packed = body::compress(dom.as_bytes()).unwrap();
+        let link_ctx = rendered.refs[0].clone();
+        s.add_rendered_link(
+            &NewLink {
+                from: a,
+                to: None,
+                raw: "/b",
+                kind: LinkKind::Anchor,
+                nofollow: false,
+                page_nofollow: false,
+                followed: true,
+                pos: Some(7),
+                target: Some("https://a.test/b"),
+                skip_reason: None,
+                context: Some(&link_ctx),
+            },
+            0,
+        )
+        .unwrap();
+        let resources = [ResourceRow {
+            url: "https://a.test/app.js",
+            kind: "script",
+            host: "https://a.test:443",
+            third_party: false,
+            outcome: "loaded",
+            status: Some(200),
+            error: None,
+            robots_rule: None,
+            bytes: 120,
+        }];
+        let console = [ConsoleRow {
+            level: "error",
+            message: "boom",
+            source: Some(("https://a.test/app.js", 3, 9)),
+        }];
+        s.record_render(
+            a,
+            &RenderRecord {
+                status: RenderStatus::Rendered,
+                reason: None,
+                reason_detail: None,
+                render_ms: Some(840),
+                window: Some((412, 915)),
+                js_redirect: None,
+                js_redirect_id: None,
+                console_totals: (3, 1),
+                resources_failed: 0,
+                resources_blocked: 4,
+                bot_challenge: false,
+                rendered_at: 1_700_000_000_000,
+                page: Some(RenderedPageRecord {
+                    data: Some(&rendered),
+                    extract_error: None,
+                    raw: Some(&raw),
+                    comparison: Some(&cmp),
+                    noindex: false,
+                    nofollow: false,
+                    canonical: None,
+                    canonical_count: 0,
+                    canonical_conflict: false,
+                    html: Some((&packed, dom.len())),
+                    raw_only_links: &[2, 5],
+                }),
+                resources: &resources,
+                console: &console,
+                screenshot: Some((b"RIFFwebp", 412, 900)),
+            },
+        )
+        .unwrap();
+
+        let (state, ms, w, errors, blocked, seq): (String, i64, i64, i64, i64, Option<i64>) = s
+            .conn
+            .query_row(
+                "SELECT state, render_ms, window_w, console_errors, resources_blocked, queue_seq
+                 FROM renders WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (state.as_str(), ms, w, errors, blocked, seq),
+            ("rendered", 840, 412, 3, 4, None)
+        );
+        let (title, h1, stored): (String, String, bool) = s
+            .conn
+            .query_row(
+                "SELECT title, h1_1, rendered_html_stored FROM rendered_pages WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((title.as_str(), h1.as_str(), stored), ("Shop", "Shop", true));
+        let texts: Vec<(String, String, String)> = s
+            .conn
+            .prepare(
+                "SELECT kind, text, origin FROM rendered_text WHERE url_id = ?1 ORDER BY origin, kind, pos",
+            )
+            .unwrap()
+            .query_map([a], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let has = |k: &str, t: &str, o: &str| texts.iter().any(|x| x.0 == k && x.1 == t && x.2 == o);
+        assert!(has("title", "Shop", "rendered"), "{texts:?}");
+        assert!(
+            has("title", "Loading", "raw"),
+            "what JavaScript removed: {texts:?}"
+        );
+        assert!(has("heading", "Old", "raw"));
+        assert!(has("meta_description", "Things", "rendered"));
+        let dir: (String, String) = s
+            .conn
+            .query_row(
+                "SELECT directive, origin FROM rendered_directives WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(dir, ("noarchive".into(), "raw".into()));
+        let sd: String = s
+            .conn
+            .query_row(
+                "SELECT origin FROM rendered_structured_data WHERE url_id = ?1",
+                [a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sd, "rendered");
+        let (title_diff, dep): (String, f64) = s
+            .conn
+            .query_row(
+                "SELECT title_diff, dependence FROM render_comparisons WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(title_diff, "changed");
+        assert!(dep > 0.0);
+        let (raw_link, rpos, text): (String, i64, String) = s
+            .conn
+            .query_row(
+                "SELECT raw, rpos, text FROM rendered_links WHERE from_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((raw_link.as_str(), rpos, text.as_str()), ("/b", 0, "B"));
+        assert_eq!(count(&s, "raw_only_links"), 2);
+        let res: (String, String, i64) = s
+            .conn
+            .query_row(
+                "SELECT type, outcome, bytes FROM render_resources WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(res, ("script".into(), "loaded".into(), 120));
+        let con: (String, String, i64) = s
+            .conn
+            .query_row(
+                "SELECT level, message, line FROM console_entries WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(con, ("error".into(), "boom".into(), 3));
+        assert_eq!(s.rendered_html(a).unwrap().unwrap(), dom.as_bytes());
+        assert_eq!(
+            s.screenshot(a).unwrap().unwrap(),
+            (b"RIFFwebp".to_vec(), 412, 900)
+        );
+        assert_eq!(
+            count(&s, "render_inputs"),
+            0,
+            "the input goes when the render is final"
+        );
+
+        s.set_renderer(r#"{"name":"Chromium","version":"141","source":"installed"}"#)
+            .unwrap();
+        assert_eq!(s.meta("render_version").unwrap().as_deref(), Some(RENDER_VERSION));
+        s.set_meta("data_features", "extraction,timing").unwrap();
+        s.add_data_features(&["rendering", "screenshots", "rendering"])
+            .unwrap();
+        assert_eq!(
+            s.meta("data_features").unwrap().as_deref(),
+            Some("extraction,timing,rendering,screenshots")
+        );
+    }
+
+    #[test]
+    fn a_failed_render_writes_only_its_state_and_stores_at_most_the_limits() {
+        let (_d, mut s) = store();
+        let a = s.record(&disc("https://a.test/a", 0, QUEUE)).unwrap().id();
+        s.enqueue_render(a, None).unwrap();
+        let urls: Vec<String> = (0..600).map(|i| format!("https://a.test/{i}.js")).collect();
+        let resources: Vec<ResourceRow> = urls
+            .iter()
+            .map(|u| ResourceRow {
+                url: u,
+                kind: "script",
+                host: "https://a.test:443",
+                third_party: false,
+                outcome: "failed",
+                status: None,
+                error: Some("timeout"),
+                robots_rule: None,
+                bytes: 0,
+            })
+            .collect();
+        let console: Vec<ConsoleRow> = (0..60)
+            .map(|_| ConsoleRow {
+                level: "warning",
+                message: "w",
+                source: None,
+            })
+            .collect();
+        s.record_render(
+            a,
+            &RenderRecord {
+                status: RenderStatus::Failed,
+                reason: Some("crash"),
+                reason_detail: Some("renderer crashed"),
+                render_ms: None,
+                window: None,
+                js_redirect: None,
+                js_redirect_id: None,
+                console_totals: (0, 60),
+                resources_failed: 600,
+                resources_blocked: 0,
+                bot_challenge: false,
+                rendered_at: 1,
+                page: None,
+                resources: &resources,
+                console: &console,
+                screenshot: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(count(&s, "render_resources"), MAX_RESOURCE_ROWS as i64);
+        assert_eq!(count(&s, "console_entries"), MAX_CONSOLE_ROWS as i64);
+        assert_eq!(count(&s, "rendered_pages"), 0);
+        assert_eq!(count(&s, "render_comparisons"), 0);
+        let (reason, failed): (String, i64) = s
+            .conn
+            .query_row(
+                "SELECT reason, resources_failed FROM renders WHERE url_id = ?1",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((reason.as_str(), failed), ("crash", 600));
+    }
+
+    #[test]
+    fn a_format_2_file_has_no_render_tables_and_reads_as_empty() {
+        let (_d, s) = store();
+        for t in RENDER_TABLES {
+            s.conn.execute_batch(&format!("DROP TABLE {t}")).unwrap();
+        }
+        assert_eq!(s.stop_renders().unwrap(), 0);
+        assert_eq!(s.requeue_rendering().unwrap(), 0);
+        assert!(s.render_counts().unwrap().is_empty());
+        assert!(s.rendered_html(1).unwrap().is_none());
+        assert!(s.screenshot(1).unwrap().is_none());
     }
 }

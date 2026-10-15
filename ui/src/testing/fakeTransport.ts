@@ -110,6 +110,22 @@ export function defaultConfig(): CrawlConfig {
     ai_checks: { auto: true, site_files: true },
     segments: [],
     spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
+    rendering: {
+      mode: "raw",
+      max_render_secs: 10,
+      min_wait_secs: 0,
+      window: { preset: "auto", width: null, height: null },
+      block: { images: true, media: true, fonts: true, stylesheets: false, third_party: false },
+      include: [],
+      exclude: [],
+      render_error_pages: false,
+      concurrency: null,
+      memory_budget_mb: null,
+      screenshots: false,
+      js_content_min_percent: 20,
+      js_content_min_words: 50,
+      hidden_content_percent: 50,
+    },
   };
 }
 
@@ -412,6 +428,9 @@ export function fakeTransport(
       }
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
+      }
+      if (!(config.rendering.max_render_secs >= 1 && config.rendering.max_render_secs <= 60)) {
+        issues.push({ path: "rendering.max_render_secs", severity: "error", code: "out_of_range", message: "The maximum render time must be between 1 and 60 seconds." });
       }
       config.segments.forEach((seg, i) => {
         if (!seg.name.trim()) issues.push({ path: `segments[${i}].name`, severity: "error", code: "segment_name_empty", message: "Give the segment a name." });

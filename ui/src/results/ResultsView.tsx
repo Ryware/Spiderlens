@@ -10,6 +10,7 @@ import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
 import type { RuleInfo } from "../generated/RuleInfo";
 import type { UrlScope } from "../generated/UrlScope";
+import type { Values } from "../generated/Values";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../components/ui";
@@ -43,7 +44,7 @@ function useDebounced<T>(value: T, ms: number): T {
  * Filter counts, refreshed as the view changes but at most every 2 s.
  * `after` runs with each refresh (the segment counts follow along).
  */
-function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, segment: number | null, version: number, rev: number, after: () => void) {
+function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, segment: number | null, values: Values | null, version: number, rev: number, after: () => void) {
   const [counts, setCounts] = useState<FilterCounts | null>(null);
   const last = useRef(0);
   const busy = useRef(false);
@@ -53,7 +54,7 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
   useEffect(() => {
     setCounts(null);
     last.current = 0;
-  }, [path, tab, scope, segment, rev]);
+  }, [path, tab, scope, segment, values, rev]);
   useEffect(() => {
     if (busy.current) return;
     const wait = last.current + 2000 - Date.now();
@@ -64,11 +65,11 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
     busy.current = true;
     last.current = Date.now();
     transport
-      .viewCounts(path, tab, scope, segment ?? undefined)
+      .viewCounts(path, tab, scope, segment ?? undefined, values ?? undefined)
       .then(setCounts, () => {})
       .finally(() => (busy.current = false));
     if (version > 0) afterRef.current();
-  }, [transport, path, tab, scope, segment, version, rev, again]);
+  }, [transport, path, tab, scope, segment, values, version, rev, again]);
   return counts;
 }
 
@@ -81,6 +82,8 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  values = null,
+  onValues,
   toolbar,
   issue = null,
   onIssueSettings,
@@ -101,6 +104,9 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Raw or rendered values; null when the crawl was not rendered (spec 014). */
+  values?: Values | null;
+  onValues?: (v: Values) => void;
   /** Controls for this tab's own pass, such as Check spelling. */
   toolbar?: ReactNode;
   /** Set when this tab lists one issue's URLs (spec 009 D10). */
@@ -162,9 +168,10 @@ export function ResultsView({
       scope: tab.scoped ? session.scope : "all",
       search: session.search,
       sort: session.sort,
+      ...(values ? { values } : {}),
       ...(segment === null ? {} : { segment }),
     }),
-    [tab, session.filter, session.scope, session.search, session.sort, segment],
+    [tab, session.filter, session.scope, session.search, session.sort, segment, values],
   );
 
   const selectionRef = useRef(selection);
@@ -186,7 +193,7 @@ export function ResultsView({
       setSelection(shift(s, delta, total));
     },
   });
-  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", segment, view.version, segmentsRev, onRefreshSegments);
+  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", segment, values, view.version, segmentsRev, onRefreshSegments);
 
   // A new query starts at the top with nothing selected, except the row
   // remembered for this tab, which is found again.
@@ -304,6 +311,18 @@ export function ResultsView({
             {selected > 1 && ` · ${selected.toLocaleString()} selected`}
           </span>
           <div className="ml-auto flex items-center gap-1.5">
+            {values && onValues && (
+              <Segmented<Values>
+                size="sm"
+                label="Which values"
+                value={values}
+                onChange={onValues}
+                options={[
+                  { value: "rendered", label: "Rendered values" },
+                  { value: "raw", label: "Raw values" },
+                ]}
+              />
+            )}
             <SegmentFilter counts={segmentCounts} value={segment} onChange={onSegment} />
             {tab.scoped && (
               <Segmented<UrlScope>

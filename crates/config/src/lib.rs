@@ -36,9 +36,9 @@ pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse
 pub use model::{
     AccessSettings, AiChecks, Changefreq, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
     HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
-    ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
+    ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow, RetrySettings, RobotsMode,
     RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
-    SpellingSettings, SubdomainMode, SuppliedCookie, UserAgent,
+    SpellingSettings, SubdomainMode, SuppliedCookie, UserAgent, WindowPreset,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};

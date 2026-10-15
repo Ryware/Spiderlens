@@ -222,6 +222,36 @@ test("live_refresh_never_blanks_the_rows_on_screen", async () => {
   expect(filled()).toBe(true);
 });
 
+test("values_switch_is_hidden_without_rendering", async () => {
+  // Spec 014 T029: a raw crawl has no rendered values to show.
+  const t = await openInternal();
+  expect(screen.queryByRole("radiogroup", { name: "Which values" })).toBeNull();
+  expect(t.results.opened.every((q) => q.values === undefined)).toBe(true);
+});
+
+test("values_switch_reopens_the_view_with_the_chosen_values", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "rendering"];
+  await openInternal(t);
+  const group = await screen.findByRole("radiogroup", { name: "Which values" });
+  const rendered = within(group).getByRole("radio", { name: "Rendered values" });
+  await waitFor(() => expect(rendered.getAttribute("aria-checked")).toBe("true"));
+  await waitFor(() => expect(t.results.opened.at(-1)?.values).toBe("rendered"));
+  await waitFor(() => expect(t.results.counted.at(-1)).toBe("rendered"));
+
+  fireEvent.click(within(group).getByRole("radio", { name: "Raw values" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.values).toBe("raw"));
+  await waitFor(() => expect(t.results.counted.at(-1)).toBe("raw"));
+  expect(within(group).getByRole("radio", { name: "Raw values" }).getAttribute("aria-checked")).toBe("true");
+
+  // The choice belongs to the crawl, so another tab keeps it.
+  fireEvent.click(screen.getByRole("button", { name: "Response codes" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.tab).toBe("response-codes"));
+  expect(t.results.opened.at(-1)?.values).toBe("raw");
+  const again = screen.getByRole("radiogroup", { name: "Which values" });
+  expect(within(again).getByRole("radio", { name: "Raw values" }).getAttribute("aria-checked")).toBe("true");
+});
+
 // Sidebar counts (T014) ---------------------------------------------------------
 
 const sidebarCount = (tab: string) => {

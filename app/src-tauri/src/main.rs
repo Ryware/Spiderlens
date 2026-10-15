@@ -33,6 +33,8 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // The browser guard of a rendering crawl is this executable too (R12).
+    spiderlens_engine::run_render_guard_if_asked();
     // AI assistants start the app's executable with `mcp` (spec 016 plan
     // D8): serve MCP on standard input and output, with no window.
     let mut args = std::env::args_os().skip(1);

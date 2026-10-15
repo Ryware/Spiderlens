@@ -102,7 +102,8 @@ string_enum! {
 }
 
 string_enum! {
-    /// What kind of reference a link is.
+    /// What kind of reference a link is. `js_redirect` is a script
+    /// navigation found by rendering (spec 014 FR-013).
     LinkKind {
         Anchor = "anchor",
         Redirect = "redirect",
@@ -113,6 +114,7 @@ string_enum! {
         AmpHtml = "amphtml",
         Next = "next",
         Prev = "prev",
+        JsRedirect = "js_redirect",
     }
 }
 
@@ -125,7 +127,7 @@ impl LinkKind {
             Self::Hreflang => DiscoverySource::Hreflang,
             Self::AmpHtml => DiscoverySource::AmpHtml,
             Self::Image => DiscoverySource::Image,
-            Self::MetaRefresh => DiscoverySource::Redirect,
+            Self::MetaRefresh | Self::JsRedirect => DiscoverySource::Redirect,
             Self::Next | Self::Prev => DiscoverySource::Link,
         }
     }

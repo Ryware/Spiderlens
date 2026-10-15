@@ -73,6 +73,7 @@ pub fn extract_title(header_charset: Option<&str>, body: &[u8]) -> Title {
         body,
         truncated: false,
         robots_token: "",
+        keep_text: false,
         a11y: false,
         hook: None,
     });

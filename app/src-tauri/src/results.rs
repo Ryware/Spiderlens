@@ -18,7 +18,7 @@ use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, U
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError,
     Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, SegmentCounts, TabCounts,
-    TabDef, TestedLink, UrlDetail, UrlScope, ViewQuery, export_file_in, issue_tabs, tabs,
+    TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in, issue_tabs, tabs,
 };
 use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter, Manager};
@@ -306,9 +306,10 @@ pub async fn view_counts(
     tab: String,
     scope: UrlScope,
     segment: Option<u32>,
+    values: Option<Values>,
 ) -> Cmd<FilterCounts> {
     state
-        .with(&path, move |r| r.counts_in(&tab, scope, segment).map_err(err))
+        .with(&path, move |r| r.counts_for(&tab, scope, segment, values).map_err(err))
         .await
 }
 

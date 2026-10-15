@@ -4,6 +4,12 @@
 //! deterministic pseudo-random rows: titles with known duplicates, missing
 //! and long titles, a mix of status codes, external URLs, redirect chains,
 //! and about `links_per_page` links per page. No network.
+//!
+//! With `rendered`, it also writes what a JavaScript rendering crawl (spec
+//! 014) stores for each internal 200 HTML page: a `rendered_pages` row
+//! (a changed title on a third of them, a noindex on one in twenty), one
+//! link only after rendering and, on one page in four, a raw link gone
+//! after rendering.
 
 use std::path::Path;
 
@@ -14,6 +20,8 @@ pub struct Synth {
     pub urls: u64,
     pub links_per_page: u32,
     pub seed: u64,
+    /// Adds spec 014 rendered data.
+    pub rendered: bool,
     /// Store each internal page's HTML (header, menu, content, footer
     /// around its links), for the link positions benchmark.
     pub html: bool,
@@ -31,6 +39,7 @@ impl Default for Synth {
             urls: 10_000,
             links_per_page: 10,
             seed: 7,
+            rendered: false,
             html: false,
             pages: false,
             result_indexes: false,
@@ -117,6 +126,7 @@ impl Synth {
         conn.pragma_update(None, "synchronous", "OFF")?;
         let tx = conn.transaction()?;
         let mut rng = Rng(self.seed.max(1));
+        let mut html_pages: Vec<(i64, Option<String>)> = Vec::new();
         {
             let mut ins = tx.prepare(
                 "INSERT INTO urls (id, url, host_key, internal, depth, state, check_only, reason, reason_detail,
@@ -166,6 +176,13 @@ impl Synth {
                 } else {
                     ("crawled", 0, None)
                 };
+                if self.rendered
+                    && !external
+                    && status == Some(200)
+                    && ctype.is_some_and(|c| c.starts_with("text/html"))
+                {
+                    html_pages.push((id, title.clone()));
+                }
                 ins.execute(params![
                     id,
                     url,
@@ -223,6 +240,44 @@ impl Synth {
                 }
             }
         }
+        if self.rendered {
+            let mut page = tx.prepare(
+                "INSERT INTO rendered_pages (url_id, title_count, meta_description_count, h1_count, h2_count,
+                  heading_counts, word_count, no_content, title, noindex, nofollow, canonical_count,
+                  canonical_conflict, rendered_html_stored)
+                 VALUES (?1, 1, 0, 1, 0, '[1,0,0,0,0,0]', 300, 0, ?2, ?3, 0, 0, 0, 0)",
+            )?;
+            let mut render = tx.prepare(
+                "INSERT INTO renders (url_id, state, attempts, render_ms, rendered_at) VALUES (?1, 'rendered', 1, ?2, ?3)",
+            )?;
+            let mut link = tx.prepare(
+                "INSERT INTO rendered_links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed, pos, rpos)
+                 VALUES (?1, ?2, ?3, 'anchor', 0, 0, 1, ?4, 0)",
+            )?;
+            let mut gone = tx.prepare("INSERT INTO raw_only_links (from_id, pos) VALUES (?1, ?2)")?;
+            for (id, title) in &html_pages {
+                let title = match (title, rng.below(3)) {
+                    (Some(t), 0) => Some(format!("{t} | Shop")),
+                    (t, _) => t.clone(),
+                };
+                page.execute(params![id, title, i64::from(rng.below(20) == 0)])?;
+                render.execute(params![
+                    id,
+                    200 + rng.below(800) as i64,
+                    1_760_000_000_000i64 + id
+                ])?;
+                let to = 1 + rng.below(self.urls) as i64;
+                link.execute(params![
+                    id,
+                    to,
+                    format!("/js/{to}"),
+                    i64::from(self.links_per_page)
+                ])?;
+                if self.links_per_page > 1 && rng.below(4) == 0 {
+                    gone.execute(params![id, 1])?;
+                }
+            }
+        }
         if self.pages {
             self.write_pages(&tx)?;
         }
@@ -230,7 +285,12 @@ impl Synth {
         // Base data, plus page content when asked: no timing or HTML.
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('data_features', ?1)",
-            [if self.pages { "extraction" } else { "" }],
+            [match (self.pages, self.rendered) {
+                (true, true) => "extraction,rendering",
+                (true, false) => "extraction",
+                (false, true) => "rendering",
+                (false, false) => "",
+            }],
         )?;
         tx.commit()?;
         if self.result_indexes {

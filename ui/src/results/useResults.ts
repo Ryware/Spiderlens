@@ -5,6 +5,7 @@ import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { Sort } from "../generated/Sort";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlScope } from "../generated/UrlScope";
+import type { Values } from "../generated/Values";
 import type { Transport } from "../transport";
 
 /** What each tab remembers while the app is open (FR-017). */
@@ -34,6 +35,8 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const [sessions, setSessions] = useState<Record<string, TabSession>>({});
   const [focusId, setFocusId] = useState<number | null>(null);
   const [retry, setRetry] = useState(0);
+  /** Raw or rendered values per crawl file, kept while the app is open (spec 014 FR-021). */
+  const [valuesByPath, setValuesByPath] = useState<Record<string, Values>>({});
   /** Bumped when custom rules ran again on this file, so open views reload (spec 013 US3). */
   const [epoch, setEpoch] = useState(0);
 
@@ -137,12 +140,19 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
+  // Only a rendered crawl has a choice; it starts on rendered values.
+  const rendered = features?.available.includes("rendering") ?? false;
+  const values: Values | null = path && rendered ? (valuesByPath[path] ?? "rendered") : null;
+  const setValues = useCallback((v: Values) => {
+    if (path) setValuesByPath((m) => ({ ...m, [path]: v }));
+  }, [path]);
+
   /** Reads which data the file has again, after external data changed it. */
   const reload = useCallback(() => setRetry((n) => n + 1), []);
 
   const counts = useTabCounts(transport, features ? path : null, live);
 
-  return { tabs, features, session, update, focusId, setFocusId, counts, epoch, reload, segment, setSegment, segmentCounts, segmentsRev, refreshSegmentCounts };
+  return { tabs, features, session, update, focusId, setFocusId, values, setValues, counts, epoch, reload, segment, setSegment, segmentCounts, segmentsRev, refreshSegmentCounts };
 }
 
 /**

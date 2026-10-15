@@ -1,5 +1,8 @@
 //! Times the results queries on a crawl file (T035):
-//! `cargo run --release -p spiderlens-results --example bench -- /tmp/1m.spiderlens`
+//! `cargo run --release -p spiderlens-results --example bench -- /tmp/1m.spiderlens [raw|rendered]`
+//!
+//! The optional second argument picks the values of a rendered crawl
+//! (spec 014 T030); without it, the file's default.
 //!
 //! `-- <file> page-titles` times only the Page titles tab (T039): opening it,
 //! its counts, each sort and filter, then the same after the crawl commits
@@ -7,7 +10,7 @@
 
 use std::time::Instant;
 
-use spiderlens_results::{Reader, Sort, UrlScope, ViewQuery, tab};
+use spiderlens_results::{Reader, Sort, UrlScope, Values, ViewQuery, tab};
 
 fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
     let t = Instant::now();
@@ -16,12 +19,21 @@ fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
     v
 }
 
+fn values() -> Option<Values> {
+    match std::env::args().nth(2).as_deref() {
+        Some("raw") => Some(Values::Raw),
+        Some("rendered") => Some(Values::Rendered),
+        _ => None,
+    }
+}
+
 fn q(tab: &str, filter: &str, search: &str, sort: Option<(&str, bool)>) -> ViewQuery {
     ViewQuery {
         tab: tab.into(),
         filter: filter.into(),
         scope: UrlScope::All,
         search: search.into(),
+        values: values(),
         sort: sort.map(|(c, d)| Sort {
             column: c.into(),
             desc: d,
@@ -146,7 +158,25 @@ fn main() {
             q("response-codes", "redirect_chain", "", None),
         ),
         ("URL, non-ASCII", q("url", "non_ascii", "", None)),
+        (
+            "Internal, sort by outlinks",
+            q("internal", "all", "", Some(("outlinks", true))),
+        ),
+        (
+            "Images, sort by found on",
+            q("images", "all", "", Some(("found_on_count", true))),
+        ),
+        (
+            "Internal, sort by indexability",
+            q("internal", "all", "", Some(("indexability", false))),
+        ),
     ];
+    // The first view sets the values up: the temporary views and the
+    // derived tables the Internal tab reads.
+    time("setup: first Internal view", || {
+        let p = r.open_view(&q("internal", "all", "", None), 1).expect("open");
+        r.close_view(p.view).unwrap();
+    });
     for (label, query) in cases {
         let page = time(&format!("{label}: first screen"), || {
             r.open_view(&query, 60).expect("open")
@@ -168,7 +198,7 @@ fn main() {
         "images",
     ] {
         time(&format!("counts {tab}"), || {
-            r.counts(tab, UrlScope::All).expect("counts")
+            r.counts_with(tab, UrlScope::All, values()).expect("counts")
         });
     }
     time("tab counts (sidebar, every tab)", || {
