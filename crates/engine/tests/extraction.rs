@@ -346,6 +346,8 @@ fn sc_004_huge_page_is_extracted_in_time() {
         truncated: false,
         robots_token: "SpiderLens",
         keep_text: false,
+        a11y: false,
+        hook: None,
     });
     let took = started.elapsed();
     println!(

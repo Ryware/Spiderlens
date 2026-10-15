@@ -11,9 +11,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+#[path = "custom_store.rs"]
+pub mod custom;
+
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use crate::extract::agents::{AgentLink, AgentLinkKind, FormMethod};
 use crate::extract::compare::{Comparison, Origin, Origins};
-use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
+use crate::extract::{AgentData, Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
 /// 2: page data extraction (spec 005). 3 and later: the steps in
@@ -308,6 +312,45 @@ pub struct SitemapRow {
     pub error: Option<String>,
 }
 
+/// One sitemap file as read (spec 011 `sitemap_files`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SitemapFileRecord {
+    /// The URL, or `file:` and the path for a file on this computer.
+    pub location: String,
+    /// `robots`, `default`, `user`, `local` or `list`.
+    pub source: &'static str,
+    pub parent_id: Option<i64>,
+    pub level: u32,
+    pub base_url: Option<String>,
+    /// `urlset` or `index`; None when the file could not be read.
+    pub kind: Option<&'static str>,
+    pub http_status: Option<u16>,
+    pub final_url: Option<String>,
+    pub redirected: bool,
+    pub compressed: bool,
+    pub bytes: u64,
+    pub entry_count: u32,
+    pub over_limit: bool,
+    pub error_class: Option<String>,
+    pub error: Option<String>,
+    pub error_line: Option<u32>,
+    pub read_at: i64,
+}
+
+/// One `<url>` or `<sitemap>` entry ready to store, with the URL it matched.
+pub struct SitemapEntryRecord<'a> {
+    pub entry: &'a super::sitemap::Entry,
+    /// `url` or `sitemap`.
+    pub kind: &'static str,
+    pub url_id: Option<i64>,
+    /// Why `loc` is not a usable address.
+    pub invalid: Option<&'a str>,
+    /// The entry's images and hreflang alternates normalized, in order;
+    /// matched to `urls` when the crawl ends ([`CrawlStore::link_sitemap_refs`]).
+    pub image_urls: &'a [Option<String>],
+    pub alternate_urls: &'a [Option<String>],
+}
+
 /// (status, error class, error reason, count): one group of final outcomes.
 pub type Outcome = (Option<u16>, Option<String>, Option<String>, u64);
 
@@ -419,6 +462,22 @@ pub struct NewLink<'a> {
     pub context: Option<&'a Ref>,
 }
 
+/// Which version of a page agent data came from (spec 016, spec 014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSource {
+    Raw,
+    Rendered,
+}
+
+impl AgentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Rendered => "rendered",
+        }
+    }
+}
+
 /// Extracted data for one HTML page, for [`CrawlStore::record_page`].
 pub struct PageRecord<'a> {
     /// None when extraction failed.
@@ -426,6 +485,8 @@ pub struct PageRecord<'a> {
     pub extract_error: Option<&'a str>,
     /// Compressed body and its uncompressed size.
     pub html: Option<(&'a [u8], usize)>,
+    /// Agent links from the `Link` response header (spec 016).
+    pub header_agent_links: &'a [AgentLink],
 }
 
 /// Totals from [`CrawlStore::counts`].
@@ -515,11 +576,12 @@ impl CrawlStore {
     /// into memory. Run between transactions, this passive checkpoint copies
     /// only the little the background thread has not, so the next commit
     /// writes from the start of the log again. Never waits: when the
-    /// background thread is busy checkpointing, it is skipped.
-    pub fn catch_up_checkpoint(&self) {
-        let _ = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    /// background thread is busy checkpointing, it returns false and the
+    /// caller tries again after its next commit.
+    pub fn catch_up_checkpoint(&self) -> bool {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0))
+            .is_ok_and(|busy| busy == 0)
     }
 
     /// Opens a crawl file for reading only: nothing is written, not even the
@@ -560,7 +622,9 @@ impl CrawlStore {
         Ok(store)
     }
 
-    pub(crate) fn conn(&self) -> &Connection {
+    /// The connection. Crates that keep their own tables in the crawl file
+    /// (spec 024) write through it while holding the writer lock.
+    pub fn conn(&self) -> &Connection {
         &self.conn
     }
 
@@ -995,9 +1059,10 @@ impl CrawlStore {
                 "INSERT OR REPLACE INTO pages (url_id, title_count, meta_description, meta_description_count,
                  h1_1, h1_2, h1_count, h2_1, h2_2, h2_count, heading_counts, word_count, lang, text_hash,
                  title_hash, meta_description_hash, meta_refresh_delay, meta_refresh_url, partial,
-                 encoding_errors, encoding, extract_error, no_content, html_stored)
+                 encoding_errors, encoding, extract_error, no_content, html_stored, sentence_count,
+                 syllable_count)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                 ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             )?
             .execute(params![
                 id,
@@ -1024,6 +1089,8 @@ impl CrawlStore {
                 page.extract_error,
                 d.no_content,
                 page.html.is_some(),
+                d.sentence_count,
+                d.syllable_count,
             ])?;
         let mut text_row = self.conn.prepare_cached(
             "INSERT INTO page_text (url_id, kind, level, pos, text, in_head) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1058,6 +1125,188 @@ impl CrawlStore {
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
+        if let Some(f) = &d.facts {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO page_facts (url_id, kind, version, data) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, f.kind, f.version, f.data])?;
+        }
+        if page.data.is_some() {
+            self.record_agents(id, AgentSource::Raw, &d.agents, page.header_agent_links)?;
+        }
+        Ok(())
+    }
+
+    /// What was read from one PDF, and its text when kept (spec 027 part C).
+    pub fn record_pdf(&self, id: i64, f: &crate::pdf::PdfFacts, text: Option<(&[u8], usize)>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO pdfs (url_id, status, status_reason, title, author, subject, keywords,
+                 creator, producer, created_at, modified_at, page_count, pages_read, word_count, lang, encrypted,
+                 no_text, tagged, link_count, text_stored)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            )?
+            .execute(params![
+                id,
+                f.status.as_str(),
+                f.detail,
+                f.title,
+                f.author,
+                f.subject,
+                f.keywords,
+                f.creator,
+                f.producer,
+                f.created,
+                f.modified,
+                f.pages,
+                f.pages_read,
+                f.words,
+                f.lang,
+                f.encrypted,
+                f.no_text(),
+                f.tagged,
+                f.links.len() as i64,
+                text.is_some(),
+            ])?;
+        if let Some((packed, size)) = text {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+
+    /// Stores one page's forms, fields, actions and agent links (spec 016
+    /// data-model.md), replacing any earlier rows for the same source.
+    pub fn record_agents(
+        &self,
+        id: i64,
+        source: AgentSource,
+        a: &AgentData,
+        header_links: &[AgentLink],
+    ) -> Result<()> {
+        let src = source.as_str();
+        // Most pages are stored once; four deletes on every page halved crawl
+        // speed (spec 008 benchmark), so they run only when an earlier
+        // record exists.
+        let earlier = self
+            .conn
+            .prepare_cached("SELECT 1 FROM page_agent WHERE url_id = ?1 AND source = ?2")?
+            .exists(params![id, src])?;
+        if earlier {
+            for table in ["page_forms", "form_fields", "page_actions", "agent_links"] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} WHERE url_id = ?1 AND source = ?2"))?
+                    .execute(params![id, src])?;
+            }
+        }
+        let links: Vec<&AgentLink> = a.links.iter().chain(header_links).collect();
+        let md = links
+            .iter()
+            .find(|l| l.kind == AgentLinkKind::MarkdownAlternate)
+            .map(|l| l.href.as_str());
+        let tools = a.forms.iter().filter_map(|f| f.tool.as_ref().map(|t| (f, t)));
+        let tools_missing = tools.filter(|(_, t)| t.description.is_none()).count()
+            + a.forms
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| {
+                    f.tool.as_ref().is_some_and(|t| t.description.is_some())
+                        && a.fields
+                            .iter()
+                            .any(|x| x.form == Some(*i as u16) && x.tool_param_description.is_none())
+                })
+                .count();
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO page_agent (url_id, source, forms, search_forms, fields,
+                 unlabelled_fields, placeholder_only_fields, nameless_buttons, actions_without_link,
+                 challenges, forms_without_submit, declared_tools, tools_missing_description, md_alternate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            )?
+            .execute(params![
+                id,
+                src,
+                a.forms.len() as i64,
+                a.forms.iter().filter(|f| f.is_search).count() as i64,
+                a.fields.len() as i64,
+                a.unlabelled_fields(),
+                a.placeholder_only_fields(),
+                a.nameless_buttons,
+                a.actions_total,
+                a.forms.iter().filter(|f| f.challenge.is_some()).count() as i64,
+                a.forms
+                    .iter()
+                    .filter(|f| !f.has_submit && f.method != FormMethod::Dialog)
+                    .count() as i64,
+                a.forms.iter().filter(|f| f.tool.is_some()).count() as i64,
+                tools_missing as i64,
+                md,
+            ])?;
+        let mut form = self.conn.prepare_cached(
+            "INSERT INTO page_forms (url_id, source, pos, method, action, is_search, has_submit,
+             field_count, challenge, tool_name, tool_description, tool_autosubmit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for (pos, f) in a.forms.iter().enumerate() {
+            let fields = a.fields.iter().filter(|x| x.form == Some(pos as u16)).count();
+            form.execute(params![
+                id,
+                src,
+                pos as i64,
+                f.method.as_str(),
+                f.action,
+                f.is_search,
+                f.has_submit,
+                fields as i64,
+                f.challenge,
+                f.tool.as_ref().map(|t| t.name.as_str()),
+                f.tool.as_ref().and_then(|t| t.description.as_deref()),
+                f.tool.as_ref().map(|t| t.autosubmit),
+            ])?;
+        }
+        let mut field = self.conn.prepare_cached(
+            "INSERT INTO form_fields (url_id, source, pos, form_pos, name, kind, required,
+             accessible_name, name_source, description, tool_param_description)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        for (pos, x) in a.fields.iter().enumerate() {
+            field.execute(params![
+                id,
+                src,
+                pos as i64,
+                x.form,
+                x.name,
+                x.kind,
+                x.required,
+                x.accessible_name,
+                x.name_source.as_str(),
+                x.description,
+                x.tool_param_description,
+            ])?;
+        }
+        let mut action = self.conn.prepare_cached(
+            "INSERT INTO page_actions (url_id, source, pos, kind, text) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (pos, x) in a.actions.iter().enumerate() {
+            action.execute(params![id, src, pos as i64, x.kind.as_str(), x.text])?;
+        }
+        let mut link = self.conn.prepare_cached(
+            "INSERT INTO agent_links (url_id, source, pos, kind, href, via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (pos, l) in links.iter().enumerate() {
+            link.execute(params![
+                id,
+                src,
+                pos as i64,
+                l.kind.as_str(),
+                l.href,
+                l.source.as_str()
+            ])?;
+        }
         Ok(())
     }
 
@@ -1082,6 +1331,35 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// The cookies one response set (spec 025 FR-025). Values are not part
+    /// of `CookieObs`, so they cannot reach the file.
+    pub fn record_cookies(&self, id: i64, cookies: &[super::cookies::CookieObs]) -> Result<()> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO cookies (url_id, name, domain, host_only, path, expires, max_age, secure, \
+             http_only, same_site, size, party, source, extra) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )?;
+        for c in cookies {
+            stmt.execute(params![
+                id,
+                c.name,
+                c.domain,
+                c.host_only,
+                c.path,
+                c.expires,
+                c.max_age,
+                c.secure,
+                c.http_only,
+                c.same_site,
+                c.size as i64,
+                if c.third_party { "third" } else { "first" },
+                c.source,
+                c.extra,
+            ])?;
+        }
+        Ok(())
+    }
+
     /// Response headers of one fetched URL, as a JSON array of pairs, with
     /// cookie values removed (`redact`).
     pub fn record_headers(&self, id: i64, headers: &[(String, String)]) -> Result<()> {
@@ -1091,6 +1369,25 @@ impl CrawlStore {
                 id,
                 serde_json::to_string(&super::redact::response_headers(headers)).expect("pairs serialize")
             ])?;
+        Ok(())
+    }
+
+    /// What the AMP checks found on a page (spec 027 part E).
+    pub fn record_amp(&self, url_id: i64, report: &crate::extract::amp::AmpReport) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO amp_pages (url_id, format, failures, style_bytes) VALUES (?1, ?2, ?3, ?4)",
+            )?
+            .execute(params![url_id, report.format.as_str(), report.failures.len() as i64, report.style_bytes])?;
+        self.conn
+            .prepare_cached("DELETE FROM amp_checks WHERE url_id = ?1")?
+            .execute([url_id])?;
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO amp_checks (url_id, check_id, pos, detail) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for f in &report.failures {
+            stmt.execute(params![url_id, f.check, f.pos, f.detail])?;
+        }
         Ok(())
     }
 
@@ -1611,6 +1908,38 @@ impl CrawlStore {
             .query_row([id], |r| r.get(0))?)
     }
 
+    /// Hosts that have internal URLs, in order.
+    pub fn internal_hosts(&self) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT DISTINCT host_key FROM urls WHERE internal = 1 ORDER BY host_key")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// One per-host site file (spec 015).
+    pub fn record_site_file(&self, f: &super::site_files::SiteFileRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO site_files
+                     (host_key, path, status, final_url, content_type, size, body, outcome, error, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                f.host_key,
+                f.path,
+                f.status,
+                f.final_url,
+                f.content_type,
+                f.size,
+                f.body,
+                f.outcome,
+                f.error,
+                f.fetched_at
+            ])?;
+        Ok(())
+    }
+
     pub fn upsert_host(&self, h: &HostRow) -> Result<()> {
         self.conn
             .prepare_cached(
@@ -1655,6 +1984,106 @@ impl CrawlStore {
                  ON CONFLICT(url) DO UPDATE SET url_count = ?3, error = ?4",
             )?
             .execute(params![s.url, s.parent, s.url_count, s.error])?;
+        Ok(())
+    }
+
+    /// Stores one sitemap file and returns its id; reading the same location
+    /// again (a resumed crawl) replaces its row and entries.
+    pub fn insert_sitemap_file(&self, f: &SitemapFileRecord) -> Result<i64> {
+        if let Some(old) = self
+            .conn
+            .prepare_cached("SELECT id FROM sitemap_files WHERE location = ?1")?
+            .query_row([&f.location], |r| r.get::<_, i64>(0))
+            .optional()?
+        {
+            self.conn
+                .prepare_cached(
+                    "DELETE FROM sitemap_refs WHERE entry_id IN (SELECT id FROM sitemap_entries WHERE file_id = ?1)",
+                )?
+                .execute([old])?;
+            self.conn
+                .prepare_cached("DELETE FROM sitemap_entries WHERE file_id = ?1")?
+                .execute([old])?;
+            self.conn
+                .prepare_cached("DELETE FROM sitemap_files WHERE id = ?1")?
+                .execute([old])?;
+        }
+        self.conn
+            .prepare_cached(
+                "INSERT INTO sitemap_files (location, source, parent_id, level, base_url, kind, http_status,
+                     final_url, redirected, compressed, bytes, entry_count, over_limit, error_class, error,
+                     error_line, read_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            )?
+            .execute(params![
+                f.location,
+                f.source,
+                f.parent_id,
+                f.level,
+                f.base_url,
+                f.kind,
+                f.http_status,
+                f.final_url,
+                f.redirected,
+                f.compressed,
+                f.bytes as i64,
+                f.entry_count,
+                f.over_limit,
+                f.error_class,
+                f.error,
+                f.error_line,
+                f.read_at,
+            ])?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn insert_sitemap_entry(&self, file_id: i64, e: &SitemapEntryRecord<'_>) -> Result<()> {
+        let x = e.entry;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO sitemap_entries (file_id, pos, kind, loc, url_id, invalid, lastmod_raw, lastmod,
+                     changefreq, priority)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                file_id,
+                x.pos,
+                e.kind,
+                x.loc,
+                e.url_id,
+                e.invalid,
+                x.lastmod,
+                x.lastmod.as_deref().and_then(super::sitemap::parse_lastmod),
+                x.changefreq,
+                x.priority,
+            ])?;
+        if x.images.is_empty() && x.alternates.is_empty() {
+            return Ok(());
+        }
+        let entry_id = self.conn.last_insert_rowid();
+        let mut refs = self.conn.prepare_cached(
+            "INSERT INTO sitemap_refs (entry_id, kind, raw, url, lang) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (i, raw) in x.images.iter().enumerate() {
+            let url = e.image_urls.get(i).and_then(Option::as_deref);
+            refs.execute(params![entry_id, "image", raw, url, Option::<&str>::None])?;
+        }
+        for (i, a) in x.alternates.iter().enumerate() {
+            let url = e.alternate_urls.get(i).and_then(Option::as_deref);
+            refs.execute(params![entry_id, "hreflang", a.href, url, a.lang])?;
+        }
+        Ok(())
+    }
+
+    /// Matches sitemap image and hreflang references to the URLs the crawl
+    /// found, once, when it ends: they may be discovered after the sitemap
+    /// was read.
+    pub fn link_sitemap_refs(&self) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sitemap_refs SET url_id = (SELECT id FROM urls WHERE urls.url = sitemap_refs.url)
+             WHERE url IS NOT NULL",
+            [],
+        )?;
         Ok(())
     }
 
@@ -1960,6 +2389,28 @@ impl CrawlStore {
             [table, column],
             |r| r.get(0),
         )?)
+    }
+
+    /// URLs crawled per host, for the per-site breakdown (spec 008 FR-029).
+    /// Read once when a run starts.
+    pub fn crawled_by_host(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT host_key, COUNT(*) FROM urls WHERE state = 'crawled' GROUP BY host_key")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Each run's speed events per site (spec 008 FR-021), oldest first.
+    pub fn speed_summaries(&self) -> Result<Vec<(String, String)>> {
+        if !self.has_table("crawl_log")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT host_key, message FROM crawl_log WHERE kind = 'speed_summary' AND host_key IS NOT NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// Log entries of one kind.

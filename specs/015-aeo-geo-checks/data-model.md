@@ -53,6 +53,22 @@ List header: `version` (integer), `date`.
 
 Primary key `(host_key, path)`.
 
+## `page_facts` (written during the crawl)
+
+The content facts of each HTML page, read by `content::page_hook` while the
+crawl's extraction has the page parsed, so the analysis does not parse
+stored HTML again (it falls back to parsing for files without them). Written
+only when raw HTML is kept, so content checks need stored HTML either way.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `url_id` | INTEGER NOT NULL | |
+| `kind` | TEXT NOT NULL | `aeo_content` |
+| `version` | INTEGER NOT NULL | `content::FACTS_VERSION`; rows of another version are ignored |
+| `data` | BLOB NOT NULL | `ContentFacts` as JSON, without the blocks; the visible text only on pages with JSON-LD questions |
+
+Primary key `(url_id, kind)`.
+
 ## `aeo_hosts`
 
 | Column | Type | Meaning |

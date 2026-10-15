@@ -56,7 +56,7 @@ pub fn not_usable_message(e: &NotUsable, can_download: bool) -> String {
 /// Finds the browser rendering uses, downloading the pinned one first when
 /// the policy prefers it and `--allow-browser-download` gives consent
 /// (`spiderlens_render::should_offer_download`). Prints the renderer notice;
-/// on failure prints the error and returns exit 7.
+/// on failure prints the error and returns exit 9.
 pub fn choose(choice: &BrowserChoice) -> Result<BrowserInfo, ExitCode> {
     let data = data_dir().unwrap_or_else(std::env::temp_dir);
     let found = match find_browser(&FindOptions {

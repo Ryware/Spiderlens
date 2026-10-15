@@ -1,25 +1,32 @@
 // One results tab (US1-US4): filters with counts, scope, search, columns,
 // the table, copy and export.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Search, SearchX } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Download, Play, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
+import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
+import type { RuleInfo } from "../generated/RuleInfo";
 import type { UrlScope } from "../generated/UrlScope";
 import type { Values } from "../generated/Values";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../components/ui";
+import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
+import { SegmentFilter } from "../segments/SegmentFilter";
+import { enabledSegments } from "../segments/segments";
+import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
 import { useExport } from "./useExport";
 import { useView } from "./useView";
+import { type CustomRun, runOutcomeText } from "./useCustomRun";
 
 /** Most rows copied through the clipboard (spec Assumptions); export does more. */
 export const COPY_LIMIT = 10_000;
@@ -33,16 +40,21 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-/** Filter counts, refreshed as the view changes but at most every 2 s. */
-function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, values: Values | null, version: number) {
+/**
+ * Filter counts, refreshed as the view changes but at most every 2 s.
+ * `after` runs with each refresh (the segment counts follow along).
+ */
+function useCounts(transport: Transport, path: string, tab: string, scope: UrlScope, segment: number | null, values: Values | null, version: number, rev: number, after: () => void) {
   const [counts, setCounts] = useState<FilterCounts | null>(null);
   const last = useRef(0);
   const busy = useRef(false);
   const [again, setAgain] = useState(0);
+  const afterRef = useRef(after);
+  afterRef.current = after;
   useEffect(() => {
     setCounts(null);
     last.current = 0;
-  }, [path, tab, scope, values]);
+  }, [path, tab, scope, segment, values, rev]);
   useEffect(() => {
     if (busy.current) return;
     const wait = last.current + 2000 - Date.now();
@@ -53,10 +65,11 @@ function useCounts(transport: Transport, path: string, tab: string, scope: UrlSc
     busy.current = true;
     last.current = Date.now();
     transport
-      .viewCounts(path, tab, scope, values ?? undefined)
+      .viewCounts(path, tab, scope, segment ?? undefined, values ?? undefined)
       .then(setCounts, () => {})
       .finally(() => (busy.current = false));
-  }, [transport, path, tab, scope, values, version, again]);
+    if (version > 0) afterRef.current();
+  }, [transport, path, tab, scope, segment, values, version, rev, again]);
   return counts;
 }
 
@@ -71,7 +84,17 @@ export function ResultsView({
   onFocusId,
   values = null,
   onValues,
+  toolbar,
+  issue = null,
+  onIssueSettings,
+  customRun,
   onInspect,
+  reveal,
+  segment = null,
+  onSegment = () => {},
+  segmentCounts = null,
+  segmentsRev = 0,
+  onRefreshSegments = () => {},
 }: {
   transport: Transport;
   path: string;
@@ -84,8 +107,23 @@ export function ResultsView({
   /** Raw or rendered values; null when the crawl was not rendered (spec 014). */
   values?: Values | null;
   onValues?: (v: Values) => void;
+  /** Controls for this tab's own pass, such as Check spelling. */
+  toolbar?: ReactNode;
+  /** Set when this tab lists one issue's URLs (spec 009 D10). */
+  issue?: RuleInfo | null;
+  onIssueSettings?: () => void;
+  /** On a custom extraction or search tab: running the crawl's rules again (spec 013 US3). */
+  customRun?: CustomRun;
   /** Enter on a row: bring the inspector up and move focus into it. */
   onInspect?: () => void;
+  /** A URL to select and scroll to ("show in table"); a new `n` asks again. */
+  reveal?: { id: number; n: number } | null;
+  /** Spec 027 part B: the segment filter, shared by every tab. */
+  segment?: number | null;
+  onSegment?: (v: number | null) => void;
+  segmentCounts?: SegmentCounts | null;
+  segmentsRev?: number;
+  onRefreshSegments?: () => void;
 }) {
   const grid = useRef<GridHandle>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -98,11 +136,24 @@ export function ResultsView({
   useEffect(() => {
     setPrefs(loadPrefs(tab));
     setSearchText(session.search);
+    sent.current = session.search;
     setSelection(emptySelection);
     // Only when the tab changes; the session is the tab's own.
   }, [tab]);
+  // The search this view last sent; any other value came from outside (an
+  // issue target opened from the inspector) and replaces the typed text.
+  const sent = useRef(session.search);
   useEffect(() => {
-    if (search !== session.search) onSession({ search });
+    if (session.search !== sent.current) {
+      sent.current = session.search;
+      setSearchText(session.search);
+    }
+  }, [session.search]);
+  useEffect(() => {
+    if (search !== session.search && search !== sent.current) {
+      sent.current = search;
+      onSession({ search });
+    }
   }, [search, session.search, onSession]);
 
   const updatePrefs = (p: ColumnPrefs) => {
@@ -118,14 +169,16 @@ export function ResultsView({
       search: session.search,
       sort: session.sort,
       ...(values ? { values } : {}),
+      ...(segment === null ? {} : { segment }),
     }),
-    [tab, session.filter, session.scope, session.search, session.sort, values],
+    [tab, session.filter, session.scope, session.search, session.sort, segment, values],
   );
 
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
   const view = useView(transport, path, query, {
     live,
+    rev: segmentsRev,
     anchors: () => {
       const top = grid.current?.topRow() ?? 0;
       const ids = [view.row(top)?.[0], selectionRef.current.focus !== null ? view.row(selectionRef.current.focus)?.[0] : undefined];
@@ -140,7 +193,7 @@ export function ResultsView({
       setSelection(shift(s, delta, total));
     },
   });
-  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", values, view.version);
+  const counts = useCounts(transport, path, tab.id, tab.scoped ? session.scope : "all", segment, values, view.version, segmentsRev, onRefreshSegments);
 
   // A new query starts at the top with nothing selected, except the row
   // remembered for this tab, which is found again.
@@ -160,6 +213,30 @@ export function ResultsView({
     };
     // Once per opened view.
   }, [view.view, view.ready]);
+
+  // "Show in table": select the URL here, first clearing the filter, scope
+  // or search when they hide it.
+  const revealed = useRef(0);
+  useEffect(() => {
+    if (!reveal || revealed.current === reveal.n || !view.ready || view.view === null) return;
+    let off = false;
+    transport.viewLocate(path, view.view, [reveal.id]).then(([i]) => {
+      if (off) return;
+      if (i != null) {
+        revealed.current = reveal.n;
+        setSelection(single(i));
+        grid.current?.reveal(i);
+        grid.current?.focus();
+      } else if (session.filter !== "all" || session.search || session.scope !== "all") {
+        setSearchText("");
+        onSession({ filter: "all", search: "", scope: "all" });
+      } else revealed.current = reveal.n;
+    }, () => {});
+    return () => {
+      off = true;
+    };
+    // Once per request and opened view.
+  }, [reveal, view.view, view.ready]);
 
   // The focused row's id feeds the inspector and is remembered per tab.
   const focusRow = selection.focus !== null ? view.row(selection.focus) : undefined;
@@ -203,11 +280,23 @@ export function ResultsView({
     return () => clearTimeout(t);
   }, [notice]);
 
-  const startExport = async (onlySelected: boolean) => {
+  const startExport = async (onlySelected: boolean, allValues?: string) => {
     const dest = await transport.pickCsvPath(`${tab.title.toLowerCase().replace(/\s+/g, "-")}${session.filter === "all" ? "" : `-${session.filter}`}`);
     if (!dest) return;
-    await exp.start(path, query, prefs.order, onlySelected ? selection.ranges : null, dest);
+    // FR-B09: with segments, the file says which segment each URL is in.
+    const grouped = enabledSegments(segmentCounts?.segments).length > 0;
+    const cols = grouped && !prefs.order.includes("segment") && tab.columns.some((c) => c.id === "segment") ? [...prefs.order, "segment"] : prefs.order;
+    await exp.start(path, query, cols, onlySelected ? selection.ranges : null, dest, allValues, segmentCounts?.segments);
   };
+  // Extractors can find several values per page; the table shows the first (FR-025).
+  const allValuesItems =
+    tab.id === "custom_extraction"
+      ? [" | ", "; "].map((sep) => ({
+          label: `Export all values, joined by "${sep.trim()}"…`,
+          onSelect: () => void startExport(false, sep),
+          disabled: view.view === null,
+        }))
+      : [];
 
   const filterLabel = tab.filters.find((f) => f.id === session.filter)?.label ?? "";
   const totalText = view.ready ? view.total.toLocaleString() : `${view.total.toLocaleString()}+`;
@@ -234,6 +323,7 @@ export function ResultsView({
                 ]}
               />
             )}
+            <SegmentFilter counts={segmentCounts} value={segment} onChange={onSegment} />
             {tab.scoped && (
               <Segmented<UrlScope>
                 size="sm"
@@ -266,6 +356,12 @@ export function ResultsView({
                 className="h-6 w-56 pl-7 text-sm"
               />
             </label>
+            {customRun && (
+              <Button size="sm" variant="quiet" disabled={customRun.running || live} onClick={() => void customRun.start(null)} title={live ? "Rules can run again once the crawl stops." : undefined}>
+                <Play aria-hidden className="size-3.5" />
+                Run rules again
+              </Button>
+            )}
             <ColumnMenu tab={tab} visible={prefs.order} available={available} onChange={(order) => updatePrefs({ ...prefs, order })} onReset={() => updatePrefs(defaultPrefs(tab))} />
             <Menu
               label="Export"
@@ -278,11 +374,18 @@ export function ResultsView({
               items={[
                 { label: view.ready ? `Export ${view.total.toLocaleString()} rows as CSV…` : "Export rows as CSV…", onSelect: () => void startExport(false), disabled: view.view === null },
                 { label: `Export ${selected.toLocaleString()} selected as CSV…`, onSelect: () => void startExport(true), disabled: selected === 0 },
+                ...allValuesItems,
               ]}
             />
           </div>
         </div>
-        <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        {toolbar}
+        {tab.id === "ai-search" && <AiOverview transport={transport} path={path} live={live} />}
+        {issue ? (
+          <IssueHeader rule={issue} onSettings={onIssueSettings} />
+        ) : (
+          <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        )}
       </header>
 
       <div className="min-h-0 flex-1">
@@ -316,8 +419,24 @@ export function ResultsView({
         )}
       </div>
 
-      {(notice || exp.job !== null || exp.result) && (
+      {(notice || exp.job !== null || exp.result || customRun?.running || customRun?.result) && (
         <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-line bg-chrome px-3 text-sm">
+          {customRun?.running && customRun.progress && (
+            <>
+              <span className="text-fg-2 tabular">
+                Running rules on {customRun.progress.done.toLocaleString()} of {customRun.progress.total ? customRun.progress.total.toLocaleString() : "…"} pages
+              </span>
+              <Bar value={customRun.progress.total ? customRun.progress.done / customRun.progress.total : 0} tone="accent" label="Rules progress" className="w-40" />
+              <Button size="sm" variant="quiet" onClick={customRun.cancel}>
+                Stop
+              </Button>
+            </>
+          )}
+          {!customRun?.running && customRun?.result && (
+            <Notice kind={customRun.result.state === "failed" ? "bad" : "info"} role="status">
+              {runOutcomeText(customRun.result)}
+            </Notice>
+          )}
           {exp.job !== null && exp.progress && (
             <>
               <span className="text-fg-2 tabular">

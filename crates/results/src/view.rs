@@ -6,6 +6,7 @@
 //! From then on any page anywhere is a range read on `pos`, and "where is
 //! row X now" is an index lookup, which keeps live refreshes anchored.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -52,6 +53,10 @@ pub struct ViewQuery {
     #[serde(default)]
     #[ts(optional)]
     pub values: Option<Values>,
+    /// Spec 027 FR-B04: only URLs in this segment; 0 means in no segment.
+    #[serde(default)]
+    #[ts(optional)]
+    pub segment: Option<u32>,
 }
 
 /// A page of rows. Each row is `[id, value of each tab column…]` in the
@@ -81,7 +86,7 @@ pub struct Refresh {
 }
 
 pub(crate) struct View {
-    pub tab: &'static TabDef,
+    pub tab: Cow<'static, TabDef>,
     pub query: ViewQuery,
     pub where_sql: String,
     pub order_sql: String,
@@ -98,7 +103,7 @@ pub(crate) struct View {
 
 /// The parts of a view's query that do not depend on paging.
 pub(crate) struct Compiled {
-    pub tab: &'static TabDef,
+    pub tab: Cow<'static, TabDef>,
     pub where_sql: String,
     pub order_sql: String,
     pub search: Option<String>,
@@ -106,11 +111,18 @@ pub(crate) struct Compiled {
     pub values: Values,
 }
 
+impl Compiled {
+    /// `FROM … WHERE …` of the view's rows.
+    pub fn source_where(&self) -> String {
+        format!("FROM {} WHERE {}", self.tab.source_sql(), self.where_sql)
+    }
+}
+
 /// Turns a view query into SQL fragments, checking every id against the
 /// tab definitions (ids never reach SQL as text).
-pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compiled> {
+pub(crate) fn compile(q: &ViewQuery, features: &crate::Features, custom: &[TabDef]) -> Result<Compiled> {
     let values = Values::resolve(q.values, features);
-    let tab = tabs::tab(&q.tab).ok_or_else(|| Error::invalid(format!("unknown tab {:?}", q.tab)))?;
+    let tab = tabs::find(&q.tab, custom).ok_or_else(|| Error::invalid(format!("unknown tab {:?}", q.tab)))?;
     let filter = tab
         .filter(&q.filter)
         .ok_or_else(|| Error::invalid(format!("unknown filter {:?} on {}", q.filter, tab.id)))?;
@@ -130,6 +142,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
             derived.push(d);
         }
     };
+    add(tab.rows);
     add(filter.derived);
     let mut where_sql = format!("({}) AND ({})", tab.eligible, filter.sql(values));
     match (tab.scoped, q.scope) {
@@ -137,11 +150,13 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
         (true, UrlScope::External) => where_sql.push_str(" AND u.internal = 0"),
         _ => {}
     }
+    where_sql.push_str(&segment_sql(q.segment));
     let search = q.search.trim();
     let search = (!search.is_empty()).then(|| search.to_lowercase());
     if search.is_some() {
         let main = tab
             .search_column
+            .as_deref()
             .and_then(|c| tab.column(c))
             .filter(|c| features.has(c.need))
             .map(|c| format!(" OR ci_contains({}, ?1)", c.sql(values)))
@@ -174,6 +189,15 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
     })
 }
 
+/// The segment filter as an `AND …` clause (the id is a number, never text).
+pub(crate) fn segment_sql(segment: Option<u32>) -> String {
+    match segment {
+        None => String::new(),
+        Some(0) => " AND u.id NOT IN (SELECT url_id FROM temp.url_segment)".into(),
+        Some(id) => format!(" AND u.id IN (SELECT url_id FROM temp.url_segment WHERE seg = {id})"),
+    }
+}
+
 /// FR-015: numbers numerically, text naturally and case-insensitively,
 /// empty values last in both directions, ties by discovery order.
 fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features, values: Values) -> String {
@@ -182,7 +206,11 @@ fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features, values: Value
     }
     let dir = if desc { "DESC" } else { "ASC" };
     let e = c.sql(values);
-    if c.kind.is_text() {
+    if let Some(k) = c.key {
+        format!("({k} IS NULL OR {k} = '') ASC, {k} {dir}, u.id ASC")
+    } else if let Some(k) = &c.sort_key {
+        format!("(({e}) IS NULL OR ({e}) = '') ASC, ({k}) {dir}, natkey({e}) {dir}, u.id ASC")
+    } else if c.kind.is_text() {
         format!("(({e}) IS NULL OR ({e}) = '') ASC, natkey({e}) {dir}, u.id ASC")
     } else {
         format!("(({e}) IS NULL) ASC, ({e}) {dir}, u.id ASC")
@@ -246,7 +274,8 @@ fn u32_of(n: i64) -> u32 {
 impl Reader {
     /// Opens a view and returns its first `count` rows (plan D4 step 1).
     pub fn open_view(&mut self, q: &ViewQuery, count: u32) -> Result<RowPage> {
-        let c = compile(q, &self.features)?;
+        let custom = self.custom_tabs()?.to_vec();
+        let c = compile(q, &self.features, &custom)?;
         self.use_values(c.values)?;
         self.ensure_derived(c.derived.iter().copied())?;
         let version = self.version()?;
@@ -298,8 +327,10 @@ impl Reader {
         );
         self.conn.execute_batch(&sql)?;
         let insert = format!(
-            "INSERT INTO temp.{table}(id) SELECT u.id FROM urls u NOT INDEXED WHERE {} ORDER BY {}",
-            v.where_sql, v.order_sql
+            "INSERT INTO temp.{table}(id) SELECT u.id FROM {} WHERE {} ORDER BY {}",
+            v.tab.source_sql(),
+            v.where_sql,
+            v.order_sql
         );
         let params = params_of(&v.search);
         let total = self.conn.execute(&insert, params.as_slice())?;
@@ -325,12 +356,13 @@ impl Reader {
             .values;
         self.use_values(values)?;
         let v = &self.views[&view];
-        let select = select_list(v.tab, &self.features, values);
+        let select = select_list(&v.tab, &self.features, values);
         let width = v.tab.columns.len() + 1;
         let rows = if let Some(table) = &v.table {
             let sql = format!(
-                "SELECT {select} FROM temp.{table} t JOIN urls u ON u.id = t.id
-                 WHERE t.pos > ?1 AND t.pos <= ?2 ORDER BY t.pos"
+                "SELECT {select} FROM temp.{table} t JOIN urls u ON u.id = t.id{}
+                 WHERE t.pos > ?1 AND t.pos <= ?2 ORDER BY t.pos",
+                v.tab.join_sql()
             );
             let mut stmt = self.conn.prepare(&sql)?;
             let (a, b) = (i64::from(from), i64::from(from) + i64::from(count));
@@ -351,8 +383,10 @@ impl Reader {
                 )
             } else {
                 format!(
-                    "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
-                    v.where_sql, v.order_sql
+                    "SELECT {select} FROM {} WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
+                    v.tab.source_sql(),
+                    v.where_sql,
+                    v.order_sql
                 )
             };
             let mut stmt = self.conn.prepare(&sql)?;
@@ -379,6 +413,23 @@ impl Reader {
         ids.iter()
             .map(|id| Ok(stmt.query_row([id], |r| r.get::<_, i64>(0)).map(u32_of).ok()))
             .collect()
+    }
+
+    /// The tabs that list URL `id` with no filter, scope or search, in
+    /// display order: where "show in table" can take it. Empty when no tab
+    /// lists it (a URL still queued, say) or it is not in the crawl.
+    pub fn tabs_of(&self, id: i64) -> Result<Vec<&'static str>> {
+        let mut out = Vec::new();
+        for t in tabs::tabs() {
+            let sql = format!(
+                "SELECT EXISTS (SELECT 1 FROM urls u WHERE u.id = ?1 AND ({}))",
+                t.eligible_on_urls()
+            );
+            if self.conn.query_row(&sql, [id], |r| r.get::<_, bool>(0))? {
+                out.push(t.id.as_ref());
+            }
+        }
+        Ok(out)
     }
 
     /// Rebuilds the view if the crawl wrote since it was built; returns the

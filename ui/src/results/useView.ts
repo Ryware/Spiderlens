@@ -33,6 +33,8 @@ const closed: ViewState = { view: null, version: 0, total: 0, ready: false, load
 export interface ViewOptions {
   /** Rebuild as the crawl writes. */
   live: boolean;
+  /** Changes when the data changed under the same query (segments edited). */
+  rev?: number;
   /** Ids whose new positions the caller needs after a rebuild. */
   anchors: () => number[];
   onRefresh: (positions: (number | null)[], total: number) => void;
@@ -51,7 +53,7 @@ export function useView(transport: Transport, path: string | null, query: ViewQu
   const optsRef = useRef(opts);
   optsRef.current = opts;
   const [retry, setRetry] = useState(0);
-  const key = query && JSON.stringify(query);
+  const key = query && `${JSON.stringify(query)}#${opts.rev ?? 0}`;
 
   useEffect(() => {
     const off = transport.onViewReady((r) => {

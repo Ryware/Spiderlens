@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::error::Error as _;
 
-use reqwest::{Client, Response, StatusCode, header};
+use reqwest::{Client, ClientBuilder, Response, StatusCode, header};
 use url::Url;
 
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, RedirectHop, RequestHeader};
@@ -19,6 +19,15 @@ pub(crate) fn build_client_with(
     opts: &CheckOptions,
     resolve: &[(String, std::net::SocketAddr)],
 ) -> Result<Client, CheckError> {
+    finish(client_builder(opts, resolve))
+}
+
+/// The client settings every request shares; `net::NetSession` adds the
+/// cookie jar when a crawl needs one.
+pub(crate) fn client_builder(
+    opts: &CheckOptions,
+    resolve: &[(String, std::net::SocketAddr)],
+) -> ClientBuilder {
     let mut builder = Client::builder();
     for (host, addr) in resolve {
         builder = builder.resolve(host, *addr);
@@ -29,17 +38,19 @@ pub(crate) fn build_client_with(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(opts.connect_timeout)
         .read_timeout(opts.read_timeout)
-        // Proxy support arrives with crawl configuration (spec 002). Until
+        // Proxy support arrives with spec 025's proxy settings. Until
         // then, requests go direct so results do not depend on the shell's
         // environment.
         .no_proxy()
-        .build()
-        .map_err(|e| {
-            CheckError::new(
-                ErrorClass::Connection,
-                format!("Could not start the HTTP client: {e}"),
-            )
-        })
+}
+
+pub(crate) fn finish(builder: ClientBuilder) -> Result<Client, CheckError> {
+    builder.build().map_err(|e| {
+        CheckError::new(
+            ErrorClass::Connection,
+            format!("Could not start the HTTP client: {e}"),
+        )
+    })
 }
 
 /// What to do when a body reaches the size limit.
@@ -183,6 +194,26 @@ pub(crate) struct Once {
     /// `Content-Length` as sent, when reqwest did not decompress the body
     /// (it removes the header when it does).
     pub content_length: Option<u64>,
+    /// A PDF body, when PDFs are read (spec 027 part C).
+    pub pdf: Option<PdfBody>,
+}
+
+/// A downloaded PDF. Over the PDF size limit nothing is kept: a partial
+/// PDF cannot be read (its index is at the end).
+pub(crate) struct PdfBody {
+    pub bytes: Vec<u8>,
+    pub over_limit: bool,
+}
+
+/// PDFs by type, or by a `.pdf` path when the server sends a generic type.
+pub(crate) fn is_pdf(url: &Url, content_type: Option<&str>) -> bool {
+    match content_type {
+        Some("application/pdf" | "application/x-pdf") => true,
+        None | Some("application/octet-stream" | "binary/octet-stream" | "application/download") => {
+            url.path().to_ascii_lowercase().ends_with(".pdf")
+        }
+        _ => false,
+    }
 }
 
 pub(crate) async fn fetch_once(
@@ -192,6 +223,7 @@ pub(crate) async fn fetch_once(
     internal: bool,
     read_body: bool,
     max_bytes: u64,
+    pdf_max_bytes: Option<u64>,
 ) -> Result<Once, CheckError> {
     let mut request = client.get(url.clone());
     for h in headers.iter().filter(|h| h.all_hosts || internal) {
@@ -234,7 +266,31 @@ pub(crate) async fn fetch_once(
     let html = content_type
         .as_deref()
         .is_none_or(|ct| ct == "text/html" || ct == "application/xhtml+xml");
-    let (body, body_problem) = if read_body && location.is_none() && html {
+    let pdf_limit = pdf_max_bytes.filter(|_| {
+        read_body
+            && location.is_none()
+            && (200..300).contains(&status)
+            && is_pdf(url, content_type.as_deref())
+    });
+    let mut pdf = None;
+    let (body, body_problem) = if let Some(limit) = pdf_limit {
+        if content_length.is_some_and(|n| n > limit) {
+            pdf = Some(PdfBody {
+                bytes: Vec::new(),
+                over_limit: true,
+            });
+            (None, None)
+        } else {
+            let (bytes, problem) = read_body_partial(response, limit).await;
+            let over_limit = problem.is_some() && bytes.len() as u64 >= limit;
+            pdf = Some(PdfBody {
+                bytes: if over_limit { Vec::new() } else { bytes },
+                over_limit,
+            });
+            // Over the PDF limit is a PDF fact, not a response problem.
+            (None, problem.filter(|_| !over_limit))
+        }
+    } else if read_body && location.is_none() && html {
         let (bytes, problem) = read_body_partial(response, max_bytes).await;
         (Some(bytes), problem)
     } else {
@@ -253,6 +309,7 @@ pub(crate) async fn fetch_once(
         body_problem,
         headers: all_headers,
         content_length,
+        pdf,
     })
 }
 
@@ -360,7 +417,10 @@ async fn read_body_partial(mut response: Response, max_bytes: u64) -> (Vec<u8>, 
         )
         .with_reason(ErrorReason::OverSize)
     };
-    let mut buf = Vec::new();
+    // Sized up front when the length is known, so large bodies (PDFs) are
+    // not copied again as the buffer grows.
+    let hint = response.content_length().unwrap_or(0).min(max_bytes);
+    let mut buf = Vec::with_capacity(hint as usize);
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {

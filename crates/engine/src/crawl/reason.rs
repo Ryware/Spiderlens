@@ -48,6 +48,7 @@ string_enum! {
         BlockedByRobots = "blocked_by_robots",
         RobotsUnavailable = "robots_unavailable",
         OverUrlLimit = "over_url_limit",
+        SitemapOnly = "sitemap_only",
         CrawlStopped = "crawl_stopped",
     }
 }
@@ -68,15 +69,20 @@ impl NotCrawledReason {
             Self::BlockedByRobots => "Blocked by robots.txt",
             Self::RobotsUnavailable => "Blocked: robots.txt unavailable",
             Self::OverUrlLimit => "Over URL limit",
+            Self::SitemapOnly => "Found only in sitemap",
             Self::CrawlStopped => "Crawl stopped",
         }
     }
 
     /// Reasons that depend on how a URL was reached, not on the URL itself.
     /// A URL holding one of these is crawled if a better path turns up
-    /// (FR-039, research R3).
+    /// (FR-039, research R3). "Found only in sitemap" ends as soon as a
+    /// link to the URL is found (spec 011 plan D5).
     pub fn can_upgrade(self) -> bool {
-        matches!(self, Self::OverDepthLimit | Self::Nofollow | Self::RedirectLimit)
+        matches!(
+            self,
+            Self::OverDepthLimit | Self::Nofollow | Self::RedirectLimit | Self::SitemapOnly
+        )
     }
 }
 
@@ -91,6 +97,7 @@ string_enum! {
         Hreflang = "hreflang",
         Image = "image",
         Sitemap = "sitemap",
+        AmpHtml = "amphtml",
     }
 }
 
@@ -104,6 +111,7 @@ string_enum! {
         Hreflang = "hreflang",
         Image = "image",
         MetaRefresh = "meta_refresh",
+        AmpHtml = "amphtml",
         Next = "next",
         Prev = "prev",
         JsRedirect = "js_redirect",
@@ -117,6 +125,7 @@ impl LinkKind {
             Self::Redirect => DiscoverySource::Redirect,
             Self::Canonical => DiscoverySource::Canonical,
             Self::Hreflang => DiscoverySource::Hreflang,
+            Self::AmpHtml => DiscoverySource::AmpHtml,
             Self::Image => DiscoverySource::Image,
             Self::MetaRefresh | Self::JsRedirect => DiscoverySource::Redirect,
             Self::Next | Self::Prev => DiscoverySource::Link,
@@ -157,6 +166,7 @@ mod tests {
                 "blocked_by_robots",
                 "robots_unavailable",
                 "over_url_limit",
+                "sitemap_only",
                 "crawl_stopped",
             ]
         );

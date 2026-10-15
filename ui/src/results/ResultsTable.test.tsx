@@ -326,7 +326,7 @@ test("alt_arrows_in_the_columns_menu_move_a_column_and_say_where", async () => {
   await waitFor(() => expect(headers()).toEqual(["Address", "Title", "Status code", "H1"]));
   expect(status().textContent).toBe("Title moved to position 2 of 4");
   // The menu lists shown columns in their order on screen, hidden ones after.
-  expect(screen.getAllByRole("menuitemcheckbox").map((i) => i.textContent?.replace("Not collected", ""))).toEqual(["Address", "Title", "Status code", "H1", "Depth"]);
+  expect(screen.getAllByRole("menuitemcheckbox").map((i) => i.textContent?.replace("Not collected", ""))).toEqual(["Address", "Title", "Status code", "H1", "Depth", "Segment"]);
   expect(document.activeElement).toBe(columnItem("Title"));
   fireEvent.keyDown(columnItem("Title"), { key: "ArrowUp", altKey: true });
   await waitFor(() => expect(headers()).toEqual(["Title", "Address", "Status code", "H1"]));
@@ -383,7 +383,8 @@ test("enter_shows_hidden_details_first", async () => {
 test("mod_digit_switches_result_tabs", async () => {
   await openInternal();
   const tabKey = (n: number) => fireEvent.keyDown(window, { key: String(n), code: `Digit${n}`, ctrlKey: true });
-  tabKey(3);
+  // Internal, Links (Link Score), External, Response codes.
+  tabKey(4);
   await screen.findByRole("region", { name: "Response codes" });
   expect(screen.getByRole("button", { name: "Response codes" }).getAttribute("aria-current")).toBe("page");
   tabKey(1);

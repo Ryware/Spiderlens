@@ -39,7 +39,7 @@ fn browser_options_need_render() {
 }
 
 #[test]
-fn no_usable_browser_exits_7_before_the_file_exists() {
+fn no_usable_browser_exits_9_before_the_file_exists() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("x.spiderlens");
     let missing = dir.path().join("no-such-browser");
@@ -49,7 +49,7 @@ fn no_usable_browser_exits_7_before_the_file_exists() {
         .arg("--out")
         .arg(&file)
         .assert()
-        .code(7)
+        .code(9)
         .stderr(contains("cannot be used: No browser at this path."))
         .stderr(contains("crawl without --render"));
     assert!(!file.exists(), "no crawl file without a browser");

@@ -38,6 +38,68 @@ pub fn words(text: &str) -> impl Iterator<Item = &str> {
         .filter(|w| !w.is_empty())
 }
 
+/// Sentences and English syllables in visible text, for Flesch reading ease
+/// (spec 009 FR-031, plan D11a). A sentence ends at `.`, `!` or `?`
+/// followed by whitespace or the end; text with words has at least one.
+/// Syllables are vowel groups per word, less a silent final "e", at least
+/// one per word.
+pub fn readability_counts(text: &str) -> (u32, u32) {
+    let mut sentences = 0u32;
+    let mut syllables = 0u32;
+    let mut words = 0u32;
+    // The current word, lowercased ASCII letters only.
+    let mut word = [0u8; 64];
+    let mut len = 0usize;
+    let mut in_word = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let word_char = c.is_alphanumeric() || is_mark(c);
+        if word_char {
+            if !in_word {
+                words += 1;
+                len = 0;
+            }
+            if c.is_ascii_alphabetic() && len < word.len() {
+                word[len] = c.to_ascii_lowercase() as u8;
+                len += 1;
+            }
+        } else {
+            if in_word {
+                syllables += english_syllables(&word[..len]);
+            }
+            if matches!(c, '.' | '!' | '?') && chars.peek().is_none_or(|n| n.is_whitespace()) {
+                sentences += 1;
+            }
+        }
+        in_word = word_char;
+    }
+    if in_word {
+        syllables += english_syllables(&word[..len]);
+    }
+    if words > 0 {
+        sentences = sentences.max(1);
+    }
+    (sentences, syllables)
+}
+
+fn english_syllables(w: &[u8]) -> u32 {
+    let vowel = |b: u8| matches!(b, b'a' | b'e' | b'i' | b'o' | b'u' | b'y');
+    let mut n = 0u32;
+    let mut prev = false;
+    for &b in w {
+        let v = vowel(b);
+        if v && !prev {
+            n += 1;
+        }
+        prev = v;
+    }
+    // "make", "time": the final e is silent; "table", "see" keep it.
+    if n > 1 && w.ends_with(b"e") && !w.ends_with(b"le") && !w.ends_with(b"ee") {
+        n -= 1;
+    }
+    n.max(1)
+}
+
 /// Combining marks (Hebrew points, Devanagari vowel signs, accents written
 /// as separate code points) belong to the word they sit on.
 fn is_mark(c: char) -> bool {
@@ -87,6 +149,36 @@ mod tests {
             words("don't e-mail").collect::<Vec<_>>(),
             ["don", "t", "e", "mail"]
         );
+    }
+
+    #[test]
+    fn readability_counts_sentences_and_syllables() {
+        assert_eq!(readability_counts(""), (0, 0));
+        assert_eq!(readability_counts("Hello"), (1, 2));
+        assert_eq!(readability_counts("The cat sat. It was happy! Was it?"), (3, 9));
+        // Decimal points and abbreviations inside a word end no sentence.
+        assert_eq!(readability_counts("Version 3.5 is out."), (1, 6));
+        assert_eq!(english_syllables(b"make"), 1);
+        assert_eq!(english_syllables(b"table"), 2);
+        assert_eq!(english_syllables(b"see"), 1);
+        assert_eq!(english_syllables(b"beautiful"), 3);
+        assert_eq!(english_syllables(b"rhythm"), 1);
+        assert_eq!(english_syllables(b""), 1);
+    }
+
+    #[test]
+    fn known_passage_scores_like_flesch() {
+        // A plain children's-book passage scores high, a dense one low.
+        let score = |t: &str| {
+            let (s, y) = readability_counts(t);
+            let w = word_count(t) as f64;
+            206.835 - 1.015 * w / s as f64 - 84.6 * y as f64 / w
+        };
+        let easy = "The cat sat on the mat. The dog ran to the cat. They had fun in the sun.";
+        let hard = "Notwithstanding considerable methodological heterogeneity, the investigators \
+                    characterised organisational interdependencies comprehensively.";
+        assert!(score(easy) > 90.0, "{}", score(easy));
+        assert!(score(hard) < 10.0, "{}", score(hard));
     }
 
     #[test]
