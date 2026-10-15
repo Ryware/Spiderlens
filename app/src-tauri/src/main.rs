@@ -131,6 +131,8 @@ fn main() {
             results::viz_scene,
             results::viz_term_links,
             results::viz_export,
+            results::cookies_list,
+            results::cookie_urls,
             results::url_html,
             results::url_tabs,
             results::copy_text,

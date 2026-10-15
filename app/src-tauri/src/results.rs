@@ -14,8 +14,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use serde::Serialize;
 use spiderlens_config::{LinkAnalysisSettings, PositionRule};
 use spiderlens_results::{
-    AnalysisProgress, AnalysisRun, ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader,
-    Refresh, RowPage, TabCounts, TabDef, TestedLink, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, ExportError, Features,
+    FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, TestedLink,
+    UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -380,6 +381,25 @@ pub async fn analysis_settings(
         .await
 }
 
+/// Distinct cookies the crawl saw, without values (spec 025 FR-027).
+#[tauri::command]
+pub async fn cookies_list(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    filter: CookieFilter,
+    sort: Option<String>,
+    descending: bool,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookiePage> {
+    state
+        .with(&path, move |r| {
+            r.cookies(filter, sort.as_deref(), descending, offset, limit)
+                .map_err(err)
+        })
+        .await
+}
+
 /// The link position rules tester (spec 023 FR-022). None when the URL is
 /// not in the crawl or its HTML was not stored.
 #[tauri::command]
@@ -443,6 +463,25 @@ pub async fn viz_term_links(
     let limit = limit.unwrap_or(500).min(5_000);
     state
         .with(&path, move |r| r.viz_term_links(&view, &term, limit).map_err(err))
+        .await
+}
+
+/// The URLs that set one cookie (spec 025 FR-028).
+#[tauri::command]
+pub async fn cookie_urls(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    name: String,
+    domain: String,
+    cookie_path: String,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookieUrlPage> {
+    state
+        .with(&path, move |r| {
+            r.cookie_urls(&name, &domain, &cookie_path, offset, limit)
+                .map_err(err)
+        })
         .await
 }
 
