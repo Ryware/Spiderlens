@@ -10,6 +10,7 @@
 
 pub mod analysis;
 mod cookies;
+pub mod bulk;
 mod counts;
 mod custom;
 mod detail;
@@ -17,12 +18,13 @@ mod export;
 mod features;
 pub mod issues;
 mod reader;
+pub mod report;
 mod sitemaps;
 mod sql;
 #[doc(hidden)]
 pub mod synth;
-mod tabs;
-mod view;
+pub(crate) mod tabs;
+pub(crate) mod view;
 pub mod viz;
 
 pub use analysis::link_positions::TestedLink;

@@ -87,6 +87,12 @@ import type { Run } from "./generated/Run";
 import type { Schedule } from "./generated/Schedule";
 import type { ScheduleDetail } from "./generated/ScheduleDetail";
 import type { ScheduleRow } from "./generated/ScheduleRow";
+import type { Report } from "./generated/Report";
+import type { FileOptions } from "./generated/FileOptions";
+import type { BulkOptions } from "./generated/BulkOptions";
+import type { BulkProgress } from "./generated/BulkProgress";
+import type { BulkResult } from "./generated/BulkResult";
+import type { BulkFormat } from "./generated/BulkFormat";
 
 export interface BuildInfo {
   product: string;
@@ -608,6 +614,14 @@ export interface ScheduleSaved {
   refused: string | null;
 }
 
+/** A report file written to disk (spec 010). */
+export interface Written {
+  path: string;
+  bytes: number;
+}
+
+/** The error text when a target exists and `overwrite` was not set. */
+export const EXISTS = "exists";
 
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
@@ -847,6 +861,15 @@ export interface Transport {
   scheduleDefaultOutput(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
 
+  // Report and exports (spec 010, contracts/desktop-commands.md).
+  report(path: string, running: boolean, profile: string | null): Promise<Report>;
+  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean): Promise<Written>;
+  printReport(path: string, file: FileOptions): Promise<void>;
+  bulkExport(path: string, options: BulkOptions): Promise<BulkResult>;
+  bulkExportCancel(): Promise<void>;
+  onBulkProgress(cb: (p: BulkProgress) => void): Promise<() => void>;
+  pickReportPath(name: string): Promise<string | null>;
+  pickBulkPath(name: string, format: BulkFormat): Promise<string | null>;
 }
 
 /** `analysis-progress` (spec 023 FR-013). */
@@ -1052,4 +1075,15 @@ export const tauriTransport: Transport = {
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
 
+  report: (path, running, profile) => invoke("report", { path, running, profile }),
+  exportReportHtml: (path, dest, file, overwrite) => invoke("export_report_html", { path, dest, file, overwrite }),
+  printReport: (path, file) => invoke("print_report", { path, file }),
+  bulkExport: (path, options) => invoke("bulk_export", { path, options }),
+  bulkExportCancel: () => invoke("bulk_export_cancel"),
+  onBulkProgress: (cb) => listen<BulkProgress>("bulk-export-progress", (e) => cb(e.payload)),
+  pickReportPath: (name) => save({ defaultPath: `${name}.html`, filters: [{ name: "Report", extensions: ["html"] }] }),
+  pickBulkPath: (name, format) =>
+    format === "xlsx"
+      ? save({ defaultPath: `${name}.xlsx`, filters: [{ name: "Excel workbook", extensions: ["xlsx"] }] })
+      : save({ defaultPath: name, title: "Folder for the CSV files" }),
 };

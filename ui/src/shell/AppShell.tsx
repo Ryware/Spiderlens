@@ -42,6 +42,8 @@ import { useSchedules } from "../schedules/useSchedules";
 import { SchedulesView } from "../schedules/SchedulesView";
 import { ScheduleEditor } from "../schedules/ScheduleEditor";
 import { newDraft } from "../schedules/format";
+import { ReportView } from "../report/ReportView";
+import type { Target } from "../generated/Target";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
 export const AUTO_COLLAPSE_DETAIL = 1100;
@@ -142,6 +144,26 @@ export function AppShell({ transport }: { transport: Transport }) {
     setAnchorOpens((n) => n + 1);
     setSection("anchor-text");
   }, []);
+  // Report figures open the matching rows (spec 010 FR-004).
+  const openTarget = useCallback(
+    (t: Target) => {
+      const tab = t.kind === "tab" ? t.tab : `issue:${t.id}`;
+      if (!results.tabs.some((x) => x.id === tab)) return;
+      if (t.kind === "tab") results.update(tab, { filter: t.filter, scope: t.scope, search: "" });
+      setSection(tab);
+    },
+    [results],
+  );
+  // Optionally show the report once a crawl finishes (spec 010 US1).
+  const finished = crawl.phase === "completed" || crawl.phase === "stopped";
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (crawl.running) wasRunning.current = true;
+    else if (finished && wasRunning.current) {
+      wasRunning.current = false;
+      if (ui.openReportOnFinish) setSection("report");
+    }
+  }, [crawl.running, finished, ui.openReportOnFinish]);
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   // "Show in table" from the inspector (T027): the URL is selected in the
@@ -338,6 +360,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
       { id: "go-integrations", title: "Integrations", group: "Go to", keywords: ["search console", "google", "external data"], run: () => setSection("integrations") },
+      { id: "go-report", title: "Crawl report", group: "Go to", keywords: ["score", "health", "audit", "pdf", "export"], enabled: crawl.path !== null, run: () => setSection("report") },
       { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
@@ -460,10 +483,22 @@ export function AppShell({ transport }: { transport: Transport }) {
             <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
+          ) : section === "report" && crawl.path ? (
+            <ReportView
+              key={crawl.path}
+              transport={transport}
+              path={crawl.path}
+              running={crawl.running}
+              onOpen={openTarget}
+              openOnFinish={ui.openReportOnFinish}
+              onOpenOnFinish={(v) => updateUi({ openReportOnFinish: v })}
+              reportFile={ui.reportFile}
+              onReportFile={(f) => updateUi({ reportFile: f })}
+            />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
-            <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} />
+            <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} onReport={crawl.path ? () => setSection("report") : undefined} />
           )}
         </main>
         {!detailHidden && (

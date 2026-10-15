@@ -11,6 +11,7 @@ mod custom;
 mod files;
 mod integrations;
 mod manage;
+mod report;
 mod results;
 mod schedules;
 mod settings;
@@ -64,6 +65,7 @@ fn main() {
             if let Some(s) = schedules::State::new() {
                 app.manage(s);
             }
+            app.manage(report::State::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -219,6 +221,11 @@ fn main() {
             schedules::schedules_repair,
             schedules::schedules_remove_all,
             schedules::schedule_default_output,
+            report::report,
+            report::export_report_html,
+            report::print_report,
+            report::bulk_export,
+            report::bulk_export_cancel,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {

@@ -143,7 +143,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
  * why URLs were not crawled, robots.txt per site and sitemaps (spec 003 US2).
  * The URLs themselves are in the result tabs (spec 007).
  */
-export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlRun; onInfo?: () => void; onResume?: () => void; onSaveAs?: () => void }) {
+export function CrawlOverview({ run, onInfo, onResume, onSaveAs, onReport }: { run: CrawlRun; onInfo?: () => void; onResume?: () => void; onSaveAs?: () => void; onReport?: () => void }) {
   const p = run.progress;
   const s = run.report?.summary;
   const info = phaseInfo[run.phase];
@@ -184,6 +184,14 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlR
 
         {run.local && (
           <LocalErrorNotice error={run.local} onResume={() => onResume?.()} onSaveAs={() => onSaveAs?.()} onKeepPaused={run.dismissLocal} />
+        )}
+        {onReport && !run.running && (run.phase === "completed" || run.phase === "stopped") && (
+          <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 text-sm">
+            <span className="flex-1">The crawl report is ready: health score, issues and exports.</span>
+            <Button size="sm" variant="primary" onClick={onReport}>
+              View report
+            </Button>
+          </div>
         )}
         {run.error && (
           <Notice kind="bad" role="alert">

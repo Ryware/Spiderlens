@@ -851,3 +851,33 @@ test("create_a_schedule_see_its_next_run_open_history_and_turn_it_off", async ({
   await expect(list.getByText("Off")).toBeVisible();
   await expect(list.getByText("No upcoming runs")).toBeVisible();
 });
+
+test("report_fits_the_window_and_its_figures_open_rows", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "View report" }).click();
+  await expect(page.getByTestId("score")).toHaveText("72");
+  // The report scrolls inside the main area; the window never scrolls.
+  const scroll = await page.evaluate(() => [document.documentElement.scrollHeight, window.innerHeight]);
+  expect(scroll[0]).toBeLessThanOrEqual(scroll[1]);
+  await page.getByRole("button", { name: "Client errors (4xx): 2" }).click();
+  await expect(page.getByRole("button", { name: "Response codes" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("grid")).toBeVisible();
+});
+
+test("report_from_the_palette_and_bulk_export_by_keyboard", async ({ page }) => {
+  await crawl(page);
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Crawl report");
+  await expect(page.getByTestId("score")).toBeVisible();
+  await page.getByRole("button", { name: /Bulk export/ }).focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Bulk export" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Export…" }).click();
+  await page.evaluate(() => window.spiderlens.audit.progress({ table: "All links", tables_done: 3, tables_total: 12, rows: 20000 }));
+  await expect(dialog.getByRole("meter", { name: "Bulk export progress" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.audit.finishBulk());
+  await expect(dialog).toContainText("Exported 30 rows in 1 tables");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});

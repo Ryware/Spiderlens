@@ -24,6 +24,7 @@ unicode-segmentation.workspace = true
 resvg.workspace = true
 scraper.workspace = true
 ego-tree.workspace = true
+rust_xlsxwriter.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -32,6 +33,8 @@ spiderlens-test-fixtures.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 proptest.workspace = true
+calamine.workspace = true
+csv.workspace = true
 
 [lints]
 workspace = true
