@@ -69,24 +69,27 @@ async fn crawl(dir: &Path, name: &str) -> PathBuf {
 /// (FR-013). `events` grows by the purge record and is compared without it.
 fn dump(path: &Path) -> Vec<String> {
     let conn = Connection::open(path).unwrap();
-    let tables: Vec<String> = conn
+    let tables: Vec<(String, bool)> = conn
         .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('bodies') ORDER BY name",
+            "SELECT name, sql LIKE '%WITHOUT ROWID%' FROM sqlite_master \
+             WHERE type = 'table' AND name NOT IN ('bodies') ORDER BY name",
         )
         .unwrap()
-        .query_map([], |r| r.get(0))
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
     let mut out = Vec::new();
-    for t in tables {
+    for (t, without_rowid) in tables {
+        // A WITHOUT ROWID table is read in primary key order.
+        let order = if without_rowid { "" } else { " ORDER BY rowid" };
         let filter = if t == "events" {
             " WHERE kind != 'html_purged'"
         } else {
             ""
         };
         let mut stmt = conn
-            .prepare(&format!("SELECT * FROM \"{t}\"{filter} ORDER BY rowid"))
+            .prepare(&format!("SELECT * FROM \"{t}\"{filter}{order}"))
             .unwrap();
         let n = stmt.column_count();
         let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();

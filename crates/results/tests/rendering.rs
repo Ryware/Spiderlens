@@ -58,6 +58,7 @@ fn q(tab: &str, filter: &str, values: Option<Values>) -> ViewQuery {
         search: String::new(),
         sort: None,
         values,
+        segment: None,
     }
 }
 
@@ -238,6 +239,7 @@ fn synth() -> (tempfile::TempDir, PathBuf) {
         links_per_page: 4,
         seed: 5,
         rendered: true,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();
@@ -319,20 +321,24 @@ fn rendered_first_screen_matches_the_full_order() {
 }
 
 /// Counts in rendered mode: the Page titles counts follow the rendered
-/// titles; tabs that read no rendered field count as in raw mode.
+/// titles; tabs that read no rendered field count as in raw mode. Their
+/// "With issues" filter (spec 009) is left out: the issue rules read the
+/// rendered titles too.
 #[test]
 fn rendered_counts_follow_the_rendered_values() {
     let (_dir, path) = synth();
     let mut r = Reader::open(&path).unwrap();
     for tab in ["internal", "external", "response-codes", "url", "images"] {
-        let raw = r
+        let mut raw = r
             .counts_with(tab, UrlScope::All, Some(Values::Raw))
             .unwrap()
             .counts;
-        let rendered = r
+        let mut rendered = r
             .counts_with(tab, UrlScope::All, Some(Values::Rendered))
             .unwrap()
             .counts;
+        raw.remove("with_issues");
+        rendered.remove("with_issues");
         assert_eq!(raw, rendered, "{tab}");
     }
     let raw = r

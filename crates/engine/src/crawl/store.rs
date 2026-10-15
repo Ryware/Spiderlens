@@ -3467,6 +3467,9 @@ mod tests {
             truncated: false,
             robots_token: "x",
             content: None,
+            keep_text: false,
+            a11y: false,
+            hook: None,
         });
         s.record_page(
             id,
@@ -3474,6 +3477,7 @@ mod tests {
                 data: Some(&data),
                 extract_error: None,
                 html: None,
+                header_agent_links: &[],
             },
         )
         .unwrap();
@@ -3490,17 +3494,17 @@ mod tests {
     }
 
     #[test]
-    fn format_5_files_get_the_near_dup_tables_when_upgraded() {
+    fn format_16_files_get_the_near_dup_tables_when_upgraded() {
         let (_d, s) = store();
         s.conn
             .execute_batch(
                 "DROP TABLE content_sig; DROP TABLE near_dup_pages; DROP TABLE near_dup_pairs;
                  DROP TABLE near_dup_clusters; ALTER TABLE pages DROP COLUMN main_words;
                  ALTER TABLE pages DROP COLUMN main_hash; ALTER TABLE pages DROP COLUMN main_source;
-                 UPDATE meta SET value = '5' WHERE key = 'format_version';",
+                 UPDATE meta SET value = '16' WHERE key = 'format_version';",
             )
             .unwrap();
-        assert_eq!(super::super::migrate::upgrade(&s.conn).unwrap(), 5);
+        assert_eq!(super::super::migrate::upgrade(&s.conn).unwrap(), 16);
         let n: i64 = s
             .conn
             .query_row(
@@ -3510,7 +3514,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 3);
-        assert_eq!(super::super::migrate::version(&s.conn).unwrap(), 6);
+        assert_eq!(super::super::migrate::version(&s.conn).unwrap(), 17);
     }
 
     #[test]
@@ -3643,6 +3647,8 @@ mod tests {
             robots_token: "SpiderLens",
             content: None,
             keep_text: true,
+            a11y: false,
+            hook: None,
         })
     }
 

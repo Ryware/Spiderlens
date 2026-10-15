@@ -74,12 +74,16 @@ export function CommandPalette({
             </div>
             <Cmdk.List className="max-h-90 overflow-y-auto p-1.5">
               <Cmdk.Empty className="px-3 py-6 text-center text-sm text-fg-3">No matching command</Cmdk.Empty>
-              {recentCommands.length > 0 && (
+              {/* While searching, one flat list: cmdk sorts items by score but
+                  does not reorder groups, so the best match could sit below a
+                  weaker one in an earlier group. */}
+              {search.trim() !== "" && available.map((c) => item(c))}
+              {search.trim() === "" && recentCommands.length > 0 && (
                 <Cmdk.Group heading="Recent" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-fg-3">
                   {recentCommands.map((c) => item(c, "recent:"))}
                 </Cmdk.Group>
               )}
-              {groups.map((g) => {
+              {search.trim() === "" && groups.map((g) => {
                 const cs = available.filter((c) => c.group === g);
                 return cs.length ? (
                   <Cmdk.Group key={g} heading={g} className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-fg-3">

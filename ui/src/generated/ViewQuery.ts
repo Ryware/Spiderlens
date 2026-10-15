@@ -8,11 +8,11 @@ import type { Values } from "./Values";
  */
 export type ViewQuery = { tab: string, filter: string, scope: UrlScope, search: string, sort: Sort | null, 
 /**
- * Spec 027 FR-B04: only URLs in this segment; 0 means in no segment.
- */
-segment?: number,, 
-/**
  * Raw or rendered values of a rendered crawl (spec 014 FR-021);
  * omitted means rendered when the crawl has rendering.
  */
-values?: Values, };
+values?: Values, 
+/**
+ * Spec 027 FR-B04: only URLs in this segment; 0 means in no segment.
+ */
+segment?: number, };

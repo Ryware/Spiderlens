@@ -120,6 +120,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     }
 }
 
@@ -183,8 +184,8 @@ async fn amp_filters_pass_and_fail_exactly_where_expected() {
     let counts = r.counts("amp", UrlScope::All).unwrap();
     for f in &tab.filters {
         assert_eq!(
-            counts.counts[f.id],
-            Some(p(&mut r, f.id).len() as u64),
+            counts.counts[&*f.id],
+            Some(p(&mut r, &f.id).len() as u64),
             "{}",
             f.id
         );

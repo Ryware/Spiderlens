@@ -20,6 +20,7 @@ fn q(tab: &str, filter: &str, sort: Option<(&str, bool)>) -> ViewQuery {
             desc,
         }),
         segment: None,
+        values: None,
     }
 }
 

@@ -14,8 +14,8 @@ use scraper::node::Element;
 use scraper::{ElementRef, Html, HtmlTreeSink, Node};
 use url::Url;
 
-use super::agents::{AgentCtx, Collector};
 use super::a11y::A11yCollector;
+use super::agents::{AgentCtx, Collector};
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
 use super::main_content::{ARTICLE, BOILER, ContentRules, EXCLUDED, MAIN, MainText, SELECTED, Spans};
@@ -123,7 +123,18 @@ pub(super) fn walk(
 /// The page's body text by paragraph with its main content marked, for the
 /// comparison view (spec 020, plan D8).
 pub(super) fn main_text(text: &str, page: &Url, content: Option<&ContentRules>) -> MainText {
-    let (_, _, _, body) = walk_doc(text, page, "", PARSE_BUDGET, false, None, false, None, false, content);
+    let (_, _, _, body) = walk_doc(
+        text,
+        page,
+        "",
+        PARSE_BUDGET,
+        false,
+        None,
+        false,
+        None,
+        false,
+        content,
+    );
     body.paragraphs(content)
 }
 

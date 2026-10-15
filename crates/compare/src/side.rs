@@ -52,7 +52,10 @@ pub(crate) fn create_tables(ws: &Connection, layout: &Layout, elements: &[Elemen
 
 /// Which filters and elements a side can evaluate.
 pub(crate) fn filter_available(features: &Features, layout: &Layout, k: usize) -> bool {
-    features.has(layout.slots[k].filter.need)
+    let f = layout.slots[k].filter;
+    // Issue hits depend on the issue settings, which a comparison does not
+    // carry yet (issue deltas are spec 012 follow-up work).
+    features.has(f.need) && f.derived != Some(Derived::IssueHits)
 }
 
 #[allow(clippy::too_many_arguments)]

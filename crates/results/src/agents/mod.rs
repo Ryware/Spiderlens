@@ -6,6 +6,8 @@ mod detail;
 
 pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFindings};
 
+use std::borrow::Cow;
+
 use crate::tabs::{FilterDef, HTML_OK, Need, TabDef, ValueKind, c, col, filter};
 
 /// One summary value of the page's raw HTML (`page_agent`), by primary key.
@@ -53,9 +55,9 @@ pub(crate) fn tab() -> TabDef {
     use ValueKind::Int;
     let n = |id, label, expr, width| col(id, label, expr, Int, width).needs(Need::Agents);
     TabDef {
-        id: "agents",
-        title: "Agents",
-        eligible: HTML_OK,
+        id: Cow::Borrowed("agents"),
+        title: Cow::Borrowed("Agents"),
+        eligible: Cow::Borrowed(HTML_OK),
         columns: vec![
             c::ADDRESS,
             n("forms", "Forms", raw!("forms"), 80),
@@ -144,5 +146,6 @@ pub(crate) fn tab() -> TabDef {
         ],
         search_column: None,
         scoped: false,
+        rows: None,
     }
 }

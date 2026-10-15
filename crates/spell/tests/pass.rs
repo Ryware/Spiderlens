@@ -145,6 +145,7 @@ fn q(filter: &str) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     }
 }
 

@@ -570,7 +570,6 @@ pub(crate) const CUSTOM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS custom_rules 
         data BLOB NOT NULL
     );";
 
-
 /// Spec 016 data-model.md. `source` is `raw` or `rendered` (spec 014).
 const AGENTS: &str = "
 CREATE TABLE page_agent (

@@ -57,6 +57,7 @@ fn q(tab: &str, filter: &str, scope: UrlScope) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     }
 }
 

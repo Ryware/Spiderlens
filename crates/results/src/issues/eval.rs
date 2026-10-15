@@ -5,7 +5,7 @@
 //! rules with one `CASE`. Counts, a URL's issues and an issue's rows are then
 //! index reads. Nothing is written to the crawl file.
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -469,13 +469,6 @@ impl Reader {
     /// any (FR-013: older files are simply evaluated again).
     pub fn recorded_rules_version(&self) -> Result<Option<u32>> {
         Ok(self.meta("rules_version")?.and_then(|v| v.parse().ok()))
-    }
-
-    fn meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self
-            .conn
-            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
-            .optional()?)
     }
 
     pub fn issue_settings(&self) -> &ResolvedSettings {

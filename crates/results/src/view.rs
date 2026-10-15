@@ -376,10 +376,14 @@ impl Reader {
                 // cost lookups, so the rows are picked by id first and their
                 // columns read for those rows only (spec 014 T030).
                 format!(
-                    "SELECT {select} FROM (SELECT u.id AS k FROM urls u NOT INDEXED WHERE {}
+                    "SELECT {select} FROM (SELECT u.id AS id FROM {} WHERE {}
                        ORDER BY {} LIMIT {count} OFFSET {from}) t
-                     CROSS JOIN urls u ON u.id = t.k ORDER BY {}",
-                    v.where_sql, v.order_sql, v.order_sql
+                     CROSS JOIN urls u ON u.id = t.id{} ORDER BY {}",
+                    v.tab.source_sql(),
+                    v.where_sql,
+                    v.order_sql,
+                    v.tab.join_sql(),
+                    v.order_sql
                 )
             } else {
                 format!(

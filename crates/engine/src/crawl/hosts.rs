@@ -28,6 +28,8 @@ pub(crate) struct Host {
     pub(crate) speed: SiteSpeed,
     /// Circuit breaker (spec 004 plan D6).
     pub(crate) health: HostHealth,
+    /// When it last answered, for "every site is slow at once" (FR-019).
+    pub(crate) last_answer: Instant,
 }
 
 impl Host {
@@ -39,6 +41,7 @@ impl Host {
             delay: None,
             speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
             health: HostHealth::default(),
+            last_answer: Instant::now(),
         }
     }
 

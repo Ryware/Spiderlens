@@ -470,7 +470,7 @@ fn response_codes(r: &mut Reader, _ctx: &Ctx) -> Result<Vec<Block>> {
             let n = |c: &crate::FilterCounts| c.counts.get(*id).copied().flatten().unwrap_or(0);
             vec![
                 Cell {
-                    text: f.label.into(),
+                    text: f.label.clone().into(),
                     target: None,
                 },
                 Cell {

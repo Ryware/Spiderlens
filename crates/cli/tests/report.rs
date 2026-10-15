@@ -12,6 +12,7 @@ fn crawl_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
         urls: 300,
         links_per_page: 2,
         seed: 7,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();
@@ -121,7 +122,17 @@ fn bulk_csv_and_xlsx() {
     assert!(listed.lines().count() > 2, "{listed}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("rows in"), "{err}");
-    assert!(err.contains("[12/12] All links"), "{err}");
+    // The links table comes last, after one table per tab.
+    let last = err
+        .lines()
+        .find(|l| l.contains("] All links"))
+        .unwrap_or_default();
+    let (done, total) = last
+        .trim_start_matches('[')
+        .split_once(']')
+        .and_then(|(n, _)| n.split_once('/'))
+        .unwrap_or_default();
+    assert!(!done.is_empty() && done == total, "{err}");
 
     let again = cli()
         .args(["export", path.to_str().unwrap(), "--bulk", "tabs", "--out"])

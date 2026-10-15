@@ -313,6 +313,9 @@ mod tests {
             truncated: false,
             robots_token: "SpiderLens",
             content: rules,
+            keep_text: false,
+            a11y: false,
+            hook: None,
         })
         .main
     }

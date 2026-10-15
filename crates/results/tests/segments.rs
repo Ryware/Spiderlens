@@ -110,6 +110,7 @@ fn q(segment: Option<u32>) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment,
+        values: None,
     }
 }
 
@@ -117,6 +118,13 @@ fn q(segment: Option<u32>) -> ViewQuery {
 fn rows(r: &mut Reader, c: &Crawled, segment: Option<u32>) -> Vec<(String, Option<String>)> {
     let page = r.open_view(&q(segment), 500).unwrap();
     let base = c.site.url(E, "");
+    // Row values follow the id, in the tab's column order.
+    let seg = 1 + spiderlens_results::tab("internal")
+        .unwrap()
+        .columns
+        .iter()
+        .position(|c| c.id == "segment")
+        .unwrap();
     let mut out: Vec<_> = page
         .rows
         .iter()
@@ -126,7 +134,7 @@ fn rows(r: &mut Reader, c: &Crawled, segment: Option<u32>) -> Vec<(String, Optio
                 .strip_prefix(base.trim_end_matches('/'))
                 .unwrap_or(url)
                 .to_string();
-            (path, row.last().unwrap().as_str().map(str::to_string))
+            (path, row[seg].as_str().map(str::to_string))
         })
         .collect();
     out.sort();

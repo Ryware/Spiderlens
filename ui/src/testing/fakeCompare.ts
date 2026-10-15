@@ -141,6 +141,10 @@ function detail(id: number, title: string): UrlDetail {
     link_metrics: null,
     cookies: [],
     unavailable: {},
+    amp: null,
+    pdf: null,
+    snippet: null,
+    spelling: null,
   };
 }
 

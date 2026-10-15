@@ -27,6 +27,9 @@ fn main() {
         truncated: false,
         robots_token: "SpiderLens",
         content: None,
+        keep_text: false,
+        a11y: false,
+        hook: None,
     };
     for _ in 0..200 {
         extract_page(&input);

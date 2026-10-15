@@ -1,4 +1,5 @@
-//! `spiderlens rules validate|test|run` (spec 013 contracts/cli.md).
+//! `spiderlens custom-rules validate|test|run` (spec 013 contracts/cli.md;
+//! renamed from `rules`, which lists the spec 009 issue rules).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

@@ -403,7 +403,9 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     // this crawl does not read PDFs (spec 027 part C has its own test).
     for tab in tabs() {
         let counts = r.counts(&tab.id, UrlScope::All).unwrap();
-        for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks && f.need != Need::Pdf && f.need != Need::Spelling && f.need != Need::Amp) {
+        for f in tab.filters.iter().filter(|f| {
+            f.need != Need::AiChecks && f.need != Need::Pdf && f.need != Need::Spelling && f.need != Need::Amp
+        }) {
             // Integration data is fetched after a crawl (spec 024), not by it.
             if f.need == Need::SearchConsole {
                 assert!(counts.counts[f.id.as_ref()].is_none());

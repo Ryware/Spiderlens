@@ -77,7 +77,7 @@ pub(crate) fn cell_text(c: &ColumnDef, v: &Value) -> String {
     }
 }
 
-fn issues_text(v: i64) -> String {
+pub(crate) fn issues_text(v: i64) -> String {
     let (p, n) = crate::tabs::decode_issues(v);
     format!("{} · {n}", p.label())
 }

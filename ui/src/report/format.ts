@@ -1,5 +1,5 @@
 import type { Tone } from "../components/ui";
-import type { Priority } from "../generated/Priority";
+import type { IssuePriority as Priority } from "../generated/IssuePriority";
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
   high: "High",

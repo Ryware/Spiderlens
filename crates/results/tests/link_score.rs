@@ -85,6 +85,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     }
 }
 
@@ -112,7 +113,7 @@ fn table(
                 .columns
                 .iter()
                 .zip(&row[1..])
-                .map(|(c, v)| (c.id, v.clone()))
+                .map(|(c, v)| (&*c.id, v.clone()))
                 .collect();
             (path, cols)
         })

@@ -4,8 +4,8 @@
 //! crawl store. Validation lives here too, so every surface reports the same
 //! issues. This crate has no dependency on the desktop shell.
 
-mod assistants;
 pub mod ai_bots;
+mod assistants;
 mod compare;
 pub mod custom;
 pub mod dirs;
@@ -34,9 +34,10 @@ pub use custom::{
 pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    AccessSettings, AiChecks, Changefreq, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
-    HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
-    ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow, RetrySettings, RobotsMode,
+    AccessSettings, AiChecks, Changefreq, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader,
+    ExtractionSettings, HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits,
+    LocalSitemap, Mode, ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode,
+    QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow, RetrySettings, RobotsMode,
     RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
     SpellingSettings, SubdomainMode, SuppliedCookie, UserAgent, WindowPreset,
 };

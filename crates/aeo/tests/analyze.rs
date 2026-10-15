@@ -241,6 +241,7 @@ async fn analysis_of_a_crawled_site() {
             search: String::new(),
             sort: None,
             segment: None,
+            values: None,
         };
         let page = r.open_view(&q, 10).unwrap();
         r.materialize(page.view).unwrap();

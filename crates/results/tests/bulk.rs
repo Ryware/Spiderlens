@@ -65,12 +65,14 @@ fn single_export(crawl: &Path, tab_id: &str, dir: &Path) -> String {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     };
     let dest = dir.join(format!("single-{}.csv", tab_id.replace(':', "-")));
     export_file(
         crawl,
         &q,
         &cols,
+        None,
         None,
         &dest,
         &AtomicBool::new(false),
@@ -100,9 +102,15 @@ async fn us4_csv_folder_matches_single_exports() {
     assert!(out.join("index.csv").exists());
     assert!(!c.dir.path().join(".audit-csv.partial").exists());
     // FR-020, SC-007: every tab equals its single export, byte for byte.
-    for t in tabs() {
+    // Tabs this crawl cannot show (AMP not checked) are left out.
+    let features = Reader::open(&c.path).unwrap().features().clone();
+    let shown: Vec<_> = tabs()
+        .iter()
+        .filter(|t| t.filter("all").is_none_or(|f| features.has(f.need)))
+        .collect();
+    for t in &shown {
         let bulk = std::fs::read_to_string(out.join(format!("tab-{}.csv", t.id))).unwrap();
-        assert_eq!(bulk, single_export(&c.path, t.id, c.dir.path()), "tab {}", t.id);
+        assert_eq!(bulk, single_export(&c.path, &t.id, c.dir.path()), "tab {}", t.id);
     }
     // And every issue with URLs.
     let mut r = Reader::open(&c.path).unwrap();
@@ -120,7 +128,7 @@ async fn us4_csv_folder_matches_single_exports() {
         issues += 1;
     }
     assert!(issues > 3);
-    assert!(res.files.len() >= tabs().len() + issues + 5);
+    assert!(res.files.len() >= shown.len() + issues + 5);
 
     // US4-4: the links table, filtered by source or target, is the detail
     // pane's Outlinks and Inlinks.
@@ -137,6 +145,7 @@ async fn us4_csv_folder_matches_single_exports() {
             search: String::new(),
             sort: None,
             segment: None,
+            values: None,
         };
         let page = r.open_view(&q, 100).unwrap();
         let rows = r.rows(page.view, 0, 100).unwrap().rows;

@@ -440,6 +440,8 @@ mod tests {
             robots_token: "SpiderLens",
             content: None,
             keep_text: true,
+            a11y: false,
+            hook: None,
         })
     }
 

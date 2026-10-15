@@ -41,6 +41,7 @@ fn main() {
             desc: true,
         }),
         segment: None,
+        values: None,
     };
     let page = r.open_view(&q, 50).expect("view");
     println!(
