@@ -33,6 +33,8 @@ pub enum Need {
     /// Crawl Analysis results such as Link Score (spec 023), calculated
     /// once fetching has ended.
     Analysis,
+    /// The cookie audit (spec 025).
+    Cookies,
     /// AI search check results (spec 015).
     AiChecks,
 }
@@ -50,6 +52,7 @@ impl Need {
             }
             Self::RawHtml => "This crawl does not store page HTML.",
             Self::Analysis => "Calculated when the crawl ends.",
+            Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
         }
     }
@@ -63,6 +66,7 @@ impl Need {
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
             Self::Analysis => "analysis",
+            Self::Cookies => "cookies",
             Self::AiChecks => "ai_checks",
         }
     }

@@ -218,6 +218,20 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                 }
             }
         }
+        // Secret cookie values come back from the environment, as on a
+        // first run (spec 025 contracts/cli.md).
+        if let Ok(info) = file::info(path) {
+            for key in &info.missing_secrets {
+                if let Some(name) = key
+                    .strip_prefix("cookie:")
+                    .and_then(|k| k.rsplit_once('/'))
+                    .map(|(_, n)| n)
+                    && let Ok(v) = std::env::var(crate::options::cookie_env(name))
+                {
+                    secrets.push((key.clone(), v));
+                }
+            }
+        }
         let mut changes = Vec::new();
         if let Ok(info) = file::info(path)
             && let Some(stored) = &info.config
@@ -699,7 +713,7 @@ fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
         .find(|c| matches!(store.id_of(c), Ok(Some(_))))
 }
 
-fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
+pub(crate) fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
     let store = CrawlStore::open_read_only(file).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::from(exit::USAGE)
