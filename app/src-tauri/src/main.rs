@@ -4,8 +4,10 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod aeo;
 mod crawl;
 mod files;
+mod manage;
 mod results;
 mod settings;
 
@@ -36,6 +38,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(aeo::State::default());
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
             for arg in std::env::args_os().skip(1) {
@@ -75,6 +78,13 @@ fn main() {
             crawl::retry_preview,
             crawl::retry_start,
             crawl::crawl_log,
+            aeo::aeo_run,
+            aeo::aeo_cancel,
+            aeo::aeo_summary,
+            aeo::aeo_page,
+            aeo::aeo_llms_txt_draft,
+            aeo::ai_bots_list,
+            aeo::aeo_rules,
             files::crawl_open,
             files::crawl_info,
             files::crawl_save_as,
@@ -86,6 +96,17 @@ fn main() {
             files::crawl_salvage,
             files::storage_status,
             files::pending_open,
+            manage::crawls_manage_list,
+            manage::crawls_html_size,
+            manage::reveal_path,
+            manage::crawls_delete,
+            manage::crawls_delete_permanently,
+            manage::crawls_purge_html_check,
+            manage::crawls_purge_html,
+            manage::storage_prefs_get,
+            manage::storage_prefs_set,
+            manage::cleanup_history,
+            manage::cleanup_run_now,
             results::results_tabs,
             results::results_open,
             results::view_open,
@@ -99,6 +120,9 @@ fn main() {
             results::url_list,
             results::cookies_list,
             results::cookie_urls,
+            results::url_html,
+            results::url_tabs,
+            results::copy_text,
             results::copy_rows,
             results::export_start,
             results::export_cancel,

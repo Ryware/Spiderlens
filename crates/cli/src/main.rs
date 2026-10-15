@@ -3,9 +3,11 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod aeo_cmd;
 mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
+mod files_cmd;
 mod options;
 
 use std::io::Write;
@@ -33,6 +35,9 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
+    /// A quality gate failed (`aeo run --fail-under`); shared with spec 009's
+    /// `issues --fail-on`, which assigns the number at merge.
+    pub const QUALITY_GATE: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -67,8 +72,15 @@ enum Command {
     Html(HtmlArgs),
     /// List the cookies the site set during a crawl (no values).
     Cookies(cookies_cmd::CookiesArgs),
+    /// List crawl files in a folder with their size and stored HTML.
+    Files(files_cmd::FilesArgs),
+    /// Remove the stored page HTML from a crawl file, keeping its results.
+    PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// AI search checks (AEO and GEO) on a crawl file.
+    #[command(subcommand)]
+    Aeo(aeo_cmd::AeoCommand),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -162,7 +174,10 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Cookies(args) => cookies_cmd::run_cookies(args),
+        Command::Files(args) => files_cmd::run_files(args),
+        Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

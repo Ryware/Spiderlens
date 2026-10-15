@@ -97,6 +97,13 @@ pub(crate) struct Compiled {
     pub derived: Vec<Derived>,
 }
 
+impl Compiled {
+    /// `FROM … WHERE …` of the view's rows.
+    pub fn source_where(&self) -> String {
+        format!("FROM {} WHERE {}", self.tab.source_sql(), self.where_sql)
+    }
+}
+
 /// Turns a view query into SQL fragments, checking every id against the
 /// tab definitions (ids never reach SQL as text).
 pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compiled> {
@@ -120,6 +127,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
             derived.push(d);
         }
     };
+    add(tab.rows);
     add(filter.derived);
     let mut where_sql = format!("({}) AND ({})", tab.eligible, filter.cond);
     match (tab.scoped, q.scope) {
@@ -171,7 +179,9 @@ fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features) -> String {
     }
     let dir = if desc { "DESC" } else { "ASC" };
     let e = c.expr;
-    if c.kind.is_text() {
+    if let Some(k) = c.key {
+        format!("({k} IS NULL OR {k} = '') ASC, {k} {dir}, u.id ASC")
+    } else if c.kind.is_text() {
         format!("(({e}) IS NULL OR ({e}) = '') ASC, natkey({e}) {dir}, u.id ASC")
     } else {
         format!("(({e}) IS NULL) ASC, ({e}) {dir}, u.id ASC")
@@ -284,8 +294,10 @@ impl Reader {
         );
         self.conn.execute_batch(&sql)?;
         let insert = format!(
-            "INSERT INTO temp.{table}(id) SELECT u.id FROM urls u NOT INDEXED WHERE {} ORDER BY {}",
-            v.where_sql, v.order_sql
+            "INSERT INTO temp.{table}(id) SELECT u.id FROM {} WHERE {} ORDER BY {}",
+            v.tab.source_sql(),
+            v.where_sql,
+            v.order_sql
         );
         let params = params_of(&v.search);
         let total = self.conn.execute(&insert, params.as_slice())?;
@@ -312,8 +324,9 @@ impl Reader {
         let width = v.tab.columns.len() + 1;
         let rows = if let Some(table) = &v.table {
             let sql = format!(
-                "SELECT {select} FROM temp.{table} t JOIN urls u ON u.id = t.id
-                 WHERE t.pos > ?1 AND t.pos <= ?2 ORDER BY t.pos"
+                "SELECT {select} FROM temp.{table} t JOIN urls u ON u.id = t.id{}
+                 WHERE t.pos > ?1 AND t.pos <= ?2 ORDER BY t.pos",
+                v.tab.join_sql()
             );
             let mut stmt = self.conn.prepare(&sql)?;
             let (a, b) = (i64::from(from), i64::from(from) + i64::from(count));
@@ -322,8 +335,10 @@ impl Reader {
             // Before the order is stored: a top-k query, fine for the first
             // screens, which is all the UI asks for at this point.
             let sql = format!(
-                "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
-                v.where_sql, v.order_sql
+                "SELECT {select} FROM {} WHERE {} ORDER BY {} LIMIT {count} OFFSET {from}",
+                v.tab.source_sql(),
+                v.where_sql,
+                v.order_sql
             );
             let mut stmt = self.conn.prepare(&sql)?;
             read_rows(&mut stmt, &params_of(&v.search), width)?
@@ -349,6 +364,23 @@ impl Reader {
         ids.iter()
             .map(|id| Ok(stmt.query_row([id], |r| r.get::<_, i64>(0)).map(u32_of).ok()))
             .collect()
+    }
+
+    /// The tabs that list URL `id` with no filter, scope or search, in
+    /// display order: where "show in table" can take it. Empty when no tab
+    /// lists it (a URL still queued, say) or it is not in the crawl.
+    pub fn tabs_of(&self, id: i64) -> Result<Vec<&'static str>> {
+        let mut out = Vec::new();
+        for t in tabs::tabs() {
+            let sql = format!(
+                "SELECT EXISTS (SELECT 1 FROM urls u WHERE u.id = ?1 AND ({}))",
+                t.eligible_on_urls()
+            );
+            if self.conn.query_row(&sql, [id], |r| r.get::<_, bool>(0))? {
+                out.push(t.id);
+            }
+        }
+        Ok(out)
     }
 
     /// Rebuilds the view if the crawl wrote since it was built; returns the

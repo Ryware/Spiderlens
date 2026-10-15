@@ -43,10 +43,10 @@ fn retry_runs_only_the_temporary_failures() {
         .unwrap();
     let summary = &json_lines(&out.stdout)[0];
     assert_eq!(summary["by_class"]["http_5xx"], 1, "{summary:#}");
-    // /missing, and the link on the 503 error page.
-    assert_eq!(summary["by_class"]["http_4xx"], 2);
+    // Links on the 503 page are not followed: /missing is the only 404.
+    assert_eq!(summary["by_class"]["http_4xx"], 1);
     assert_eq!(summary["transient_errors"], 1);
-    assert_eq!(summary["permanent_errors"], 2);
+    assert_eq!(summary["permanent_errors"], 1);
 
     // Without --yes it asks, and "n" changes nothing.
     spiderlens()

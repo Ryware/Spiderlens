@@ -56,6 +56,10 @@ impl Features {
                 available.push(need);
             }
         }
+        // Spec 015: the AI checks record their run in the meta table.
+        if meta("aeo_analysis")?.is_some() {
+            available.push(Need::AiChecks);
+        }
         // The cookie audit arrived with a crawl file format step, so the
         // table says it all, also for older crawls resumed after upgrading.
         let cookies: bool = conn.query_row(

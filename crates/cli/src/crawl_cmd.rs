@@ -325,7 +325,11 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     };
-    let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    let mut crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     execute(crawler, file, cmd.quiet, cmd.json)
 }
 
@@ -336,6 +340,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         Ok(rt) => rt,
         Err(code) => return code,
     };
+    let ai_auto = crawler.config().ai_checks.auto;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -382,8 +387,13 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
                             } else {
                                 String::new()
                             };
+                            // What keeps it from going faster (spec 008 FR-028).
+                            let limit = match &p.limit {
+                                Some(l) if !p.waiting_for_host => format!("  ({})", l.message),
+                                _ => String::new(),
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
                         }
@@ -413,6 +423,9 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         }
     };
     print_summary(&summary, json, &file);
+    if ai_auto && summary.status == "completed" {
+        crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
     if !json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",
@@ -518,6 +531,10 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
             .unwrap_or_default();
         let err = h.error.as_deref().map(|e| format!(" ({e})")).unwrap_or_default();
         let _ = writeln!(out, "robots.txt       {}  {}{delay}{err}", h.host, h.robots);
+    }
+    // Why parts of the crawl were slow (spec 008 FR-021).
+    for e in &s.speed_events {
+        let _ = writeln!(out, "speed            {}", e.summary);
     }
     for m in &s.sitemaps {
         let err = m

@@ -25,6 +25,7 @@ pub struct CrawlConfig {
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
     pub access: AccessSettings,
+    pub ai_checks: AiChecks,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -505,6 +506,27 @@ impl CrawlConfig {
             }
         }
         self.missing_secrets()
+    }
+}
+
+/// AI search checks (spec 015 FR-002, FR-003, FR-010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AiChecks {
+    /// Run the AI checks when the crawl finishes.
+    pub auto: bool,
+    /// Fetch `/llms.txt`, `/llms-full.txt` and `/.well-known/tdmrep.json`
+    /// once per internal host at the end of the crawl.
+    pub site_files: bool,
+}
+
+impl Default for AiChecks {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            site_files: true,
+        }
     }
 }
 

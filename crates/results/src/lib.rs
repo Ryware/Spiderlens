@@ -22,7 +22,7 @@ mod view;
 
 pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage};
 pub use counts::{FilterCounts, TabCounts};
-pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
+pub use detail::{HeadingRow, HtmlMissing, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail};
 pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
 pub use features::Features;
 pub use reader::Reader;
