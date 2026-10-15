@@ -24,6 +24,7 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    pub access: AccessSettings,
     pub ai_checks: AiChecks,
 }
 
@@ -409,6 +410,105 @@ impl Default for ExtractionSettings {
     }
 }
 
+/// Cookies and, later, sign-ins and proxy: how the crawl reaches a site
+/// (spec 025, data-model.md).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AccessSettings {
+    /// Sent to the crawl's internal hosts only (FR-015, FR-016).
+    pub cookies: Vec<SuppliedCookie>,
+    pub cookie_policy: CookiePolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SuppliedCookie {
+    pub name: String,
+    #[ts(type = "{ plain: string } | { secret: true, value?: string }")]
+    pub value: HeaderValue,
+    /// `example.com` also reaches its subdomains, as a `Domain` attribute
+    /// would.
+    pub domain: String,
+    #[serde(default = "root_path")]
+    pub path: String,
+    #[serde(default)]
+    pub secure_only: bool,
+}
+
+fn root_path() -> String {
+    "/".into()
+}
+
+/// What happens to cookies the site sets during the crawl (FR-017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CookiePolicy {
+    /// As search engines do, and as SpiderLens did before spec 025.
+    #[default]
+    Ignore,
+    /// Kept in memory for the rest of the crawl, never written.
+    Keep,
+}
+
+impl CrawlConfig {
+    /// Secrets the configuration needs but does not hold (loaded from a
+    /// file, where they are never written). Header names are reported as
+    /// they are; other secrets carry a `kind:` prefix (spec 025
+    /// data-model.md), which no header name can contain.
+    pub fn missing_secrets(&self) -> Vec<String> {
+        let headers = self
+            .identity
+            .headers
+            .iter()
+            .filter(|h| h.value.is_secret() && h.value.expose().is_none())
+            .map(|h| h.name.clone());
+        let cookies = self
+            .access
+            .cookies
+            .iter()
+            .filter(|c| c.value.is_secret() && c.value.expose().is_none())
+            .map(|c| format!("cookie:{}/{}", c.domain, c.name));
+        headers.chain(cookies).collect()
+    }
+
+    /// Puts secret values back from `(key, value)` pairs keyed as in
+    /// [`Self::missing_secrets`] (header names case-insensitively). Returns
+    /// the keys still missing.
+    pub fn fill_secrets(&mut self, secrets: &[(String, String)]) -> Vec<String> {
+        let find = |key: &str, case_insensitive: bool| {
+            secrets
+                .iter()
+                .find(|(k, _)| {
+                    if case_insensitive {
+                        k.eq_ignore_ascii_case(key)
+                    } else {
+                        k == key
+                    }
+                })
+                .map(|(_, v)| v.clone())
+        };
+        for h in &mut self.identity.headers {
+            if h.value.is_secret()
+                && h.value.expose().is_none()
+                && let Some(v) = find(&h.name, true)
+            {
+                h.value = HeaderValue::secret(v);
+            }
+        }
+        for c in &mut self.access.cookies {
+            if c.value.is_secret()
+                && c.value.expose().is_none()
+                && let Some(v) = find(&format!("cookie:{}/{}", c.domain, c.name), false)
+            {
+                c.value = HeaderValue::secret(v);
+            }
+        }
+        self.missing_secrets()
+    }
+}
+
 /// AI search checks (spec 015 FR-002, FR-003, FR-010).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
@@ -480,6 +580,8 @@ mod tests {
         assert_eq!(c.retry.attempts, 3);
         assert_eq!(c.retry.max_wait_secs, 60.0);
         assert!(c.extraction.store_html);
+        assert!(c.access.cookies.is_empty());
+        assert_eq!(c.access.cookie_policy, CookiePolicy::Ignore);
     }
 
     #[test]
@@ -495,11 +597,33 @@ mod tests {
             "network",
             "retry",
             "extraction",
+            "access",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");
         }
         assert_eq!(v["limits"]["max_urls"], json!(null));
         assert_eq!(v["speed"]["preset"], "polite");
+    }
+
+    #[test]
+    fn secret_cookies_are_listed_and_filled() {
+        let mut c: CrawlConfig = serde_json::from_value(json!({
+            "identity": {"headers": [{"name": "X-Key", "value": {"secret": true}}]},
+            "access": {"cookies": [
+                {"name": "sid", "value": {"secret": true}, "domain": "example.com"},
+                {"name": "consent", "value": {"plain": "yes"}, "domain": "example.com"}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(c.access.cookies[0].path, "/");
+        assert_eq!(c.missing_secrets(), ["X-Key", "cookie:example.com/sid"]);
+        let left = c.fill_secrets(&[
+            ("x-key".into(), "k".into()),
+            ("cookie:example.com/sid".into(), "v".into()),
+        ]);
+        assert!(left.is_empty());
+        assert_eq!(c.access.cookies[0].value.expose(), Some("v"));
+        assert!(!serde_json::to_string(&c).unwrap().contains("\"v\""));
     }
 
     #[test]

@@ -68,6 +68,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
   };
 }

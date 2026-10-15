@@ -64,6 +64,16 @@ impl Features {
         if meta("aeo_analysis")?.is_some() {
             available.push(Need::AiChecks);
         }
+        // The cookie audit arrived with a crawl file format step, so the
+        // table says it all, also for older crawls resumed after upgrading.
+        let cookies: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cookies')",
+            [],
+            |r| r.get(0),
+        )?;
+        if cookies {
+            available.push(Need::Cookies);
+        }
         let redirect_limit = config
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))

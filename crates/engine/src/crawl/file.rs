@@ -727,15 +727,7 @@ pub fn info(path: &Path) -> Result<CrawlInfo, StoreError> {
     };
     let missing_secrets = config
         .as_ref()
-        .map(|c| {
-            c.config
-                .identity
-                .headers
-                .iter()
-                .filter(|h| h.value.is_secret() && h.value.expose().is_none())
-                .map(|h| h.name.clone())
-                .collect()
-        })
+        .map(|c| c.config.missing_secrets())
         .unwrap_or_default();
 
     let access = if version > FORMAT_VERSION {

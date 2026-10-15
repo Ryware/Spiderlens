@@ -93,6 +93,8 @@ pub struct UrlDetail {
     /// Link Score and link counts (spec 023); None for external URLs and
     /// while the crawl runs.
     pub link_metrics: Option<LinkMetrics>,
+    /// Cookies this URL's response set, without values (spec 025 FR-027).
+    pub cookies: Vec<crate::CookieRow>,
     /// Requests made for this URL across the crawl, retries included
     /// (spec 004 FR-020).
     pub attempts: Option<u32>,
@@ -343,6 +345,7 @@ impl Reader {
             ("attempts", Need::Attempts),
             ("raw_html", Need::RawHtml),
             ("link_metrics", Need::Analysis),
+            ("cookies", Need::Cookies),
         ] {
             if !self.features.has(need) {
                 unavailable.insert(field.to_string(), need.unavailable_reason().to_string());
@@ -388,6 +391,7 @@ impl Reader {
             headings,
             html_stored,
             link_metrics,
+            cookies: self.url_cookies(id)?,
             attempts,
             error_reason,
             manual_retry,
