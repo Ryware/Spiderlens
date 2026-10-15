@@ -33,6 +33,8 @@ pub enum Need {
     /// Crawl Analysis results such as Link Score (spec 023), calculated
     /// once fetching has ended.
     Analysis,
+    /// AI search check results (spec 015).
+    AiChecks,
 }
 
 impl Need {
@@ -48,6 +50,7 @@ impl Need {
             }
             Self::RawHtml => "This crawl does not store page HTML.",
             Self::Analysis => "Calculated when the crawl ends.",
+            Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
         }
     }
 
@@ -60,6 +63,7 @@ impl Need {
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
             Self::Analysis => "analysis",
+            Self::AiChecks => "ai_checks",
         }
     }
 }
@@ -690,6 +694,103 @@ macro_rules! heading_tab {
     };
 }
 
+/// An `aeo_pages` value of the row's URL (spec 015).
+macro_rules! ai {
+    ($field:literal) => {
+        concat!("(SELECT a.", $field, " FROM aeo_pages a WHERE a.url_id = u.id)")
+    };
+}
+
+/// A failed AI check with a tab filter: bit `$bit` of `aeo_pages.flags`
+/// (spec 015 contracts/aeo-crate.md; bits are append-only).
+macro_rules! ai_flag {
+    ($id:literal, $label:literal, $bit:literal) => {
+        filter(
+            $id,
+            $label,
+            concat!(
+                "(SELECT a.flags FROM aeo_pages a WHERE a.url_id = u.id) & (1 << ",
+                $bit,
+                ") != 0"
+            ),
+        )
+        .needs(Need::AiChecks)
+    };
+}
+
+fn ai_search_tab() -> TabDef {
+    use ValueKind::*;
+    let ai_col = |id, label, expr, kind, width| col(id, label, expr, kind, width).needs(Need::AiChecks);
+    TabDef {
+        id: "ai-search",
+        title: "AI search",
+        eligible: HTML_OK,
+        columns: vec![
+            c::ADDRESS,
+            ai_col("ai_score", "AI score", ai!("score"), Int, 90),
+            ai_col("page_type", "Page type", ai!("page_type"), Text, 100),
+            ai_col("ai_access", "Access", ai!("access"), Int, 80),
+            ai_col("ai_readable", "Readable without JS", ai!("readable"), Int, 90),
+            ai_col("ai_answer", "Answer readiness", ai!("answer"), Int, 90),
+            ai_col("ai_trust", "Trust", ai!("trust"), Int, 70),
+            ai_col("ai_structured", "Structured data", ai!("structured"), Int, 90),
+            ai_col(
+                "blocked_crawlers",
+                "Blocked AI crawlers",
+                "ai_bot_names((SELECT a.blocked_bots FROM aeo_pages a WHERE a.url_id = u.id))",
+                Text,
+                240,
+            ),
+            ai_col("published", "Published", ai!("published"), Text, 110),
+            ai_col("modified", "Modified", ai!("modified"), Text, 110),
+            ai_col("author", "Author", ai!("author"), Text, 160),
+            ai_col("version_used", "Version used", ai!("version_used"), Text, 100).hidden(),
+            ai_col("provisional", "Provisional", ai!("provisional"), Bool, 90).hidden(),
+            ai_col(
+                "page_type_reason",
+                "Page type reason",
+                ai!("page_type_reason"),
+                Text,
+                220,
+            )
+            .hidden(),
+            c::TITLE.hidden(),
+        ],
+        filters: vec![
+            filter("all", "All", "1"),
+            filter(
+                "score_below_50",
+                "AI score below 50",
+                concat!(ai!("score"), " < 50"),
+            )
+            .needs(Need::AiChecks),
+            ai_flag!("search_blocked", "Blocked for AI search crawlers", 0),
+            ai_flag!("training_only_blocked", "Blocked for AI training only", 1),
+            ai_flag!("user_fetch_blocked", "Blocked for user-requested fetches", 2),
+            ai_flag!("snippet_restricted", "Snippet restricted", 3),
+            ai_flag!("js_content", "Main content missing without JavaScript", 4),
+            ai_flag!("js_suspected", "Possibly built with JavaScript", 5),
+            ai_flag!("question_no_answer", "Question without a direct answer", 6),
+            ai_flag!("unstructured", "Long text without structure", 7),
+            ai_flag!("no_facts", "No facts with sources", 8),
+            ai_flag!(
+                "sd_not_visible",
+                "Structured data content not visible on the page",
+                9
+            ),
+            ai_flag!("no_date", "No date", 10),
+            ai_flag!("dates_disagree", "Dates disagree", 11),
+            ai_flag!("stale", "Not updated in 12 months", 12),
+            ai_flag!("no_author", "No author", 13),
+            ai_flag!("sd_errors", "Structured data errors", 14),
+            ai_flag!("sd_warnings", "Structured data warnings", 15),
+        ],
+        search_column: Some("author"),
+        scoped: false,
+        rows: None,
+    }
+}
+
 /// Every tab in display order (FR-007, FR-009).
 pub fn tabs() -> &'static [TabDef] {
     static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(build);
@@ -1075,6 +1176,7 @@ fn build() -> Vec<TabDef> {
             ],
             "meta_robots",
         ),
+        ai_search_tab(),
     ]
 }
 

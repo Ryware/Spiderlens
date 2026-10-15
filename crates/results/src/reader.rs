@@ -92,6 +92,13 @@ impl Reader {
         &self.features
     }
 
+    /// Reads the file's data list again: analyses that run after the crawl
+    /// (spec 015's AI checks) add data to a file that is already open.
+    pub fn refresh_features(&mut self) -> Result<&Features> {
+        self.features = Features::detect(&self.conn)?;
+        Ok(&self.features)
+    }
+
     /// Changes whenever the crawl commits new data (cheap: no table read).
     pub fn version(&mut self) -> Result<u64> {
         let dv: i64 = self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;

@@ -307,7 +307,7 @@ export function AppShell({ transport }: { transport: Transport }) {
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
               // tab's selection into the new tab's first render.
-              key={`${crawl.path}\n${resultTab.id}`}
+              key={`${crawl.path}\n${resultTab.id}\n${results.features?.available.join(",") ?? ""}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -340,7 +340,17 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab ? <Inspector transport={transport} path={crawl.path} id={results.focusId} onShowInTable={showInTable} /> : <DetailPanel />}
+              {resultTab ? (
+                <Inspector
+                  transport={transport}
+                  path={crawl.path}
+                  id={results.focusId}
+                  onShowInTable={showInTable}
+                  aiChecks={results.features?.available.includes("ai_checks") ?? false}
+                />
+              ) : (
+                <DetailPanel />
+              )}
             </div>
           </>
         )}

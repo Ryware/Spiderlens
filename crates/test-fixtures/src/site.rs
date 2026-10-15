@@ -473,11 +473,19 @@ impl Site {
             .count()
     }
 
-    /// Requests other than robots.txt.
+    /// Requests other than robots.txt and the AI site files (spec 015).
     pub fn page_hits(&self) -> Vec<Hit> {
         self.hits()
             .into_iter()
-            .filter(|h| h.path != "/robots.txt")
+            .filter(|h| !SITE_FILES.contains(&h.path.as_str()))
             .collect()
     }
 }
+
+/// Per-host files that are not pages: robots.txt and the AI site files.
+const SITE_FILES: &[&str] = &[
+    "/robots.txt",
+    "/llms.txt",
+    "/llms-full.txt",
+    "/.well-known/tdmrep.json",
+];
