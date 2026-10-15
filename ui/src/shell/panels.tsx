@@ -5,6 +5,7 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { BuildInfo, Transport } from "../transport";
 import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, Tooltip, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
+import { analysisLabel, type Analysis } from "../results/useAnalysis";
 import { PausedSites, siteName } from "./PausedSites";
 import { CrawlSpeed } from "./CrawlSpeed";
 import { classLabel } from "../crawl/errorClasses";
@@ -49,7 +50,7 @@ const pauseReasons: Record<string, string> = {
 };
 
 /** Live crawl figures (FR-006), from the engine's progress events. */
-export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) {
+export function StatusBar({ setup, run, analysis }: { setup: CrawlSetup; run: CrawlRun; analysis?: Analysis }) {
   const p = run.progress;
   const s = run.report?.summary;
   const wait = run.waitingForHost;
@@ -73,9 +74,15 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
       <span className="flex min-w-0 items-center gap-1.5 text-fg-2" role="status" data-phase={run.phase}>
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dots[info.tone], run.running && "motion-safe:animate-pulse")} />
         <span className="truncate">
-          {info.label}
-          {run.phase !== "idle" && run.target ? ` ${run.target}` : ""}
-          {wait && (wait.probing || wait.secondsLeft === null ? " · Testing…" : ` · ${formatElapsed(wait.secondsLeft * 1000)}`)}
+          {run.analysis ? (
+            `Analysing: ${run.analysis.label} ${run.analysis.total > 0 ? Math.floor((run.analysis.done * 100) / run.analysis.total) : 0}%`
+          ) : (
+            <>
+              {info.label}
+              {run.phase !== "idle" && run.target ? ` ${run.target}` : ""}
+              {wait && (wait.probing || wait.secondsLeft === null ? " · Testing…" : ` · ${formatElapsed(wait.secondsLeft * 1000)}`)}
+            </>
+          )}
         </span>
       </span>
       {figures.map(([n, label, key]) => (
@@ -83,6 +90,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
           <span className="font-medium text-fg-2">{n}</span> {label}
         </span>
       ))}
+      {analysis && <AnalysisStatus analysis={analysis} />}
       <PausedSites run={run} />
       <CrawlSpeed run={run} />
       <span className="ml-auto">
@@ -91,6 +99,30 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
         {setup.config ? ` · ${robotsLabel[setup.config.robots.mode]}` : ""}
       </span>
     </footer>
+  );
+}
+
+/** Crawl Analysis in the status bar (spec 023 FR-013): progress and Cancel. */
+function AnalysisStatus({ analysis: a }: { analysis: Analysis }) {
+  const label = analysisLabel(a);
+  if (!label) return null;
+  return (
+    <span className="flex items-center gap-1.5" data-analysis={a.status} title={a.error ?? undefined}>
+      {/* Live, but not role=status: that is the crawl's phase. */}
+      <span aria-live="polite" className={cn(a.status === "failed" ? "text-bad" : "text-fg-2")}>
+        {label}
+      </span>
+      {a.status === "running" && (
+        <Button variant="quiet" size="sm" className="h-5 px-1.5 text-xs" aria-label="Cancel analysis" onClick={a.cancel}>
+          Cancel
+        </Button>
+      )}
+      {(a.status === "cancelled" || a.status === "failed") && (
+        <Button variant="quiet" size="sm" className="h-5 px-1.5 text-xs" aria-label="Run analysis again" onClick={a.start}>
+          Run again
+        </Button>
+      )}
+    </span>
   );
 }
 
@@ -111,7 +143,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: "
  * why URLs were not crawled, robots.txt per site and sitemaps (spec 003 US2).
  * The URLs themselves are in the result tabs (spec 007).
  */
-export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlRun; onInfo?: () => void; onResume?: () => void; onSaveAs?: () => void }) {
+export function CrawlOverview({ run, onInfo, onResume, onSaveAs, onReport }: { run: CrawlRun; onInfo?: () => void; onResume?: () => void; onSaveAs?: () => void; onReport?: () => void }) {
   const p = run.progress;
   const s = run.report?.summary;
   const info = phaseInfo[run.phase];
@@ -152,6 +184,14 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlR
 
         {run.local && (
           <LocalErrorNotice error={run.local} onResume={() => onResume?.()} onSaveAs={() => onSaveAs?.()} onKeepPaused={run.dismissLocal} />
+        )}
+        {onReport && !run.running && (run.phase === "completed" || run.phase === "stopped") && (
+          <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 text-sm">
+            <span className="flex-1">The crawl report is ready: health score, issues and exports.</span>
+            <Button size="sm" variant="primary" onClick={onReport}>
+              View report
+            </Button>
+          </div>
         )}
         {run.error && (
           <Notice kind="bad" role="alert">
@@ -312,6 +352,7 @@ export function StartState({
   onOpenSettings,
   library,
   onOpenRecent,
+  onCompare,
   onManageCrawls,
 }: {
   setup: CrawlSetup;
@@ -321,6 +362,8 @@ export function StartState({
   /** Recent and unsaved crawls (spec 006 US4). */
   library?: CrawlLibrary;
   onOpenRecent?: (path: string) => void;
+  /** Opens the comparison setup (spec 012). */
+  onCompare?: () => void;
   /** Opens Manage crawls (spec 019 US1, FR-023). */
   onManageCrawls?: () => void;
 }) {
@@ -370,6 +413,11 @@ export function StartState({
           <span>
             Commands <Kbd keys="Mod+K" />
           </span>
+          {onCompare && (
+            <button type="button" className="rounded-sm hover:text-fg-2" onClick={onCompare}>
+              Compare crawls…
+            </button>
+          )}
         </div>
 
         {library && onOpenRecent && <RecentCrawls library={library} onOpen={onOpenRecent} />}

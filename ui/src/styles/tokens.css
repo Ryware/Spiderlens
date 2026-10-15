@@ -68,6 +68,17 @@
   --seg-amber: oklch(0.72 0.15 85);
   --seg-green: oklch(0.60 0.14 145);
   --seg-gray: oklch(0.60 0.01 195);
+  /* Visualisations (spec 022 plan D8): shapes take the status hues, so
+     pictures and tables agree; palettes and tones follow on their own. */
+  --viz-ok: var(--ok);
+  --viz-redirect: var(--info);
+  --viz-client-error: var(--warn);
+  --viz-server-error: var(--bad);
+  --viz-blocked: var(--fg-2);
+  --viz-not-crawled: var(--fg-3);
+  --viz-folder: var(--accent);
+  --viz-group: var(--fg-2);
+  --viz-line: var(--line-strong);
 
   --shadow-popover: 0 12px 32px -8px oklch(0.2 0.02 195 / 0.25), 0 0 0 1px oklch(0.2 0.02 195 / 0.08);
   --shadow-sheet: 0 28px 70px -18px oklch(0.2 0.02 195 / 0.35), 0 0 0 1px oklch(0.2 0.02 195 / 0.08);

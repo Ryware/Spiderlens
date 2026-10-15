@@ -3,12 +3,21 @@
 // (crates/results/tests).
 
 import type { ColumnDef } from "../generated/ColumnDef";
+import type { CookieFilter } from "../generated/CookieFilter";
+import type { CookieRow } from "../generated/CookieRow";
 import type { Need } from "../generated/Need";
 import type { Segment } from "../generated/Segment";
 import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
-import type { ExportProgress, Range, Transport, ViewReady } from "../transport";
+import type { ViewState } from "../generated/ViewState";
+import type { ExportOptions } from "../generated/ExportOptions";
+import { fakeScene, fakeTermLinks } from "./fakeViz";
+import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
+import type { AnalysisProgress } from "../generated/AnalysisProgress";
+import type { AnalysisRun } from "../generated/AnalysisRun";
+import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, Range, Transport, ViewReady } from "../transport";
+import { fakeIssueTabs, fakeIssuesTransport, hits, type FakeIssues } from "./fakeIssues";
 
 export interface FakeUrl {
   id: number;
@@ -23,6 +32,8 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** Meta description, for the search preview. */
+  description?: string | null;
 }
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
@@ -59,6 +70,17 @@ export const fakeTabs: TabDef[] = [
     ],
     search_column: null,
     scoped: true,
+  },
+  {
+    id: "links",
+    title: "Links",
+    columns: [col("address", "Address", "url", 420), col("link_score", "Link Score", "score", 100, "analysis"), col("depth", "Crawl depth", "int", 100), col("followed_inlinks", "Unique followed inlinks", "int", 170, "analysis")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "depth_4", label: "Crawl depth 4 or more", need: "base" },
+    ],
+    search_column: null,
+    scoped: false,
   },
 ];
 
@@ -100,13 +122,38 @@ export function fakeSegmentOf(segments: Segment[], u: FakeUrl): Segment | null {
   return segments.find((s) => s.enabled && s.clauses.length > 0 && (s.mode === "all" ? s.clauses.every(test) : s.clauses.some(test))) ?? null;
 }
 
-const cell = (u: FakeUrl, c: string, segments: Segment[]) =>
-  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, segment: fakeSegmentOf(segments, u)?.name ?? null })[c] ?? null;
+/** A made-up Link Score: the start URL is the strongest page. */
+const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
+const cell = (u: FakeUrl, c: string, segments: Segment[] = []) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null })[c] ?? null;
+
+/** A cookie the fake crawl saw, and the URLs that set it. */
+export interface FakeCookie extends Omit<CookieRow, "urls"> {
+  setBy: number[];
+}
+
+const cookieMatches: Record<CookieFilter, (c: FakeCookie) => boolean> = {
+  all: () => true,
+  session: (c) => c.session,
+  persistent: (c) => !c.session,
+  third_party: (c) => c.third_party,
+  missing_secure: (c) => !c.secure,
+  missing_http_only: (c) => !c.http_only,
+  same_site_none: (c) => c.same_site === "none",
+};
+
+const cookieRow = ({ setBy, ...c }: FakeCookie): CookieRow => ({ ...c, urls: setBy.length });
+
+export function fakeCookie(name: string, setBy: number[], c: Partial<FakeCookie> = {}): FakeCookie {
+  return { name, domain: "example.com", path: "/", session: true, expires: null, secure: true, http_only: true, same_site: "lax", third_party: false, source: "response", size: name.length + 20, setBy, ...c };
+}
 
 export interface FakeResults {
   urls: FakeUrl[];
+  /** Cookies the crawl recorded; seen only when features include "cookies". */
+  cookies: FakeCookie[];
   copied: string[];
-  exports: { columns: string[]; ranges: Range[] | null; dest: string; segments?: Segment[] }[];
+  exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null; segments?: Segment[] }[];
   opened: { tab: string; filter: string; search: string; sort: string | null; segment?: number }[];
   /** How often the sidebar asked for its tab counts. */
   tabCountCalls: number;
@@ -118,8 +165,26 @@ export interface FakeResults {
   /** Announces that the open view's full order is ready. */
   ready(): void;
   progress(p: Partial<ExportProgress>): void;
+  /** Visualisation states asked for (spec 022). */
+  viz: ViewState[];
+  /** Visualisation exports asked for, in order. */
+  vizExports: { view: ViewState; options: ExportOptions; file: string }[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** The open file's custom tabs (spec 013); none unless a test adds them. */
+  customTabs: TabDef[];
+  /** Custom column values by URL id; pages without an entry are not in the custom tabs. */
+  customCells: Map<number, Record<string, string | number | null>>;
+  /** Link analysis settings sent for the open file (spec 023). */
+  linkSettings: LinkAnalysisSettings[];
+  /** Crawl Analysis runs started (file paths) and cancels asked for. */
+  analyses: string[];
+  analysisCancels: number;
+  /** Reports progress of the running analysis. */
+  analysisProgress(p: Partial<AnalysisProgress>): void;
+  /** Ends the running analysis: with a run, or cancelled or failed. */
+  analysisDone(d?: Partial<AnalysisDone>): void;
+
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -137,29 +202,62 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "vizScene"
+  | "vizTermLinks"
+  | "vizExport"
+  | "cookiesList"
+  | "cookieUrls"
   | "urlHtml"
   | "urlTabs"
   | "copyText"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
+  | "analysisRun"
+  | "analysisSettings"
+  | "analysisStart"
+  | "analysisCancel"
+  | "onAnalysisProgress"
+  | "onAnalysisDone"
+  | "positionsTest"
   | "onViewReady"
   | "onExportProgress"
-> & { results: FakeResults } {
+  | "ruleCatalogue"
+  | "issuesApply"
+  | "issuesSummary"
+  | "onIssuesPartial"
+  | "urlIssues"
+> & { results: FakeResults; issues: FakeIssues } {
   let version = 1;
   let next = 0;
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
   const readyCbs = new Set<(r: ViewReady) => void>();
   const progressCbs = new Set<(p: ExportProgress) => void>();
+  const analysisProgressCbs = new Set<(p: AnalysisProgressEvent) => void>();
+  const analysisDoneCbs = new Set<(d: AnalysisDone) => void>();
+  let analysing: string | null = null;
+  const fakeRun = (): AnalysisRun => ({ urls: results.urls.length, links: 12, rounds: 30, pages_without_html: 0, weighted: false, ms: 40 });
   const results: FakeResults = {
     urls: [...initial],
+    cookies: [],
     copied: [],
+    viz: [],
+    vizExports: [],
+    linkSettings: [],
+    analyses: [],
+    analysisCancels: 0,
+    analysisProgress: (p) => analysisProgressCbs.forEach((cb) => cb({ path: analysing ?? "", phase: "positions", done: 0, total: 100, ...p })),
+    analysisDone: (d) => {
+      const path = analysing ?? "";
+      analysing = null;
+      analysisDoneCbs.forEach((cb) => cb({ path, run: d?.cancelled || d?.error ? null : fakeRun(), cancelled: false, error: null, ...d }));
+    },
     exports: [],
     opened: [],
     tabCountCalls: 0,
     segments: [],
     segmentCalls: [],
-    features: ["base"],
+    features: ["base", "analysis"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
     },
@@ -168,14 +266,28 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.urls.push(...urls);
       version++;
     },
+    customTabs: [],
+    customCells: new Map(),
   };
+  const issuesApi = fakeIssuesTransport(() => results.urls);
+  const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
+  const tabOf = (id: string) => [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
+  const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c, results.segments)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
-    const tab = fakeTabs.find((t) => t.id === q.tab)!;
-    let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    const tab = tabOf(q.tab);
+    const rule = q.tab.startsWith("issue:") ? issuesApi.issues.rules().find((r) => `issue:${r.id}` === q.tab) : undefined;
+    let us = rule ? hits(rule, results.urls) : results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    if (isCustom(q.tab)) {
+      us = us.filter((u) => results.customCells.has(u.id));
+      // `<column>_has`: a value; `<column>_none`: none.
+      const [, col, kind] = /^(.*)_(has|none)$/.exec(q.filter) ?? [];
+      if (col) us = us.filter((u) => (valueOf(u, col) !== null && valueOf(u, col) !== "") === (kind === "has"));
+    }
     if (q.segment !== undefined && q.segment !== null) us = us.filter((u) => (fakeSegmentOf(results.segments, u)?.id ?? 0) === q.segment);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
+    if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
     if (q.filter === "class_timeout") us = [];
     if (q.filter === "class_http_404") us = us.filter((u) => u.status === 404);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
@@ -185,8 +297,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const k = q.sort.column;
       const d = q.sort.desc ? -1 : 1;
       us = [...us].sort((a, b) => {
-        const x = cell(a, k, results.segments);
-        const y = cell(b, k, results.segments);
+        const x = valueOf(a, k);
+        const y = valueOf(b, k);
         if (x === y) return a.id - b.id;
         if (x === null) return 1;
         if (y === null) return -1;
@@ -208,7 +320,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
-    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id, results.segments) : null))];
+    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? valueOf(u, c.id) : null))];
   };
   const page = (view: number, from: number, count: number) => {
     const v = views.get(view)!;
@@ -216,7 +328,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   return {
     results,
-    resultsTabs: async () => fakeTabs,
+    ...issuesApi,
+    resultsTabs: async (path) => (path ? [...fakeTabs, ...fakeIssueTabs, ...results.customTabs] : [...fakeTabs, ...fakeIssueTabs]),
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -251,7 +364,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     segmentsCounts: async () => segmentCounts(),
     viewCounts: async (_p, tab, scope, segment) => {
-      const t = fakeTabs.find((x) => x.id === tab)!;
+      const t = tabOf(tab);
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
       for (const f of t.filters) {
@@ -260,7 +373,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           unavailable[f.id] = "Not collected yet: arrives with page extraction.";
         } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null, segment }).ids.length;
       }
-      return { tab, counts, unavailable, version };
+      return { tab, counts, unavailable, labels: {}, version };
     },
     tabCounts: async () => {
       results.tabCountCalls++;
@@ -268,6 +381,16 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     viewClose: async (_p, view) => {
       views.delete(view);
+    },
+    vizScene: async (_p, state) => {
+      results.viz.push(state);
+      return fakeScene(results.urls, state);
+    },
+    vizTermLinks: async (_p, state, term, limit) => fakeTermLinks(results.urls, state, term, limit ?? 500),
+    vizExport: async (_p, view, options, file) => {
+      results.vizExports.push({ view, options, file });
+      if (file.includes("too-big")) throw new Error("the picture would be 20000 x 900 pixels, over the 16000 pixel limit: export it as SVG, or export a focused view");
+      return { files: options.format === "csv" ? [file, file.replace(/\.csv$/, "-links.csv")] : [file] };
     },
     urlDetail: async (_p, id) => {
       const u = results.urls.find((x) => x.id === id)!;
@@ -306,26 +429,36 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         ],
         headings: 2,
         html_stored: results.features.includes("raw_html") && u.title !== null,
+        snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
+        link_metrics: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
+        cookies: results.features.includes("cookies") ? results.cookies.filter((c) => c.setBy.includes(id)).map((c) => ({ ...cookieRow(c), urls: 1 })) : [],
         unavailable: {
           ...(results.features.includes("attempts") ? {} : { attempts: "Request attempts are not recorded in this crawl yet." }),
           ...(results.features.includes("raw_html") ? {} : { raw_html: "This crawl does not store page HTML." }),
+          ...(results.features.includes("cookies") ? {} : { cookies: "This crawl was made before SpiderLens recorded the cookies each page sets." }),
         },
       };
       return d;
     },
-    urlList: async (_p, id, kind, from) =>
+    urlList: async (_p, id, kind, from, _count, position) =>
       kind === "inlinks"
-        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false }].filter(() => id !== -1), headings: [], unavailable: null }
+        ? (() => {
+            const rows = [
+              { id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" },
+              { id: 2, url: results.urls[1 % results.urls.length].url, raw: "/story", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Read on", sponsored: false, ugc: false, position: "content" },
+            ].filter((r) => id !== -1 && (!position || r.position === position));
+            return { total: rows.length, from, rows, headings: [], unavailable: null };
+          })()
         : kind === "headings"
           ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
           : kind === "images"
             ? {
                 total: 2,
                 from,
-                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false })),
+                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false, position: null })),
                 headings: [],
                 unavailable: null,
               }
@@ -356,11 +489,64 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.copied.push(text);
       return text;
     },
-    exportStart: async (_p, _q, columns, ranges, dest, segments) => {
-      results.exports.push({ columns, ranges, dest, ...(segments ? { segments } : {}) });
+    cookiesList: async (_p, filter, sort, descending, offset, limit) => {
+      if (!results.features.includes("cookies")) throw new Error("This crawl file has no cookie data.");
+      const rows = results.cookies.filter(cookieMatches[filter]).map(cookieRow);
+      const key = (sort ?? "urls") as keyof CookieRow;
+      const down = descending || sort === null;
+      rows.sort((a, b) => {
+        const x = a[key] ?? "";
+        const y = b[key] ?? "";
+        return (x < y ? -1 : x > y ? 1 : 0) * (down ? -1 : 1) || a.name.localeCompare(b.name);
+      });
+      const counts = Object.fromEntries(Object.entries(cookieMatches).map(([f, m]) => [f, results.cookies.filter(m).length]));
+      return { rows: rows.slice(offset, offset + limit), total: rows.length, counts };
+    },
+    cookieUrls: async (_p, name, domain, cookiePath, offset, limit) => {
+      const c = results.cookies.find((x) => x.name === name && x.domain === domain && x.path === cookiePath);
+      const ids = c?.setBy ?? [];
+      const rows = ids.slice(offset, offset + limit).map((id) => {
+        const u = results.urls.find((x) => x.id === id)!;
+        return { id, url: u.url, status: u.status };
+      });
+      return { rows, total: ids.length };
+    },
+    exportStart: async (_p, _q, columns, ranges, dest, allValues, segments) => {
+      results.exports.push({ columns, ranges, dest, allValues: allValues ?? null, ...(segments ? { segments } : {}) });
+
       return 1;
     },
     exportCancel: async () => {},
+    analysisRun: async () => fakeRun(),
+    analysisStart: async (path) => {
+      analysing = path;
+      results.analyses.push(path);
+    },
+    analysisCancel: async () => {
+      results.analysisCancels++;
+    },
+    onAnalysisProgress: async (cb) => {
+      analysisProgressCbs.add(cb);
+      return () => void analysisProgressCbs.delete(cb);
+    },
+    onAnalysisDone: async (cb) => {
+      analysisDoneCbs.add(cb);
+      return () => void analysisDoneCbs.delete(cb);
+    },
+    analysisSettings: async (_p, settings) => {
+      results.linkSettings.push(settings);
+    },
+    // The page has a header link, a menu link and a content link; the first
+    // rule, when there is one, claims the menu link.
+    positionsTest: async (_p, url, rules) => {
+      if (!results.urls.some((u) => u.url === url.trim())) return null;
+      const rule = rules[0];
+      return [
+        { pos: 0, raw: "/", text: "Home", position: "header" as const, rule: null },
+        { pos: 1, raw: "/promo", text: "Promo", position: rule ? rule.position : ("content" as const), rule: rule ? 0 : null },
+        { pos: 2, raw: "/story", text: "Read the story", position: "content" as const, rule: null },
+      ];
+    },
     onViewReady: async (cb) => {
       readyCbs.add(cb);
       return () => void readyCbs.delete(cb);

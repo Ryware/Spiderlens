@@ -30,11 +30,12 @@ export function useExport(transport: Transport) {
     return () => clearTimeout(t);
   }, [result]);
 
-  const start = useCallback(
-    async (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, segments?: Segment[]) => {
+  /** Runs any export command that answers with a job id (spec 012 uses it too). */
+  const run = useCallback(
+    async (begin: () => Promise<number>, dest: string) => {
       setResult(null);
       try {
-        const id = await transport.exportStart(path, query, columns, ranges, dest, segments);
+        const id = await begin();
         jobRef.current = id;
         setJob(id);
         setProgress({ job: id, rows_written: 0, total: 0, state: "running", error: null, path: dest });
@@ -42,12 +43,18 @@ export function useExport(transport: Transport) {
         setResult({ job: 0, rows_written: 0, total: 0, state: "failed", error: String(e), path: dest });
       }
     },
-    [transport],
+    [],
+  );
+
+  const start = useCallback(
+    (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null, segments?: Segment[]) =>
+      run(() => transport.exportStart(path, query, columns, ranges, dest, allValues, segments), dest),
+    [transport, run],
   );
 
   const cancel = useCallback(() => {
     if (jobRef.current !== null) void transport.exportCancel(jobRef.current);
   }, [transport]);
 
-  return { job, progress, result, start, cancel };
+  return { job, progress, result, start, run, cancel };
 }

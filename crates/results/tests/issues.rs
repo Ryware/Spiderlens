@@ -221,20 +221,29 @@ async fn us2_filters_list_exactly_the_seeded_urls_and_counts_agree() {
     let sidebar = r.tab_counts().unwrap();
     assert_eq!(sidebar.counts.len(), tabs().len());
     for tab in tabs() {
-        let listed = paths(&mut r, &c, &q(tab.id, "all")).len() as u64;
-        assert_eq!(sidebar.counts[tab.id], listed, "{}", tab.id);
+        // Tabs whose data this crawl does not have (Search Console before a
+        // fetch, spec 024) list nothing to compare with.
+        if r.counts(&tab.id, UrlScope::All)
+            .unwrap()
+            .unavailable
+            .contains_key("all")
+        {
+            continue;
+        }
+        let listed = paths(&mut r, &c, &q(&tab.id, "all")).len() as u64;
+        assert_eq!(sidebar.counts[tab.id.as_ref()], listed, "{}", tab.id);
     }
 
     // Every available filter's count equals the rows it lists (FR-009, SC-002).
     for tab in tabs() {
-        let counts = r.counts(tab.id, UrlScope::All).unwrap();
+        let counts = r.counts(&tab.id, UrlScope::All).unwrap();
         for f in &tab.filters {
-            match counts.counts[f.id] {
+            match counts.counts[f.id.as_ref()] {
                 Some(n) => {
-                    let listed = paths(&mut r, &c, &q(tab.id, f.id)).len() as u64;
+                    let listed = paths(&mut r, &c, &q(&tab.id, &f.id)).len() as u64;
                     assert_eq!(n, listed, "{}/{}", tab.id, f.id);
                 }
-                None => assert!(counts.unavailable.contains_key(f.id)),
+                None => assert!(counts.unavailable.contains_key(f.id.as_ref())),
             }
         }
     }
@@ -348,7 +357,7 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     // "Show in table": the tabs that list a URL, in display order.
     assert_eq!(
         &r.tabs_of(home).unwrap()[..4],
-        ["internal", "response-codes", "url", "page-titles"]
+        ["internal", "links", "response-codes", "url"]
     );
     assert_eq!(r.tabs_of(missing).unwrap(), ["internal", "response-codes", "url"]);
     let private = out
@@ -378,7 +387,7 @@ async fn us4_export_matches_view_and_cancel_leaves_nothing() {
     let dest = dir.path().join("titles.csv");
     let never = AtomicBool::new(false);
     let cols = vec!["address".to_string(), "title".to_string()];
-    let n = export_file(&c.path, &view, &cols, None, &dest, &never, &mut |_, _| {}).unwrap();
+    let n = export_file(&c.path, &view, &cols, None, None, &dest, &never, &mut |_, _| {}).unwrap();
     assert_eq!(n as usize, page.rows.len());
     let text = std::fs::read_to_string(&dest).unwrap();
     let text = text.strip_prefix('\u{feff}').expect("UTF-8 byte order mark");
@@ -409,13 +418,14 @@ async fn us4_export_matches_view_and_cancel_leaves_nothing() {
         &big,
         &[],
         Some(&[(0, 5)]),
+        None,
         &cancelled,
         &stop,
         &mut |_, _| {},
     );
     assert!(res.is_ok() || !cancelled.exists());
     let bad = dir.path().join("no-such-dir").join("x.csv");
-    assert!(export_file(&c.path, &big, &[], None, &bad, &never, &mut |_, _| {}).is_err());
+    assert!(export_file(&c.path, &big, &[], None, None, &bad, &never, &mut |_, _| {}).is_err());
     assert!(!dir.path().join("no-such-dir").exists());
     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()

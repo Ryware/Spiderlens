@@ -494,7 +494,7 @@ fn export_step(file: &Path, tabs: &[crate::model::ExportTab]) -> StepResult {
                 sort: None,
                 segment: None,
             };
-            match export_file(file, &q, &[], None, &dest, &never, &mut |_, _| {}) {
+            match export_file(file, &q, &[], None, None, &dest, &never, &mut |_, _| {}) {
                 Ok(_) => outputs.push(dest),
                 Err(e) => problems.push(format!("{} › {}: {e}", t.tab, t.filter)),
             }

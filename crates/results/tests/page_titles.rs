@@ -299,6 +299,7 @@ fn page_titles_export_lists_the_view() {
         &query,
         &["address".into(), "title_length".into(), "occurrences".into()],
         None,
+        None,
         &mut out,
         &std::sync::atomic::AtomicBool::new(false),
         &mut |_, _| {},

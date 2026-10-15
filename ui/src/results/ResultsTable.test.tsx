@@ -383,7 +383,8 @@ test("enter_shows_hidden_details_first", async () => {
 test("mod_digit_switches_result_tabs", async () => {
   await openInternal();
   const tabKey = (n: number) => fireEvent.keyDown(window, { key: String(n), code: `Digit${n}`, ctrlKey: true });
-  tabKey(3);
+  // Internal, Links (Link Score), External, Response codes.
+  tabKey(4);
   await screen.findByRole("region", { name: "Response codes" });
   expect(screen.getByRole("button", { name: "Response codes" }).getAttribute("aria-current")).toBe("page");
   tabKey(1);

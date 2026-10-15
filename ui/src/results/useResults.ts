@@ -34,10 +34,29 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const [sessions, setSessions] = useState<Record<string, TabSession>>({});
   const [focusId, setFocusId] = useState<number | null>(null);
   const [retry, setRetry] = useState(0);
+  /** Bumped when custom rules ran again on this file, so open views reload (spec 013 US3). */
+  const [epoch, setEpoch] = useState(0);
+
+  // The open file's tabs include its custom extraction and search tabs.
+  // A finished crawl is read again: its rules' tabs appear once pages exist.
+  useEffect(() => {
+    let off = false;
+    const show = (t: TabDef[]) => {
+      if (!off) setTabs(t);
+    };
+    // A new crawl's file can lag its start; the built-in tabs show meanwhile.
+    transport.resultsTabs(path ?? undefined).then(show, () => transport.resultsTabs().then(show, () => {}));
+    return () => {
+      off = true;
+    };
+  }, [transport, path, live, epoch]);
 
   useEffect(() => {
-    transport.resultsTabs().then(setTabs, () => {});
-  }, [transport]);
+    const off = transport.onCustomRunDone((d) => {
+      if (d.path === path && d.state !== "failed") setEpoch((n) => n + 1);
+    });
+    return () => void off.then((f) => f());
+  }, [transport, path]);
 
   useEffect(() => {
     setSessions({});
@@ -118,9 +137,12 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
+  /** Reads which data the file has again, after external data changed it. */
+  const reload = useCallback(() => setRetry((n) => n + 1), []);
+
   const counts = useTabCounts(transport, features ? path : null, live);
 
-  return { tabs, features, session, update, focusId, setFocusId, counts, segment, setSegment, segmentCounts, segmentsRev, refreshSegmentCounts };
+  return { tabs, features, session, update, focusId, setFocusId, counts, epoch, reload, segment, setSegment, segmentCounts, segmentsRev, refreshSegmentCounts };
 }
 
 /**

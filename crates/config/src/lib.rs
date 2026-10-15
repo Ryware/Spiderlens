@@ -5,6 +5,10 @@
 //! issues. This crate has no dependency on the desktop shell.
 
 pub mod ai_bots;
+mod compare;
+pub mod custom;
+pub mod dirs;
+mod links;
 mod list_input;
 mod model;
 mod patterns;
@@ -20,17 +24,25 @@ mod stored;
 mod url_norm;
 mod validate;
 
+pub use compare::{CompareSettings, CompareSettingsError, ElementSetting, IssueSettingsChoice, MapRule};
+pub use custom::{
+    CustomRules, ElementKind, ElementLimit, ExtractMode, Extractor, ExtractorKind, Search, SearchCondition,
+    SearchTarget, export_rules, import_rules, merge_rules,
+};
+pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    AiChecks, CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, Limits, Mode, ModeInput,
-    NetworkSettings, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings, Scope, SpeedSettings,
-    SubdomainMode, UserAgent,
+    AccessSettings, AiChecks, Changefreq, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
+    HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
+    ModeInput, NetworkSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
+    RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
+    SubdomainMode, SuppliedCookie, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
 pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile, import_profile};
 pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
-pub use secret::HeaderValue;
+pub use secret::{HeaderValue, Secret};
 pub use segments::{
     Clause, Field as SegmentField, MAX_SEGMENTS, Match as SegmentMatch, Op as SegmentOp, Segment,
     SegmentColor, SegmentMatcher, UrlFacts, validate_segments,
