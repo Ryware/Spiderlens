@@ -2,12 +2,12 @@
 
 | Command | Arguments | Returns |
 |---|---|---|
-| `report` | `{ running: bool }` | `Report` |
-| `export_report_html` | `{ path, title, note, urls_per_issue, overwrite }` | `{ path, bytes }` |
-| `print_report` | `{ title, note, urls_per_issue }` | `()`; opens the OS print dialog for PDF |
-| `bulk_export` | `BulkOptions` | `BulkResult`; emits `export_progress` events |
-| `cancel_export` | `()` | `()` |
+| `report` | `{ path, running, profile }` | `Report` |
+| `export_report_html` | `{ path, dest, file: FileOptions, overwrite }` | `{ path, bytes }` |
+| `print_report` | `{ path, file: FileOptions }` | `()`; opens the report in its own window and the OS print dialog for PDF |
+| `bulk_export` | `{ path, options: BulkOptions }` | `BulkResult`; emits `bulk-export-progress` events |
+| `bulk_export_cancel` | `()` | `()` |
 
-Events: `export_progress` with `BulkProgress`. Errors are strings with the same messages as the CLI. Existing paths are refused with `exists` unless `overwrite` is set after the user confirms.
+`path` is the open crawl file, as in the spec 007 commands. Events: `bulk-export-progress` with `BulkProgress` (named apart from the spec 007 `export-progress` event). Errors are strings with the same messages as the CLI. Existing paths are refused with `exists` unless `overwrite` is set after the user confirms.
 
 App setting (UI settings, not the crawl profile): `openReportOnFinish: boolean` (default false), `reportFile: { title, note, urlsPerIssue }`.

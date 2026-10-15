@@ -138,6 +138,15 @@ pub fn validate(config: &CrawlConfig, input: &ModeInput) -> Vec<Issue> {
 pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
     let mut i = Issues(Vec::new());
 
+    // Custom rules (spec 013)
+    for p in crate::custom::check_rules(&c.custom) {
+        if p.warning {
+            i.warn(p.path, p.code, p.message);
+        } else {
+            i.error(p.path, p.code, p.message);
+        }
+    }
+
     // Limits
     if c.limits.max_urls == Some(0) {
         i.error(
@@ -184,6 +193,102 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "scope.query_params.names",
             "query_names_missing",
             "List at least one parameter name to remove, or choose another option.",
+        );
+    }
+
+    // Sitemaps (spec 011)
+    let http_url = |s: &str| {
+        url::Url::parse(s.trim())
+            .ok()
+            .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+    };
+    for (index, u) in c.scope.sitemaps.urls.iter().enumerate() {
+        if http_url(u).is_none() {
+            i.error(
+                format!("scope.sitemaps.urls[{index}]"),
+                "sitemap_url_invalid",
+                "Enter the full sitemap address, starting with http:// or https://.",
+            );
+        }
+    }
+    for (index, f) in c.scope.sitemaps.files.iter().enumerate() {
+        if f.path.trim().is_empty() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].path"),
+                "sitemap_file_missing",
+                "Choose the sitemap file.",
+            );
+        }
+        if http_url(&f.base_url).is_none() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].base_url"),
+                "sitemap_base_invalid",
+                "Enter the address this file will be published at, starting with http:// or https://.",
+            );
+        }
+    }
+    if !c.scope.sitemaps.read && (!c.scope.sitemaps.urls.is_empty() || !c.scope.sitemaps.files.is_empty()) {
+        i.warn(
+            "scope.sitemaps.read",
+            "sitemaps_off",
+            "Sitemaps you added are not read while \"Read sitemaps\" is off.",
+        );
+    }
+
+    // Sitemap generation (spec 011 FR-021)
+    let g = &c.sitemap_generate;
+    if !(1..=50_000).contains(&g.max_urls_per_file) {
+        i.error(
+            "sitemap_generate.max_urls_per_file",
+            "out_of_range",
+            "URLs per sitemap file must be between 1 and 50,000.",
+        );
+    }
+    if let crate::PrioritySource::Fixed(p) = g.priority
+        && !(0.0..=1.0).contains(&p)
+    {
+        i.error(
+            "sitemap_generate.priority",
+            "out_of_range",
+            "Priority must be between 0.0 and 1.0.",
+        );
+    }
+    if let crate::LastmodSource::Fixed(d) = &g.lastmod
+        && jiff::civil::Date::strptime("%Y-%m-%d", d.trim()).is_err()
+    {
+        i.error(
+            "sitemap_generate.lastmod",
+            "lastmod_invalid",
+            "Enter the date as YYYY-MM-DD.",
+        );
+    }
+    if !g.base_url.trim().is_empty() && http_url(&g.base_url).is_none() {
+        i.error(
+            "sitemap_generate.base_url",
+            "sitemap_base_invalid",
+            "Enter the address the sitemap files will be published at, starting with http:// or https://.",
+        );
+    }
+    for (group, list) in [("include", &g.include), ("exclude", &g.exclude)] {
+        for (index, p) in list.iter().enumerate() {
+            if let Err(message) = check_pattern(p) {
+                i.error(
+                    format!("sitemap_generate.{group}[{index}]"),
+                    "pattern_syntax",
+                    message,
+                );
+            }
+        }
+    }
+    let prefix_ok = !g.file_prefix.is_empty()
+        && g.file_prefix
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if !prefix_ok {
+        i.error(
+            "sitemap_generate.file_prefix",
+            "file_prefix_invalid",
+            "Use letters, digits, dots, hyphens and underscores for the file name.",
         );
     }
 
@@ -282,6 +387,71 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
                     );
                 }
             }
+        }
+    }
+
+    // Cookies (spec 025 data-model.md)
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+    };
+    let mut per_domain: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, ck) in c.access.cookies.iter().enumerate() {
+        let path = format!("access.cookies[{index}]");
+        if !token(ck.name.trim()) {
+            i.error(
+                format!("{path}.name"),
+                "cookie_name",
+                "A cookie name is letters, digits and simple symbols, without spaces, = or ;.",
+            );
+        }
+        match ck.value.expose() {
+            None => i.error(
+                format!("{path}.value"),
+                "cookie_secret_missing",
+                "This secret value is not saved in files. Enter it again to start the crawl.",
+            ),
+            Some(v)
+                if v.bytes()
+                    .any(|b| b.is_ascii_control() || b == b';' || b == b',' || b == b' ') =>
+            {
+                i.error(
+                    format!("{path}.value"),
+                    "cookie_value",
+                    "A cookie value cannot contain spaces, commas, semicolons or line breaks.",
+                )
+            }
+            Some(v) if ck.name.len() + v.len() > 4096 => i.error(
+                format!("{path}.value"),
+                "cookie_too_large",
+                "Browsers refuse cookies over 4 KB, so sites never receive them.",
+            ),
+            Some(_) => {}
+        }
+        let domain = ck.domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        if domain.is_empty() || domain.contains('/') || domain.contains(' ') {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_domain",
+                "Enter the site the cookie belongs to, for example example.com.",
+            );
+        }
+        if !ck.path.starts_with('/') {
+            i.error(
+                format!("{path}.path"),
+                "cookie_path",
+                "A cookie path starts with /.",
+            );
+        }
+        let n = per_domain.entry(domain).or_default();
+        *n += 1;
+        if *n == 181 {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_count",
+                "Browsers keep at most 180 cookies per site.",
+            );
         }
     }
 
@@ -424,6 +594,28 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Link analysis (spec 023)
+    for (index, rule) in c.links.position_rules.iter().enumerate() {
+        if let Err(message) = crate::check_selector(&rule.selector) {
+            i.error(
+                format!("links.position_rules[{index}].selector"),
+                "selector_syntax",
+                message,
+            );
+        }
+    }
+    if let Some(w) = &c.links.weighting {
+        for (name, value) in w.fields() {
+            if !(value.is_finite() && (0.0..=1.0).contains(&value)) {
+                i.error(
+                    format!("links.weighting.{name}"),
+                    "out_of_range",
+                    "Weights must be between 0 and 1.",
+                );
+            }
+        }
+    }
+
     i.0
 }
 
@@ -448,6 +640,69 @@ mod tests {
             .iter()
             .map(|i| (i.path.as_str(), i.code.as_str(), i.severity))
             .collect()
+    }
+
+    #[test]
+    fn sitemap_sources_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.scope.sitemaps.urls = vec!["https://a.test/s.xml".into(), "/sitemap.xml".into()];
+        c.scope.sitemaps.files = vec![crate::LocalSitemap {
+            path: String::new(),
+            base_url: "ftp://a.test/".into(),
+        }];
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("scope.sitemaps.urls[1]", "sitemap_url_invalid", Severity::Error),
+                (
+                    "scope.sitemaps.files[0].path",
+                    "sitemap_file_missing",
+                    Severity::Error
+                ),
+                (
+                    "scope.sitemaps.files[0].base_url",
+                    "sitemap_base_invalid",
+                    Severity::Error
+                ),
+            ]
+        );
+        c.scope.sitemaps.urls.pop();
+        c.scope.sitemaps.files.clear();
+        c.scope.sitemaps.read = false;
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![("scope.sitemaps.read", "sitemaps_off", Severity::Warning)]
+        );
+    }
+
+    #[test]
+    fn link_position_rules_and_weights_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.links.position_rules = vec![
+            crate::PositionRule {
+                selector: ".mega-menu".into(),
+                position: crate::Position::Navigation,
+            },
+            crate::PositionRule {
+                selector: "div[".into(),
+                position: crate::Position::Footer,
+            },
+        ];
+        c.links.weighting = Some(crate::PositionWeights {
+            footer: 1.5,
+            ..Default::default()
+        });
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                (
+                    "links.position_rules[1].selector",
+                    "selector_syntax",
+                    Severity::Error
+                ),
+                ("links.weighting.footer", "out_of_range", Severity::Error),
+            ]
+        );
     }
 
     #[test]
@@ -644,6 +899,45 @@ mod tests {
         assert!(got.contains(&"speed.max_per_host".to_string()));
         assert!(got.contains(&"retry.attempts".to_string()));
         assert!(got.contains(&"network.read_timeout_secs".to_string()));
+    }
+
+    #[test]
+    fn cookies() {
+        use crate::{HeaderValue, SuppliedCookie};
+        let ck = |name: &str, value: HeaderValue, domain: &str, path: &str| SuppliedCookie {
+            name: name.into(),
+            value,
+            domain: domain.into(),
+            path: path.into(),
+            secure_only: false,
+        };
+        let mut c = CrawlConfig::default();
+        c.access.cookies = vec![
+            ck("ok", HeaderValue::Plain("yes".into()), "example.com", "/"),
+            ck("bad name", HeaderValue::Plain("x".into()), "example.com", "/"),
+            ck("v", HeaderValue::Plain("a;b".into()), "example.com", "/"),
+            ck("s", HeaderValue::Secret(None), "", "shop"),
+        ];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("access.cookies[1].name".to_string(), "cookie_name".to_string()),
+                ("access.cookies[2].value".to_string(), "cookie_value".to_string()),
+                (
+                    "access.cookies[3].value".to_string(),
+                    "cookie_secret_missing".to_string()
+                ),
+                (
+                    "access.cookies[3].domain".to_string(),
+                    "cookie_domain".to_string()
+                ),
+                ("access.cookies[3].path".to_string(), "cookie_path".to_string()),
+            ]
+        );
     }
 
     #[test]

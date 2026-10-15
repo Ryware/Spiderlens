@@ -110,3 +110,10 @@ crates/test-fixtures/src/report.rs   report fixture site (known score, codes, de
 - **Spec 006 (PR 27)** owns read-only opening; reports on view-only files use the same reader and write nothing (US6 scenario 2).
 - **Spec 012** compares scores by `SCORE_VERSION`; **specs 011, 014, 015, 016** add sections to `SECTIONS`.
 - **No migration step and no new exit code.**
+
+## Implementation notes
+
+- Report file tokens are read from ui/src/styles/tokens.css with `include_str!` at compile time, so no build script is needed.
+- Score colours use the existing meaning tokens (`--ok`, `--warn`, `--bad`) instead of new score tokens.
+- The CSV quoting and formula guard stay in export.rs (`pub(crate)`) and are shared by the bulk sinks.
+- CLI issue settings: `--issues FILE` (rule overrides JSON) or defaults; `--profile` waits for spec 009's stored settings.

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use spiderlens_config::{
-    CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, QueryMode, RobotsMode, SpeedSettings,
-    SubdomainMode, UaPreset, import_profile,
+    CookiePolicy, CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, QueryMode, RobotsMode,
+    SpeedSettings, SubdomainMode, SuppliedCookie, UaPreset, import_profile,
 };
 
 #[derive(Args, Debug, Default)]
@@ -33,6 +33,112 @@ pub struct IdentityArgs {
     /// Send custom headers to every host, not only internal ones.
     #[arg(long, help_heading = "Identity")]
     pub header_all_hosts: bool,
+}
+
+/// Cookies sent to the crawl's internal hosts (spec 025). Secret values
+/// come from the environment, never from the command line, where other
+/// programs could read them.
+#[derive(Args, Debug, Default)]
+pub struct AccessArgs {
+    /// A cookie whose value is secret, read from SPIDERLENS_COOKIE_<NAME>.
+    /// Repeatable.
+    #[arg(long = "cookie", value_name = "NAME@DOMAIN[/PATH]", help_heading = "Cookies")]
+    pub cookies: Vec<String>,
+    /// A cookie with a non-secret value (a consent flag, a test variant).
+    /// Repeatable.
+    #[arg(
+        long = "cookie-plain",
+        value_name = "NAME=VALUE@DOMAIN[/PATH]",
+        help_heading = "Cookies"
+    )]
+    pub plain_cookies: Vec<String>,
+    /// What to do with cookies the site sets [default: ignore].
+    #[arg(long, value_enum, help_heading = "Cookies")]
+    pub cookie_policy: Option<CookiePolicyArg>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CookiePolicyArg {
+    /// Do not send them back, as search engines do.
+    Ignore,
+    /// Keep them in memory for the rest of the crawl.
+    Keep,
+}
+
+/// `SPIDERLENS_COOKIE_SID` for a cookie named `sid`: upper case, and any
+/// character other than a letter or digit becomes `_`.
+pub fn cookie_env(name: &str) -> String {
+    let tail: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("SPIDERLENS_COOKIE_{tail}")
+}
+
+/// `NAME@DOMAIN[/PATH]` into name, domain and path.
+fn cookie_target(raw: &str) -> Result<(String, String, String), String> {
+    let (name, rest) = raw
+        .rsplit_once('@')
+        .ok_or_else(|| format!("--cookie takes NAME@DOMAIN[/PATH], got '{raw}'"))?;
+    let (domain, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    if name.trim().is_empty() || domain.trim().is_empty() {
+        return Err(format!("--cookie takes NAME@DOMAIN[/PATH], got '{raw}'"));
+    }
+    Ok((
+        name.trim().to_string(),
+        domain.trim().to_string(),
+        path.to_string(),
+    ))
+}
+
+impl AccessArgs {
+    pub fn apply(&self, c: &mut CrawlConfig) -> Result<(), String> {
+        for raw in &self.cookies {
+            let (name, domain, path) = cookie_target(raw)?;
+            let var = cookie_env(&name);
+            let value =
+                std::env::var(&var).map_err(|_| format!("set {var} to the value of cookie {name}"))?;
+            c.access.cookies.push(SuppliedCookie {
+                name,
+                value: HeaderValue::secret(value),
+                domain,
+                path,
+                secure_only: false,
+            });
+        }
+        for raw in &self.plain_cookies {
+            let (pair, target) = raw
+                .rsplit_once('@')
+                .ok_or_else(|| format!("--cookie-plain takes NAME=VALUE@DOMAIN[/PATH], got '{raw}'"))?;
+            let (name, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("--cookie-plain takes NAME=VALUE@DOMAIN[/PATH], got '{raw}'"))?;
+            let (name, domain, path) = cookie_target(&format!("{name}@{target}"))?;
+            c.access.cookies.push(SuppliedCookie {
+                name,
+                value: HeaderValue::Plain(value.to_string()),
+                domain,
+                path,
+                secure_only: false,
+            });
+        }
+        if let Some(p) = self.cookie_policy {
+            c.access.cookie_policy = match p {
+                CookiePolicyArg::Ignore => CookiePolicy::Ignore,
+                CookiePolicyArg::Keep => CookiePolicy::Keep,
+            };
+        }
+        Ok(())
+    }
 }
 
 #[derive(Args, Debug, Default)]
@@ -100,12 +206,29 @@ pub struct CrawlArgs {
     /// Sort query parameters by name.
     #[arg(long, help_heading = "Scope")]
     pub sort_params: bool,
-    /// Also crawl URLs from the sitemaps listed in robots.txt.
-    #[arg(long, help_heading = "Scope")]
+    /// Read sitemaps and crawl the URLs only they list (the default; kept
+    /// from spec 003).
+    #[arg(long, help_heading = "Sitemaps")]
     pub use_sitemaps: bool,
+    /// Do not read sitemaps.
+    #[arg(long, conflicts_with = "use_sitemaps", help_heading = "Sitemaps")]
+    pub no_sitemaps: bool,
+    /// Read sitemaps but record URLs that only a sitemap lists as "Found only
+    /// in sitemap" instead of crawling them.
+    #[arg(long, conflicts_with = "no_sitemaps", help_heading = "Sitemaps")]
+    pub no_crawl_sitemap_only: bool,
+    /// Also read this sitemap. Repeatable.
+    #[arg(long = "sitemap-url", value_name = "URL", help_heading = "Sitemaps")]
+    pub sitemap_urls: Vec<String>,
+    /// Also read this sitemap file, published at BASE-URL. Repeatable.
+    #[arg(long = "sitemap-file", value_name = "PATH=BASE-URL", value_parser = parse_local_sitemap, help_heading = "Sitemaps")]
+    pub sitemap_files: Vec<spiderlens_config::LocalSitemap>,
 
     #[command(flatten)]
     pub identity: IdentityArgs,
+
+    #[command(flatten)]
+    pub access: AccessArgs,
 
     #[arg(long, value_enum, help_heading = "Speed")]
     pub speed: Option<SpeedArg>,
@@ -159,6 +282,10 @@ pub struct CrawlArgs {
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
 
+    /// Custom extraction and search rules (a rule file). Rules with the
+    /// profile's names replace them.
+    #[arg(long, value_name = "FILE", help_heading = "Custom rules")]
+    pub rules: Option<PathBuf>,
     /// Do not run the AI search checks when the crawl finishes.
     #[arg(long, help_heading = "AI search")]
     pub no_ai_checks: bool,
@@ -406,11 +533,24 @@ impl CrawlArgs {
         if self.sort_params {
             c.scope.query_params.sort = true;
         }
+        let sm = &mut c.scope.sitemaps;
         if self.use_sitemaps {
-            c.scope.use_sitemaps = true;
+            sm.read = true;
+            sm.crawl_sitemap_only = true;
         }
+        if self.no_sitemaps {
+            sm.read = false;
+            sm.crawl_sitemap_only = false;
+        }
+        if self.no_crawl_sitemap_only {
+            sm.read = true;
+            sm.crawl_sitemap_only = false;
+        }
+        sm.urls.extend(self.sitemap_urls.iter().cloned());
+        sm.files.extend(self.sitemap_files.iter().cloned());
 
         self.identity.apply(&mut c)?;
+        self.access.apply(&mut c)?;
 
         if let Some(s) = self.speed {
             c.speed = match s {
@@ -480,6 +620,28 @@ impl CrawlArgs {
         if self.no_store_html {
             c.extraction.store_html = false;
         }
+        if let Some(path) = &self.rules {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let more =
+                spiderlens_config::import_rules(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            spiderlens_config::merge_rules(&mut c.custom, more);
+        }
         Ok(Resolved { config: c, notices })
     }
+}
+
+/// `PATH=BASE-URL` for `--sitemap-file`. The split is at the last `=` that
+/// is followed by `http`, so paths may contain `=`.
+fn parse_local_sitemap(s: &str) -> Result<spiderlens_config::LocalSitemap, String> {
+    let at = s
+        .rmatch_indices('=')
+        .map(|(i, _)| i)
+        .find(|&i| s[i + 1..].starts_with("http"))
+        .ok_or_else(|| {
+            "expected PATH=BASE-URL, for example sitemap.xml=https://example.com/sitemap.xml".to_string()
+        })?;
+    Ok(spiderlens_config::LocalSitemap {
+        path: s[..at].to_string(),
+        base_url: s[at + 1..].to_string(),
+    })
 }

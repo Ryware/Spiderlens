@@ -4,6 +4,7 @@
 //! snapshot: rows the crawl commits after the export starts are not seen
 //! (FR-030), and the crawl never waits for the export.
 
+use std::borrow::Cow;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::types::Value;
 
 use crate::Error;
+use crate::issues::ResolvedSettings;
 use crate::reader::connect;
 use crate::tabs::{ColumnDef, TabDef};
 use crate::view::{ViewQuery, compile};
@@ -23,6 +25,8 @@ pub enum ExportError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Results(#[from] Error),
+    #[error("{} already exists", .0.display())]
+    Exists(PathBuf),
 }
 
 impl From<rusqlite::Error> for ExportError {
@@ -32,14 +36,16 @@ impl From<rusqlite::Error> for ExportError {
 }
 
 /// Values a spreadsheet would run as a formula (OWASP CSV injection).
-fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     match s.chars().next() {
         Some('=' | '+' | '-' | '@' | '\t' | '\r') => format!("'{s}").into(),
         _ => s.into(),
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+/// One CSV field: formula-like values neutralised, quoted when needed
+/// (FR-029). Shared with the comparison exports (spec 012).
+pub fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))
@@ -59,14 +65,20 @@ fn tsv_field(out: &mut String, s: &str) {
 }
 
 /// The text a cell exports as: full value, booleans as Yes and No.
-fn cell_text(c: &ColumnDef, v: &Value) -> String {
+pub(crate) fn cell_text(c: &ColumnDef, v: &Value) -> String {
     match v {
         Value::Null | Value::Blob(_) => String::new(),
         Value::Integer(i) if c.kind == crate::ValueKind::Bool => (if *i != 0 { "Yes" } else { "No" }).into(),
+        Value::Integer(i) if c.kind == crate::ValueKind::Issues => issues_text(*i),
         Value::Integer(i) => i.to_string(),
         Value::Real(f) => f.to_string(),
         Value::Text(s) => s.clone(),
     }
+}
+
+fn issues_text(v: i64) -> String {
+    let (p, n) = crate::tabs::decode_issues(v);
+    format!("{} · {n}", p.label())
 }
 
 fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
@@ -75,16 +87,19 @@ fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
         serde_json::Value::Number(n) if c.kind == crate::ValueKind::Bool => {
             (if n.as_i64() != Some(0) { "Yes" } else { "No" }).into()
         }
+        serde_json::Value::Number(n) if c.kind == crate::ValueKind::Issues => {
+            n.as_i64().map(issues_text).unwrap_or_default()
+        }
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     }
 }
 
 /// Resolves column ids (empty = the tab's default visible columns).
-pub(crate) fn pick_columns(
-    tab: &'static TabDef,
+pub(crate) fn pick_columns<'t>(
+    tab: &'t TabDef,
     ids: &[String],
-) -> Result<Vec<(usize, &'static ColumnDef)>, Error> {
+) -> Result<Vec<(usize, &'t ColumnDef)>, Error> {
     if ids.is_empty() {
         return Ok(tab
             .columns
@@ -98,18 +113,14 @@ pub(crate) fn pick_columns(
             tab.columns
                 .iter()
                 .enumerate()
-                .find(|(_, c)| c.id == id)
+                .find(|(_, c)| c.id == id.as_str())
                 .ok_or_else(|| Error::invalid(format!("unknown column {id:?} on {}", tab.id)))
         })
         .collect()
 }
 
 /// One TSV line from a row page row (`[id, cells…]`), for copy (FR-026).
-pub fn write_tsv_row(
-    tab: &'static TabDef,
-    columns: &[String],
-    row: &[serde_json::Value],
-) -> Result<String, Error> {
+pub fn write_tsv_row(tab: &TabDef, columns: &[String], row: &[serde_json::Value]) -> Result<String, Error> {
     let cols = pick_columns(tab, columns)?;
     let mut s = String::new();
     for (n, (i, c)) in cols.iter().enumerate() {
@@ -121,14 +132,14 @@ pub fn write_tsv_row(
     Ok(s)
 }
 
-pub(crate) fn tsv_header(tab: &'static TabDef, columns: &[String]) -> Result<String, Error> {
+pub(crate) fn tsv_header(tab: &TabDef, columns: &[String]) -> Result<String, Error> {
     let cols = pick_columns(tab, columns)?;
     let mut s = String::new();
     for (n, (_, c)) in cols.iter().enumerate() {
         if n > 0 {
             s.push('\t');
         }
-        tsv_field(&mut s, c.label);
+        tsv_field(&mut s, &c.label);
     }
     Ok(s)
 }
@@ -136,28 +147,54 @@ pub(crate) fn tsv_header(tab: &'static TabDef, columns: &[String]) -> Result<Str
 /// Writes the view as CSV to `out`: byte order mark, header row, every
 /// matching row in view order (FR-028, FR-029). `ranges` limits it to
 /// positions (a selection). Returns the number of rows written.
+// The export's inputs are independent choices; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn write_csv(
     crawl: &Path,
     q: &ViewQuery,
     columns: &[String],
     ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
     out: impl Write,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
-    let (conn, features) = connect(crawl)?;
-    let c = compile(q, &features)?;
-    let cols = pick_columns(c.tab, columns)?;
-    for d in &c.derived {
-        crate::tabs::build_derived(&conn, *d, &features)?;
+    let settings = ResolvedSettings::default();
+    write_csv_with(
+        crawl, q, columns, ranges, all_values, &settings, out, cancel, progress,
+    )
+}
+
+/// [`write_csv`] with the issue settings in force (spec 009 FR-025: an
+/// issue's export lists the same URLs the app shows).
+#[allow(clippy::too_many_arguments)]
+pub fn write_csv_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
+    out: impl Write,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
+    let (conn, features, _) = connect(crawl, settings)?;
+    let custom = crate::custom::tabs(&conn)?;
+    let c = compile(q, &features, &custom)?;
+    let cols = pick_columns(&c.tab, columns)?;
+    let links = &features.link_settings;
+    if c.derived.contains(&crate::tabs::Derived::LinkMetrics) && links.weighting.is_some() {
+        crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
     }
+    crate::issues::build_derived_with(&conn, &features, settings, &c.derived)?;
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;
     for (n, (_, col)) in cols.iter().enumerate() {
         if n > 0 {
             out.write_all(b",")?;
         }
-        csv_field(&mut out, col.label)?;
+        csv_field(&mut out, &col.label)?;
     }
     out.write_all(b"\r\n")?;
 
@@ -174,7 +211,15 @@ pub fn write_csv(
     )?;
     let select: String = cols
         .iter()
-        .map(|(_, col)| if features.has(col.need) { col.expr } else { "NULL" })
+        .map(|(_, col)| {
+            if !features.has(col.need) {
+                Cow::Borrowed("NULL")
+            } else if let Some(e) = all_values.and_then(|sep| crate::custom::all_values_expr(col, sep)) {
+                Cow::Owned(e)
+            } else {
+                Cow::Borrowed(col.expr.as_ref())
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let full = vec![(0u32, u32::try_from(total).unwrap_or(u32::MAX))];
@@ -222,11 +267,32 @@ pub fn write_csv(
 /// Exports to `dest` through `<dest>.part`, renamed when complete; on
 /// cancel or failure the part file is removed and `dest` is untouched
 /// (FR-030, Edge case: export failures).
+#[allow(clippy::too_many_arguments)]
 pub fn export_file(
     crawl: &Path,
     q: &ViewQuery,
     columns: &[String],
     ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    dest: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
+    let settings = ResolvedSettings::default();
+    export_file_with(
+        crawl, q, columns, ranges, all_values, &settings, dest, cancel, progress,
+    )
+}
+
+/// [`export_file`] with the issue settings in force.
+#[allow(clippy::too_many_arguments)]
+pub fn export_file_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
     dest: &Path,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
@@ -234,7 +300,9 @@ pub fn export_file(
     let part = part_path(dest);
     let result = (|| {
         let file = std::fs::File::create(&part)?;
-        let n = write_csv(crawl, q, columns, ranges, &file, cancel, progress)?;
+        let n = write_csv_with(
+            crawl, q, columns, ranges, all_values, settings, &file, cancel, progress,
+        )?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&part, dest)?;
@@ -265,13 +333,13 @@ impl crate::Reader {
         let tab = self
             .views
             .get(&view)
-            .map(|v| v.tab)
+            .map(|v| v.tab.clone())
             .ok_or_else(|| Error::invalid("view closed"))?;
         let rows = self.rows_at(view, ranges, COPY_LIMIT)?;
-        let mut s = tsv_header(tab, columns)?;
+        let mut s = tsv_header(&tab, columns)?;
         for row in rows {
             s.push('\n');
-            s.push_str(&write_tsv_row(tab, columns, &row)?);
+            s.push_str(&write_tsv_row(&tab, columns, &row)?);
         }
         Ok(s)
     }

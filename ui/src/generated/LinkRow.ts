@@ -16,4 +16,10 @@ raw: string, kind: string, nofollow: boolean, followed: boolean, internal: boole
  * Anchor text, or alt text for images. For images, null means the alt
  * attribute is missing.
  */
-text: string | null, sponsored: boolean, ugc: boolean, };
+text: string | null, sponsored: boolean, ugc: boolean, 
+/**
+ * Where the anchor sits on its page (spec 023 US4): a `Position` or
+ * "unknown" (HTML not stored). Null when not worked out yet, or not
+ * an anchor.
+ */
+position: string | null, };

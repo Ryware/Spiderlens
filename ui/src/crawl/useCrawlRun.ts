@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
@@ -48,6 +49,8 @@ export interface CrawlRunState {
   applied: { speed: SpeedSettings; retry: RetrySettings } | null;
   /** The disk, write or network problem that paused the crawl (spec 006 US5, spec 004 FR-015). */
   local: LocalError | null;
+  /** The Crawl Analysis pass running after the crawl (spec 009 plan D12). */
+  analysis: PassProgress | null;
 }
 
 const initial: CrawlRunState = {
@@ -62,6 +65,7 @@ const initial: CrawlRunState = {
   notices: [],
   applied: null,
   local: null,
+  analysis: null,
 };
 
 /** Only the newest notices stay on screen; the crawl log keeps them all. */
@@ -97,7 +101,7 @@ export function useCrawlRun(transport: Transport) {
   const finish = useCallback((f: CrawlFinished) => {
     endSegment();
     idRef.current = null;
-    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error, local: f.local ?? null }));
+    setState((s) => ({ ...s, phase: phaseFor(f), id: null, path: f.path, report: f.report, error: f.error, local: f.local ?? null, analysis: null }));
   }, []);
 
   useEffect(() => {
@@ -112,6 +116,11 @@ export function useCrawlRun(transport: Transport) {
       transport.onCrawlWarning((w) => {
         if (w.id !== idRef.current) return;
         setState((s) => (s.warnings.includes(w.message) ? s : { ...s, warnings: [...s.warnings, w.message] }));
+      }),
+      transport.onPassProgress((p) => {
+        // Passes on an opened file end with their last event.
+        const done = p.total > 0 && p.done >= p.total;
+        setState((s) => ({ ...s, analysis: done && s.id === null ? null : p }));
       }),
       transport.onCrawlNotice((n) => {
         if (n.id !== idRef.current) return;

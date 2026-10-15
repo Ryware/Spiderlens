@@ -6,6 +6,7 @@
 //! From then on any page anywhere is a range read on `pos`, and "where is
 //! row X now" is an index lookup, which keeps live refreshes anchored.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -75,7 +76,7 @@ pub struct Refresh {
 }
 
 pub(crate) struct View {
-    pub tab: &'static TabDef,
+    pub tab: Cow<'static, TabDef>,
     pub query: ViewQuery,
     pub where_sql: String,
     pub order_sql: String,
@@ -90,7 +91,7 @@ pub(crate) struct View {
 
 /// The parts of a view's query that do not depend on paging.
 pub(crate) struct Compiled {
-    pub tab: &'static TabDef,
+    pub tab: Cow<'static, TabDef>,
     pub where_sql: String,
     pub order_sql: String,
     pub search: Option<String>,
@@ -106,8 +107,8 @@ impl Compiled {
 
 /// Turns a view query into SQL fragments, checking every id against the
 /// tab definitions (ids never reach SQL as text).
-pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compiled> {
-    let tab = tabs::tab(&q.tab).ok_or_else(|| Error::invalid(format!("unknown tab {:?}", q.tab)))?;
+pub(crate) fn compile(q: &ViewQuery, features: &crate::Features, custom: &[TabDef]) -> Result<Compiled> {
+    let tab = tabs::find(&q.tab, custom).ok_or_else(|| Error::invalid(format!("unknown tab {:?}", q.tab)))?;
     let filter = tab
         .filter(&q.filter)
         .ok_or_else(|| Error::invalid(format!("unknown filter {:?} on {}", q.filter, tab.id)))?;
@@ -140,6 +141,7 @@ pub(crate) fn compile(q: &ViewQuery, features: &crate::Features) -> Result<Compi
     if search.is_some() {
         let main = tab
             .search_column
+            .as_deref()
             .and_then(|c| tab.column(c))
             .filter(|c| features.has(c.need))
             .map(|c| format!(" OR ci_contains({}, ?1)", c.expr))
@@ -178,9 +180,11 @@ fn sort_sql(c: &ColumnDef, desc: bool, features: &crate::Features) -> String {
         return "u.id".into();
     }
     let dir = if desc { "DESC" } else { "ASC" };
-    let e = c.expr;
+    let e = &c.expr;
     if let Some(k) = c.key {
         format!("({k} IS NULL OR {k} = '') ASC, {k} {dir}, u.id ASC")
+    } else if let Some(k) = &c.sort_key {
+        format!("(({e}) IS NULL OR ({e}) = '') ASC, ({k}) {dir}, natkey({e}) {dir}, u.id ASC")
     } else if c.kind.is_text() {
         format!("(({e}) IS NULL OR ({e}) = '') ASC, natkey({e}) {dir}, u.id ASC")
     } else {
@@ -194,7 +198,7 @@ pub(crate) fn select_list(tab: &TabDef, features: &crate::Features) -> String {
     for c in &tab.columns {
         s.push_str(", ");
         if features.has(c.need) {
-            s.push_str(c.expr);
+            s.push_str(&c.expr);
         } else {
             s.push_str("NULL");
         }
@@ -245,7 +249,8 @@ fn u32_of(n: i64) -> u32 {
 impl Reader {
     /// Opens a view and returns its first `count` rows (plan D4 step 1).
     pub fn open_view(&mut self, q: &ViewQuery, count: u32) -> Result<RowPage> {
-        let c = compile(q, &self.features)?;
+        let custom = self.custom_tabs()?.to_vec();
+        let c = compile(q, &self.features, &custom)?;
         self.ensure_derived(c.derived.iter().copied())?;
         let version = self.version()?;
         let id = self.next_view;
@@ -320,7 +325,7 @@ impl Reader {
             .views
             .get(&view)
             .ok_or_else(|| Error::invalid("view closed"))?;
-        let select = select_list(v.tab, &self.features);
+        let select = select_list(&v.tab, &self.features);
         let width = v.tab.columns.len() + 1;
         let rows = if let Some(table) = &v.table {
             let sql = format!(
@@ -377,7 +382,7 @@ impl Reader {
                 t.eligible_on_urls()
             );
             if self.conn.query_row(&sql, [id], |r| r.get::<_, bool>(0))? {
-                out.push(t.id);
+                out.push(t.id.as_ref());
             }
         }
         Ok(out)

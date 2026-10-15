@@ -76,7 +76,7 @@ fn page_titles(path: &str) {
         ));
     }
     for f in tab("page-titles").unwrap().filters.iter().skip(1) {
-        cases.push((format!("filter {}", f.id), q("page-titles", f.id, "", None)));
+        cases.push((format!("filter {}", f.id), q("page-titles", &f.id, "", None)));
     }
     for round in ["cold", "warm", "after a commit"] {
         if round == "after a commit" {
@@ -181,6 +181,7 @@ fn main() {
             std::path::Path::new(&path),
             &q("internal", "all", "", Some(("title", false))),
             &[],
+            None,
             None,
             &out,
             &cancel,

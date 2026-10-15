@@ -2,11 +2,12 @@
 // the table, copy and export.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Search, SearchX } from "lucide-react";
+import { Download, Play, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
+import type { RuleInfo } from "../generated/RuleInfo";
 import type { UrlScope } from "../generated/UrlScope";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
@@ -15,11 +16,13 @@ import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
+import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
 import { useExport } from "./useExport";
 import { useView } from "./useView";
+import { type CustomRun, runOutcomeText } from "./useCustomRun";
 
 /** Most rows copied through the clipboard (spec Assumptions); export does more. */
 export const COPY_LIMIT = 10_000;
@@ -69,6 +72,9 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  issue = null,
+  onIssueSettings,
+  customRun,
   onInspect,
   reveal,
 }: {
@@ -80,6 +86,11 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Set when this tab lists one issue's URLs (spec 009 D10). */
+  issue?: RuleInfo | null;
+  onIssueSettings?: () => void;
+  /** On a custom extraction or search tab: running the crawl's rules again (spec 013 US3). */
+  customRun?: CustomRun;
   /** Enter on a row: bring the inspector up and move focus into it. */
   onInspect?: () => void;
   /** A URL to select and scroll to ("show in table"); a new `n` asks again. */
@@ -96,15 +107,25 @@ export function ResultsView({
   useEffect(() => {
     setPrefs(loadPrefs(tab));
     setSearchText(session.search);
+    sent.current = session.search;
     setSelection(emptySelection);
     // Only when the tab changes; the session is the tab's own.
   }, [tab]);
-  // Typing updates the session; a search cleared from outside (show in
-  // table) is not put back.
+  // The search this view last sent; any other value came from outside (an
+  // issue target opened from the inspector) and replaces the typed text.
+  const sent = useRef(session.search);
   useEffect(() => {
-    if (search !== session.search) onSession({ search });
-    // Only when the typed search settles.
-  }, [search]);
+    if (session.search !== sent.current) {
+      sent.current = session.search;
+      setSearchText(session.search);
+    }
+  }, [session.search]);
+  useEffect(() => {
+    if (search !== session.search && search !== sent.current) {
+      sent.current = search;
+      onSession({ search });
+    }
+  }, [search, session.search, onSession]);
 
   const updatePrefs = (p: ColumnPrefs) => {
     setPrefs(p);
@@ -221,11 +242,20 @@ export function ResultsView({
     return () => clearTimeout(t);
   }, [notice]);
 
-  const startExport = async (onlySelected: boolean) => {
+  const startExport = async (onlySelected: boolean, allValues?: string) => {
     const dest = await transport.pickCsvPath(`${tab.title.toLowerCase().replace(/\s+/g, "-")}${session.filter === "all" ? "" : `-${session.filter}`}`);
     if (!dest) return;
-    await exp.start(path, query, prefs.order, onlySelected ? selection.ranges : null, dest);
+    await exp.start(path, query, prefs.order, onlySelected ? selection.ranges : null, dest, allValues);
   };
+  // Extractors can find several values per page; the table shows the first (FR-025).
+  const allValuesItems =
+    tab.id === "custom_extraction"
+      ? [" | ", "; "].map((sep) => ({
+          label: `Export all values, joined by "${sep.trim()}"…`,
+          onSelect: () => void startExport(false, sep),
+          disabled: view.view === null,
+        }))
+      : [];
 
   const filterLabel = tab.filters.find((f) => f.id === session.filter)?.label ?? "";
   const totalText = view.ready ? view.total.toLocaleString() : `${view.total.toLocaleString()}+`;
@@ -272,6 +302,12 @@ export function ResultsView({
                 className="h-6 w-56 pl-7 text-sm"
               />
             </label>
+            {customRun && (
+              <Button size="sm" variant="quiet" disabled={customRun.running || live} onClick={() => void customRun.start(null)} title={live ? "Rules can run again once the crawl stops." : undefined}>
+                <Play aria-hidden className="size-3.5" />
+                Run rules again
+              </Button>
+            )}
             <ColumnMenu tab={tab} visible={prefs.order} available={available} onChange={(order) => updatePrefs({ ...prefs, order })} onReset={() => updatePrefs(defaultPrefs(tab))} />
             <Menu
               label="Export"
@@ -284,12 +320,17 @@ export function ResultsView({
               items={[
                 { label: view.ready ? `Export ${view.total.toLocaleString()} rows as CSV…` : "Export rows as CSV…", onSelect: () => void startExport(false), disabled: view.view === null },
                 { label: `Export ${selected.toLocaleString()} selected as CSV…`, onSelect: () => void startExport(true), disabled: selected === 0 },
+                ...allValuesItems,
               ]}
             />
           </div>
         </div>
         {tab.id === "ai-search" && <AiOverview transport={transport} path={path} live={live} />}
-        <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        {issue ? (
+          <IssueHeader rule={issue} onSettings={onIssueSettings} />
+        ) : (
+          <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        )}
       </header>
 
       <div className="min-h-0 flex-1">
@@ -323,8 +364,24 @@ export function ResultsView({
         )}
       </div>
 
-      {(notice || exp.job !== null || exp.result) && (
+      {(notice || exp.job !== null || exp.result || customRun?.running || customRun?.result) && (
         <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-line bg-chrome px-3 text-sm">
+          {customRun?.running && customRun.progress && (
+            <>
+              <span className="text-fg-2 tabular">
+                Running rules on {customRun.progress.done.toLocaleString()} of {customRun.progress.total ? customRun.progress.total.toLocaleString() : "…"} pages
+              </span>
+              <Bar value={customRun.progress.total ? customRun.progress.done / customRun.progress.total : 0} tone="accent" label="Rules progress" className="w-40" />
+              <Button size="sm" variant="quiet" onClick={customRun.cancel}>
+                Stop
+              </Button>
+            </>
+          )}
+          {!customRun?.running && customRun?.result && (
+            <Notice kind={customRun.result.state === "failed" ? "bad" : "info"} role="status">
+              {runOutcomeText(customRun.result)}
+            </Notice>
+          )}
           {exp.job !== null && exp.progress && (
             <>
               <span className="text-fg-2 tabular">
