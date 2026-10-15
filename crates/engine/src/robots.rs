@@ -25,6 +25,8 @@ struct Rule {
     pattern: String,
     /// The line as written, for example `Disallow: /private/`.
     line: String,
+    /// 1-based line number in the file (spec 015 FR-009).
+    line_no: u32,
 }
 
 #[derive(Debug, Default)]
@@ -39,6 +41,26 @@ struct Group {
 pub struct RobotsTxt {
     groups: Vec<Group>,
     sitemaps: Vec<String>,
+    other_lines: Vec<OtherLine>,
+}
+
+/// A `key: value` line that is not a group, rule, crawl-delay or sitemap
+/// line, such as `Content-Signal` or `License` (spec 015 FR-014).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherLine {
+    pub line_no: u32,
+    /// As written, without surrounding spaces.
+    pub key: String,
+    pub value: String,
+    /// The `User-agent` values of the group the line sits in, if any.
+    pub agents: Vec<String>,
+}
+
+/// The rule that decides a URL, with where it is in the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecidingRule {
+    pub line_no: u32,
+    pub line: String,
 }
 
 /// The rules that apply to one user agent on one host.
@@ -71,7 +93,8 @@ impl RobotsTxt {
         // line starts a new group (RFC 9309 section 2.1).
         let mut in_rules = false;
 
-        for raw in text.lines() {
+        for (i, raw) in text.lines().enumerate() {
+            let line_no = u32::try_from(i + 1).unwrap_or(u32::MAX);
             let line = raw.split('#').next().unwrap_or("").trim();
             let Some((key, value)) = line.split_once(':') else {
                 continue;
@@ -104,6 +127,7 @@ impl RobotsTxt {
                         allow,
                         pattern: encode_pattern(value),
                         line: format!("{}: {value}", if allow { "Allow" } else { "Disallow" }),
+                        line_no,
                     });
                 }
                 "crawl-delay" => {
@@ -118,13 +142,40 @@ impl RobotsTxt {
                     }
                 }
                 "sitemap" if !value.is_empty() => out.sitemaps.push(value.to_string()),
-                _ => {}
+                "sitemap" => {}
+                _ => out.other_lines.push(OtherLine {
+                    line_no,
+                    key: key_as_written(line),
+                    value: value.to_string(),
+                    agents: current.as_ref().map(|g| g.agents.clone()).unwrap_or_default(),
+                }),
             }
         }
         if let Some(g) = current {
             out.groups.push(g);
         }
         out
+    }
+
+    /// Lines this parser does not act on, in file order (spec 015 FR-014).
+    pub fn other_lines(&self) -> &[OtherLine] {
+        &self.other_lines
+    }
+
+    /// Whether some group names `token` itself (not only `*`).
+    pub fn has_group(&self, token: &str) -> bool {
+        let token = token.to_ascii_lowercase();
+        self.groups.iter().any(|g| g.agents.contains(&token))
+    }
+
+    /// Like [`Self::for_agent`], for crawlers that follow another crawler's
+    /// group when they have none (Applebot follows Googlebot): the first
+    /// token with its own group wins, else the `*` groups.
+    pub fn for_agent_with_fallback(&self, token: &str, fallbacks: &[String]) -> RobotsPolicy {
+        std::iter::once(token)
+            .chain(fallbacks.iter().map(String::as_str))
+            .find(|t| self.has_group(t))
+            .map_or_else(|| self.for_agent(token), |t| self.for_agent(t))
     }
 
     /// Merges every group naming `token` (case-insensitive), or every `*`
@@ -178,9 +229,25 @@ impl RobotsPolicy {
         if self.disallow_all {
             return RobotsVerdict::Disallowed("robots.txt unavailable".into());
         }
+        match self.deciding_rule(url) {
+            Some(rule) => RobotsVerdict::Disallowed(rule.line.clone()),
+            None => RobotsVerdict::Allowed,
+        }
+    }
+
+    /// The Disallow rule that blocks `url`, with its line number; `None`
+    /// when the URL is allowed. Ignores [`Self::is_disallow_all`].
+    pub fn blocking_rule(&self, url: &Url) -> Option<DecidingRule> {
+        self.deciding_rule(url).map(|r| DecidingRule {
+            line_no: r.line_no,
+            line: r.line.clone(),
+        })
+    }
+
+    fn deciding_rule(&self, url: &Url) -> Option<&Rule> {
         let mut target = url.path().to_string();
         if target == "/robots.txt" {
-            return RobotsVerdict::Allowed;
+            return None;
         }
         if let Some(q) = url.query() {
             target.push('?');
@@ -192,11 +259,15 @@ impl RobotsPolicy {
             .iter()
             .filter(|r| matches(&r.pattern, &target))
             .max_by_key(|r| (r.pattern.len(), r.allow));
-        match best {
-            Some(rule) if !rule.allow => RobotsVerdict::Disallowed(rule.line.clone()),
-            _ => RobotsVerdict::Allowed,
-        }
+        best.filter(|r| !r.allow)
     }
+}
+
+/// The key of a `key: value` line as written (case kept).
+fn key_as_written(line: &str) -> String {
+    line.split_once(':')
+        .map(|(k, _)| k.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// `Googlebot/2.1` and `googlebot` both name the product token `googlebot`.
@@ -475,6 +546,74 @@ mod tests {
             verdict("Disallow: /x\n", "bot", "https://a.test/x"),
             RobotsVerdict::Allowed
         );
+    }
+
+    #[test]
+    fn blocking_rule_has_its_line_number() {
+        let txt = RobotsTxt::parse(b"# comment\nUser-agent: GPTBot\nAllow: /public/\nDisallow: /\n");
+        let p = txt.for_agent("gptbot");
+        assert_eq!(
+            p.blocking_rule(&url("https://a.test/x")),
+            Some(DecidingRule {
+                line_no: 4,
+                line: "Disallow: /".into()
+            })
+        );
+        assert_eq!(p.blocking_rule(&url("https://a.test/public/a")), None);
+        assert_eq!(p.blocking_rule(&url("https://a.test/robots.txt")), None);
+    }
+
+    #[test]
+    fn other_lines_are_kept_with_their_group() {
+        let txt = RobotsTxt::parse(
+            b"Content-Signal: search=yes, ai-train=no\nUser-agent: *\nContent-Usage: train-ai=n\nDisallow: /x\nLicense: https://a.test/license.xml\nSitemap: https://a.test/s.xml\nDisalow: /typo\n",
+        );
+        let lines: Vec<_> = txt
+            .other_lines()
+            .iter()
+            .map(|l| (l.line_no, l.key.as_str(), l.value.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (1, "Content-Signal", "search=yes, ai-train=no"),
+                (3, "Content-Usage", "train-ai=n"),
+                (5, "License", "https://a.test/license.xml"),
+                (7, "Disalow", "/typo"),
+            ]
+        );
+        assert!(txt.other_lines()[0].agents.is_empty());
+        assert_eq!(txt.other_lines()[1].agents, ["*"]);
+    }
+
+    #[test]
+    fn fallback_token_applies_only_without_own_group() {
+        let txt =
+            RobotsTxt::parse(b"User-agent: Googlebot\nDisallow: /g/\n\nUser-agent: *\nDisallow: /all/\n");
+        let fb = vec!["googlebot".to_string()];
+        let apple = txt.for_agent_with_fallback("applebot", &fb);
+        assert_eq!(apple.matched_agent.as_deref(), Some("googlebot"));
+        assert!(matches!(
+            apple.check(&url("https://a.test/g/1")),
+            RobotsVerdict::Disallowed(_)
+        ));
+        assert_eq!(apple.check(&url("https://a.test/all/1")), RobotsVerdict::Allowed);
+
+        let own = RobotsTxt::parse(
+            b"User-agent: Applebot\nDisallow: /a/\n\nUser-agent: Googlebot\nDisallow: /g/\n",
+        );
+        let apple = own.for_agent_with_fallback("applebot", &fb);
+        assert_eq!(apple.matched_agent.as_deref(), Some("applebot"));
+        assert_eq!(apple.check(&url("https://a.test/g/1")), RobotsVerdict::Allowed);
+
+        let star = RobotsTxt::parse(b"User-agent: *\nDisallow: /all/\n");
+        assert_eq!(
+            star.for_agent_with_fallback("applebot", &fb)
+                .matched_agent
+                .as_deref(),
+            Some("*")
+        );
+        assert!(!star.has_group("applebot"));
     }
 
     #[test]

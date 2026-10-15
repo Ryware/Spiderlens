@@ -23,18 +23,20 @@ use url::Url;
 
 use super::file::{self, LocalError, LockError, WriterLock};
 use super::health::{HostHealth, Transition};
+use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, SpeedLimit};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
+use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
-use super::speed::{Signal, SiteSpeed, parse_retry_after};
+use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
     Response, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
@@ -60,6 +62,8 @@ const MAX_WINDOW: usize = 64 * 1024;
 /// Network failures in a row, across at least two hosts and with no answer
 /// in between, that mean the local network is down (spec 004 plan D7).
 const NETWORK_DOWN_FAILURES: u32 = 10;
+/// Sites listed in the per-site breakdown (spec 008 FR-029).
+const SITES_SHOWN: usize = 50;
 /// How often free space on the crawl file's drive is checked (spec 006 FR-027).
 const DISK_CHECK_EVERY: Duration = Duration::from_secs(2);
 
@@ -193,6 +197,14 @@ pub struct Progress {
     /// Nothing can be requested because every remaining URL's host is
     /// paused (US4.4).
     pub waiting_for_host: bool,
+    /// What keeps the crawl from going faster, if anything (spec 008
+    /// FR-028).
+    pub limit: Option<SpeedLimit>,
+    /// The sites with work in progress, busiest first, at most
+    /// `SITES_SHOWN` of them (FR-029).
+    pub sites: Vec<SitePace>,
+    /// How many sites have work in progress in all.
+    pub sites_total: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +265,16 @@ pub struct CrawlSummary {
     pub manual_retries: u64,
     /// Why the crawl paused itself (`network`), if it did.
     pub pause_reason: Option<String>,
+    /// Sites that slowed down, asked to wait or paused, one entry per run
+    /// (spec 008 FR-021).
+    pub speed_events: Vec<SpeedNote>,
+}
+
+/// What slowed one site down during a run (spec 008 FR-021).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpeedNote {
+    pub host: String,
+    pub summary: String,
 }
 
 impl CrawlSummary {
@@ -333,6 +355,11 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
         pause_reason: store.meta("pause_reason")?.filter(|r| !r.is_empty()),
+        speed_events: store
+            .speed_summaries()?
+            .into_iter()
+            .map(|(host, summary)| SpeedNote { host, summary })
+            .collect(),
     })
 }
 
@@ -377,6 +404,8 @@ struct Host {
     speed: SiteSpeed,
     /// Circuit breaker (spec 004 plan D6).
     health: HostHealth,
+    /// When it last answered, for "every site is slow at once" (FR-019).
+    last_answer: Instant,
 }
 
 impl Host {
@@ -388,6 +417,7 @@ impl Host {
             delay: None,
             speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
             health: HostHealth::default(),
+            last_answer: Instant::now(),
         }
     }
 
@@ -401,6 +431,10 @@ impl Host {
         self.health.limit().map_or(usual, |l| l.min(usual))
     }
 }
+
+/// A cut, a requested wait, the allowance after them, and the site's typical
+/// and usual response times.
+type SpeedEvent = (Option<Cut>, Option<Duration>, u32, (Option<f64>, Option<f64>));
 
 /// What a fetch task reports.
 // Page is nearly every message, so boxing it would only add an allocation.
@@ -424,6 +458,16 @@ enum Msg {
     },
     SitemapDone(SitemapRow),
     SitemapsFinished,
+    SiteFile(SiteFileRow),
+    SiteFilesFinished,
+}
+
+/// The per-host AI site files (spec 015 FR-010), fetched after the last page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteFiles {
+    NotStarted,
+    Pending,
+    Done,
 }
 
 struct PageOutcome {
@@ -451,7 +495,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    hook: Option<PageHook>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -472,6 +523,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     robots_token: &token,
                     // Spec 026: stored once the crawl file has the tables.
                     a11y: false,
+                    hook: hook.as_ref(),
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
@@ -529,9 +581,16 @@ pub struct Crawler {
     start: Option<Url>,
     resolve: Vec<(String, SocketAddr)>,
     retry_base: Duration,
+    page_hook: Option<PageHook>,
 }
 
 impl Crawler {
+    /// Reads more from every parsed page during this crawl (see
+    /// [`PageHook`]); its facts are stored in `page_facts`.
+    pub fn set_page_hook(&mut self, hook: PageHook) {
+        self.page_hook = Some(hook);
+    }
+
     /// Creates the crawl file and records the seeds. The configuration must
     /// already be validated (spec 002); invalid patterns are refused here too.
     pub fn create(path: &Path, config: CrawlConfig, input: &ModeInput) -> Result<Self, CrawlError> {
@@ -624,6 +683,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -743,6 +803,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -896,6 +957,7 @@ struct Run {
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
     errors: u64,
@@ -924,6 +986,15 @@ struct Run {
     window_cap: usize,
     /// Set while a redirect past the hop limit is being recorded.
     redirect_over_limit: bool,
+    /// URLs finished per host, earlier runs included (spec 008 FR-029).
+    crawled_by_host: HashMap<String, u64>,
+    /// Speed events per host in this run (FR-021).
+    site_events: HashMap<String, SiteEvents>,
+    /// How busy the loop is: computer or saving as the limit (FR-028).
+    load: LoadMeter,
+    /// Every site is slow at once: requests stay at this many until it
+    /// passes (FR-019).
+    connection_hold: Option<u32>,
     /// A disk problem that is pausing the crawl (spec 006 FR-027).
     local: Option<LocalError>,
     next_disk_check: Instant,
@@ -994,6 +1065,7 @@ impl Run {
             .find(|(s, _)| *s == UrlState::Crawled)
             .map_or(0, |(_, n)| *n);
         let errors = c.store.page_errors()?;
+        let crawled_by_host = c.store.crawled_by_host()?.into_iter().collect();
         let active_before_ms = c
             .store
             .meta("active_ms")?
@@ -1016,6 +1088,7 @@ impl Run {
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
             errors,
@@ -1035,6 +1108,10 @@ impl Run {
             net_hosts: HashSet::new(),
             window_cap: WINDOW,
             redirect_over_limit: false,
+            crawled_by_host,
+            site_events: HashMap::new(),
+            load: LoadMeter::new(now),
+            connection_hold: None,
             local: None,
             next_disk_check: Instant::now(),
         })
@@ -1062,6 +1139,7 @@ impl Run {
     fn progress(&mut self, force: bool) {
         if force || self.last_progress.elapsed() >= PROGRESS_EVERY {
             self.last_progress = Instant::now();
+            self.update_connection_hold(self.last_progress);
             if self.events.is_none() {
                 return;
             }
@@ -1089,6 +1167,8 @@ impl Run {
                     .window
                     .host_heads()
                     .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
+            let load = self.load.load(Instant::now());
+            let (limit, sites, sites_total) = self.pace(urls_per_sec, load);
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -1103,8 +1183,102 @@ impl Run {
                 waiting,
                 paused_hosts,
                 waiting_for_host,
+                limit,
+                sites,
+                sites_total,
             }));
         }
+    }
+
+    /// FR-019: when every answering site gets slow at once, the user's
+    /// connection is the problem. Requests stay where they are and no site
+    /// is cut for slowness until it passes.
+    fn update_connection_hold(&mut self, now: Instant) {
+        let slow = pace::connection_slow(self.hosts.values().map(|h| (&h.speed, h.last_answer)), now);
+        if slow == self.connection_hold.is_some() {
+            return;
+        }
+        self.connection_hold = slow.then_some(self.in_flight.max(1));
+        for h in self.hosts.values_mut() {
+            h.speed.set_hold(slow);
+        }
+    }
+
+    fn site_view<'a>(&'a self, key: &'a str, h: &'a Host, waiting: u64) -> SiteView<'a> {
+        use super::health::HealthState;
+        let now = Instant::now();
+        let paused = match h.health.state() {
+            HealthState::Paused { until } => {
+                Some(until.saturating_duration_since(now).as_secs_f64().ceil() as u64)
+            }
+            HealthState::Probing { .. } => Some(0),
+            HealthState::Active | HealthState::GivenUp => None,
+        };
+        SiteView {
+            host: key,
+            speed: &h.speed,
+            in_flight: h.in_flight,
+            limit: h.limit(),
+            delay: h.delay,
+            next_start: h.next_start,
+            paused,
+            crawled: self.crawled_by_host.get(key).copied().unwrap_or(0),
+            waiting,
+            robots_pending: !matches!(h.robots, RobotsState::Known(..)),
+        }
+    }
+
+    /// What limits the crawl (FR-028) and the per-site breakdown (FR-029).
+    fn pace(&self, urls_per_sec: f64, load: pace::Load) -> (Option<SpeedLimit>, Vec<SitePace>, u32) {
+        let now = Instant::now();
+        let mut waiting: HashMap<&str, u64> = self.window.host_counts().map(|(h, n)| (h, n as u64)).collect();
+        for (key, h) in &self.hosts {
+            if h.in_flight > 0 {
+                waiting.entry(key.as_str()).or_insert(0);
+            }
+        }
+        let more = !self.window.holds_everything();
+        let mut sites: Vec<SitePace> = Vec::with_capacity(waiting.len());
+        // The site holding up the most queued URLs, when no site with queued
+        // URLs can start a request now.
+        let mut blocking: Option<(&str, &Host, u64)> = None;
+        let mut any_can_start = false;
+        for (&key, &n) in &waiting {
+            let Some(h) = self.hosts.get(key) else {
+                // robots.txt not asked for yet: about to start.
+                any_can_start |= n > 0;
+                continue;
+            };
+            sites.push(pace::site_pace(&self.site_view(key, h, n), now, more && n > 0));
+            if n == 0 {
+                continue;
+            }
+            let ready = matches!(h.robots, RobotsState::Known(..));
+            if !ready || (h.in_flight < h.limit() && h.next_start <= now) {
+                any_can_start = true;
+            } else if blocking.is_none_or(|(_, _, m)| n > m) {
+                blocking = Some((key, h, n));
+            }
+        }
+        let total = sites.len() as u32;
+        sites.sort_by(|a, b| {
+            (b.in_flight as u64 + b.waiting)
+                .cmp(&(a.in_flight as u64 + a.waiting))
+                .then_with(|| a.host.cmp(&b.host))
+        });
+        sites.truncate(SITES_SHOWN);
+        let crawl = CrawlView {
+            in_flight: self.in_flight,
+            max_concurrent: self.c.config.speed.max_concurrent,
+            max_urls_per_sec: self.c.config.speed.max_urls_per_sec,
+            urls_per_sec,
+            connection_slow: self.connection_hold.is_some(),
+            load,
+        };
+        let blocking = blocking
+            .filter(|_| !any_can_start)
+            .map(|(key, h, n)| self.site_view(key, h, n));
+        (pace::crawl_limit(&crawl, blocking.as_ref(), now), sites, total)
     }
 
     fn paused_hosts(&self) -> Vec<PausedHost> {
@@ -1303,11 +1477,13 @@ impl Run {
                 .set_meta("active_ms", &self.active_ms().to_string())?;
         }
         if self.write_tx.take().is_some() {
+            let t = Instant::now();
             self.c.store.commit()?;
             if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
                 self.c.store.catch_up_checkpoint();
                 self.last_catch_up = Instant::now();
             }
+            self.load.saving(t.elapsed());
         }
         Ok(())
     }
@@ -1366,14 +1542,20 @@ impl Run {
                             && !self.sitemaps_pending
                             && self.retries.is_empty()
                         {
-                            self.c.store.set_meta("status", "completed")?;
-                            self.c
-                                .store
-                                .conn()
-                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
-                                .map_err(StoreError::from)?;
-                            self.c.store.record_event("completed", None)?;
-                            break;
+                            match self.site_files {
+                                SiteFiles::NotStarted => self.start_site_files()?,
+                                SiteFiles::Pending => {}
+                                SiteFiles::Done => {
+                                    self.c.store.set_meta("status", "completed")?;
+                                    self.c
+                                        .store
+                                        .conn()
+                                        .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                        .map_err(StoreError::from)?;
+                                    self.c.store.record_event("completed", None)?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1397,18 +1579,23 @@ impl Run {
                     None => std::future::pending().await,
                 }
             };
+            // Time spent waiting here is time the loop was not the limit.
+            let waiting_since = Instant::now();
             tokio::select! {
                 Some(cmd) = command => {
+                    self.load.idle(waiting_since.elapsed());
                     self.handle_command(cmd)?;
                 }
                 Some(msg) = self.rx.recv() => {
+                    self.load.idle(waiting_since.elapsed());
                     self.handle(msg)?;
                     if let Some((_, writes)) = &mut self.write_tx {
                         *writes += 1;
                     }
                 }
-                () = sleep => {}
+                () = sleep => self.load.idle(waiting_since.elapsed()),
                 r = self.control.changed(), if !self.control_closed => {
+                    self.load.idle(waiting_since.elapsed());
                     if r.is_err() {
                         self.control_closed = true;
                     }
@@ -1416,6 +1603,7 @@ impl Run {
             }
             self.commit_if_due()?;
         }
+        self.record_speed_summaries()?;
         self.commit()?;
         self.c.store.build_result_indexes()?;
         #[cfg(debug_assertions)]
@@ -1466,7 +1654,7 @@ impl Run {
             *wake = Some(wake.map_or(t, |w| w.min(t)));
         };
         let speed = self.c.config.speed;
-        let max_concurrent = speed.max_concurrent;
+        let max_concurrent = speed.max_concurrent.min(self.connection_hold.unwrap_or(u32::MAX));
         let robots_mode = self.c.config.robots.mode;
         loop {
             if self.in_flight >= max_concurrent {
@@ -1638,13 +1826,16 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // The hook's facts stand in for stored HTML, so it runs only when the
+        // HTML is kept (a crawl without it has no content checks either).
+        let hook = self.c.page_hook.clone().filter(|_| store_html);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1735,6 +1926,67 @@ impl Run {
             };
             let _ = tx.send(Msg::Robots { host_key: key, fetch });
         });
+    }
+
+    /// Fetches each internal host's AI site files, one at a time per host
+    /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    fn start_site_files(&mut self) -> Result<(), CrawlError> {
+        if !self.c.config.ai_checks.site_files {
+            self.site_files = SiteFiles::Done;
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        for key in self.c.store.internal_hosts()? {
+            let host = self.hosts.get(&key);
+            let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
+            let policy = match host.map(|h| &h.robots) {
+                Some(RobotsState::Known(p, _)) => Some(p.clone()),
+                _ => None,
+            };
+            // A host the crawl gave up on gets no more requests (spec 004).
+            let given_up = host.is_some_and(|h| h.health.is_given_up());
+            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+                .iter()
+                .map(|path| {
+                    if given_up {
+                        return (
+                            (*path).to_string(),
+                            Some("host unavailable: the crawl gave up on it".to_string()),
+                        );
+                    }
+                    let blocked = policy.as_ref().and_then(|p| {
+                        let url = Url::parse(&format!("{key}{path}")).ok()?;
+                        match p.check(&url) {
+                            RobotsVerdict::Disallowed(rule) => Some(format!("blocked by robots.txt: {rule}")),
+                            _ => None,
+                        }
+                    });
+                    ((*path).to_string(), blocked)
+                })
+                .collect();
+            jobs.push((key, delay, paths));
+        }
+        self.site_files = SiteFiles::Pending;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (key, delay, paths) in jobs {
+                for (i, (path, blocked)) in paths.into_iter().enumerate() {
+                    let row = match blocked {
+                        Some(why) => SiteFileRow::skipped(&key, &path, &why),
+                        None => {
+                            if i > 0 && !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            site_files::fetch(&client, &key, &path).await
+                        }
+                    };
+                    let _ = tx.send(Msg::SiteFile(row));
+                }
+            }
+            let _ = tx.send(Msg::SiteFilesFinished);
+        });
+        Ok(())
     }
 
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
@@ -1843,6 +2095,11 @@ impl Run {
                 self.sitemaps_pending = false;
                 Ok(())
             }
+            Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SiteFilesFinished => {
+                self.site_files = SiteFiles::Done;
+                Ok(())
+            }
         }
     }
 
@@ -1864,7 +2121,7 @@ impl Run {
         let transient = attempt.is_transient();
         let max_wait = Duration::from_secs_f64(settings.max_wait_secs);
 
-        let host_blocked = match self.hosts.get_mut(&entry.host_key) {
+        let (host_blocked, speed_event) = match self.hosts.get_mut(&entry.host_key) {
             Some(h) => {
                 h.in_flight -= 1;
                 // Retry-After pauses the whole host, up to the maximum wait
@@ -1883,16 +2140,26 @@ impl Run {
                 {
                     signal = Signal::Other;
                 }
-                if let Some(until) = h.speed.on_response(took, signal, now) {
-                    h.next_start = h.next_start.max(until.min(now + max_wait));
+                let cut_before = h.speed.last_cut();
+                let until = h.speed.on_response(took, signal, now);
+                if signal == Signal::Answered {
+                    h.last_answer = now;
                 }
-                matches!(
+                let cut = h.speed.last_cut().filter(|c| Some(*c) != cut_before);
+                let wait = until.map(|u| u.min(now + max_wait).saturating_duration_since(now));
+                if let Some(w) = wait {
+                    h.next_start = h.next_start.max(now + w);
+                }
+                let blocked = matches!(
                     h.health.state(),
                     HealthState::Paused { .. } | HealthState::GivenUp
-                )
+                );
+                let typical = (h.speed.typical_ms(), h.speed.baseline_ms());
+                (blocked, (cut.map(|(_, c)| c), wait, h.speed.allowance(), typical))
             }
-            None => false,
+            None => (false, (None, None, 0, (None, None))),
         };
+        self.record_speed_event(&entry, &result, speed_event)?;
         // A request that was in flight when its host paused, or when the
         // network went down, does not use an attempt (FR-027).
         if transient && (host_blocked || self.local.is_some()) {
@@ -1926,6 +2193,7 @@ impl Run {
             let key = entry.host_key.clone();
             match t {
                 Transition::Paused { pause, failures } => {
+                    self.site_events.entry(key.clone()).or_default().pauses += 1;
                     let why = if failures > 0 {
                         format!("{failures} requests in a row failed")
                     } else {
@@ -2032,7 +2300,72 @@ impl Run {
                 ),
             )?;
         }
+        *self.crawled_by_host.entry(entry.host_key.clone()).or_default() += 1;
         self.on_page(entry, internal, robots_rule, took, result, attempt.round_attempts)
+    }
+
+    /// Logs a cut or a requested wait, and counts it for the site's summary
+    /// (spec 008 FR-021).
+    fn record_speed_event(
+        &mut self,
+        entry: &QueueEntry,
+        result: &Result<PageOutcome, CheckError>,
+        (cut, wait, allowance, (typical, usual)): SpeedEvent,
+    ) -> Result<(), CrawlError> {
+        let host = entry.host_key.as_str();
+        let wall = now_ms();
+        if let Some(cut) = cut {
+            let events = self.site_events.entry(host.to_string()).or_default();
+            let what = match cut {
+                Cut::Overloaded => {
+                    events.overloads += 1;
+                    let status = result.as_ref().map_or(0, |o| o.status);
+                    format!("{host} answered {status} (overloaded)")
+                }
+                Cut::Slower => {
+                    events.slowdowns += 1;
+                    format!(
+                        "{host} got slower ({} ms, usually {} ms)",
+                        typical.unwrap_or(0.0).round(),
+                        usual.unwrap_or(0.0).round()
+                    )
+                }
+                Cut::TimedOut => {
+                    events.slowdowns += 1;
+                    format!("A request to {host} timed out")
+                }
+            };
+            let message = format!("{what}; requests to it at once cut to {allowance}.");
+            self.c
+                .store
+                .log(wall, "speed_cut", Some(host), Some(entry.id), &message)?;
+        }
+        if let Some(w) = wait.filter(|w| !w.is_zero()) {
+            self.site_events.entry(host.to_string()).or_default().wait(w);
+            let message = format!(
+                "{host} asked to wait {} (Retry-After); no requests to it until then.",
+                human_duration(w)
+            );
+            self.c
+                .store
+                .log(wall, "speed_wait", Some(host), Some(entry.id), &message)?;
+        }
+        Ok(())
+    }
+
+    /// One line per site that slowed down, waited or paused in this run
+    /// (FR-021), so a finished crawl can explain why parts of it were slow.
+    fn record_speed_summaries(&mut self) -> Result<(), CrawlError> {
+        let mut events: Vec<_> = self.site_events.drain().filter(|(_, e)| !e.is_empty()).collect();
+        events.sort_by(|a, b| a.0.cmp(&b.0));
+        let wall = now_ms();
+        for (host, e) in events {
+            let message = format!("{host}: {}.", e.summary());
+            self.c
+                .store
+                .log(wall, "speed_summary", Some(&host), None, &message)?;
+        }
+        Ok(())
     }
 
     fn return_to_queue(&mut self, entry: QueueEntry) -> Result<(), CrawlError> {
