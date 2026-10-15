@@ -140,6 +140,8 @@ enum Command {
     Sitemap(sitemap_cmd::SitemapCommand),
     /// List the sitemap files a crawl read, as a tree.
     Sitemaps(sitemap_cmd::SitemapsArgs),
+    /// Orphan pages: in a sitemap but linked from no crawled page.
+    Orphans(sitemap_cmd::OrphansArgs),
     /// Recurring crawls that run without the app (spec 021).
     #[command(subcommand)]
     Schedule(Box<schedule_cmd::ScheduleCommand>),
@@ -274,6 +276,7 @@ fn main() -> ExitCode {
         Command::CustomRules(cmd) => rules_cmd::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
+        Command::Orphans(args) => sitemap_cmd::run_orphans(&args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
         Command::Serp(args) => serp_cmd::run_serp(args),
     }

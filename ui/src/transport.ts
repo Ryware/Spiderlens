@@ -81,6 +81,8 @@ import type { Setup } from "./generated/Setup";
 import type { Summary } from "./generated/Summary";
 import type { GenerateReport } from "./generated/GenerateReport";
 import type { SitemapFiles } from "./generated/SitemapFiles";
+import type { OrphanSummary } from "./generated/OrphanSummary";
+import type { UrlSitemapEntry } from "./generated/UrlSitemapEntry";
 import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
 import type { AnalysisProgress } from "./generated/AnalysisProgress";
 import type { AnalysisRun } from "./generated/AnalysisRun";
@@ -863,6 +865,10 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   // Sitemap generation (spec 011, contracts/desktop-commands.md).
   sitemapFiles(path: string): Promise<SitemapFiles>;
+  /** Spec 011 FR-012: the orphan counts above the Sitemaps tab. */
+  orphanSummary(path: string): Promise<OrphanSummary>;
+  /** Spec 011 FR-026: the sitemaps that list one URL. */
+  sitemapEntriesForUrl(path: string, id: number): Promise<UrlSitemapEntry[]>;
   sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
   sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
   /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
@@ -1146,6 +1152,8 @@ export const tauriTransport: Transport = {
   exportStart: (path, query, columns, ranges, dest, allValues, segments) => invoke("export_start", { path, query, columns, ranges, dest, allValues: allValues ?? null, segments: segments ?? null }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   sitemapFiles: (path) => invoke("sitemap_files", { path }),
+  orphanSummary: (path) => invoke("orphan_summary", { path }),
+  sitemapEntriesForUrl: (path, id) => invoke("sitemap_entries_for_url", { path, id }),
   sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
   sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),

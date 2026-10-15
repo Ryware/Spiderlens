@@ -12,6 +12,7 @@ pub mod meta;
 pub mod other;
 pub mod response;
 pub mod security;
+pub mod sitemaps;
 pub mod titles;
 pub mod url;
 

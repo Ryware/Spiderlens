@@ -256,6 +256,8 @@ fn main() {
             integrations::integrations_cache_clear,
             integrations::integrations_open_terms,
             results::sitemap_files,
+            results::orphan_summary,
+            results::sitemap_entries_for_url,
             results::sitemap_preview,
             results::sitemap_generate,
             results::analysis_run,

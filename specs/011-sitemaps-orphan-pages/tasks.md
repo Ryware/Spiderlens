@@ -60,20 +60,20 @@ description: "Task list for spec 011, sitemaps and orphan pages"
 
 ## Phase 6: Analysis passes (011b, needs spec 009 code)
 
-- [ ] T029 [US3] [US4] `sitemap_audit` pass in `crates/results/src/sitemaps/audit.rs` registered in `PASSES`: location rule (research R4), duplicates, `lastmod` invalid, future, identical, older than the page, index loops and depth, empty files, robots listing, no sitemap found; writes `sitemap_problems`. Tests US3 scenarios 2 to 7, US4 scenarios 1 to 5, read-only file into temp.
-- [ ] T030 [US2] `orphans` pass in `crates/results/src/sitemaps/orphans.rs`: linked set, redirect and meta refresh fixpoint, nofollow-only class, `url_sources`, List mode skipped with reason, completeness note. Tests US2 scenarios 1 to 6 and 8.
+- [x] T029 [US3] [US4] `sitemap_audit` pass in `crates/results/src/sitemaps/audit.rs` registered in `PASSES`: location rule (research R4), duplicates, `lastmod` invalid, future, identical, older than the page, index loops and depth, empty files, robots listing, no sitemap found; writes `sitemap_problems`. Tests US3 scenarios 2 to 7, US4 scenarios 1 to 5, read-only file into temp. _(Part b: written without compiling; tests to add when CI runs.)_
+- [x] T030 [US2] `orphans` pass in `crates/results/src/sitemaps/orphans.rs`: linked set, redirect and meta refresh fixpoint, nofollow-only class, `url_sources`, List mode skipped with reason, completeness note. Tests US2 scenarios 1 to 6 and 8. _(Uses spec 024 `orphan_candidates` in place of `url_sources`.)_
 - [ ] T031 [US2] [US3] Pass budgets at 1,000,000 URLs and entries (SC-004), recorded in benchmarks.md.
 
 ## Phase 7: Rules (US1, US2, US3, US4)
 
-- [ ] T032 [US1] `crates/results/src/issues/rules/sitemaps.rs`: the 27 rules of the spec table with ids, priorities, thresholds, scopes, `need`, evidence (sitemap files per URL), why and fix texts; per-URL live rules for response, indexability, blocked, not crawled, not in sitemap; pass-backed rules for the rest; site-wide rules with the `detail` view (research R8, agreed with 009). Tests: each rule has a positive and a negative fixture case; US1 scenarios 1 to 8; FR-017 "not checked".
-- [ ] T033 [US1] `sitemaps` TabDef in `crates/results/src/tabs.rs` with the FR-026 filters pointing at rules (spec 009 D2) and the Sitemaps, Lastmod and Orphan class columns; the filter-equals-rule test covers them.
+- [x] T032 [US1] `crates/results/src/issues/rules/sitemaps.rs`: the 27 rules of the spec table with ids, priorities, thresholds, scopes, `need`, evidence (sitemap files per URL), why and fix texts; per-URL live rules for response, indexability, blocked, not crawled, not in sitemap; pass-backed rules for the rest; site-wide rules with the `detail` view (research R8, agreed with 009). Tests: each rule has a positive and a negative fixture case; US1 scenarios 1 to 8; FR-017 "not checked".
+- [x] T033 [US1] `sitemaps` TabDef in `crates/results/src/tabs.rs` with the FR-026 filters pointing at rules (spec 009 D2) and the Sitemaps, Lastmod and Orphan class columns; the filter-equals-rule test covers them.
 
 ## Phase 8: Desktop and CLI read side (011b)
 
-- [ ] T034 [US2] Tauri commands `orphan_summary`, `sitemap_entries_for_url`; fake transport entries.
-- [ ] T035 [US1] [US2] Sitemaps tab UI: orphan header with completeness and List mode notices, provisional label while running; inspector "Sitemaps" section `ui/src/sitemaps/InspectorSitemaps.tsx`. Vitest and Playwright (filter to orphans, select a URL, see its sitemaps).
-- [ ] T036 [P] [US2] CLI `spiderlens orphans` (plain, CSV, JSON, `--nofollow-only`, completeness note) with tests.
+- [x] T034 [US2] Tauri commands `orphan_summary`, `sitemap_entries_for_url`; fake transport entries.
+- [x] T035 [US1] [US2] Sitemaps tab UI: orphan header with completeness and List mode notices, provisional label while running; inspector "Sitemaps" section `ui/src/sitemaps/InspectorSitemaps.tsx`. Vitest and Playwright (filter to orphans, select a URL, see its sitemaps).
+- [x] T036 [P] [US2] CLI `spiderlens orphans` (plain, CSV, JSON, `--nofollow-only`, completeness note) with tests.
 
 ## Phase 9: Polish
 

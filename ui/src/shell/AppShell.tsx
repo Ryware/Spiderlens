@@ -24,6 +24,7 @@ import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
 import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { SitemapFilesView } from "../sitemaps/SitemapFiles";
+import { OrphanNotice } from "../sitemaps/OrphanNotice";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
 import { ContentView } from "../content/ContentView";
@@ -501,6 +502,8 @@ export function AppShell({ transport }: { transport: Transport }) {
                   toolbar={
                     resultTab.id === "spelling" ? (
                       <SpellingBar spelling={spelling} live={crawl.running} />
+                    ) : resultTab.id === "sitemaps" ? (
+                      <OrphanNotice transport={transport} path={crawl.path} live={crawl.running} />
                     ) : resultTab.id === "amp" ? (
                       <p className="m-0 text-sm text-fg-3">These checks are a core subset of AMP's rules, not the official AMP validator.</p>
                     ) : undefined

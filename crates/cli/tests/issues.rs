@@ -143,9 +143,9 @@ fn analyse_runs_the_phase_and_reports_what_ran() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let report = json(&out);
     assert_eq!(report["saved"], true);
-    // This spec ships the runner; the passes come with specs 010-023.
+    // Each pass either ran or says why it was skipped.
     assert_eq!(
-        report["ran"].as_array().unwrap().len(),
+        report["ran"].as_array().unwrap().len() + report["skipped"].as_array().unwrap().len(),
         spiderlens_results::analysis::PASSES.len()
     );
     let missing = run(&["analyse", "/nonexistent.spiderlens"]);

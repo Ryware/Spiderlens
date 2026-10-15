@@ -400,11 +400,17 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     // Every filter is available, and its count equals the rows it lists.
     // The AI checks (spec 015) run after the crawl and have their own tests;
     // AMP is checked only when asked (spec 027 part E has its own test);
-    // this crawl does not read PDFs (spec 027 part C has its own test).
+    // this crawl does not read PDFs (spec 027 part C has its own test);
+    // the sitemap passes run after the crawl (spec 011 tests them).
     for tab in tabs() {
         let counts = r.counts(&tab.id, UrlScope::All).unwrap();
         for f in tab.filters.iter().filter(|f| {
-            f.need != Need::AiChecks && f.need != Need::Pdf && f.need != Need::Spelling && f.need != Need::Amp
+            f.need != Need::AiChecks
+                && f.need != Need::Pdf
+                && f.need != Need::Spelling
+                && f.need != Need::Amp
+                && f.need != Need::SitemapAudit
+                && f.need != Need::Orphans
         }) {
             // Integration data is fetched after a crawl (spec 024), not by it.
             if f.need == Need::SearchConsole {

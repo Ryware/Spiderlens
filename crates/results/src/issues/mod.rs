@@ -28,7 +28,7 @@ use crate::tabs::{Derived, Need};
 
 /// Increases whenever a rule is added, removed or changes its condition
 /// (FR-003).
-pub const RULES_VERSION: u32 = 1;
+pub const RULES_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +50,7 @@ pub enum Category {
     StructuredData,
     Security,
     Url,
+    Sitemaps,
 }
 
 impl Category {
@@ -71,6 +72,7 @@ impl Category {
             Self::StructuredData => "Structured data",
             Self::Security => "Security",
             Self::Url => "URL",
+            Self::Sitemaps => "Sitemaps",
         }
     }
 }
@@ -91,15 +93,19 @@ pub enum Scope {
     Pages,
     /// Image URLs (Images tab).
     Images,
+    /// Every URL the crawl knows of, crawled or not: sitemap URLs that were
+    /// not requested are listed too (spec 011 FR-017).
+    Known,
 }
 
 impl Scope {
-    pub const ALL: [Scope; 5] = [
+    pub const ALL: [Scope; 6] = [
         Self::AllUrls,
         Self::InternalUrls,
         Self::ExternalUrls,
         Self::Pages,
         Self::Images,
+        Self::Known,
     ];
 
     pub fn sql(self) -> &'static str {
@@ -109,6 +115,7 @@ impl Scope {
             Self::ExternalUrls => "u.internal = 0 AND u.state = 'crawled'",
             Self::Pages => crate::tabs::HTML_OK,
             Self::Images => crate::tabs::IMAGES,
+            Self::Known => "1",
         }
     }
 
@@ -119,6 +126,7 @@ impl Scope {
             Self::ExternalUrls => "External URLs that were checked",
             Self::Pages => "Internal HTML pages that returned 2xx",
             Self::Images => "Images",
+            Self::Known => "Every URL the crawl found, crawled or not",
         }
     }
 }
@@ -145,6 +153,8 @@ pub enum Unit {
     Links,
     Depth,
     Score,
+    Days,
+    Entries,
 }
 
 impl Unit {
@@ -158,6 +168,8 @@ impl Unit {
             Self::Links => "links",
             Self::Depth => "levels",
             Self::Score => "points",
+            Self::Days => "days",
+            Self::Entries => "entries",
         }
     }
 }
@@ -295,6 +307,7 @@ pub fn catalogue() -> &'static [Rule] {
             rules::other::RULES,
             rules::security::RULES,
             rules::url::RULES,
+            rules::sitemaps::RULES,
         ]
         .concat()
     });
@@ -459,7 +472,7 @@ mod tests {
     fn catalogue_is_complete_and_consistent() {
         // FR-001, FR-003, FR-004, SC-008.
         let all = catalogue();
-        assert_eq!(all.len(), 75, "first rule set (spec table, with readability)");
+        assert_eq!(all.len(), 102, "first rule set (spec table, with readability) and spec 011's 27");
         let mut ids = HashSet::new();
         let mut cats = HashSet::new();
         for r in all {
@@ -498,7 +511,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(cats.len(), 16);
+        assert_eq!(cats.len(), 17);
     }
 
     #[test]

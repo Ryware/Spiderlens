@@ -278,3 +278,84 @@ fn run_generate(a: &GenerateArgs) -> ExitCode {
         }
     }
 }
+
+#[derive(Args)]
+pub struct OrphansArgs {
+    /// The crawl file.
+    file: PathBuf,
+    /// List the pages linked only through nofollow links instead.
+    #[arg(long)]
+    nofollow_only: bool,
+    /// Print CSV with a header row.
+    #[arg(long, conflicts_with = "json")]
+    csv: bool,
+    /// Print `{ summary, orphans }` as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+/// `spiderlens orphans`: the orphan pages the crawl-end analysis found
+/// (spec 011 FR-014, contracts/cli.md). Notes go to stderr so the output
+/// stays a clean list.
+pub fn run_orphans(a: &OrphansArgs) -> ExitCode {
+    let reader = match Reader::open(&a.file) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    let (summary, rows) = match reader
+        .orphan_summary()
+        .and_then(|s| reader.orphan_rows(a.nofollow_only).map(|r| (s, r)))
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+    };
+    if a.json {
+        crate::print_json(&serde_json::json!({ "summary": summary, "orphans": rows }));
+        return ExitCode::from(exit::FETCHED);
+    }
+    if let Some(reason) = &summary.reason {
+        eprintln!("note: {reason}");
+        if !summary.list_mode {
+            eprintln!("note: run `spiderlens analyse {}` to find them", a.file.display());
+        }
+    } else if summary.incomplete {
+        eprintln!(
+            "note: the crawl did not reach every page ({} URLs not crawled), so some of these may be linked from pages it did not fetch",
+            summary.not_crawled
+        );
+    }
+    if a.csv {
+        let mut w = csv::Writer::from_writer(std::io::stdout().lock());
+        let mut write = || -> csv::Result<()> {
+            w.write_record(["url", "class", "sources", "status", "state", "sitemap"])?;
+            for r in &rows {
+                w.write_record([
+                    r.url.as_str(),
+                    r.class.as_str(),
+                    &r.sources.join(","),
+                    &r.status.map(|s| s.to_string()).unwrap_or_default(),
+                    r.state.as_str(),
+                    r.sitemap.as_deref().unwrap_or(""),
+                ])?;
+            }
+            w.flush()?;
+            Ok(())
+        };
+        if let Err(e) = write() {
+            eprintln!("error: {e}");
+            return ExitCode::from(exit::USAGE);
+        }
+        return ExitCode::from(exit::FETCHED);
+    }
+    for r in &rows {
+        let status = r.status.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+        println!("{}  {}  {}  {}", r.url, status, r.sources.join(","), r.state);
+    }
+    ExitCode::from(exit::FETCHED)
+}

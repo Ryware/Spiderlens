@@ -105,6 +105,7 @@ impl Features {
         if meta("spelling")?.is_some() {
             available.push(Need::Spelling);
         }
+        available.extend(pass_needs(conn)?);
         let redirect_limit = config
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))
@@ -124,6 +125,35 @@ impl Features {
             link_settings,
         })
     }
+}
+
+/// The outputs of the sitemap passes (spec 011 part b): present once the
+/// pass has run, recorded in the `analysis` meta key, or this session ran it
+/// into `temp` for a file it cannot write.
+pub(crate) fn pass_needs(conn: &Connection) -> rusqlite::Result<Vec<Need>> {
+    let ran: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'analysis'", [], |r| r.get(0))
+        .optional()?;
+    let ran: serde_json::Map<String, serde_json::Value> = ran
+        .and_then(|r| serde_json::from_str(&r).ok())
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (need, pass, table) in [
+        (Need::SitemapAudit, "sitemap_audit", "sitemap_problems"),
+        (Need::Orphans, "orphans", "orphans"),
+    ] {
+        let exists = |master: &str| -> rusqlite::Result<bool> {
+            conn.query_row(
+                &format!("SELECT EXISTS (SELECT 1 FROM {master} WHERE type = 'table' AND name = ?1)"),
+                [table],
+                |r| r.get(0),
+            )
+        };
+        if exists("sqlite_temp_master")? || (ran.contains_key(pass) && exists("sqlite_master")?) {
+            out.push(need);
+        }
+    }
+    Ok(out)
 }
 
 fn find_u64(v: &serde_json::Value, key: &str) -> Option<u64> {

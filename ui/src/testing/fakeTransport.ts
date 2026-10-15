@@ -6,6 +6,8 @@ import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { GenerateReport } from "../generated/GenerateReport";
 import type { SitemapFileRow } from "../generated/SitemapFileRow";
+import type { OrphanSummary } from "../generated/OrphanSummary";
+import type { UrlSitemapEntry } from "../generated/UrlSitemapEntry";
 import type { SitemapFiles } from "../generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
@@ -247,7 +249,11 @@ export interface FakeSitemaps {
   files: SitemapFiles;
   /** File names already in each folder. */
   existing: Map<string, string[]>;
-  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
+  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean   /** The orphan notice above the Sitemaps tab. */
+  orphans: OrphanSummary;
+  /** Sitemap entries per URL id, for the inspector. */
+  entries: Map<number, UrlSitemapEntry[]>;
+}[];
   previews: number;
   /** When set, the next generate fails with this message. */
   fail: string | null;
@@ -294,7 +300,7 @@ export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
 ): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
-  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
+  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, orphans: fakeOrphanSummary(), entries: new Map(), existing: new Map(), generated: [], previews: 0, fail: null };
 
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
@@ -378,6 +384,8 @@ export function fakeTransport(
     sitemaps,
     pickFolder: async () => picks.folder ?? (await agentsApi.pickFolder()),
     sitemapFiles: async () => structuredClone(sitemaps.files),
+    orphanSummary: async () => structuredClone(sitemaps.orphans),
+    sitemapEntriesForUrl: async (_path, id) => structuredClone(sitemaps.entries.get(id) ?? []),
     sitemapPreview: async (_path, options, folder) => {
       sitemaps.previews += 1;
       const r = fakeReport_(resultsApi.results.urls, options, folder ? (sitemaps.existing.get(folder) ?? []) : []);
@@ -948,4 +956,9 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     onCrawlsChanged: (cb) => on(crawlsChanged, () => cb()),
   };
   return { files, api };
+}
+
+/** An orphan summary for a finished Spider crawl, with overrides. */
+export function fakeOrphanSummary(over: Partial<OrphanSummary> = {}): OrphanSummary {
+  return { available: true, reason: null, list_mode: false, orphans: 0, nofollow_only: 0, provisional: false, incomplete: false, not_crawled: 0, ...over };
 }

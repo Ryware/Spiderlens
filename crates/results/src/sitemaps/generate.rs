@@ -490,6 +490,17 @@ fn base_url(reader: &Reader, opts: &SitemapGenerateOptions) -> Result<String, Ge
 
 /// `Last-Modified` from the stored response headers, as a W3C datetime.
 fn last_modified(headers_json: &str) -> Option<String> {
+    let ts = last_modified_at(headers_json)?;
+    Some(ts.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string())
+}
+
+/// `Last-Modified` from the stored response headers, in UTC seconds (the
+/// `sitemap_audit` pass compares it with the entry's `lastmod`).
+pub(crate) fn last_modified_secs(headers_json: &str) -> Option<i64> {
+    last_modified_at(headers_json).map(|ts| ts.as_second())
+}
+
+fn last_modified_at(headers_json: &str) -> Option<jiff::Timestamp> {
     let pairs: Vec<(String, String)> = serde_json::from_str(headers_json).ok()?;
     let v = pairs
         .iter()
@@ -498,10 +509,9 @@ fn last_modified(headers_json: &str) -> Option<String> {
         .1
         .trim()
         .to_string();
-    let ts = jiff::fmt::rfc2822::DateTimeParser::new()
+    jiff::fmt::rfc2822::DateTimeParser::new()
         .parse_timestamp(&v)
-        .ok()?;
-    Some(ts.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string())
+        .ok()
 }
 
 fn w3c_from_ms(ms: i64) -> Option<String> {

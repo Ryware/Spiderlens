@@ -700,6 +700,24 @@ test("sitemap_files_tree_opens_from_the_sidebar_and_works_by_keyboard", async ({
 
 });
 
+test("sitemaps_tab_shows_orphan_counts_and_the_orphan_filter", async ({ page }) => {
+  // Spec 011 FR-012, FR-026: the Sitemaps tab, its orphan line and filter.
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.sitemaps.orphans = { ...s.sitemaps.orphans, orphans: 3, nofollow_only: 1 };
+  });
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Sitemaps", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  const tab = page.getByRole("region", { name: "Sitemaps" });
+  await expect(tab.getByRole("status", { name: "Orphan pages" })).toHaveText("3 orphan pages, 1 page linked only through nofollow.");
+  const all = await page.getByTestId("row-count").textContent();
+  await tab.getByRole("button", { name: /^Orphan pages/ }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).not.toHaveText(all ?? "");
+  await expect(page.getByTestId("row-count")).toHaveText(/^[\d,]+ URLs?$/);
+});
+
 test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {
   // Spec 008 FR-028, FR-029: the reason in the status bar, every site's pace on click.
   await page.keyboard.type("example.com");

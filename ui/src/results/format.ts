@@ -111,6 +111,8 @@ export const needReason: Record<Need, string> = {
   readability: "Not collected: this crawl file was made before SpiderLens counted sentences and syllables.",
   search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
   sitemap_entries: "Not recorded: this crawl file was made before SpiderLens kept sitemap entries.",
+  sitemap_audit: "Checked when the crawl ends.",
+  orphans: "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps.",
   analysis: "Calculated when the crawl ends.",
   cookies: "This crawl was made before SpiderLens recorded the cookies each page sets.",
   ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
