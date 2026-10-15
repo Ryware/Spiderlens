@@ -14,6 +14,9 @@ pub struct Synth {
     pub urls: u64,
     pub links_per_page: u32,
     pub seed: u64,
+    /// Store each internal page's HTML (header, menu, content, footer
+    /// around its links), for the link positions benchmark.
+    pub html: bool,
     /// Also writes page content (spec 005 `pages`, `page_text`) for the
     /// HTML pages, marks the file as having it, and builds the indexes a
     /// finished run leaves (`pages_title_hash`, `pages_md_hash`) when
@@ -28,6 +31,7 @@ impl Default for Synth {
             urls: 10_000,
             links_per_page: 10,
             seed: 7,
+            html: false,
             pages: false,
             result_indexes: false,
         }
@@ -71,6 +75,38 @@ const WORDS: &[&str] = &[
     "café",
     "Straße",
 ];
+
+/// A page of about 20 KB: the image, then the anchors split between a
+/// header menu, the content and the footer, so `pos` matches the links.
+fn page_html(targets: &[i64]) -> String {
+    use std::fmt::Write;
+    let mut h = String::from("<!doctype html><html><head><title>Page</title></head><body><header>");
+    let _ = write!(h, r#"<img src="/x/{}" alt="logo"><nav><ul>"#, targets[0]);
+    let anchors = &targets[1..];
+    let menu = anchors.len() / 3;
+    let footer = anchors.len() / 6;
+    for (i, t) in anchors.iter().enumerate() {
+        if i == menu {
+            h.push_str("</ul></nav></header><main><article>");
+        }
+        if i == anchors.len() - footer {
+            h.push_str("</article></main><footer>");
+        }
+        if i < menu {
+            let _ = write!(h, r#"<li><a href="/x/{t}">Section {i}</a></li>"#);
+        } else {
+            let _ = write!(
+                h,
+                r#"<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. <a href="/x/{t}">Read more about {i}</a> ut enim ad minim veniam.</p>"#
+            );
+        }
+    }
+    if menu == anchors.len() {
+        h.push_str("</ul></nav></header>");
+    }
+    h.push_str("</footer></body></html>");
+    h
+}
 
 impl Synth {
     /// Creates `path` (it must not exist). Returns the number of URLs.
@@ -154,13 +190,36 @@ impl Synth {
         }
         {
             let mut ins = tx.prepare(
-                "INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed) VALUES (?1, ?2, ?3, ?4, 0, 0, 1)",
+                "INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed, pos)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 1, ?5)",
             )?;
+            let mut body =
+                tx.prepare("INSERT INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)")?;
+            let internal: Vec<bool> = if self.html {
+                let mut q = tx.prepare("SELECT internal FROM urls ORDER BY id")?;
+                q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+            } else {
+                Vec::new()
+            };
+            let mut targets = Vec::with_capacity(self.links_per_page as usize);
             for from in 1..=self.urls as i64 {
+                targets.clear();
                 for k in 0..self.links_per_page {
                     let to = 1 + rng.below(self.urls) as i64;
                     let kind = if k == 0 { "image" } else { "anchor" };
-                    ins.execute(params![from, to, format!("/x/{to}"), kind])?;
+                    ins.execute(params![from, to, format!("/x/{to}"), kind, k])?;
+                    targets.push(to);
+                }
+                if self.html && internal[from as usize - 1] {
+                    let html = page_html(&targets);
+                    let packed = spiderlens_engine::extract::body::compress(html.as_bytes())
+                        .map_err(|e| rusqlite::Error::InvalidPath(e.to_string().into()))?;
+                    body.execute(params![
+                        from,
+                        spiderlens_engine::extract::body::CODEC,
+                        html.len() as i64,
+                        packed
+                    ])?;
                 }
             }
         }

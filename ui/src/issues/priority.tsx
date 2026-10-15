@@ -1,5 +1,5 @@
 import { Badge, type Tone } from "../components/ui";
-import type { Priority } from "../generated/Priority";
+import type { IssuePriority as Priority } from "../generated/IssuePriority";
 
 export const PRIORITIES: Priority[] = ["high", "medium", "low", "opportunity"];
 

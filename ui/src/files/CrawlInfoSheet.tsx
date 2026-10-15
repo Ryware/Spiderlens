@@ -42,12 +42,15 @@ export function CrawlInfoSheet({
   transport,
   path,
   onNewCrawl,
+  onScheduleAgain,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   transport: Transport;
   path: string | null;
   onNewCrawl: (info: CrawlInfo) => void;
+  /** A new schedule with this crawl's settings and input (spec 021 FR-002). */
+  onScheduleAgain?: (info: CrawlInfo) => void;
 }) {
   const [info, setInfo] = useState<CrawlInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +144,11 @@ export function CrawlInfoSheet({
         )}
       </div>
       <footer className="flex justify-end gap-2 border-t border-line px-5 py-3">
+        {onScheduleAgain && (
+          <Button disabled={!i?.config} onClick={() => i && onScheduleAgain(i)}>
+            Schedule again…
+          </Button>
+        )}
         <Button disabled={!i?.config} onClick={() => i && onNewCrawl(i)}>
           New crawl with these settings
         </Button>

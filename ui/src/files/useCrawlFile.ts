@@ -61,7 +61,7 @@ export function useCrawlFile(
     if (ok) latest.current.onOpened?.(info.path);
     // Passes missing or stale on this file run now (spec 009 plan D12); a
     // file this session cannot write is shown without them.
-    if (ok && info.access.kind === "writable") void transport.analysisRun(info.path).catch(() => {});
+    if (ok && info.access.kind === "writable") void transport.passesRun(info.path).catch(() => {});
     return ok;
   }, [transport]);
 

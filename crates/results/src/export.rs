@@ -40,7 +40,7 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+pub(crate) fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))
@@ -175,6 +175,10 @@ pub fn write_csv_with(
     let (conn, features, _) = connect(crawl, settings)?;
     let c = compile(q, &features)?;
     let cols = pick_columns(c.tab, columns)?;
+    let links = &features.link_settings;
+    if c.derived.contains(&crate::tabs::Derived::LinkMetrics) && links.weighting.is_some() {
+        crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
+    }
     crate::issues::build_derived_with(&conn, &features, settings, &c.derived)?;
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;

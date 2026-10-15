@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use ego_tree::NodeRef;
+use ego_tree::{NodeId, NodeRef};
 use html5ever::driver::ParseOpts;
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
@@ -90,9 +90,36 @@ struct Walker<'p> {
     visible: String,
     anchor: Option<Open>,
     heading: Option<Open>,
+    /// Record the element each reference came from (spec 023 link
+    /// positions, after the crawl only).
+    track: bool,
+    at: Option<NodeId>,
+    nodes: Vec<NodeId>,
 }
 
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: bool) -> PageData {
+#[cfg(test)]
+pub(super) fn walk(
+    text: &str,
+    page: &Url,
+    token: &str,
+    budget: Duration,
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
+) -> PageData {
+    walk_doc(text, page, token, budget, a11y, hook, false).1
+}
+
+/// [`walk`], also returning the document and, when `track` is set, the
+/// element of each reference (same index as `PageData::refs`).
+pub(super) fn walk_doc(
+    text: &str,
+    page: &Url,
+    token: &str,
+    budget: Duration,
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
+    track: bool,
+) -> (Html, PageData, Vec<NodeId>) {
     let (doc, cut) = parse(text, budget);
     // Spec 026: only created when asked for, so "Off" costs this test.
     let mut checks = a11y.then(|| A11yCollector::new(&doc));
@@ -104,6 +131,9 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: 
         visible: String::new(),
         anchor: None,
         heading: None,
+        track,
+        at: None,
+        nodes: Vec::new(),
     };
     w.data.no_content = false;
     w.data.partial = cut;
@@ -150,7 +180,17 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: 
     }
     w.data.text_hash = hash(&visible);
     w.data.a11y = checks.map(|c| c.finish(&doc));
-    w.data
+    if let Some((hook, body_len)) = hook {
+        let input = super::HookInput {
+            url: page,
+            body_len,
+            lang: w.data.lang.as_deref(),
+        };
+        w.data.facts = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.0)(&doc, &input)))
+            .ok()
+            .flatten();
+    }
+    (doc, w.data, w.nodes)
 }
 
 /// Elements that do not break words apart (`a<b>b</b>` is one word).
@@ -232,6 +272,9 @@ impl Walker<'_> {
 
     fn push_ref(&mut self, mut r: Ref, ctx: Ctx) -> usize {
         r.noscript = ctx.noscript;
+        if self.track {
+            self.nodes.push(self.at.expect("set on entering the element"));
+        }
         self.data.refs.push(r);
         self.data.refs.len() - 1
     }
@@ -255,6 +298,9 @@ impl Walker<'_> {
             // HTML links, images or titles.
             push_children(node, ctx, stack);
             return;
+        }
+        if self.track {
+            self.at = Some(node.id());
         }
         let name = e.name.local.clone();
         let inline = is_inline(&name);

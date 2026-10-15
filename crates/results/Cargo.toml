@@ -17,6 +17,10 @@ serde.workspace = true
 serde_json.workspace = true
 ts-rs.workspace = true
 url.workspace = true
+unicode-segmentation.workspace = true
+resvg.workspace = true
+scraper.workspace = true
+ego-tree.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

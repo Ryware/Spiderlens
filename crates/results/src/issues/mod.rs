@@ -32,7 +32,7 @@ pub const RULES_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
+#[ts(export, rename = "IssueCategory")]
 pub enum Category {
     ResponseCodes,
     Links,
@@ -127,7 +127,7 @@ impl Scope {
 /// results can change until the crawl ends (FR-019).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
+#[ts(export, rename = "IssueRuleKind")]
 pub enum RuleKind {
     PerUrl,
     SiteWide,

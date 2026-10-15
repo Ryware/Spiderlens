@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
+import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
@@ -8,7 +9,8 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { resultTabs, Sidebar } from "./Sidebar";
+import { reportTabs, resultTabs, Sidebar, vizTabs } from "./Sidebar";
+import { VizView, vizViews } from "../viz/VizView";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -17,6 +19,7 @@ import { useAppearance, useUiState } from "./useUiState";
 import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
+import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
 import { issueOfTab, issueTab, useIssues } from "../issues/useIssues";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
@@ -26,6 +29,11 @@ import { CrawlInfoSheet } from "../files/CrawlInfoSheet";
 import { ManageCrawls } from "../files/ManageCrawls";
 import { CleanupNotice } from "../files/CleanupNotice";
 import type { CrawlInfo } from "../transport";
+import type { Schedule } from "../generated/Schedule";
+import { useSchedules } from "../schedules/useSchedules";
+import { SchedulesView } from "../schedules/SchedulesView";
+import { ScheduleEditor } from "../schedules/ScheduleEditor";
+import { newDraft } from "../schedules/format";
 
 /** Below these window widths the detail panel, then the sidebar, collapse (FR-005). */
 export const AUTO_COLLAPSE_DETAIL = 1100;
@@ -96,6 +104,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   /** Crawl information for a file other than the open crawl (from Manage crawls). */
   const [infoPath, setInfoPath] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorDraft, setEditorDraft] = useState<Schedule | null>(null);
+  const [scheduleVersion, setScheduleVersion] = useState(0);
   const urlRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
   const inspectFrom = useRef<HTMLElement | null>(null);
@@ -103,9 +114,18 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [inspectAsked, setInspectAsked] = useState(0);
   const results = useResults(transport, crawl.path, crawl.running);
   const issues = useIssues(transport, crawl.path, crawl.running, setup.config?.issues);
+  const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const issueId = resultTab ? issueOfTab(resultTab.id) : null;
+  const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
+  const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
+  // Opening the anchor text cloud from the details starts a fresh view for the selected page.
+  const [anchorOpens, setAnchorOpens] = useState(0);
+  const openAnchorCloud = useCallback(() => {
+    setAnchorOpens((n) => n + 1);
+    setSection("anchor-text");
+  }, []);
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   // "Show in table" from the inspector (T027): the URL is selected in the
@@ -132,6 +152,18 @@ export function AppShell({ transport }: { transport: Transport }) {
   useEffect(() => {
     document.documentElement.dataset.platform = platform;
   }, []);
+
+  // Edited link analysis settings apply to the open crawl file too, which
+  // then works out positions and Link Score again (spec 023 FR-023). The
+  // file's own settings stand until the user changes them.
+  const links = setup.config?.links;
+  const linksKey = links ? JSON.stringify(links) : null;
+  const lastLinks = useRef<string | null>(null);
+  useEffect(() => {
+    const before = lastLinks.current;
+    lastLinks.current = linksKey;
+    if (links && crawl.path && before !== null && before !== linksKey) void transport.analysisSettings(crawl.path, links).catch(() => {});
+  }, [linksKey, crawl.path, transport]);
 
   // Focus the start URL once the window is ready (US1-2).
   const configReady = setup.config !== null;
@@ -204,6 +236,28 @@ export function AppShell({ transport }: { transport: Transport }) {
   const saveAs = useCallback(() => void saveFileAs(), [saveFileAs]);
   const recentOpen = useMemo(() => library.recent.filter((e) => e.available).slice(0, 5), [library.recent]);
 
+  const schedules = useSchedules(transport);
+  const editSchedule = useCallback((s: Schedule) => {
+    setEditorDraft(structuredClone(s));
+    setEditorOpen(true);
+  }, []);
+  // A new schedule from settings and an input (spec 021 FR-002).
+  const scheduleFrom = useCallback(
+    async (config: CrawlInfo["config"], startUrl: string | null, profile: string | null) => {
+      if (!config) return;
+      const outputDir = (await transport.scheduleDefaultOutput().catch(() => null)) ?? "";
+      setSettingsOpen(false);
+      setInfoOpen(false);
+      setSection("schedules");
+      editSchedule(newDraft({ config, startUrl, profile, outputDir }));
+    },
+    [transport, editSchedule],
+  );
+  const scheduleThisCrawl = useCallback(
+    () => void scheduleFrom(setup.config, setup.startUrl.trim() || null, setup.loaded?.name ?? null),
+    [scheduleFrom, setup.config, setup.startUrl, setup.loaded],
+  );
+
   const hasInput = setup.config?.mode === "list" || setup.startUrl.trim() !== "";
   const commands: Command[] = useMemo(
     () => [
@@ -219,6 +273,15 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
       { id: "manage-crawls", title: "Manage crawls…", group: "Crawl", keywords: ["disk", "space", "delete", "cleanup", "storage", "files", "trash"], run: () => setManageOpen(true) },
+      {
+        id: "analyse",
+        title: "Work out Link Score",
+        group: "Crawl",
+        keywords: ["analysis", "link positions", "pagerank"],
+        enabled: crawl.path !== null && !crawl.running && analysis.status !== "running",
+        run: analysis.start,
+      },
+      { id: "schedule-crawl", title: "Schedule this crawl…", group: "Crawl", keywords: ["schedule", "recurring", "repeat", "every", "cron", "new schedule"], enabled: setup.config !== null, run: scheduleThisCrawl },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
       { id: "mode-spider", title: "Switch to Spider mode", group: "Crawl", enabled: !crawl.active, run: () => setup.set((c) => ({ ...c, mode: "spider" })) },
@@ -235,6 +298,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
       { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
+      { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...issues.rules.map((r) => ({
@@ -245,6 +309,8 @@ export function AppShell({ transport }: { transport: Transport }) {
         enabled: crawl.path !== null,
         run: () => setSection(issueTab(r.id)),
       })),
+      ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...reportTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
       { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
@@ -258,7 +324,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, openPicker, openFile, recentOpen, resume, saveAs, openSettings, ui, updateUi, systemDark, issues.rules],
+    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules],
   );
 
   const run = useCallback(
@@ -276,7 +342,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || manageOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -285,7 +351,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, manageOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -312,14 +378,23 @@ export function AppShell({ transport }: { transport: Transport }) {
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
         <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
-          {section === "log" && crawl.path ? (
+          {section === "schedules" ? (
+            <SchedulesView
+              transport={transport}
+              schedules={schedules}
+              version={scheduleVersion}
+              onNew={scheduleThisCrawl}
+              onEdit={editSchedule}
+              onOpenCrawl={(p) => void file.open(p)}
+            />
+          ) : section === "log" && crawl.path ? (
             <CrawlLog transport={transport} path={crawl.path} live={crawl.running} />
           ) : resultTab && crawl.path ? (
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
               // tab's selection into the new tab's first render.
               // Settings changes reload it: thresholds change the rows (spec 009).
-              key={`${crawl.path}\n${resultTab.id}\n${issues.changed}`}
+              key={`${crawl.path}\n${resultTab.id}\n${issues.changed}\n${results.features?.available.join(",") ?? ""}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -333,6 +408,10 @@ export function AppShell({ transport }: { transport: Transport }) {
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
+          ) : vizView && crawl.path ? (
+            <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
+          ) : cookiesOpen && crawl.path ? (
+            <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
@@ -354,25 +433,31 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab ? <Inspector
+              {resultTab || vizView || cookiesOpen ? (
+                <Inspector
                   transport={transport}
                   path={crawl.path}
                   id={results.focusId}
                   issuesVersion={issues.changed}
                   rulesVersion={issues.summary?.rules_version}
                   onShowInTable={showInTable}
+                  onAnchorCloud={openAnchorCloud}
+                  aiChecks={results.features?.available.includes("ai_checks") ?? false}
                   onIssue={(id) => setSection(issueTab(id))}
                   onOpenUrl={(url) => {
                     results.update("internal", { search: url, filter: "all" });
                     setSection("internal");
                   }}
-                /> : <DetailPanel />}
+                />
+              ) : (
+                <DetailPanel />
+              )}
             </div>
           </>
         )}
         </div>
       </div>
-      <StatusBar setup={setup} run={crawl} />
+      <StatusBar setup={setup} run={crawl} analysis={analysis} />
 
       <SettingsSheet
         open={settingsOpen}
@@ -386,6 +471,18 @@ export function AppShell({ transport }: { transport: Transport }) {
         level={level}
         systemDark={systemDark}
         onAppearance={updateUi}
+        crawlPath={crawl.path}
+        onSchedule={scheduleThisCrawl}
+      />
+      <ScheduleEditor
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        transport={transport}
+        initial={editorDraft}
+        onSaved={() => {
+          setScheduleVersion((v) => v + 1);
+          void schedules.reload();
+        }}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
@@ -399,6 +496,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         transport={transport}
         path={infoPath ?? crawl.path}
         onNewCrawl={newCrawlFrom}
+        onScheduleAgain={(i) => void scheduleFrom(i.config, i.start_url, null)}
       />
       <ManageCrawls
         open={manageOpen}

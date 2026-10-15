@@ -1,12 +1,21 @@
-//! The Crawl Analysis phase (spec 009 plan D12): global computations over a
-//! whole crawl (Link Score, near duplicates, orphans, ...) that are too slow
-//! to repeat on every open. Each is a [`Pass`] listed in [`PASSES`]; the
-//! runner orders them by their dependencies, reruns the stale ones, records
-//! each in the `analysis` meta key and reports progress.
+//! Crawl Analysis: whole-crawl computations that run after fetching ends
+//! (spec 009 plan D12, specs 022 and 023).
 //!
-//! Passes run when a crawl ends, by the process that wrote it, and on demand
-//! for an opened file. On a read-only file they run into the reader
-//! connection's `temp` schema, so results show for the session only.
+//! Two parts live here. Link positions and Link Score (spec 023 stage 1) are
+//! built by the reader in its `temp` schema on demand, like the other derived
+//! tables (plan D6). Columns name the tables unqualified, so a stored copy in
+//! `main` and a fresh copy in `temp` are read the same way (plan D5).
+//!
+//! The shared runner from spec 009 (plan D12) follows: each global
+//! computation is a [`Pass`] listed in [`PASSES`]; the runner orders them by
+//! their dependencies, reruns the stale ones, records each in the `analysis`
+//! meta key and reports progress. Passes run when a crawl ends, by the
+//! process that wrote it, and on demand for an opened file; on a read-only
+//! file they run into the reader connection's `temp` schema. Moving Link
+//! Score onto it is spec 023 stage 2.
+
+pub mod link_metrics;
+pub mod link_positions;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -18,8 +27,175 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::features::Features;
-use crate::tabs::Need;
+use crate::reader::Reader;
+use crate::tabs::{Derived, Need};
 use crate::{Error, Result};
+
+/// Where a running analysis is (FR-013), for the status bar and the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct AnalysisProgress {
+    /// "positions" or "link_score".
+    pub phase: &'static str,
+    /// Pages classified, or URLs whose links were read.
+    #[ts(type = "number")]
+    pub done: u64,
+    #[ts(type = "number")]
+    pub total: u64,
+}
+
+/// Progress reports and the cancel flag, handed to each computation.
+pub struct Watch<'a> {
+    on: &'a mut dyn FnMut(AnalysisProgress),
+    cancel: &'a AtomicBool,
+}
+
+impl<'a> Watch<'a> {
+    pub fn new(on: &'a mut dyn FnMut(AnalysisProgress), cancel: &'a AtomicBool) -> Self {
+        Self { on, cancel }
+    }
+
+    /// Runs `f` with nobody watching and no way to cancel.
+    pub fn quiet<R>(f: impl FnOnce(&mut Watch<'_>) -> R) -> R {
+        let never = AtomicBool::new(false);
+        let mut nop = |_| {};
+        f(&mut Watch::new(&mut nop, &never))
+    }
+
+    /// Reports progress; fails with SQLITE_INTERRUPT once cancelled, the
+    /// same error an interrupted query gives.
+    pub(crate) fn tick(&mut self, phase: &'static str, done: u64, total: u64) -> rusqlite::Result<()> {
+        (self.on)(AnalysisProgress { phase, done, total });
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_INTERRUPT),
+                Some("analysis cancelled".into()),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Runs `f` inside savepoint `name`, rolled back if `f` fails.
+    pub(crate) fn savepoint<T>(
+        conn: &rusqlite::Connection,
+        name: &str,
+        f: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        conn.execute_batch(&format!("SAVEPOINT {name}"))?;
+        match f() {
+            Ok(v) => {
+                conn.execute_batch(&format!("RELEASE {name}"))?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name}"));
+                Err(e)
+            }
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// What one analysis run covered (FR-014), for the status bar and the
+/// detail of the result.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct AnalysisRun {
+    #[ts(type = "number")]
+    pub urls: u64,
+    #[ts(type = "number")]
+    pub links: u64,
+    pub rounds: u32,
+    /// Links on pages whose HTML was not stored (position Unknown).
+    #[ts(type = "number")]
+    pub pages_without_html: u64,
+    pub weighted: bool,
+    pub ms: u32,
+}
+
+impl Reader {
+    /// Runs Crawl Analysis now (stage 1: into this reader's temp tables):
+    /// link positions, then Link Score and the link counts.
+    pub fn analyse(&mut self) -> Result<AnalysisRun> {
+        let never = AtomicBool::new(false);
+        let run = self.analyse_with(&mut |_| {}, &never)?;
+        Ok(run.expect("never cancelled"))
+    }
+
+    /// [`Reader::analyse`] with progress reports. Setting `cancel` (or
+    /// interrupting the connection) stops it: the result is then None and
+    /// the results from before the run are left as they were (FR-013).
+    pub fn analyse_with(
+        &mut self,
+        on: &mut dyn FnMut(AnalysisProgress),
+        cancel: &AtomicBool,
+    ) -> Result<Option<AnalysisRun>> {
+        if !self.features.has(Need::Analysis) {
+            return Err(Error::invalid(Need::Analysis.unavailable_reason()));
+        }
+        let started = std::time::Instant::now();
+        let mut watch = Watch::new(on, cancel);
+        // One savepoint around both tables: a cancelled run rolls back to
+        // the tables (or their absence) from before.
+        let conn = &self.conn;
+        let settings = &self.features.link_settings;
+        let built = Watch::savepoint(conn, "analysis", || {
+            let positions = link_positions::build(conn, &settings.position_rules, &mut watch)?;
+            let metrics = link_metrics::build(conn, settings.weighting.as_ref(), &mut watch)?;
+            Ok((positions, metrics))
+        });
+        let (positions, metrics) = match built {
+            Ok(b) => b,
+            Err(_) if watch.cancelled() => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        self.mark_built(Derived::LinkPositions)?;
+        self.mark_built(Derived::LinkMetrics)?;
+        Ok(Some(AnalysisRun {
+            urls: metrics.urls,
+            links: positions.links,
+            rounds: metrics.rounds,
+            pages_without_html: positions.pages_without_html,
+            weighted: self.features.link_settings.weighting.is_some(),
+            ms: started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
+        }))
+    }
+
+    /// [`Reader::test_positions`] for a URL as typed. None when the URL is
+    /// not in the crawl or its HTML was not stored.
+    pub fn test_positions_url(
+        &self,
+        url: &str,
+        rules: &[spiderlens_config::PositionRule],
+    ) -> Result<Option<Vec<link_positions::TestedLink>>> {
+        let url = url.trim();
+        let id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM urls WHERE url = ?1 OR url = ?1 || '/' ORDER BY length(url) LIMIT 1",
+                [url],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match id {
+            Some(id) => self.test_positions(id, rules),
+            None => Ok(None),
+        }
+    }
+
+    /// The rules tester (FR-022): `rules` applied to one stored page,
+    /// nothing written. None when the page's HTML was not stored.
+    pub fn test_positions(
+        &self,
+        url_id: i64,
+        rules: &[spiderlens_config::PositionRule],
+    ) -> Result<Option<Vec<link_positions::TestedLink>>> {
+        Ok(link_positions::test_page(&self.conn, url_id, rules)?)
+    }
+}
 
 /// Every pass, in tie-break order. A feature adds its pass file and one
 /// line here.
@@ -53,7 +229,7 @@ pub struct PassContext<'a> {
     /// URLs in the crawl, for batching and progress.
     pub urls: u64,
     pass: &'static str,
-    progress: &'a mut dyn FnMut(AnalysisProgress),
+    progress: &'a mut dyn FnMut(PassProgress),
     cancel: &'a AtomicBool,
 }
 
@@ -62,7 +238,7 @@ impl PassContext<'_> {
     /// [`Error::Cancelled`] once the phase was cancelled: call it between
     /// batches.
     pub fn progress(&mut self, done: u64, total: u64, label: &str) -> Result<()> {
-        (self.progress)(AnalysisProgress {
+        (self.progress)(PassProgress {
             pass: self.pass.into(),
             label: label.into(),
             done,
@@ -79,11 +255,11 @@ impl PassContext<'_> {
     }
 }
 
-/// The `analysis_progress` event (plan D12).
+/// The `passes-progress` event (plan D12).
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct AnalysisProgress {
+pub struct PassProgress {
     pub pass: String,
     pub label: String,
     #[ts(type = "number")]
@@ -184,7 +360,7 @@ pub fn needs_analysis(conn: &Connection) -> Result<bool> {
 /// outputs (the process that wrote the crawl, or `spiderlens analyse`).
 pub fn analyse_file(
     path: &Path,
-    progress: &mut dyn FnMut(AnalysisProgress),
+    progress: &mut dyn FnMut(PassProgress),
     cancel: &AtomicBool,
 ) -> Result<AnalysisReport> {
     let conn = crate::reader::connect_writable(path)?;
@@ -199,7 +375,7 @@ pub(crate) fn run(
     conn: &Connection,
     schema: &'static str,
     passes: &[&dyn Pass],
-    progress: &mut dyn FnMut(AnalysisProgress),
+    progress: &mut dyn FnMut(PassProgress),
     cancel: &AtomicBool,
 ) -> Result<AnalysisReport> {
     let ordered = order(passes)?;
@@ -295,7 +471,7 @@ impl crate::Reader {
     /// file is closed.
     pub fn analyse_in_session(
         &mut self,
-        progress: &mut dyn FnMut(AnalysisProgress),
+        progress: &mut dyn FnMut(PassProgress),
         cancel: &AtomicBool,
     ) -> Result<AnalysisReport> {
         let report = run(&self.conn, "temp", PASSES, progress, cancel)?;

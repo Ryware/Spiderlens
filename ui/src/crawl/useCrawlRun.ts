@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AnalysisProgress } from "../generated/AnalysisProgress";
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
@@ -50,7 +50,7 @@ export interface CrawlRunState {
   /** The disk, write or network problem that paused the crawl (spec 006 US5, spec 004 FR-015). */
   local: LocalError | null;
   /** The Crawl Analysis pass running after the crawl (spec 009 plan D12). */
-  analysis: AnalysisProgress | null;
+  analysis: PassProgress | null;
 }
 
 const initial: CrawlRunState = {
@@ -117,7 +117,7 @@ export function useCrawlRun(transport: Transport) {
         if (w.id !== idRef.current) return;
         setState((s) => (s.warnings.includes(w.message) ? s : { ...s, warnings: [...s.warnings, w.message] }));
       }),
-      transport.onAnalysisProgress((p) => {
+      transport.onPassProgress((p) => {
         // Passes on an opened file end with their last event.
         const done = p.total > 0 && p.done >= p.total;
         setState((s) => ({ ...s, analysis: done && s.id === null ? null : p }));

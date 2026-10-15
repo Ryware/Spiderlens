@@ -4,7 +4,7 @@
 
 import type { IssueSettings } from "../generated/IssueSettings";
 import type { IssuesSummary } from "../generated/IssuesSummary";
-import type { Priority } from "../generated/Priority";
+import type { IssuePriority as Priority } from "../generated/IssuePriority";
 import type { RuleInfo } from "../generated/RuleInfo";
 import type { SettingsNotice } from "../generated/SettingsNotice";
 import type { TabDef } from "../generated/TabDef";

@@ -135,6 +135,13 @@ impl Reader {
         &self.features
     }
 
+    /// Reads the file's data list again: analyses that run after the crawl
+    /// (spec 015's AI checks) add data to a file that is already open.
+    pub fn refresh_features(&mut self) -> Result<&Features> {
+        self.features = Features::detect(&self.conn)?;
+        Ok(&self.features)
+    }
+
     /// Changes whenever the crawl commits new data (cheap: no table read).
     pub fn version(&mut self) -> Result<u64> {
         let dv: i64 = self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
@@ -158,6 +165,10 @@ impl Reader {
         self.version()?;
         let g = self.data_gen;
         for d in needed {
+            // Weighted Link Score reads the link positions (spec 023 FR-025).
+            if d == Derived::LinkMetrics && self.features.link_settings.weighting.is_some() {
+                self.ensure_derived([Derived::LinkPositions])?;
+            }
             if self.derived.get(&d) != Some(&g) {
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
@@ -173,6 +184,35 @@ impl Reader {
             }
         }
         Ok(())
+    }
+
+    /// Records that a derived table was just built for the current data.
+    pub(crate) fn mark_built(&mut self, d: Derived) -> Result<()> {
+        self.version()?;
+        self.derived.insert(d, self.data_gen);
+        Ok(())
+    }
+
+    /// Whether a derived table is current, without building it.
+    pub(crate) fn has_derived(&mut self, d: Derived) -> Result<bool> {
+        self.version()?;
+        Ok(self.derived.get(&d) == Some(&self.data_gen))
+    }
+
+    pub fn link_settings(&self) -> &spiderlens_config::LinkAnalysisSettings {
+        &self.features.link_settings
+    }
+
+    /// Replaces the link analysis settings (Settings › Link analysis). The
+    /// positions and Link Score are worked out again on next use (FR-023).
+    pub fn set_link_settings(&mut self, settings: spiderlens_config::LinkAnalysisSettings) {
+        if settings != self.features.link_settings {
+            self.features.link_settings = settings;
+            self.derived.remove(&Derived::LinkPositions);
+            self.derived.remove(&Derived::LinkMetrics);
+            // Open views read the new values on their next refresh.
+            self.version += 1;
+        }
     }
 
     /// A handle that stops this reader's running query from another thread

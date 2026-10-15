@@ -27,6 +27,7 @@ use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, Sp
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
+use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
 use super::store::{
@@ -35,8 +36,9 @@ use super::store::{
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
-use crate::fetch::{Once, build_client_with, fetch_once};
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
+use crate::fetch::{Once, fetch_once};
+use crate::net::NetSession;
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, FinalClass, RequestHeader};
@@ -51,7 +53,7 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
 /// How often the crawl lets the write-ahead log start over.
-const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
+const CATCH_UP_EVERY: Duration = Duration::from_millis(250);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
@@ -83,7 +85,7 @@ pub enum CrawlError {
     )]
     NeedsUpgrade { from: i64 },
     /// Header values that are never stored must be entered again (FR-034).
-    #[error("enter the secret value of these headers to resume: {}", .0.join(", "))]
+    #[error("enter these secret values to resume: {}", .0.join(", "))]
     NeedsSecrets(Vec<String>),
     /// Read-only file or media: save a copy elsewhere to resume (FR-021).
     #[error("{} cannot be changed here (read-only); save a copy to another folder to resume it", .0.display())]
@@ -107,7 +109,8 @@ pub struct ResumeOptions {
     pub upgrade: Option<Upgrade>,
     /// Speed and URL-limit changes, recorded in the configuration history.
     pub changes: Vec<Change>,
-    /// Header name and value for secrets that were not stored.
+    /// Values for secrets that were not stored, keyed as in
+    /// `CrawlConfig::missing_secrets` (a header name, or `cookie:domain/name`).
     pub secrets: Vec<(String, String)>,
 }
 
@@ -457,6 +460,16 @@ enum Msg {
     },
     SitemapDone(SitemapRow),
     SitemapsFinished,
+    SiteFile(SiteFileRow),
+    SiteFilesFinished,
+}
+
+/// The per-host AI site files (spec 015 FR-010), fetched after the last page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteFiles {
+    NotStarted,
+    Pending,
+    Done,
 }
 
 struct PageOutcome {
@@ -484,7 +497,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    hook: Option<PageHook>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -505,6 +525,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     robots_token: &token,
                     // Spec 026: stored once the crawl file has the tables.
                     a11y: false,
+                    hook: hook.as_ref(),
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
@@ -562,9 +583,16 @@ pub struct Crawler {
     start: Option<Url>,
     resolve: Vec<(String, SocketAddr)>,
     retry_base: Duration,
+    page_hook: Option<PageHook>,
 }
 
 impl Crawler {
+    /// Reads more from every parsed page during this crawl (see
+    /// [`PageHook`]); its facts are stored in `page_facts`.
+    pub fn set_page_hook(&mut self, hook: PageHook) {
+        self.page_hook = Some(hook);
+    }
+
     /// Creates the crawl file and records the seeds. The configuration must
     /// already be validated (spec 002); invalid patterns are refused here too.
     pub fn create(path: &Path, config: CrawlConfig, input: &ModeInput) -> Result<Self, CrawlError> {
@@ -657,6 +685,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -691,19 +720,7 @@ impl Crawler {
             .and_then(|c| serde_json::from_str(&c).ok())
             .ok_or_else(|| CrawlError::Config("the crawl file has no readable configuration".into()))?;
         // Secrets are never stored (FR-034): the caller supplies them again.
-        let mut missing = Vec::new();
-        for h in &mut stored.config.identity.headers {
-            if h.value.is_secret() && h.value.expose().is_none() {
-                match options
-                    .secrets
-                    .iter()
-                    .find(|(n, _)| n.eq_ignore_ascii_case(&h.name))
-                {
-                    Some((_, v)) => h.value = HeaderValue::secret(v.clone()),
-                    None => missing.push(h.name.clone()),
-                }
-            }
-        }
+        let missing = stored.config.fill_secrets(&options.secrets);
         if !missing.is_empty() {
             return Err(CrawlError::NeedsSecrets(missing));
         }
@@ -776,6 +793,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -823,6 +841,12 @@ impl Crawler {
         Ok(self)
     }
 
+    /// Stores a key in the crawl file's `meta` table, for callers that add
+    /// their own context, such as the schedule that started a run (spec 021).
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CrawlError> {
+        Ok(self.store.set_meta(key, value)?)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
@@ -840,8 +864,14 @@ impl Crawler {
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
-        let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, events, commands)?;
+        let net = NetSession::new(
+            &opts,
+            &self.config.access,
+            self.rules.internal().clone(),
+            &self.resolve,
+        )
+        .map_err(CrawlError::Client)?;
+        let mut run = Run::new(self, opts, net, control, events, commands)?;
         match run.main_loop().await {
             Ok(()) => {}
             // A write failed: nothing of the open batch reached the file, so
@@ -916,6 +946,7 @@ struct Run {
     c: Crawler,
     opts: CheckOptions,
     client: Client,
+    net: NetSession,
     headers: Arc<Vec<RequestHeader>>,
     control: watch::Receiver<Control>,
     control_closed: bool,
@@ -929,6 +960,7 @@ struct Run {
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
     errors: u64,
@@ -975,7 +1007,7 @@ impl Run {
     fn new(
         c: Crawler,
         opts: CheckOptions,
-        client: Client,
+        net: NetSession,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -1046,7 +1078,8 @@ impl Run {
             headers: Arc::new(opts.headers.clone()),
             c,
             opts,
-            client,
+            client: net.client().clone(),
+            net,
             control,
             control_closed: false,
             events,
@@ -1059,6 +1092,7 @@ impl Run {
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
             errors,
@@ -1449,8 +1483,7 @@ impl Run {
         if self.write_tx.take().is_some() {
             let t = Instant::now();
             self.c.store.commit()?;
-            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
-                self.c.store.catch_up_checkpoint();
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY && self.c.store.catch_up_checkpoint() {
                 self.last_catch_up = Instant::now();
             }
             self.load.saving(t.elapsed());
@@ -1512,14 +1545,20 @@ impl Run {
                             && !self.sitemaps_pending
                             && self.retries.is_empty()
                         {
-                            self.c.store.set_meta("status", "completed")?;
-                            self.c
-                                .store
-                                .conn()
-                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
-                                .map_err(StoreError::from)?;
-                            self.c.store.record_event("completed", None)?;
-                            break;
+                            match self.site_files {
+                                SiteFiles::NotStarted => self.start_site_files()?,
+                                SiteFiles::Pending => {}
+                                SiteFiles::Done => {
+                                    self.c.store.set_meta("status", "completed")?;
+                                    self.c
+                                        .store
+                                        .conn()
+                                        .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                        .map_err(StoreError::from)?;
+                                    self.c.store.record_event("completed", None)?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1790,13 +1829,16 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // The hook's facts stand in for stored HTML, so it runs only when the
+        // HTML is kept (a crawl without it has no content checks either).
+        let hook = self.c.page_hook.clone().filter(|_| store_html);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1887,6 +1929,67 @@ impl Run {
             };
             let _ = tx.send(Msg::Robots { host_key: key, fetch });
         });
+    }
+
+    /// Fetches each internal host's AI site files, one at a time per host
+    /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    fn start_site_files(&mut self) -> Result<(), CrawlError> {
+        if !self.c.config.ai_checks.site_files {
+            self.site_files = SiteFiles::Done;
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        for key in self.c.store.internal_hosts()? {
+            let host = self.hosts.get(&key);
+            let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
+            let policy = match host.map(|h| &h.robots) {
+                Some(RobotsState::Known(p, _)) => Some(p.clone()),
+                _ => None,
+            };
+            // A host the crawl gave up on gets no more requests (spec 004).
+            let given_up = host.is_some_and(|h| h.health.is_given_up());
+            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+                .iter()
+                .map(|path| {
+                    if given_up {
+                        return (
+                            (*path).to_string(),
+                            Some("host unavailable: the crawl gave up on it".to_string()),
+                        );
+                    }
+                    let blocked = policy.as_ref().and_then(|p| {
+                        let url = Url::parse(&format!("{key}{path}")).ok()?;
+                        match p.check(&url) {
+                            RobotsVerdict::Disallowed(rule) => Some(format!("blocked by robots.txt: {rule}")),
+                            _ => None,
+                        }
+                    });
+                    ((*path).to_string(), blocked)
+                })
+                .collect();
+            jobs.push((key, delay, paths));
+        }
+        self.site_files = SiteFiles::Pending;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (key, delay, paths) in jobs {
+                for (i, (path, blocked)) in paths.into_iter().enumerate() {
+                    let row = match blocked {
+                        Some(why) => SiteFileRow::skipped(&key, &path, &why),
+                        None => {
+                            if i > 0 && !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            site_files::fetch(&client, &key, &path).await
+                        }
+                    };
+                    let _ = tx.send(Msg::SiteFile(row));
+                }
+            }
+            let _ = tx.send(Msg::SiteFilesFinished);
+        });
+        Ok(())
     }
 
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
@@ -1993,6 +2096,11 @@ impl Run {
             }
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
+                Ok(())
+            }
+            Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SiteFilesFinished => {
+                self.site_files = SiteFiles::Done;
                 Ok(())
             }
         }
@@ -2398,6 +2506,7 @@ impl Run {
                         && self.c.rules.adopt_start_redirect(t)
                     {
                         seed = true;
+                        self.net.adopt_host(t);
                         self.c.stored.resolved_hosts = self.c.rules.internal_hosts().to_vec();
                         self.c.store.set_meta(
                             "config",
@@ -2514,6 +2623,15 @@ impl Run {
         if let Some(o) = outcome {
             let store = &self.c.store;
             store.record_headers(entry.id, &o.headers)?;
+            // The cookie audit costs nothing on responses without cookies.
+            if o.headers.iter().any(|(n, _)| n == "set-cookie")
+                && let Ok(url) = Url::parse(&entry.url)
+            {
+                store.record_cookies(
+                    entry.id,
+                    &super::cookies::from_headers(&url, &o.headers, now_ms()),
+                )?;
+            }
             let meta_count = match &o.page {
                 Some(p) => {
                     store.record_page(

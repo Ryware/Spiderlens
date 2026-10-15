@@ -33,6 +33,13 @@ pub enum Need {
     /// Sentence and syllable counts for the readability score (spec 009
     /// FR-031).
     Readability,
+    /// Crawl Analysis results such as Link Score (spec 023), calculated
+    /// once fetching has ended.
+    Analysis,
+    /// The cookie audit (spec 025).
+    Cookies,
+    /// AI search check results (spec 015).
+    AiChecks,
 }
 
 impl Need {
@@ -50,6 +57,9 @@ impl Need {
             Self::Readability => {
                 "Readability was not measured in this crawl file; it was made before SpiderLens scored readability."
             }
+            Self::Analysis => "Calculated when the crawl ends.",
+            Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
+            Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
         }
     }
 
@@ -62,6 +72,9 @@ impl Need {
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
             Self::Readability => "readability",
+            Self::Analysis => "analysis",
+            Self::Cookies => "cookies",
+            Self::AiChecks => "ai_checks",
         }
     }
 }
@@ -79,6 +92,10 @@ pub enum ValueKind {
     Status,
     State,
     Bool,
+    /// Link Score: 0-100, shown whole in the table, one decimal elsewhere.
+    Score,
+    /// A share of pages, 0-100.
+    Percent,
     /// A URL's issues: `(4 - highest priority) * 1,000,000 + count`, so
     /// sorting descending puts the most urgent first (spec 009 FR-018).
     /// Shown as "High · 3".
@@ -129,6 +146,16 @@ pub enum Derived {
     /// `temp.issue_hits(rule, url_id)` for the issue settings in force
     /// (spec 009 plan D4).
     IssueHits,
+    /// `link_metrics`: Link Score and link counts (spec 023), built in
+    /// `temp` when the file holds no current copy.
+    LinkMetrics,
+    /// `temp.viz_crawl_tree`: each URL's crawl tree parent (spec 022).
+    VizCrawlTree,
+    /// `temp.viz_dirs` and `temp.viz_dir_urls`: the directory tree.
+    VizDirs,
+    /// `link_positions`: where on its page each body link sits (spec 023
+    /// US4), from the stored HTML.
+    LinkPositions,
 }
 
 impl Derived {
@@ -142,6 +169,10 @@ impl Derived {
             Self::OccText => "occ_text",
             Self::PageFlags => "page_flags",
             Self::IssueHits => "issue_hits",
+            Self::LinkMetrics => "link_metrics",
+            Self::LinkPositions => "link_positions",
+            Self::VizCrawlTree => "viz_crawl_tree",
+            Self::VizDirs => "viz_dirs",
         }
     }
 
@@ -156,7 +187,11 @@ impl Derived {
             | Self::OccH2
             | Self::OccText
             | Self::PageFlags
-            | Self::IssueHits => "1",
+            | Self::IssueHits
+            | Self::LinkMetrics
+            | Self::LinkPositions
+            | Self::VizCrawlTree
+            | Self::VizDirs => "1",
         }
     }
 }
@@ -340,6 +375,22 @@ impl ColumnDef {
     }
 }
 
+/// A spec 023 link metric, read from `link_metrics` (unqualified: a fresh
+/// copy in `temp` shadows a stored one, plan D5).
+macro_rules! lm {
+    ($id:literal, $label:literal, $field:literal, $kind:expr, $width:literal $(,)?) => {
+        col(
+            $id,
+            $label,
+            concat!("(SELECT ", $field, " FROM link_metrics m WHERE m.url_id = u.id)"),
+            $kind,
+            $width,
+        )
+        .needs(Need::Analysis)
+        .reads(Derived::LinkMetrics)
+    };
+}
+
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     FilterDef {
         id,
@@ -350,6 +401,13 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         threshold: None,
         hide_when_empty: None,
     }
+}
+
+/// A Links tab filter on the spec 023 metrics.
+const fn link_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond)
+        .needs(Need::Analysis)
+        .reads(Derived::LinkMetrics)
 }
 
 impl FilterDef {
@@ -505,6 +563,51 @@ mod c {
     pub const SOURCE: ColumnDef = col("source", "Discovered via", "u.source", ValueKind::Text, 120).hidden();
     pub const IN_SITEMAP: ColumnDef =
         col("in_sitemap", "In sitemap", "u.in_sitemap", ValueKind::Bool, 100).hidden();
+    pub const LINK_SCORE: ColumnDef = lm!(
+        "link_score",
+        "Link Score",
+        "round(m.score, 1)",
+        ValueKind::Score,
+        100
+    );
+    pub const LINK_RANK: ColumnDef = lm!("link_rank", "Link Score rank", "m.rank", ValueKind::Int, 120);
+    pub const UNIQUE_INLINKS: ColumnDef = lm!(
+        "unique_inlinks",
+        "Unique inlinks",
+        "m.unique_inlinks",
+        ValueKind::Int,
+        120
+    );
+    pub const FOLLOWED_INLINKS: ColumnDef = lm!(
+        "followed_inlinks",
+        "Unique followed inlinks",
+        "m.followed_inlinks",
+        ValueKind::Int,
+        170
+    );
+    pub const ALL_INLINKS: ColumnDef =
+        lm!("all_inlinks", "All inlinks", "m.all_inlinks", ValueKind::Int, 100);
+    pub const UNIQUE_OUTLINKS: ColumnDef = lm!(
+        "unique_outlinks",
+        "Unique outlinks",
+        "m.unique_outlinks",
+        ValueKind::Int,
+        120
+    );
+    pub const EXTERNAL_OUTLINKS: ColumnDef = lm!(
+        "external_outlinks",
+        "Unique external outlinks",
+        "m.external_outlinks",
+        ValueKind::Int,
+        170,
+    );
+    pub const PCT_LINKING: ColumnDef = lm!(
+        "pct_linking",
+        "% of pages linking",
+        "round(m.pct_linking, 1)",
+        ValueKind::Percent,
+        140
+    );
 }
 
 /// Filters by content type (Internal and External tabs).
@@ -664,6 +767,102 @@ const WITH_ISSUES: FilterDef = filter(
     "EXISTS (SELECT 1 FROM temp.issue_hits h WHERE h.url_id = u.id)",
 )
 .reads(Derived::IssueHits);
+/// An `aeo_pages` value of the row's URL (spec 015).
+macro_rules! ai {
+    ($field:literal) => {
+        concat!("(SELECT a.", $field, " FROM aeo_pages a WHERE a.url_id = u.id)")
+    };
+}
+
+/// A failed AI check with a tab filter: bit `$bit` of `aeo_pages.flags`
+/// (spec 015 contracts/aeo-crate.md; bits are append-only).
+macro_rules! ai_flag {
+    ($id:literal, $label:literal, $bit:literal) => {
+        filter(
+            $id,
+            $label,
+            concat!(
+                "(SELECT a.flags FROM aeo_pages a WHERE a.url_id = u.id) & (1 << ",
+                $bit,
+                ") != 0"
+            ),
+        )
+        .needs(Need::AiChecks)
+    };
+}
+
+fn ai_search_tab() -> TabDef {
+    use ValueKind::*;
+    let ai_col = |id, label, expr, kind, width| col(id, label, expr, kind, width).needs(Need::AiChecks);
+    TabDef {
+        id: "ai-search",
+        title: "AI search",
+        eligible: HTML_OK,
+        columns: vec![
+            c::ADDRESS,
+            ai_col("ai_score", "AI score", ai!("score"), Int, 90),
+            ai_col("page_type", "Page type", ai!("page_type"), Text, 100),
+            ai_col("ai_access", "Access", ai!("access"), Int, 80),
+            ai_col("ai_readable", "Readable without JS", ai!("readable"), Int, 90),
+            ai_col("ai_answer", "Answer readiness", ai!("answer"), Int, 90),
+            ai_col("ai_trust", "Trust", ai!("trust"), Int, 70),
+            ai_col("ai_structured", "Structured data", ai!("structured"), Int, 90),
+            ai_col(
+                "blocked_crawlers",
+                "Blocked AI crawlers",
+                "ai_bot_names((SELECT a.blocked_bots FROM aeo_pages a WHERE a.url_id = u.id))",
+                Text,
+                240,
+            ),
+            ai_col("published", "Published", ai!("published"), Text, 110),
+            ai_col("modified", "Modified", ai!("modified"), Text, 110),
+            ai_col("author", "Author", ai!("author"), Text, 160),
+            ai_col("version_used", "Version used", ai!("version_used"), Text, 100).hidden(),
+            ai_col("provisional", "Provisional", ai!("provisional"), Bool, 90).hidden(),
+            ai_col(
+                "page_type_reason",
+                "Page type reason",
+                ai!("page_type_reason"),
+                Text,
+                220,
+            )
+            .hidden(),
+            c::TITLE.hidden(),
+        ],
+        filters: vec![
+            filter("all", "All", "1"),
+            filter(
+                "score_below_50",
+                "AI score below 50",
+                concat!(ai!("score"), " < 50"),
+            )
+            .needs(Need::AiChecks),
+            ai_flag!("search_blocked", "Blocked for AI search crawlers", 0),
+            ai_flag!("training_only_blocked", "Blocked for AI training only", 1),
+            ai_flag!("user_fetch_blocked", "Blocked for user-requested fetches", 2),
+            ai_flag!("snippet_restricted", "Snippet restricted", 3),
+            ai_flag!("js_content", "Main content missing without JavaScript", 4),
+            ai_flag!("js_suspected", "Possibly built with JavaScript", 5),
+            ai_flag!("question_no_answer", "Question without a direct answer", 6),
+            ai_flag!("unstructured", "Long text without structure", 7),
+            ai_flag!("no_facts", "No facts with sources", 8),
+            ai_flag!(
+                "sd_not_visible",
+                "Structured data content not visible on the page",
+                9
+            ),
+            ai_flag!("no_date", "No date", 10),
+            ai_flag!("dates_disagree", "Dates disagree", 11),
+            ai_flag!("stale", "Not updated in 12 months", 12),
+            ai_flag!("no_author", "No author", 13),
+            ai_flag!("sd_errors", "Structured data errors", 14),
+            ai_flag!("sd_warnings", "Structured data warnings", 15),
+        ],
+        search_column: Some("author"),
+        scoped: false,
+        rows: None,
+    }
+}
 
 /// Every tab in display order (FR-007, FR-009).
 pub fn tabs() -> &'static [TabDef] {
@@ -801,8 +1000,16 @@ fn build() -> Vec<TabDef> {
                 c::SIZE,
                 c::RESPONSE_TIME,
                 c::DEPTH,
+                c::LINK_SCORE,
                 c::INLINKS,
                 c::OUTLINKS,
+                c::LINK_RANK.hidden(),
+                c::UNIQUE_INLINKS.hidden(),
+                c::FOLLOWED_INLINKS.hidden(),
+                c::ALL_INLINKS.hidden(),
+                c::UNIQUE_OUTLINKS.hidden(),
+                c::EXTERNAL_OUTLINKS.hidden(),
+                c::PCT_LINKING.hidden(),
                 c::REDIRECT_TARGET.hidden(),
                 c::ERROR_CLASS.hidden(),
                 c::FOUND_ON,
@@ -811,6 +1018,64 @@ fn build() -> Vec<TabDef> {
             ],
             filters: TYPE_FILTERS.to_vec(),
             search_column: Some("title"),
+            scoped: false,
+            rows: None,
+        },
+        TabDef {
+            id: "links",
+            title: "Links",
+            eligible: HTML_OK,
+            columns: vec![
+                c::ADDRESS,
+                c::LINK_SCORE,
+                col("depth", "Crawl depth", "u.depth", Int, 100),
+                c::UNIQUE_INLINKS,
+                c::FOLLOWED_INLINKS,
+                c::UNIQUE_OUTLINKS,
+                c::INDEXABILITY,
+                c::LINK_RANK.hidden(),
+                c::ALL_INLINKS.hidden(),
+                c::EXTERNAL_OUTLINKS.hidden(),
+                c::PCT_LINKING.hidden(),
+                c::TITLE.hidden(),
+            ],
+            filters: vec![
+                filter("all", "All", "1"),
+                filter("depth_4", "Crawl depth 4 or more", "u.depth >= 4"),
+                link_filter(
+                    "one_followed",
+                    "One followed inlink",
+                    "(SELECT m.followed_inlinks FROM link_metrics m WHERE m.url_id = u.id) = 1",
+                ),
+                link_filter(
+                    "no_followed",
+                    "No followed inlinks",
+                    "u.source <> 'start' AND (SELECT m.followed_inlinks FROM link_metrics m WHERE m.url_id = u.id) = 0",
+                ),
+                link_filter(
+                    "no_outlinks",
+                    "No internal outlinks",
+                    "(SELECT m.unique_outlinks FROM link_metrics m WHERE m.url_id = u.id) = 0",
+                ),
+                filter(
+                    "nofollow_outlinks",
+                    "Nofollow internal outlinks",
+                    "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id \
+                     AND l.kind = 'anchor' AND t.internal = 1 AND (l.nofollow = 1 OR l.page_nofollow = 1))",
+                ),
+                // Positions 1, 2 and 5: navigation, header, footer (US4).
+                filter(
+                    "boilerplate_only",
+                    "Linked only from navigation, header or footer",
+                    "EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'anchor' AND l.from_id <> u.id) \
+                     AND NOT EXISTS (SELECT 1 FROM links l LEFT JOIN link_positions p \
+                     ON p.from_id = l.from_id AND p.pos = l.pos WHERE l.to_id = u.id AND l.kind = 'anchor' \
+                     AND l.from_id <> u.id AND COALESCE(p.position, 0) NOT IN (1, 2, 5))",
+                )
+                .needs(Need::Analysis)
+                .reads(Derived::LinkPositions),
+            ],
+            search_column: None,
             scoped: false,
             rows: None,
         },
@@ -1084,6 +1349,7 @@ fn build() -> Vec<TabDef> {
             ],
             "meta_robots",
         ),
+        ai_search_tab(),
     ]
 }
 
@@ -1093,6 +1359,7 @@ pub(crate) fn build_derived(
     d: Derived,
     features: &crate::Features,
 ) -> rusqlite::Result<()> {
+    let links = &features.link_settings;
     match d {
         Derived::Titles => {
             conn.execute_batch(
@@ -1129,6 +1396,14 @@ pub(crate) fn build_derived(
         Derived::PageFlags => page_flags(conn),
         // Built by the reader or export, which know the issue settings.
         Derived::IssueHits => Ok(()),
+        Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+        }),
+        Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+        }),
+        Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
+        Derived::VizDirs => crate::viz::dirs::build(conn),
     }
 }
 
@@ -1486,7 +1761,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 11);
+        assert_eq!(tab_ids.len(), 13);
     }
 
     #[test]

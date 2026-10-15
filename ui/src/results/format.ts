@@ -48,6 +48,11 @@ export function formatCell(kind: ValueKind, v: JsonValue): string {
       return v ? "Yes" : "No";
     case "issues":
       return typeof v === "number" ? issuesText(v) : String(v);
+    case "score":
+      // Whole numbers in the table; the detail pane and exports keep one decimal (spec 023 FR-004).
+      return typeof v === "number" ? String(Math.round(v)) : String(v);
+    case "percent":
+      return typeof v === "number" ? `${v.toFixed(1)}%` : String(v);
     default:
       return String(v);
   }
@@ -86,7 +91,7 @@ export function cellTone(kind: ValueKind, v: JsonValue): CellTone {
 
 export const toneText = { ok: "text-ok", info: "text-info", warn: "text-warn", bad: "text-bad" } as const;
 
-export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status";
+export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status" || kind === "score" || kind === "percent";
 
 /** Why a column or filter has no data in this file. */
 export const needReason: Record<Need, string> = {
@@ -96,4 +101,7 @@ export const needReason: Record<Need, string> = {
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
   readability: "Not collected: this crawl file was made before SpiderLens counted sentences and syllables.",
+  analysis: "Calculated when the crawl ends.",
+  cookies: "This crawl was made before SpiderLens recorded the cookies each page sets.",
+  ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
 };

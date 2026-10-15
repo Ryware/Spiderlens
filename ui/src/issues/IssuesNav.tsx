@@ -3,7 +3,7 @@ import { ChevronRight, CircleAlert, CircleDot, Lightbulb, TriangleAlert, type Lu
 import { cn, Tooltip } from "../components/ui";
 import type { IssueCount } from "../generated/IssueCount";
 import type { IssuesSummary } from "../generated/IssuesSummary";
-import type { Priority } from "../generated/Priority";
+import type { IssuePriority as Priority } from "../generated/IssuePriority";
 import { issueTab } from "./useIssues";
 import { PRIORITIES, priorityLabel, priorityTone } from "./priority";
 

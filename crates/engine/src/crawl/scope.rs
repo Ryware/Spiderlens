@@ -129,6 +129,11 @@ impl ScopeRules {
         u
     }
 
+    /// The internal hosts, for the cookie jar (spec 025).
+    pub fn internal(&self) -> &InternalHosts {
+        &self.internal
+    }
+
     pub fn is_internal(&self, url: &Url) -> bool {
         url.host_str().is_some_and(|h| self.internal.is_internal(h))
     }

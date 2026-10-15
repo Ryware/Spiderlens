@@ -4,6 +4,8 @@
 //! crawl store. Validation lives here too, so every surface reports the same
 //! issues. This crate has no dependency on the desktop shell.
 
+pub mod ai_bots;
+mod links;
 mod list_input;
 mod model;
 mod patterns;
@@ -18,17 +20,19 @@ mod stored;
 mod url_norm;
 mod validate;
 
+pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget, Identity, IssueSettings, Limits, Mode,
-    ModeInput, NetworkSettings, Priority, QueryMode, QueryParams, RetrySettings, RobotsMode, RobotsSettings,
-    RuleOverride, Scope, SpeedSettings, SubdomainMode, UserAgent,
+    AccessSettings, AiChecks, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget,
+    Identity, IssueSettings, Limits, Mode, ModeInput, NetworkSettings, Priority, QueryMode, QueryParams,
+    RetrySettings, RobotsMode, RobotsSettings, RuleOverride, Scope, SpeedSettings, SubdomainMode,
+    SuppliedCookie, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
 pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile, import_profile};
 pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
-pub use secret::HeaderValue;
+pub use secret::{HeaderValue, Secret};
 pub use site::{InternalHosts, registrable_domain};
 pub use storage::{
     CLEANUP_DAY_CHOICES, CleanupReason, CleanupRecord, DEFAULT_CLEANUP_DAYS, DEFAULT_RESERVE, HISTORY_LIMIT,

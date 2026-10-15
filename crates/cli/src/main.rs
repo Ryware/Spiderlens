@@ -3,11 +3,16 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod aeo_cmd;
+mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;
 mod issues_cmd;
+mod links_cmd;
 mod options;
+mod schedule_cmd;
+mod viz_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -37,6 +42,9 @@ pub(crate) mod exit {
     /// `issues --fail-on`: an issue at or above that priority has URLs
     /// (spec 009 FR-027).
     pub const ISSUES_FOUND: u8 = 7;
+    /// A quality gate failed (`aeo run --fail-under`); the same number as
+    /// `ISSUES_FOUND`, both being "the checks found what you asked to fail on".
+    pub const QUALITY_GATE: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -69,6 +77,8 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// List the cookies the site set during a crawl (no values).
+    Cookies(cookies_cmd::CookiesArgs),
     /// List crawl files in a folder with their size and stored HTML.
     Files(files_cmd::FilesArgs),
     /// Remove the stored page HTML from a crawl file, keeping its results.
@@ -81,9 +91,20 @@ enum Command {
     Issues(Box<issues_cmd::IssuesArgs>),
     /// Run the crawl analysis passes that have not run on a crawl file yet.
     Analyse(issues_cmd::AnalyseArgs),
+    /// Write a visualisation of a crawl file as SVG, PNG or CSV (same as the app's export).
+    Viz(Box<viz_cmd::VizArgs>),
+    /// Link Score and link positions of a crawl file.
+    #[command(subcommand)]
+    Links(links_cmd::LinksCommand),
+    /// AI search checks (AEO and GEO) on a crawl file.
+    #[command(subcommand)]
+    Aeo(aeo_cmd::AeoCommand),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Recurring crawls that run without the app (spec 021).
+    #[command(subcommand)]
+    Schedule(Box<schedule_cmd::ScheduleCommand>),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -173,13 +194,18 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Cookies(args) => cookies_cmd::run_cookies(args),
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Rules(args) => issues_cmd::run_rules(args),
         Command::Issues(args) => issues_cmd::run_issues(*args),
         Command::Analyse(args) => issues_cmd::run_analyse(args),
+        Command::Viz(args) => viz_cmd::run_viz(*args),
+        Command::Links(cmd) => links_cmd::run(cmd),
+        Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
     }
 }
 

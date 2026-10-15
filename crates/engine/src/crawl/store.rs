@@ -510,11 +510,12 @@ impl CrawlStore {
     /// into memory. Run between transactions, this passive checkpoint copies
     /// only the little the background thread has not, so the next commit
     /// writes from the start of the log again. Never waits: when the
-    /// background thread is busy checkpointing, it is skipped.
-    pub fn catch_up_checkpoint(&self) {
-        let _ = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    /// background thread is busy checkpointing, it returns false and the
+    /// caller tries again after its next commit.
+    pub fn catch_up_checkpoint(&self) -> bool {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0))
+            .is_ok_and(|busy| busy == 0)
     }
 
     /// Opens a crawl file for reading only: nothing is written, not even the
@@ -1055,6 +1056,13 @@ impl CrawlStore {
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
+        if let Some(f) = &d.facts {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO page_facts (url_id, kind, version, data) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, f.kind, f.version, f.data])?;
+        }
         Ok(())
     }
 
@@ -1074,6 +1082,35 @@ impl CrawlStore {
                 d.source.as_str(),
                 d.crawler,
                 d.in_head
+            ])?;
+        }
+        Ok(())
+    }
+
+    /// The cookies one response set (spec 025 FR-025). Values are not part
+    /// of `CookieObs`, so they cannot reach the file.
+    pub fn record_cookies(&self, id: i64, cookies: &[super::cookies::CookieObs]) -> Result<()> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO cookies (url_id, name, domain, host_only, path, expires, max_age, secure, \
+             http_only, same_site, size, party, source, extra) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )?;
+        for c in cookies {
+            stmt.execute(params![
+                id,
+                c.name,
+                c.domain,
+                c.host_only,
+                c.path,
+                c.expires,
+                c.max_age,
+                c.secure,
+                c.http_only,
+                c.same_site,
+                c.size as i64,
+                if c.third_party { "third" } else { "first" },
+                c.source,
+                c.extra,
             ])?;
         }
         Ok(())
@@ -1451,6 +1488,38 @@ impl CrawlStore {
             .conn
             .prepare_cached("SELECT url FROM urls WHERE id = ?1")?
             .query_row([id], |r| r.get(0))?)
+    }
+
+    /// Hosts that have internal URLs, in order.
+    pub fn internal_hosts(&self) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT DISTINCT host_key FROM urls WHERE internal = 1 ORDER BY host_key")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// One per-host site file (spec 015).
+    pub fn record_site_file(&self, f: &super::site_files::SiteFileRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO site_files
+                     (host_key, path, status, final_url, content_type, size, body, outcome, error, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                f.host_key,
+                f.path,
+                f.status,
+                f.final_url,
+                f.content_type,
+                f.size,
+                f.body,
+                f.outcome,
+                f.error,
+                f.fetched_at
+            ])?;
+        Ok(())
     }
 
     pub fn upsert_host(&self, h: &HostRow) -> Result<()> {

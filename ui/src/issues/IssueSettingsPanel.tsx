@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Button, Input, Notice, NumberInput, Select, Switch } from "../components/ui";
 import type { IssueSettings } from "../generated/IssueSettings";
-import type { Priority } from "../generated/Priority";
+import type { IssuePriority as Priority } from "../generated/IssuePriority";
 import type { RuleCatalogue } from "../generated/RuleCatalogue";
 import type { RuleInfo } from "../generated/RuleInfo";
 import type { RuleOverride } from "../generated/RuleOverride";

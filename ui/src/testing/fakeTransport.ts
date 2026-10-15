@@ -1,13 +1,15 @@
 // In-memory Transport for UI tests. Validation here is a small stand-in; the
 // real rules are tested in Rust (spiderlens-config).
 
-import type { AnalysisProgress } from "../generated/AnalysisProgress";
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type { FakeIssues } from "./fakeIssues";
+import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -69,6 +71,9 @@ export function defaultConfig(): CrawlConfig {
     },
     extraction: { store_html: true },
     issues: { rules: {} },
+    links: { auto_analyse: true, position_rules: [], weighting: null },
+    access: { cookies: [], cookie_policy: "ignore" },
+    ai_checks: { auto: true, site_files: true },
   };
 }
 
@@ -138,8 +143,8 @@ export interface FakeCrawls {
   preview: RetryPreview;
   progress(p: Partial<CrawlProgress>): void;
   warn(message: string): void;
-  analyse(p: Partial<AnalysisProgress>): void;
-  /** Files `analysisRun` was called for. */
+  analyse(p: Partial<PassProgress>): void;
+  /** Files `passesRun` was called for. */
   analysed: string[];
   notice(n: Partial<CrawlNotice> & { message: string }): void;
   finish(f: Partial<CrawlFinished>): void;
@@ -147,14 +152,14 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; issues: FakeIssues } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
   const onProgress: Listeners<CrawlProgress> = new Set();
   const onWarning: Listeners<{ id: number; message: string }> = new Set();
   const onFinished: Listeners<CrawlFinished> = new Set();
-  const onAnalysis: Listeners<AnalysisProgress> = new Set();
+  const onAnalysis: Listeners<PassProgress> = new Set();
   const onNotice: Listeners<CrawlNotice> = new Set();
   const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
@@ -199,12 +204,18 @@ export function fakeTransport(
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
+    ...aeoApi,
+    ...schedulesApi,
+    schedules,
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
+    pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",
@@ -236,6 +247,11 @@ export function fakeTransport(
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      config.links.position_rules.forEach((r, i) => {
+        // Stand-in for the CSS parser: an unclosed bracket is invalid.
+        if (r.selector.trim() === "" || r.selector.split("[").length !== r.selector.split("]").length)
+          issues.push({ path: `links.position_rules[${i}].selector`, severity: "error", code: "selector_syntax", message: "Not a valid CSS selector." });
+      });
       const r = config.retry;
       if (!(r.base_wait_secs >= 0.1 && r.base_wait_secs <= 60)) {
         issues.push({ path: "retry.base_wait_secs", severity: "error", code: "out_of_range", message: "The first wait must be between 0.1 and 60 seconds." });
@@ -317,8 +333,8 @@ export function fakeTransport(
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
-    onAnalysisProgress: (cb) => subscribe(onAnalysis, cb),
-    analysisRun: async (path) => {
+    onPassProgress: (cb) => subscribe(onAnalysis, cb),
+    passesRun: async (path) => {
       crawls.analysed.push(path);
       return { ran: [], skipped: [], saved: true };
     },

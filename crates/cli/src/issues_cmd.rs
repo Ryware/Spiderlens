@@ -311,7 +311,7 @@ pub(crate) fn analyse(
     show: bool,
 ) -> spiderlens_results::Result<spiderlens_results::analysis::AnalysisReport> {
     let mut last = (String::new(), u64::MAX);
-    let mut progress = |p: spiderlens_results::analysis::AnalysisProgress| {
+    let mut progress = |p: spiderlens_results::analysis::PassProgress| {
         let pct = (p.done * 100).checked_div(p.total).unwrap_or(0);
         if show && (p.label != last.0 || pct != last.1) {
             eprintln!("Analysing: {} {pct}%", p.label);

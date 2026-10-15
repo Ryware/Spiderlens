@@ -218,6 +218,20 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                 }
             }
         }
+        // Secret cookie values come back from the environment, as on a
+        // first run (spec 025 contracts/cli.md).
+        if let Ok(info) = file::info(path) {
+            for key in &info.missing_secrets {
+                if let Some(name) = key
+                    .strip_prefix("cookie:")
+                    .and_then(|k| k.rsplit_once('/'))
+                    .map(|(_, n)| n)
+                    && let Ok(v) = std::env::var(crate::options::cookie_env(name))
+                {
+                    secrets.push((key.clone(), v));
+                }
+            }
+        }
         let mut changes = Vec::new();
         if let Ok(info) = file::info(path)
             && let Some(stored) = &info.config
@@ -321,7 +335,11 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     };
-    let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    let mut crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     execute(crawler, file, cmd.quiet, cmd.json)
 }
 
@@ -332,6 +350,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         Ok(rt) => rt,
         Err(code) => return code,
     };
+    let ai_auto = crawler.config().ai_checks.auto;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -422,6 +441,9 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
             "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
             file.display()
         );
+    }
+    if ai_auto && summary.status == "completed" {
+        crate::aeo_cmd::run_after_crawl(&file, quiet || json);
     }
     if !json && !quiet {
         eprintln!(
@@ -721,7 +743,7 @@ fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
         .find(|c| matches!(store.id_of(c), Ok(Some(_))))
 }
 
-fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
+pub(crate) fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
     let store = CrawlStore::open_read_only(file).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::from(exit::USAGE)

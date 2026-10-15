@@ -12,14 +12,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
-use spiderlens_config::IssueSettings;
-use spiderlens_results::analysis::{AnalysisProgress, AnalysisReport};
+use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule};
+use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts,
-    TabDef, UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
+    AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, ExportError, Features,
+    FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, TestedLink,
+    UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 type Cmd<T> = Result<T, String>;
@@ -41,6 +42,8 @@ pub struct State {
     /// Issue settings of the profile in use (spec 009 plan D9), applied to
     /// every reader and export.
     pub issues: Mutex<IssueSettings>,
+    /// Cancel flag of the running Crawl Analysis, if any.
+    analysis: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -160,7 +163,7 @@ pub async fn results_open(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<
     state
         .with(&path, |r| {
             Ok(Opened {
-                features: r.features().clone(),
+                features: r.refresh_features().map_err(err)?.clone(),
             })
         })
         .await
@@ -273,9 +276,221 @@ pub async fn url_list(
     kind: ListKind,
     from: u32,
     count: u32,
+    position: Option<String>,
 ) -> Cmd<ListPage> {
     state
-        .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
+        .with(&path, move |r| {
+            r.list_at(id, kind, position.as_deref(), from, count).map_err(err)
+        })
+        .await
+}
+
+/// Runs Crawl Analysis on the open file now (spec 023 stage 1).
+#[tauri::command]
+pub async fn analysis_run(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<AnalysisRun> {
+    state.with(&path, move |r| r.analyse().map_err(err)).await
+}
+
+#[derive(Serialize, Clone)]
+struct AnalysisProgressEvent {
+    path: PathBuf,
+    #[serde(flatten)]
+    progress: AnalysisProgress,
+}
+
+#[derive(Serialize, Clone)]
+struct AnalysisDone {
+    path: PathBuf,
+    /// None when cancelled or failed.
+    run: Option<AnalysisRun>,
+    cancelled: bool,
+    error: Option<String>,
+}
+
+/// Starts Crawl Analysis on the open file's reader (spec 023 FR-012,
+/// FR-013): `analysis-progress` events at most every 100 ms, then one
+/// `analysis-done`. Other reader commands wait until it ends.
+#[tauri::command]
+pub fn analysis_start(app: AppHandle, state: tauri::State<'_, State>, path: PathBuf) -> Cmd<()> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(old) = state
+        .analysis
+        .lock()
+        .expect("analysis lock")
+        .replace(cancel.clone())
+    {
+        old.store(true, Ordering::Relaxed);
+    }
+    let p = path.clone();
+    state.send(&path, move |r, _| {
+        let mut last: Option<std::time::Instant> = None;
+        let mut on = |progress: AnalysisProgress| {
+            let due = last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(100));
+            if due || progress.done == progress.total {
+                last = Some(std::time::Instant::now());
+                let _ = app.emit(
+                    "analysis-progress",
+                    AnalysisProgressEvent {
+                        path: p.clone(),
+                        progress,
+                    },
+                );
+            }
+        };
+        let done = match r.analyse_with(&mut on, &cancel) {
+            Ok(run) => AnalysisDone {
+                path: p.clone(),
+                cancelled: run.is_none(),
+                run,
+                error: None,
+            },
+            Err(e) => AnalysisDone {
+                path: p.clone(),
+                run: None,
+                cancelled: false,
+                error: Some(e.to_string()),
+            },
+        };
+        // Finished: a late cancel must not interrupt the next job.
+        let state = app.state::<State>();
+        let mut current = state.analysis.lock().expect("analysis lock");
+        if current.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancel)) {
+            *current = None;
+        }
+        drop(current);
+        let _ = app.emit("analysis-done", done);
+    })
+}
+
+/// Cancels the running Crawl Analysis (FR-013): checked between batches,
+/// and the reader's query is interrupted, so it stops within a second.
+#[tauri::command]
+pub fn analysis_cancel(state: tauri::State<'_, State>) {
+    if let Some(c) = state.analysis.lock().expect("analysis lock").take() {
+        c.store(true, Ordering::Relaxed);
+        if let Some(a) = state.actor.lock().expect("results lock").as_ref() {
+            a.interrupt.interrupt();
+        }
+    }
+}
+
+/// Uses `settings` for the open file's link positions and Link Score from
+/// now on (spec 023 FR-023): both are worked out again on next use.
+#[tauri::command]
+pub async fn analysis_settings(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    settings: LinkAnalysisSettings,
+) -> Cmd<()> {
+    state
+        .with(&path, move |r| {
+            r.set_link_settings(settings);
+            Ok(())
+        })
+        .await
+}
+
+/// Distinct cookies the crawl saw, without values (spec 025 FR-027).
+#[tauri::command]
+pub async fn cookies_list(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    filter: CookieFilter,
+    sort: Option<String>,
+    descending: bool,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookiePage> {
+    state
+        .with(&path, move |r| {
+            r.cookies(filter, sort.as_deref(), descending, offset, limit)
+                .map_err(err)
+        })
+        .await
+}
+
+/// The link position rules tester (spec 023 FR-022). None when the URL is
+/// not in the crawl or its HTML was not stored.
+#[tauri::command]
+pub async fn positions_test(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    url: String,
+    rules: Vec<PositionRule>,
+) -> Cmd<Option<Vec<TestedLink>>> {
+    state
+        .with(&path, move |r| r.test_positions_url(&url, &rules).map_err(err))
+        .await
+}
+
+/// One visualisation scene for the open file (spec 022): the crawl tree or
+/// the directory tree, as `state` asks.
+#[tauri::command]
+pub async fn viz_scene(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+) -> Cmd<spiderlens_results::viz::Scene> {
+    state.with(&path, move |r| r.viz_scene(&view).map_err(err)).await
+}
+
+/// Exports the view as SVG, PNG or CSV (spec 022 FR-024): the scene is
+/// rebuilt from `view`, so the file is what is on screen; drawing and
+/// writing run off the reader.
+#[tauri::command]
+pub async fn viz_export(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+    options: spiderlens_results::viz::export::ExportOptions,
+    file: PathBuf,
+) -> Cmd<spiderlens_results::viz::export::ExportDone> {
+    let colour = view.colour;
+    let (scene, header) = state
+        .with(&path, move |r| {
+            let scene = r.viz_scene(&view).map_err(err)?;
+            Ok((scene, r.viz_header().map_err(err)?))
+        })
+        .await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        spiderlens_results::viz::export::export(&scene, colour, &header, &options, &file).map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// The links behind one term of an anchor text cloud (spec 022 FR-018):
+/// `total` of them, the first `limit` listed.
+#[tauri::command]
+pub async fn viz_term_links(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+    term: String,
+    limit: Option<usize>,
+) -> Cmd<spiderlens_results::viz::anchors::TermLinks> {
+    let limit = limit.unwrap_or(500).min(5_000);
+    state
+        .with(&path, move |r| r.viz_term_links(&view, &term, limit).map_err(err))
+        .await
+}
+
+/// The URLs that set one cookie (spec 025 FR-028).
+#[tauri::command]
+pub async fn cookie_urls(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    name: String,
+    domain: String,
+    cookie_path: String,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookieUrlPage> {
+    state
+        .with(&path, move |r| {
+            r.cookie_urls(&name, &domain, &cookie_path, offset, limit)
+                .map_err(err)
+        })
         .await
 }
 
@@ -471,18 +686,18 @@ struct IssuesPartial {
 }
 
 /// Runs the Crawl Analysis passes that have not run on `path` (spec 009
-/// plan D12), sending `analysis-progress` events. `cancel` stops it between
+/// plan D12), sending `passes-progress` events. `cancel` stops it between
 /// batches; finished passes stay.
 pub fn analyse(app: &AppHandle, path: &Path, cancel: &AtomicBool) -> Result<AnalysisReport, String> {
-    let mut progress = |p: AnalysisProgress| {
-        let _ = app.emit("analysis-progress", p);
+    let mut progress = |p: PassProgress| {
+        let _ = app.emit("passes-progress", p);
     };
     spiderlens_results::analysis::analyse_file(path, &mut progress, cancel).map_err(|e| e.to_string())
 }
 
 /// Analyses an opened file whose passes are missing or stale.
 #[tauri::command]
-pub async fn analysis_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
+pub async fn passes_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
     tauri::async_runtime::spawn_blocking(move || analyse(&app, &path, &AtomicBool::new(false)))
         .await
         .map_err(|e| e.to_string())?

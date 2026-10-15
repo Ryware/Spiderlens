@@ -9,6 +9,7 @@
 //! constitution principle VI).
 
 pub mod analysis;
+mod cookies;
 mod counts;
 mod detail;
 mod export;
@@ -20,9 +21,15 @@ mod sql;
 pub mod synth;
 mod tabs;
 mod view;
+pub mod viz;
 
+pub use analysis::link_positions::TestedLink;
+pub use analysis::{AnalysisProgress, AnalysisRun};
+pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage};
 pub use counts::{FilterCounts, TabCounts};
-pub use detail::{HeadingRow, HtmlMissing, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail};
+pub use detail::{
+    HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail,
+};
 pub use export::{
     COPY_LIMIT, ExportError, export_file, export_file_with, write_csv, write_csv_with, write_tsv_row,
 };
