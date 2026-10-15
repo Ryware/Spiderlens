@@ -203,6 +203,12 @@ impl Out<'_> {
     }
 }
 
+/// A tab whose All filter this file can show; the others (AMP on a crawl
+/// that did not check AMP) have no rows to export.
+fn tab_available(tab: &tabs::TabDef, features: &Features) -> bool {
+    tab.filter("all").is_none_or(|f| features.has(f.need))
+}
+
 #[derive(Default)]
 struct OverviewExtra {
     priority: String,
@@ -293,7 +299,10 @@ pub fn run_bulk_with(
         let total = wanted
             .iter()
             .map(|t| match *t {
-                "tabs" => tabs::tabs().len(),
+                "tabs" => tabs::tabs()
+                    .iter()
+                    .filter(|t| tab_available(t, &features))
+                    .count(),
                 "issues" => issues.len(),
                 _ => 1,
             })
@@ -312,7 +321,7 @@ pub fn run_bulk_with(
             match *t {
                 "summary" => summary(&mut out)?,
                 "tabs" => {
-                    for tab in tabs::tabs() {
+                    for tab in tabs::tabs().iter().filter(|t| tab_available(t, &features)) {
                         out.view(
                             &tab.id,
                             &format!("tab-{}", tab.id),

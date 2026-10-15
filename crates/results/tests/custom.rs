@@ -145,8 +145,8 @@ async fn custom_tabs_list_values_and_filter() {
     let all = r.tabs().unwrap();
     assert_eq!(
         all.len(),
-        tabs().len() + 2,
-        "two custom tabs after the fixed ones"
+        tabs().len() + spiderlens_results::issue_tabs().len() + 2,
+        "two custom tabs after the fixed and issue ones"
     );
     let ex = all.iter().find(|t| t.id == "custom_extraction").unwrap();
     let labels: Vec<&str> = ex.columns.iter().map(|c| c.label.as_ref()).collect();
@@ -275,7 +275,10 @@ async fn detail_lists_every_value_and_export_joins_them() {
 async fn crawls_without_rules_have_no_custom_tabs() {
     let c = crawl(CustomRules::default()).await;
     let mut r = Reader::open(&c.path).unwrap();
-    assert_eq!(r.tabs().unwrap().len(), tabs().len());
+    assert_eq!(
+        r.tabs().unwrap().len(),
+        tabs().len() + spiderlens_results::issue_tabs().len()
+    );
     assert!(r.find_tab("custom_extraction").is_err());
     assert!(r.custom_results(1).unwrap().is_empty());
 }

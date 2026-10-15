@@ -95,6 +95,7 @@ fn text_of(kind: ValueKind, v: &Value) -> String {
     match v {
         Value::Null | Value::Blob(_) => String::new(),
         Value::Integer(i) if kind == ValueKind::Bool => (if *i != 0 { "Yes" } else { "No" }).into(),
+        Value::Integer(i) if kind == ValueKind::Issues => crate::export::issues_text(*i),
         Value::Integer(i) => i.to_string(),
         Value::Real(f) => f.to_string(),
         Value::Text(s) => s.clone(),
@@ -395,6 +396,10 @@ impl Sink for XlsxSink {
                 Value::Null | Value::Blob(_) => {}
                 Value::Integer(n) if c.kind == ValueKind::Bool => {
                     ws.write_string(r, col, if *n != 0 { "Yes" } else { "No" })
+                        .map_err(xl)?;
+                }
+                Value::Integer(n) if c.kind == ValueKind::Issues => {
+                    ws.write_string(r, col, crate::export::issues_text(*n))
                         .map_err(xl)?;
                 }
                 Value::Integer(n) => {

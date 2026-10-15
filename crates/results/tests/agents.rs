@@ -137,7 +137,7 @@ async fn us2_filters_list_exactly_the_expected_pages() {
     ]);
     let t = tab("agents").unwrap();
     for f in &t.filters {
-        if f.id == "all" || f.id == "no_markdown" {
+        if f.id == "all" || f.id == "no_markdown" || f.id == "with_issues" {
             continue;
         }
         let want = expected

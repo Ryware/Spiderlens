@@ -459,14 +459,21 @@ impl Comparison {
     ) -> Result<HashMap<i64, Vec<serde_json::Value>>> {
         let s = &mut self.sides[side];
         for d in cols.iter().filter_map(|c| c.derived).chain(rows) {
-            if !s.derived.contains(&d) {
+            if d != Derived::IssueHits && !s.derived.contains(&d) {
                 build_derived(&s.conn, d, &s.features)?;
                 s.derived.push(d);
             }
         }
         let exprs: Vec<&str> = cols
             .iter()
-            .map(|c| if s.features.has(c.need) { &*c.expr } else { "NULL" })
+            .map(|c| {
+                // Issue hits need the issue settings (see side::filter_available).
+                if s.features.has(c.need) && c.derived != Some(Derived::IssueHits) {
+                    &*c.expr
+                } else {
+                    "NULL"
+                }
+            })
             .collect();
         let mut out = HashMap::new();
         if ids.is_empty() {

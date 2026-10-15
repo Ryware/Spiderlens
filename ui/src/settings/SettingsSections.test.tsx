@@ -111,7 +111,7 @@ test("url_list_category_appears_only_in_list_mode", async () => {
   await setup();
   const n = await openSettings();
   expect(within(n).queryByRole("tab", { name: /^URL list/ })).toBeNull();
-  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Sign-in and cookies", "Page data", "Duplicate content", "Segments", "Link analysis", "Issues", "Custom rules", "Storage", "Spelling", "JavaScript rendering", "Appearance", "AI assistants"]);
+  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Sign-in and cookies", "Page data", "Duplicate content", "Segments", "Link analysis", "Issues", "Custom rules", "Spelling", "JavaScript rendering", "Storage", "Appearance", "AI assistants"]);
   await closeSettings();
   fireEvent.click(screen.getByLabelText("List"));
   fireEvent.click(await screen.findByRole("button", { name: "Add a list of URLs…" }));
