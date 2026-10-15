@@ -221,3 +221,43 @@ fn check_rejects_bad_network_values() {
         .stderr(contains("network.read_timeout_secs"))
         .stdout(predicate::str::is_empty());
 }
+
+#[test]
+fn sitemap_flags() {
+    // Spec 011 contracts/cli.md.
+    let (c, code) = json(&["config", "show", "--json"]);
+    assert_eq!(code, 0);
+    assert_eq!(c["config"]["scope"]["sitemaps"]["read"], true);
+    assert_eq!(c["config"]["scope"]["sitemaps"]["crawl_sitemap_only"], true);
+
+    let (c, _) = json(&["config", "show", "--json", "--no-sitemaps"]);
+    assert_eq!(c["config"]["scope"]["sitemaps"]["read"], false);
+    assert_eq!(c["config"]["scope"]["sitemaps"]["crawl_sitemap_only"], false);
+
+    let (c, _) = json(&[
+        "config",
+        "show",
+        "--json",
+        "--no-crawl-sitemap-only",
+        "--sitemap-url",
+        "https://a.test/extra.xml",
+        "--sitemap-file",
+        "dir/a=b.xml=https://a.test/sitemap.xml",
+    ]);
+    let s = &c["config"]["scope"]["sitemaps"];
+    assert_eq!(s["read"], true);
+    assert_eq!(s["crawl_sitemap_only"], false);
+    assert_eq!(s["urls"][0], "https://a.test/extra.xml");
+    assert_eq!(s["files"][0]["path"], "dir/a=b.xml");
+    assert_eq!(s["files"][0]["base_url"], "https://a.test/sitemap.xml");
+
+    spiderlens()
+        .args(["config", "show", "--sitemap-file", "nobase.xml"])
+        .assert()
+        .code(2)
+        .stderr(contains("PATH=BASE-URL"));
+    spiderlens()
+        .args(["config", "show", "--use-sitemaps", "--no-sitemaps"])
+        .assert()
+        .code(2);
+}

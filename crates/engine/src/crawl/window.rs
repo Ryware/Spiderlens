@@ -174,6 +174,11 @@ impl QueueWindow {
     }
 
     /// Each host with URLs in the window, and its earliest URL's key.
+    /// How many entries each host has in the window (spec 008 FR-029).
+    pub fn host_counts(&self) -> impl Iterator<Item = (&str, usize)> {
+        self.by_host.iter().map(|(h, keys)| (h.as_str(), keys.len()))
+    }
+
     pub fn host_heads(&self) -> impl Iterator<Item = (&str, QueueKey)> {
         self.by_host
             .iter()

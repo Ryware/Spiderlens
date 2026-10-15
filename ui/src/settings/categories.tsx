@@ -7,12 +7,20 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
+import { CookiesEditor, hostOf } from "./CookiesEditor";
 import { HeadersEditor } from "./HeadersEditor";
+import { IssueSettingsPanel } from "../issues/IssueSettingsPanel";
+import { LinkAnalysisBody } from "./LinkAnalysisSettings";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { CustomRulesPanel } from "./CustomRules";
+import { DictionaryManager } from "../spelling/DictionaryManager";
+import { SegmentsSettings } from "../segments/SegmentsSettings";
+import { SitemapSources } from "./SitemapSources";
+import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -21,7 +29,7 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
-  /** An app preference, not part of the crawl profile (spec 018 FR-012). */
+  /** An app preference, not part of the crawl profile (spec 018 FR-012, spec 019 FR-025). */
   app?: boolean;
 }
 
@@ -33,7 +41,25 @@ export const categories: Category[] = [
   { id: "speed", title: "Speed", description: "How hard SpiderLens works the site. Polite is right for sites you don't own.", prefixes: ["speed"] },
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
+  { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "segments", title: "Segments", description: "Group URLs into parts of the site. Every results tab can show and filter by them.", prefixes: ["segments"] },
+  { id: "links", title: "Link analysis", description: "Link Score, and where on the page each link sits.", prefixes: ["links"] },
+  { id: "issues", title: "Issues", description: "Which checks run on the results, how urgent each is, and their limits. Changes apply to the open crawl right away.", prefixes: ["issues"] },
+  { id: "custom", title: "Custom rules", description: "Extract values and search every page. Rules run on each page's HTML as it arrives.", prefixes: ["custom"] },
+  {
+    id: "storage",
+    title: "Storage",
+    description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
+  {
+    id: "spelling",
+    title: "Spelling",
+    description: "Spelling is checked after the crawl, from the stored pages, so it never slows crawling. Dictionaries stay on this computer.",
+    prefixes: ["spelling"],
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -54,7 +80,25 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 }
 
 /** `live`: a crawl is running and only the settings it can take on at once are editable. */
-export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
+export function CategoryBody({
+  id,
+  setup,
+  transport,
+  live,
+  crawlPath = null,
+  crawlRunning = false,
+
+}: {
+  id: CategoryId;
+  setup: CrawlSetup;
+  transport: Transport;
+  live?: boolean;
+  /** The open crawl, which custom rules can run on again (spec 013 US3). */
+  crawlPath?: string | null;
+  crawlRunning?: boolean;
+
+}): ReactNode {
+  if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
@@ -143,9 +187,14 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
             <Row label="Stay in the start folder" help="Internal URLs outside the start URL's folder are not crawled.">
               {(_, l) => <Switch labelledBy={l} checked={config.scope.stay_in_folder} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, stay_in_folder: v } }))} />}
             </Row>
-            <Row label="Use sitemaps from robots.txt" help="Also crawl the URLs listed in the sitemaps the site declares.">
-              {(_, l) => <Switch labelledBy={l} checked={config.scope.use_sitemaps} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, use_sitemaps: v } }))} />}
-            </Row>
+          </Group>
+          <Group title="Sitemaps">
+            <SitemapSources
+              value={config.scope.sitemaps}
+              onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, sitemaps: v } }))}
+              issues={issues}
+              transport={transport}
+            />
           </Group>
           <Group title="URLs">
             <Row label="Query parameters" help="Removing parameters makes URLs that differ only by them count once." issues={at("scope.query_params.mode")}>
@@ -361,22 +410,127 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
         </>
       );
 
-    case "extraction":
+    case "access":
       return (
-        <Group>
-          <Row
-            label="Store page HTML"
-            help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
-          >
-            {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
-          </Row>
-          <Row
-            label="Check AMP"
-            help="Follows amphtml links and checks pages marked as AMP against a core subset of AMP's rules. The results are in the AMP tab."
-          >
-            {(_, l) => <Switch labelledBy={l} checked={config.extraction.check_amp} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, check_amp: v } }))} />}
-          </Row>
-        </Group>
+        <>
+          <Group title="Cookies">
+            <Row
+              label="Cookies sent with every request"
+              stacked
+              help="Sent only to this crawl's own site. Paste the Cookie line from a signed-in browser to crawl as that user."
+              issues={at("access.cookies")}
+            >
+              {() => (
+                <CookiesEditor
+                  cookies={config.access.cookies}
+                  defaultDomain={hostOf(setup.startUrl)}
+                  onChange={(cookies) => set((c) => ({ ...c, access: { ...c.access, cookies } }))}
+                />
+              )}
+            </Row>
+            <Row
+              label="Cookies the site sets"
+              help={
+                config.access.cookie_policy === "keep"
+                  ? "Sent back for the rest of the crawl, like a browser. They are recorded in the Cookies report either way."
+                  : "Recorded in the Cookies report but not sent back, so every page is seen as a first visit."
+              }
+              issues={at("access.cookie_policy")}
+            >
+              {() => (
+                <Segmented
+                  label="Cookies the site sets"
+                  value={config.access.cookie_policy}
+                  options={[
+                    { value: "ignore", label: "Ignore" },
+                    { value: "keep", label: "Keep" },
+                  ]}
+                  onChange={(cookie_policy) => set((c) => ({ ...c, access: { ...c.access, cookie_policy } }))}
+                />
+              )}
+            </Row>
+          </Group>
+        </>
       );
+
+    case "extraction": {
+      const pdf = config.extraction.pdf;
+      const setPdf = (p: Partial<typeof pdf>) => set((c) => ({ ...c, extraction: { ...c.extraction, pdf: { ...c.extraction.pdf, ...p } } }));
+      return (
+        <>
+          <Group>
+            <Row
+              label="Store page HTML"
+              help="Keeps each page's HTML in the crawl file, compressed to about a sixth of its size, so it can be viewed and searched later. Turn off to keep crawl files small."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
+            </Row>
+            <Row
+              label="Check AMP"
+              help="Follows amphtml links and checks pages marked as AMP against a core subset of AMP's rules. The results are in the AMP tab."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={config.extraction.check_amp} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, check_amp: v } }))} />}
+            </Row>
+          </Group>
+          <Group title="PDFs">
+            <Row
+              label="Crawl PDFs"
+              help="Downloads PDFs and reads their properties, page count, words and links. Reading happens beside the crawl, so pages are not slowed down. With Store page HTML on, the PDF text is kept too."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={pdf.crawl} onChange={(v) => setPdf({ crawl: v })} />}
+            </Row>
+            <Row label="Follow links in PDFs" help="Crawls the pages PDFs link to. When off, the links are still listed.">
+              {(_, l) => <Switch labelledBy={l} disabled={!pdf.crawl} checked={pdf.follow_links} onChange={(v) => setPdf({ follow_links: v })} />}
+            </Row>
+            <Row label="PDF size limit (MB)" help="Larger PDFs are not downloaded past the limit and are listed as over it." issues={at("extraction.pdf.max_mb")}>
+              {(i) => <NumberInput id={i} disabled={!pdf.crawl} value={pdf.max_mb} onChange={(v) => setPdf({ max_mb: v ?? NaN })} />}
+            </Row>
+            <Row label="Time to read one PDF (seconds)" help="A PDF that takes longer is listed as partly read, with what was read by then." issues={at("extraction.pdf.time_limit_secs")}>
+              {(i) => <NumberInput id={i} disabled={!pdf.crawl} value={pdf.time_limit_secs} onChange={(v) => setPdf({ time_limit_secs: v ?? NaN })} />}
+            </Row>
+          </Group>
+        </>
+      );
+    }
+    case "spelling": {
+      const sp = config.spelling;
+      const setSp = (p: Partial<typeof sp>) => set((c) => ({ ...c, spelling: { ...c.spelling, ...p } }));
+      return (
+        <>
+          <Group>
+            <Row label="Check spelling after the crawl" help="Or check any time with Check spelling on the Spelling tab.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.check} onChange={(v) => setSp({ check: v })} />}
+            </Row>
+            <Row label="Language of pages without a lang attribute" issues={at("spelling.default_lang")}>
+              {(i) => <Input id={i} className="w-32" value={sp.default_lang} onChange={(e) => setSp({ default_lang: e.target.value })} />}
+            </Row>
+            <Row label="Skip words in capitals" help="Words like NASA or SKU are usually names, not mistakes.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.skip_all_caps} onChange={(v) => setSp({ skip_all_caps: v })} />}
+            </Row>
+            <Row label="Words to ignore" help="One per line: brand names, product names, jargon. Case is ignored." stacked>
+              {(i) => <Lines id={i} value={sp.ignore} onChange={(ignore) => setSp({ ignore })} placeholder="SpiderLens" />}
+            </Row>
+          </Group>
+          <Group title="Dictionaries">
+            <Row
+              label="Pages are checked with the dictionary for their language"
+              help="Words in another script, such as Hebrew on an English page, use that script's dictionary when one is installed."
+              stacked
+            >
+              {() => <DictionaryManager transport={transport} />}
+            </Row>
+          </Group>
+        </>
+      );
+    }
+
+    case "segments":
+      return <SegmentsSettings segments={config.segments} issues={issuesAt(issues, "segments")} onChange={(segments) => set((c) => ({ ...c, segments }))} />;
+    case "custom":
+      return <CustomRulesPanel setup={setup} transport={transport} crawlPath={crawlPath} crawlRunning={crawlRunning} />;
+    case "links":
+      return <LinkAnalysisBody links={config.links} issues={issues} transport={transport} path={crawlPath} onChange={(links) => set((c) => ({ ...c, links }))} />;
+    case "issues":
+      return <IssueSettingsPanel transport={transport} settings={config.issues} onChange={(v) => set((c) => ({ ...c, issues: v }))} />;
   }
 }

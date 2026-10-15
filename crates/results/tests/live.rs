@@ -14,6 +14,7 @@ fn view(sort: Option<&str>) -> ViewQuery {
             column: c.into(),
             desc: false,
         }),
+        segment: None,
     }
 }
 
@@ -25,6 +26,7 @@ fn live_refresh_keeps_anchor_and_respects_view() {
         urls: 2_000,
         links_per_page: 3,
         seed: 3,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();
@@ -72,6 +74,7 @@ fn reopen_gives_identical_views() {
         urls: 1_500,
         links_per_page: 2,
         seed: 11,
+        ..Default::default()
     }
     .write(&path)
     .unwrap();
@@ -82,4 +85,45 @@ fn reopen_gives_identical_views() {
         (page.rows, counts.counts)
     };
     assert_eq!(read(), read());
+}
+
+#[test]
+fn tab_counts_follow_the_crawl_and_stay_cheap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("counts.spiderlens");
+    Synth {
+        urls: 100_000,
+        links_per_page: 3,
+        seed: 5,
+        ..Default::default()
+    }
+    .write(&path)
+    .unwrap();
+    let mut r = Reader::open(&path).unwrap();
+    let t = std::time::Instant::now();
+    let first = r.tab_counts().unwrap();
+    let cold = t.elapsed();
+    eprintln!("tab_counts over 100k URLs: {} ms", cold.as_millis());
+    let internal = r.counts("internal", UrlScope::All).unwrap();
+    assert_eq!(Some(first.counts["internal"]), internal.counts["all"]);
+    let t = std::time::Instant::now();
+    assert_eq!(
+        r.tab_counts().unwrap(),
+        first,
+        "unchanged data is answered from memory"
+    );
+    assert!(t.elapsed() < std::time::Duration::from_millis(50));
+
+    let w = Connection::open(&path).unwrap();
+    w.execute(
+        "INSERT INTO urls (url, host_key, internal, depth, state, source, status, content_type, title, fetched_at)
+         VALUES ('https://example.test/fresh', 'https://example.test:443', 1, 1, 'crawled', 'link', 200, 'text/html', 'Fresh', 1)",
+        [],
+    )
+    .unwrap();
+    let after = r.tab_counts().unwrap();
+    assert!(after.version > first.version);
+    assert_eq!(after.counts["internal"], first.counts["internal"] + 1);
+    assert_eq!(after.counts["page-titles"], first.counts["page-titles"] + 1);
+    assert_eq!(after.counts["external"], first.counts["external"]);
 }

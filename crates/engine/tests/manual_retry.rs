@@ -50,11 +50,12 @@ async fn us5_retries_only_transient_failures_in_place() {
         "{:?}",
         r.summary.by_class
     );
-    // The 404s stay as they were: /missing, and the link on the first
-    // run's 503 error page (processed then, as for any final answer).
+    // The 404 stays as it was. Links on the first run's 503 pages were
+    // never followed, so nothing from them is left behind.
+    assert_eq!(site.count(E, "/should-not-be-followed"), 0);
     assert_eq!(
         r.summary.by_class.get("http_4xx"),
-        Some(&2),
+        Some(&1),
         "{:?}",
         r.summary.by_class
     );

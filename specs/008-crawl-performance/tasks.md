@@ -34,10 +34,10 @@
 
 ## Later rounds
 
-- [ ] T014 [US1] Live cap changes during a crawl (FR-005)
-- [ ] T015 [US2] Global slowdown detection (FR-019)
-- [ ] T016 [US3] Limiting-factor reasons and per-site breakdown (FR-028, FR-029), desktop status bar
-- [ ] T017 [US2] Speed events recorded in the crawl file (FR-021)
+- [x] T014 [US1] Live cap changes during a crawl (FR-005): done by spec 004 (`RunCommand::Apply`)
+- [x] T015 [US2] Global slowdown detection (FR-019): `pace::connection_slow`, holds every site's allowance and the number of requests at once while it lasts
+- [x] T016 [US3] Limiting-factor reasons and per-site breakdown (FR-028, FR-029): `crawl/pace.rs`, `Progress.limit` and `Progress.sites`, CLI progress line, desktop status bar "Crawl speed" popover
+- [x] T017 [US2] Speed events recorded in the crawl file (FR-021): `speed_cut`, `speed_wait` and per-run `speed_summary` rows in the crawl log, `speed_events` in the summary, Slowdowns in the overview
 - [x] T018 [US4] Saving backpressure (FR-023) and the 1,000,000 URL memory run (SC-007); fixed the write-ahead log growing without limit
 - [x] T019 [US5] Reduced benchmark in CI (FR-034): `bench-check`, against a build of the base branch
-- [ ] T020 [US2] Retry the URL that got 429/503 (needs spec 004 retries)
+- [x] T020 [US2] Retry the URL that got 429/503: done by spec 004
