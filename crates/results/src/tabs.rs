@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Search Console page data fetched after the crawl (spec 024).
+    SearchConsole,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
     /// Crawl Analysis results such as Link Score (spec 023), calculated
@@ -53,6 +55,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::SearchConsole => {
+                "No Search Console data in this crawl yet. Fetch it from Integrations after connecting your Google account."
+            }
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
@@ -70,6 +75,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::SearchConsole => "search_console",
             Self::SitemapEntries => "sitemap_entries",
             Self::Analysis => "analysis",
             Self::Cookies => "cookies",
@@ -93,8 +99,10 @@ pub enum ValueKind {
     Bool,
     /// Link Score: 0-100, shown whole in the table, one decimal elsewhere.
     Score,
-    /// A share of pages, 0-100.
+    /// A share, 0-100 (also Search Console CTR).
     Percent,
+    /// A number with one decimal (average position).
+    Decimal,
 }
 
 impl ValueKind {
@@ -389,11 +397,60 @@ impl FilterDef {
     }
 }
 
+/// Search Console page data (spec 024), one primary-key lookup each.
+const GSC_CLICKS: &str = "(SELECT g.clicks FROM gsc_pages g WHERE g.url_id = u.id)";
+const GSC_IMPRESSIONS: &str = "(SELECT g.impressions FROM gsc_pages g WHERE g.url_id = u.id)";
+const GSC_CTR: &str = "(SELECT g.ctr * 100 FROM gsc_pages g WHERE g.url_id = u.id)";
+const GSC_POSITION: &str = "(SELECT g.position FROM gsc_pages g WHERE g.url_id = u.id AND g.impressions > 0)";
+const GSC_DATA: &str = "(CASE WHEN EXISTS (SELECT 1 FROM integration_status s WHERE s.url_id = u.id \
+     AND s.provider = 'search_console' AND s.reason = 'no_data') THEN 'No data from Google' \
+     WHEN EXISTS (SELECT 1 FROM gsc_pages g WHERE g.url_id = u.id) THEN 'Has data' ELSE 'Not fetched' END)";
+
 /// Columns many tabs share.
 mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
+    pub const GSC_CLICKS: ColumnDef = col(
+        "gsc_clicks",
+        "Clicks (Search Console)",
+        super::GSC_CLICKS,
+        ValueKind::Int,
+        120,
+    )
+    .needs(Need::SearchConsole);
+    pub const GSC_IMPRESSIONS: ColumnDef = col(
+        "gsc_impressions",
+        "Impressions (Search Console)",
+        super::GSC_IMPRESSIONS,
+        ValueKind::Int,
+        140,
+    )
+    .needs(Need::SearchConsole);
+    pub const GSC_CTR: ColumnDef = col(
+        "gsc_ctr",
+        "CTR (Search Console)",
+        super::GSC_CTR,
+        ValueKind::Percent,
+        110,
+    )
+    .needs(Need::SearchConsole);
+    pub const GSC_POSITION: ColumnDef = col(
+        "gsc_position",
+        "Avg. position (Search Console)",
+        super::GSC_POSITION,
+        ValueKind::Decimal,
+        120,
+    )
+    .needs(Need::SearchConsole);
+    pub const GSC_DATA: ColumnDef = col(
+        "gsc_data",
+        "Search Console data",
+        super::GSC_DATA,
+        ValueKind::Text,
+        150,
+    )
+    .needs(Need::SearchConsole);
     pub const CONTENT_TYPE: ColumnDef = col(
         "content_type",
         "Content type",
@@ -864,6 +921,10 @@ fn build() -> Vec<TabDef> {
                 c::FOUND_ON,
                 c::SOURCE,
                 c::IN_SITEMAP,
+                c::GSC_CLICKS.hidden(),
+                c::GSC_IMPRESSIONS.hidden(),
+                c::GSC_CTR.hidden(),
+                c::GSC_POSITION.hidden(),
             ],
             filters: TYPE_FILTERS.to_vec(),
             search_column: Some("title"),
@@ -1214,9 +1275,46 @@ fn build() -> Vec<TabDef> {
             ],
             "meta_robots",
         ),
+        TabDef {
+            id: "search-console",
+            title: "Search Console",
+            eligible: HTML_OK,
+            columns: vec![
+                c::ADDRESS,
+                c::GSC_CLICKS,
+                c::GSC_IMPRESSIONS,
+                c::GSC_CTR,
+                c::GSC_POSITION,
+                c::INDEXABILITY,
+                c::TITLE,
+                c::INLINKS,
+                c::DEPTH,
+                c::GSC_DATA.hidden(),
+            ],
+            filters: [
+                filter("all", "All", "1"),
+                filter("clicks", "With clicks", GSC_WITH_CLICKS),
+                filter("no_impressions", "Indexable, no impressions", GSC_INDEXABLE_NO_IMPRESSIONS),
+                filter("clicks_not_indexable", "Has clicks, not indexable", GSC_CLICKS_NOT_INDEXABLE),
+                filter("no_data", "No data from Google", GSC_NO_DATA),
+            ]
+            .into_iter()
+            .map(|f| f.needs(Need::SearchConsole))
+            .collect(),
+            search_column: Some("title"),
+            scoped: false,
+        },
         ai_search_tab(),
     ]
 }
+
+const GSC_WITH_CLICKS: &str = "COALESCE((SELECT g.clicks FROM gsc_pages g WHERE g.url_id = u.id), 0) > 0";
+const GSC_INDEXABLE_NO_IMPRESSIONS: &str = "indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url) = 'Indexable' \
+     AND COALESCE((SELECT g.impressions FROM gsc_pages g WHERE g.url_id = u.id), 0) = 0";
+const GSC_CLICKS_NOT_INDEXABLE: &str = "indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url) <> 'Indexable' \
+     AND COALESCE((SELECT g.clicks FROM gsc_pages g WHERE g.url_id = u.id), 0) > 0";
+const GSC_NO_DATA: &str = "EXISTS (SELECT 1 FROM integration_status s WHERE s.url_id = u.id \
+     AND s.provider = 'search_console' AND s.reason = 'no_data')";
 
 /// Builds a derived table on `conn` (dropping an older copy).
 pub(crate) fn build_derived(
@@ -1340,7 +1438,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 13);
+        assert_eq!(tab_ids.len(), 14);
     }
 
     #[test]

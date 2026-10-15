@@ -25,6 +25,9 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 jiff.workspace = true
+spiderlens-integrations.workspace = true
+secrecy.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 spiderlens-test-fixtures.workspace = true
@@ -32,7 +35,6 @@ assert_cmd.workspace = true
 predicates.workspace = true
 jsonschema.workspace = true
 tempfile.workspace = true
-rusqlite.workspace = true
 
 [lints]
 workspace = true

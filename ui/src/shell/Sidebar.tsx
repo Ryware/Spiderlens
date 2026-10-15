@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -23,6 +23,7 @@ export const resultTabs: NavItem[] = [
   { id: "images", title: "Images", icon: Image },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
+  { id: "search-console", title: "Search Console", icon: Search },
   { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];
 
@@ -112,6 +113,8 @@ export function Sidebar({
       <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
       {heading("Visualisations")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{vizTabs.map((t) => item(t, results))}</ul>
+      {heading("External data")}
+      <ul className="m-0 list-none p-0">{item({ id: "integrations", title: "Integrations", icon: Cable }, true)}</ul>
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

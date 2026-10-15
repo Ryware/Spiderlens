@@ -6,6 +6,7 @@ import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
+import { IntegrationsView } from "../integrations/IntegrationsView";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
@@ -305,6 +306,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
+      { id: "go-integrations", title: "Integrations", group: "Go to", keywords: ["search console", "google", "external data"], run: () => setSection("integrations") },
       { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
@@ -405,6 +407,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
+          ) : section === "integrations" ? (
+            <IntegrationsView transport={transport} path={crawl.path} crawlRunning={crawl.running} onDataChanged={results.reload} />
           ) : section === "sitemap-files" && crawl.path ? (
             <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
           ) : vizView && crawl.path ? (

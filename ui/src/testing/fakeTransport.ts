@@ -9,6 +9,7 @@ import type { SitemapFiles } from "../generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
@@ -252,7 +253,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; integrations: FakeIntegrations } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
   const saved = new Map<string, LoadedProfile>();
@@ -303,11 +304,14 @@ export function fakeTransport(
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
+    ...integrationsApi,
+    integrations,
     ...aeoApi,
     ...schedulesApi,
     schedules,

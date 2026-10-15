@@ -22,6 +22,16 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { CacheInfo } from "./generated/CacheInfo";
+import type { Connection } from "./generated/Connection";
+import type { OrphanPage } from "./generated/OrphanPage";
+import type { PageRequest } from "./generated/PageRequest";
+import type { Property } from "./generated/Property";
+import type { ProviderSettings } from "./generated/ProviderSettings";
+import type { ProviderStatus } from "./generated/ProviderStatus";
+import type { QueryRow } from "./generated/QueryRow";
+import type { RunProgress } from "./generated/RunProgress";
+import type { Status as IntegrationStatus } from "./generated/Status";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
 import type { ExportDone } from "./generated/ExportDone";
@@ -659,6 +669,31 @@ export interface Transport {
   positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // External data (spec 024, contracts/desktop-commands.md).
+  integrationsStatus(): Promise<IntegrationStatus>;
+  integrationsSettingsSave(provider: string, settings: ProviderSettings): Promise<ProviderStatus>;
+  /** Saves the user's own Google client; an empty id goes back to the built-in one. */
+  integrationsGoogleClient(clientId: string, clientSecret: string | null): Promise<void>;
+  /** Opens Google's consent page in the system browser and resolves when the user answers. */
+  integrationsConnectGoogle(features: string[]): Promise<Connection>;
+  integrationsConnectCancel(): Promise<void>;
+  integrationsSaveKey(provider: string, label: string, key: string): Promise<Connection>;
+  /** True when Google confirmed the revoke. */
+  integrationsForget(kind: string, label: string): Promise<boolean>;
+  integrationsProperties(account: string | null, path: string | null): Promise<Property[]>;
+  integrationsDefaultRequest(property: string): Promise<PageRequest>;
+  integrationsRunSearchConsole(path: string, account: string | null, request: PageRequest): Promise<RunProgress>;
+  integrationsRunResume(path: string, runId: number | null): Promise<RunProgress>;
+  integrationsRunPause(): Promise<void>;
+  integrationsRunCancel(): Promise<void>;
+  integrationsRuns(path: string): Promise<RunProgress[]>;
+  integrationsQueries(path: string, urlId: number): Promise<QueryRow[]>;
+  integrationsOrphans(path: string, source: string | null, offset: number, limit: number): Promise<OrphanPage>;
+  integrationsRemove(path: string, provider: string | null): Promise<void>;
+  integrationsCacheInfo(): Promise<CacheInfo>;
+  integrationsCacheClear(provider: string | null): Promise<number>;
+  integrationsOpenTerms(provider: string): Promise<void>;
+  onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
   aeoRun(path: string): Promise<{ run_id: number }>;
@@ -813,6 +848,27 @@ export const tauriTransport: Transport = {
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  integrationsStatus: () => invoke("integrations_status"),
+  integrationsSettingsSave: (provider, settings) => invoke("integrations_settings_save", { provider, settings }),
+  integrationsGoogleClient: (clientId, clientSecret) => invoke("integrations_google_client", { clientId, clientSecret }),
+  integrationsConnectGoogle: (features) => invoke("integrations_connect_google", { features }),
+  integrationsConnectCancel: () => invoke("integrations_connect_cancel"),
+  integrationsSaveKey: (provider, label, key) => invoke("integrations_save_key", { provider, label, key }),
+  integrationsForget: (kind, label) => invoke("integrations_forget", { kind, label }),
+  integrationsProperties: (account, path) => invoke("integrations_properties", { account, path }),
+  integrationsDefaultRequest: (property) => invoke("integrations_default_request", { property }),
+  integrationsRunSearchConsole: (path, account, request) => invoke("integrations_run_search_console", { path, account, request }),
+  integrationsRunResume: (path, runId) => invoke("integrations_run_resume", { path, runId }),
+  integrationsRunPause: () => invoke("integrations_run_pause"),
+  integrationsRunCancel: () => invoke("integrations_run_cancel"),
+  integrationsRuns: (path) => invoke("integrations_runs", { path }),
+  integrationsQueries: (path, urlId) => invoke("integrations_queries", { path, urlId }),
+  integrationsOrphans: (path, source, offset, limit) => invoke("integrations_orphans", { path, source, offset, limit }),
+  integrationsRemove: (path, provider) => invoke("integrations_remove", { path, provider }),
+  integrationsCacheInfo: () => invoke("integrations_cache_info"),
+  integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
+  integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
   aeoSummary: (path) => invoke("aeo_summary", { path }),
