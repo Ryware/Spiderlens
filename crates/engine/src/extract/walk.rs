@@ -98,8 +98,15 @@ struct Walker<'p> {
 }
 
 #[cfg(test)]
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: bool) -> PageData {
-    walk_doc(text, page, token, budget, a11y, false).1
+pub(super) fn walk(
+    text: &str,
+    page: &Url,
+    token: &str,
+    budget: Duration,
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
+) -> PageData {
+    walk_doc(text, page, token, budget, a11y, hook, false).1
 }
 
 /// [`walk`], also returning the document and, when `track` is set, the
@@ -110,6 +117,7 @@ pub(super) fn walk_doc(
     token: &str,
     budget: Duration,
     a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
     track: bool,
 ) -> (Html, PageData, Vec<NodeId>) {
     let (doc, cut) = parse(text, budget);
@@ -162,6 +170,16 @@ pub(super) fn walk_doc(
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
     w.data.a11y = checks.map(|c| c.finish(&doc));
+    if let Some((hook, body_len)) = hook {
+        let input = super::HookInput {
+            url: page,
+            body_len,
+            lang: w.data.lang.as_deref(),
+        };
+        w.data.facts = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.0)(&doc, &input)))
+            .ok()
+            .flatten();
+    }
     (doc, w.data, w.nodes)
 }
 

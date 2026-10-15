@@ -32,6 +32,11 @@ import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
 import type { PositionRule } from "./generated/PositionRule";
 import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
+import type { AeoRule } from "./generated/AeoRule";
+import type { AiBot } from "./generated/AiBot";
+import type { AiPageResult } from "./generated/AiPageResult";
+import type { AiProgress } from "./generated/AiProgress";
+import type { AiSummary } from "./generated/AiSummary";
 
 export interface BuildInfo {
   product: string;
@@ -117,6 +122,41 @@ export interface CrawlProgress {
   paused_hosts: PausedHost[];
   /** Every remaining URL's site is paused: nothing can be requested (US4.4). */
   waiting_for_host: boolean;
+  /** What keeps the crawl from going faster, if anything (spec 008 FR-028). */
+  limit: SpeedLimit | null;
+  /** Sites with work in progress, busiest first; at most 50 (FR-029). */
+  sites: SitePace[];
+  /** Sites with work in progress in all. */
+  sites_total: number;
+}
+
+/** The main limit on the crawl's speed (spec 008 FR-028). */
+export interface SpeedLimit {
+  kind: "concurrency" | "rate" | "per_site" | "site_slowdown" | "site_overload" | "requested_wait" | "crawl_delay" | "site_paused" | "starting_up" | "connection" | "computer" | "saving";
+  /** The engine's host key, when it is about one site. */
+  host: string | null;
+  /** For a requested wait or a pause: seconds until it ends. */
+  seconds_left: number | null;
+  /** In plain language. */
+  message: string;
+}
+
+/** One row of the per-site speed breakdown (spec 008 FR-029). */
+export interface SitePace {
+  host: string;
+  state: "speeding_up" | "steady" | "slowed_down" | "waiting" | "paused";
+  /** Requests it may have open now, and the most it ever gets. */
+  allowance: number;
+  max: number;
+  in_flight: number;
+  /** Recent average response time. */
+  response_ms: number | null;
+  crawled: number;
+  /** URLs waiting for it, counted in the part of the queue held in memory; more on disk when `waiting_more`. */
+  waiting: number;
+  waiting_more: boolean;
+  reason: string;
+  seconds_left: number | null;
 }
 
 /** A site the crawl has paused (spec 004 FR-028). `host` is the engine's host key. */
@@ -192,6 +232,8 @@ export interface CrawlSummary {
   manual_retries: number;
   /** Why the crawl paused itself, if it did: "network" or "local". */
   pause_reason: string | null;
+  /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
+  speed_events?: { host: string; summary: string }[];
 }
 
 export interface CrawlReport {
@@ -437,6 +479,24 @@ export interface ExportProgress {
   path: string;
 }
 
+// AI checks (spec 015, contracts/desktop-commands.md).
+
+export type AeoProgress = AiProgress & { run_id: number; path: string };
+
+export interface AeoFinished {
+  run_id: number;
+  path: string;
+  /** Null when the run was cancelled or failed; earlier results stay. */
+  summary: AiSummary | null;
+  error: string | null;
+}
+
+export interface AiBotList {
+  version: number;
+  date: string;
+  bots: AiBot[];
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -556,6 +616,18 @@ export interface Transport {
   positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // AI checks (spec 015).
+  /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
+  aeoRun(path: string): Promise<{ run_id: number }>;
+  aeoCancel(runId: number): Promise<void>;
+  /** Null when the checks have not run on this file. */
+  aeoSummary(path: string): Promise<AiSummary | null>;
+  aeoPage(path: string, urlId: number): Promise<AiPageResult | null>;
+  aeoLlmsTxtDraft(path: string, maxLinks: number): Promise<{ text: string }>;
+  aeoRules(): Promise<AeoRule[]>;
+  aiBotsList(): Promise<AiBotList>;
+  onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
+  onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
 }
 
 /** `analysis-progress` (spec 023 FR-013). */
@@ -664,4 +736,13 @@ export const tauriTransport: Transport = {
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  aeoRun: (path) => invoke("aeo_run", { path }),
+  aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
+  aeoSummary: (path) => invoke("aeo_summary", { path }),
+  aeoPage: (path, urlId) => invoke("aeo_page", { path, urlId }),
+  aeoLlmsTxtDraft: (path, maxLinks) => invoke("aeo_llms_txt_draft", { path, maxLinks }),
+  aeoRules: () => invoke("aeo_rules"),
+  aiBotsList: () => invoke("ai_bots_list"),
+  onAeoProgress: (cb) => listen<AeoProgress>("aeo-progress", (e) => cb(e.payload)),
+  onAeoFinished: (cb) => listen<AeoFinished>("aeo-finished", (e) => cb(e.payload)),
 };
