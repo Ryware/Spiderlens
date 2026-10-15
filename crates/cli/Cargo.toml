@@ -18,6 +18,7 @@ spiderlens-config.workspace = true
 spiderlens-results.workspace = true
 spiderlens-aeo.workspace = true
 rusqlite.workspace = true
+spiderlens-schedule.workspace = true
 tokio.workspace = true
 clap.workspace = true
 serde.workspace = true
