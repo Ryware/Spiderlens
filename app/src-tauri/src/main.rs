@@ -4,8 +4,8 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod compare;
 mod aeo;
+mod compare;
 mod crawl;
 mod files;
 mod manage;

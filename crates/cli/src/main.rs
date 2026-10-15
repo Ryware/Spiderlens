@@ -3,8 +3,8 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
-mod compare_cmd;
 mod aeo_cmd;
+mod compare_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;

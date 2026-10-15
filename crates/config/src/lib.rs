@@ -4,8 +4,8 @@
 //! crawl store. Validation lives here too, so every surface reports the same
 //! issues. This crate has no dependency on the desktop shell.
 
-mod compare;
 pub mod ai_bots;
+mod compare;
 mod list_input;
 mod model;
 mod patterns;
