@@ -9,6 +9,7 @@ mod crawl;
 mod files;
 mod manage;
 mod results;
+mod schedules;
 mod settings;
 
 use spiderlens_engine::BuildInfo;
@@ -26,6 +27,12 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // The system scheduler starts the app with these flags; no window opens
+    // (spec 021 plan D1).
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(code) = schedules::headless(&args) {
+        std::process::exit(code);
+    }
     let smoke_file = std::env::var_os(SMOKE_TEST_ENV);
 
     tauri::Builder::default()
@@ -48,6 +55,9 @@ fn main() {
                 }
             }
             files::recover_at_launch(app.handle());
+            if let Some(s) = schedules::State::new() {
+                app.manage(s);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -124,6 +134,21 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            schedules::schedules_list,
+            schedules::schedule_get,
+            schedules::schedule_preview,
+            schedules::schedule_validate,
+            schedules::schedule_save,
+            schedules::schedule_set_enabled,
+            schedules::schedule_duplicate,
+            schedules::schedule_delete,
+            schedules::schedule_run_now,
+            schedules::schedule_stop,
+            schedules::schedule_history,
+            schedules::schedule_update_from_profile,
+            schedules::schedules_repair,
+            schedules::schedules_remove_all,
+            schedules::schedule_default_output,
         ])
         .on_page_load(move |webview, payload| {
             if let (Some(path), PageLoadEvent::Finished) = (&smoke_file, payload.event()) {
