@@ -45,6 +45,17 @@ const RESERVED_HEADERS: [&str; 10] = [
     "proxy-connection",
 ];
 
+impl Issue {
+    pub(crate) fn error(path: impl Into<String>, code: &str, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            severity: Severity::Error,
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
 struct Issues(Vec<Issue>);
 
 impl Issues {
@@ -615,6 +626,8 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             }
         }
     }
+    // Segments (spec 027 part B)
+    i.0.extend(crate::segments::validate_segments(&c.segments));
 
     i.0
 }

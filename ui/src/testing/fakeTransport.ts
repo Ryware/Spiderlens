@@ -13,7 +13,7 @@ import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
-import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeResultsTransport, fakeSegmentOf, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import { fakeAuditTransport, type FakeAudit } from "./fakeAudit";
 import type { FakeIssues } from "./fakeIssues";
 import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
@@ -105,7 +105,7 @@ export function defaultConfig(): CrawlConfig {
     links: { auto_analyse: true, position_rules: [], weighting: null },
     access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
-
+    segments: [],
   };
 }
 
@@ -402,6 +402,12 @@ export function fakeTransport(
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
+      config.segments.forEach((seg, i) => {
+        if (!seg.name.trim()) issues.push({ path: `segments[${i}].name`, severity: "error", code: "segment_name_empty", message: "Give the segment a name." });
+        seg.clauses.forEach((c, j) => {
+          if (!c.value.trim()) issues.push({ path: `segments[${i}].clauses[${j}]`, severity: "error", code: "segment_value_empty", message: "Enter a value to compare with." });
+        });
+      });
       // Custom rules (spec 013): a few of the engine's checks, enough for the UI paths.
       config.custom.extractors.forEach((e, i) => {
         if (!e.expr.trim()) issues.push({ path: `custom.extractors[${i}].expr`, severity: "error", code: "custom_expr_empty", message: "Enter what to extract." });
@@ -436,6 +442,13 @@ export function fakeTransport(
             label: excluded ? "Excluded by rule" : null,
             detail: excluded ?? null,
             robots_checked: false,
+            segment: (() => {
+              try {
+                return fakeSegmentOf(config.segments, { id: 0, url: input, status: null, title: null, depth: 0, internal: true })?.name ?? null;
+              } catch {
+                return null;
+              }
+            })(),
           };
         }),
     parseListText: async (text) => {

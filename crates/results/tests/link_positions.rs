@@ -92,6 +92,7 @@ fn paths(r: &mut Reader, c: &Crawled, filter: &str) -> Vec<String> {
                 scope: UrlScope::All,
                 search: String::new(),
                 sort: None,
+                segment: None,
             },
             100,
         )

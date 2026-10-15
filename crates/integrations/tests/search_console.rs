@@ -543,6 +543,7 @@ async fn us1_4_search_console_tab_lists_the_fetched_pages() {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let list = |r: &mut Reader, filter: &str| {
         let page = r.open_view(&q(filter), 500).unwrap();

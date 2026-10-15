@@ -6,6 +6,8 @@ import type { ColumnDef } from "../generated/ColumnDef";
 import type { CookieFilter } from "../generated/CookieFilter";
 import type { CookieRow } from "../generated/CookieRow";
 import type { Need } from "../generated/Need";
+import type { Segment } from "../generated/Segment";
+import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ViewState } from "../generated/ViewState";
@@ -47,7 +49,7 @@ export const fakeTabs: TabDef[] = [
   {
     id: "internal",
     title: "Internal",
-    columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "status", 96), col("title", "Title", "text", 320), col("h1", "H1", "text", 260, "extraction"), col("depth", "Depth", "int", 70, "base", false)],
+    columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "status", 96), col("title", "Title", "text", 320), col("h1", "H1", "text", 260, "extraction"), col("depth", "Depth", "int", 70, "base", false), col("segment", "Segment", "text", 140, "base", false)],
     filters: [
       { id: "all", label: "All", need: "base" },
       { id: "html", label: "HTML", need: "base" },
@@ -59,7 +61,7 @@ export const fakeTabs: TabDef[] = [
   {
     id: "response-codes",
     title: "Response codes",
-    columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "status", 96)],
+    columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "status", 96), col("segment", "Segment", "text", 140, "base", false)],
     filters: [
       { id: "all", label: "All", need: "base" },
       { id: "client_error", label: "Client error (4xx)", need: "base" },
@@ -82,10 +84,48 @@ export const fakeTabs: TabDef[] = [
   },
 ];
 
+/**
+ * A small stand-in for the engine's segment matcher (the real one is tested
+ * in Rust): text conditions on the URL, host and path, and status class.
+ */
+export function fakeSegmentOf(segments: Segment[], u: FakeUrl): Segment | null {
+  const parsed = new URL(u.url);
+  const facts: Record<string, string> = {
+    url: u.url,
+    host: parsed.host,
+    path: parsed.pathname,
+    query: parsed.search.replace(/^\?/, ""),
+    status_class: u.status === null ? "none" : `${Math.floor(u.status / 100)}xx`,
+  };
+  const test = (c: Segment["clauses"][number]) => {
+    const hay = (facts[c.field] ?? "").toLowerCase();
+    const v = c.value.trim().toLowerCase();
+    switch (c.op) {
+      case "contains":
+        return hay.includes(v);
+      case "not_contains":
+        return !hay.includes(v);
+      case "starts_with":
+        return hay.startsWith(v);
+      case "ends_with":
+        return hay.endsWith(v);
+      case "equals":
+        return hay === v;
+      case "not_equals":
+        return hay !== v;
+      case "matches":
+        return new RegExp(c.value).test(facts[c.field] ?? "");
+      default:
+        return false;
+    }
+  };
+  return segments.find((s) => s.enabled && s.clauses.length > 0 && (s.mode === "all" ? s.clauses.every(test) : s.clauses.some(test))) ?? null;
+}
+
 /** A made-up Link Score: the start URL is the strongest page. */
 const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
-const cell = (u: FakeUrl, c: string) =>
-  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7 })[c] ?? null;
+const cell = (u: FakeUrl, c: string, segments: Segment[] = []) =>
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null })[c] ?? null;
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
 export interface FakeCookie extends Omit<CookieRow, "urls"> {
@@ -113,10 +153,13 @@ export interface FakeResults {
   /** Cookies the crawl recorded; seen only when features include "cookies". */
   cookies: FakeCookie[];
   copied: string[];
-  exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null }[];
-  opened: { tab: string; filter: string; search: string; sort: string | null }[];
+  exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null; segments?: Segment[] }[];
+  opened: { tab: string; filter: string; search: string; sort: string | null; segment?: number }[];
   /** How often the sidebar asked for its tab counts. */
   tabCountCalls: number;
+  /** Segments applied to the open crawl (segmentsSet). */
+  segments: Segment[];
+  segmentCalls: Segment[][];
   /** What the open crawl file holds; base only unless a test adds more. */
   features: Need[];
   /** Announces that the open view's full order is ready. */
@@ -154,6 +197,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewRefresh"
   | "viewCounts"
   | "tabCounts"
+  | "segmentsSet"
+  | "segmentsCounts"
   | "viewClose"
   | "urlDetail"
   | "urlList"
@@ -210,6 +255,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     exports: [],
     opened: [],
     tabCountCalls: 0,
+    segments: [],
+    segmentCalls: [],
     features: ["base", "analysis"],
     ready: () => {
       for (const [view, v] of views) readyCbs.forEach((cb) => cb({ view, total: v.ids.length }));
@@ -225,7 +272,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   const issuesApi = fakeIssuesTransport(() => results.urls);
   const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
   const tabOf = (id: string) => [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
-  const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c)) as ReturnType<typeof cell>;
+  const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c, results.segments)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
     const tab = tabOf(q.tab);
@@ -237,6 +284,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const [, col, kind] = /^(.*)_(has|none)$/.exec(q.filter) ?? [];
       if (col) us = us.filter((u) => (valueOf(u, col) !== null && valueOf(u, col) !== "") === (kind === "has"));
     }
+    if (q.segment !== undefined && q.segment !== null) us = us.filter((u) => (fakeSegmentOf(results.segments, u)?.id ?? 0) === q.segment);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
@@ -259,6 +307,17 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     }
     return { tab, ids: us.map((u) => u.id) };
   };
+  const segmentCounts = (): SegmentCounts => {
+    const counts: Record<number, number> = {};
+    for (const s of results.segments) if (s.enabled) counts[s.id] = 0;
+    let none = 0;
+    for (const u of results.urls) {
+      const s = fakeSegmentOf(results.segments, u);
+      if (s) counts[s.id] += 1;
+      else none += 1;
+    }
+    return { counts, no_segment: none, segments: results.segments };
+  };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
     return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? valueOf(u, c.id) : null))];
@@ -274,7 +333,13 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
-      results.opened.push({ tab: q.tab, filter: q.filter, search: q.search, sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null });
+      results.opened.push({
+        tab: q.tab,
+        filter: q.filter,
+        search: q.search,
+        sort: q.sort ? `${q.sort.column}${q.sort.desc ? ":desc" : ""}` : null,
+        ...(q.segment !== undefined && q.segment !== null ? { segment: q.segment } : {}),
+      });
       views.set(view, { ...select(q), version });
       queries.set(view, q);
       return { ...page(view, 0, count), total: null, ready: false };
@@ -291,7 +356,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       views.set(view, fresh);
       return { version, total: fresh.ids.length, positions: anchors.map((a) => (fresh.ids.indexOf(a) < 0 ? null : fresh.ids.indexOf(a))), build_ms: 1 };
     },
-    viewCounts: async (_p, tab, scope) => {
+    segmentsSet: async (_p, segments) => {
+      results.segments = segments;
+      results.segmentCalls.push(segments);
+      version++;
+      return segmentCounts();
+    },
+    segmentsCounts: async () => segmentCounts(),
+    viewCounts: async (_p, tab, scope, segment) => {
       const t = tabOf(tab);
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
@@ -299,7 +371,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         if (!results.features.includes(f.need)) {
           counts[f.id] = null;
           unavailable[f.id] = "Not collected yet: arrives with page extraction.";
-        } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null }).ids.length;
+        } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null, segment }).ids.length;
       }
       return { tab, counts, unavailable, labels: {}, version };
     },
@@ -439,8 +511,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       });
       return { rows, total: ids.length };
     },
-    exportStart: async (_p, _q, columns, ranges, dest, allValues) => {
-      results.exports.push({ columns, ranges, dest, allValues: allValues ?? null });
+    exportStart: async (_p, _q, columns, ranges, dest, allValues, segments) => {
+      results.exports.push({ columns, ranges, dest, allValues: allValues ?? null, ...(segments ? { segments } : {}) });
 
       return 1;
     },

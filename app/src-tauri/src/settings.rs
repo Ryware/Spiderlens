@@ -141,6 +141,9 @@ pub struct ScopeVerdict {
     label: Option<&'static str>,
     detail: Option<String>,
     robots_checked: bool,
+    /// The segment the URL would belong to by its address alone (spec 027
+    /// FR-B08); page facts are unknown before the crawl.
+    segment: Option<String>,
 }
 
 /// What the crawler would do with each URL under these settings (spec 003
@@ -156,9 +159,23 @@ pub async fn scope_test(
     let start = spiderlens_config::normalize_url(&start_url).map_err(|e| format!("Start URL: {e}"))?;
     let urls: Vec<String> = urls.into_iter().filter(|u| !u.trim().is_empty()).collect();
     let tests = spiderlens_engine::crawl::scope_test(&config, &start, &urls, fetch_robots).await?;
+    let matcher = spiderlens_config::SegmentMatcher::new(&config.segments);
+    let segment_of = |url: &Option<String>| -> Option<String> {
+        let url = url.as_deref()?;
+        let id = matcher.classify(&spiderlens_config::UrlFacts {
+            url,
+            ..Default::default()
+        })?;
+        config
+            .segments
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.name.trim().to_string())
+    };
     Ok(tests
         .into_iter()
         .map(|t| ScopeVerdict {
+            segment: segment_of(&t.url),
             label: t.reason.map(|r| r.label()),
             input: t.input,
             url: t.url,

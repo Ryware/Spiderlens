@@ -214,6 +214,7 @@ fn flagged(r: &mut Reader, site: &Site, id: &str) -> BTreeSet<String> {
         scope: Default::default(),
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let page = r.open_view(&q, 1000).unwrap();
     let base = site.url(E, "");
@@ -293,6 +294,7 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         scope: Default::default(),
         search: "/good".into(),
         sort: None,
+        segment: None,
     };
     let good = r
         .open_view(&q, 10)
@@ -331,6 +333,7 @@ async fn sc007_filters_and_rules_list_the_same_urls() {
             scope: Default::default(),
             search: String::new(),
             sort: None,
+            segment: None,
         };
         let base = c.site.url(E, "");
         let rows: BTreeSet<String> = r
@@ -361,6 +364,7 @@ async fn us2_a_page_lists_its_issues_with_evidence() {
         scope: Default::default(),
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let row = r.open_view(&q, 10).unwrap().rows.remove(0);
     let id = row[0].as_i64().unwrap();
@@ -459,6 +463,7 @@ async fn us2_broken_links_list_their_targets() {
         scope: Default::default(),
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let id = r.open_view(&q, 10).unwrap().rows[0][0].as_i64().unwrap();
     let issue = r

@@ -3,6 +3,7 @@ import type { AccessSettings } from "./AccessSettings";
 import type { CustomRules } from "./CustomRules";
 import type { IssueSettings } from "./IssueSettings";
 import type { Mode } from "./Mode";
+import type { Segment } from "./Segment";
 import type { SpeedSettings } from "./SpeedSettings";
 import type { AiChecks } from "./AiChecks";
 import type { NetworkSettings } from "./NetworkSettings";
@@ -32,5 +33,9 @@ links: LinkAnalysisSettings, access: AccessSettings, ai_checks: AiChecks,
 /**
  * The last options used to generate XML sitemaps (spec 011 FR-025).
  */
-sitemap_generate: SitemapGenerateOptions, };
-
+sitemap_generate: SitemapGenerateOptions, 
+/**
+ * URL groups shown across the results (spec 027 part B). Results-only:
+ * they never change what is crawled.
+ */
+segments: Array<Segment>, };

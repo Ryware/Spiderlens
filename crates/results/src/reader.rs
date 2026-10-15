@@ -40,6 +40,8 @@ pub struct Reader {
     /// Counts crawl data changes only (not settings changes).
     pub(crate) data_gen: u64,
     data_version: i64,
+    /// Segment membership (spec 027 part B).
+    pub(crate) segments: crate::segments::State,
 }
 
 /// Opens a crawl file the way every reader in this crate does: read-only,
@@ -114,6 +116,7 @@ fn setup(
     conn.pragma_update(None, "cache_size", -32_768)?;
     conn.pragma_update(None, "temp_store", "FILE")?;
     sql::register(&conn)?;
+    crate::segments::create_tables(&conn)?;
     let thresholds = Arc::new(RwLock::new(settings.thresholds()));
     sql::register_thresholds(&conn, thresholds.clone())?;
     let features = Features::detect(&conn)?;
@@ -161,7 +164,8 @@ impl Reader {
     pub fn open_with(path: &Path, issue_settings: ResolvedSettings) -> Result<Self> {
         let (conn, features, thresholds) = connect(path, &issue_settings)?;
         let data_version = conn.query_row("PRAGMA data_version", [], |r| r.get(0))?;
-        Ok(Self {
+        let stored = crate::segments::stored(&conn);
+        let mut reader = Self {
             conn,
             path: path.to_path_buf(),
             features,
@@ -176,7 +180,12 @@ impl Reader {
             version: 1,
             data_gen: 1,
             data_version,
-        })
+            segments: crate::segments::State::new(Vec::new()),
+        };
+        if !stored.is_empty() {
+            reader.set_segments(stored)?;
+        }
+        Ok(reader)
     }
 
     pub fn path(&self) -> &Path {
@@ -239,6 +248,7 @@ impl Reader {
     /// Makes sure each derived table is current for this crawl data,
     /// updating it in place when it can (see `tabs::update_derived`).
     pub(crate) fn ensure_derived(&mut self, needed: impl IntoIterator<Item = Derived>) -> Result<()> {
+        self.ensure_segments()?;
         self.version()?;
         let g = self.data_gen;
         for d in needed {

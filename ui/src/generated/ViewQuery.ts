@@ -5,4 +5,8 @@ import type { UrlScope } from "./UrlScope";
 /**
  * What the user is looking at (spec Key Entities: View).
  */
-export type ViewQuery = { tab: string, filter: string, scope: UrlScope, search: string, sort: Sort | null, };
+export type ViewQuery = { tab: string, filter: string, scope: UrlScope, search: string, sort: Sort | null, 
+/**
+ * Spec 027 FR-B04: only URLs in this segment; 0 means in no segment.
+ */
+segment?: number, };

@@ -18,6 +18,7 @@ mod export;
 mod features;
 pub mod issues;
 mod reader;
+mod segments;
 pub mod serp;
 pub mod report;
 mod sitemaps;
@@ -37,12 +38,14 @@ pub use detail::{
     HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, Snippet, UrlDetail,
 };
 pub use export::{
-    COPY_LIMIT, ExportError, csv_field, export_file, export_file_with, write_csv, write_csv_with,
+    COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv, write_csv_in,
+    write_csv_with,
     write_tsv_row,
 };
 pub use features::Features;
 pub use reader::{Reader, connect_attachable};
 pub use rusqlite::InterruptHandle;
+pub use segments::SegmentCounts;
 pub use sitemaps::{
     GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput, SitemapFileRow, SitemapFiles,
     check_structure as check_sitemap_structure, generate as generate_sitemaps,

@@ -133,6 +133,8 @@ fn main() {
             results::view_refresh,
             results::view_counts,
             results::tab_counts,
+            results::segments_set,
+            results::segments_counts,
             results::view_close,
             results::url_detail,
             results::url_list,

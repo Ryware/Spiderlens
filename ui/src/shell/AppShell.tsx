@@ -127,7 +127,8 @@ export function AppShell({ transport }: { transport: Transport }) {
   const inspectFrom = useRef<HTMLElement | null>(null);
   const inspectPending = useRef(false);
   const [inspectAsked, setInspectAsked] = useState(0);
-  const results = useResults(transport, crawl.path, crawl.running);
+  const segmentsValid = !setup.issues.some((i) => i.severity === "error" && i.path.startsWith("segments"));
+  const results = useResults(transport, crawl.path, crawl.running, setup.config?.segments, segmentsValid);
   const issues = useIssues(transport, crawl.path, crawl.running, setup.config?.issues);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
@@ -474,6 +475,11 @@ export function AppShell({ transport }: { transport: Transport }) {
               customRun={isCustomTab(resultTab.id) ? customRun : undefined}
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
+              segment={results.segment}
+              onSegment={results.setSegment}
+              segmentCounts={results.segmentCounts}
+              segmentsRev={results.segmentsRev}
+              onRefreshSegments={results.refreshSegmentCounts}
             />
           ) : section === "integrations" ? (
             <IntegrationsView transport={transport} path={crawl.path} crawlRunning={crawl.running} onDataChanged={results.reload} />

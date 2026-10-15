@@ -16,6 +16,7 @@ use crate::issues::ResolvedSettings;
 use crate::reader::connect;
 use crate::tabs::{ColumnDef, TabDef};
 use crate::view::{ViewQuery, compile};
+use spiderlens_config::Segment;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -179,10 +180,41 @@ pub fn write_csv_with(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
+    write_csv_in(
+        crawl, q, columns, ranges, all_values, settings, None, out, cancel, progress,
+    )
+}
+
+/// [`write_csv_with`] grouping URLs by `segments` (None: the segments stored
+/// with the crawl). With the default columns and any enabled segment, the
+/// Segment column is added (spec 027 FR-B09).
+#[allow(clippy::too_many_arguments)]
+pub fn write_csv_in(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
+    segments: Option<&[Segment]>,
+    out: impl Write,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
     let (conn, features, _) = connect(crawl, settings)?;
     let custom = crate::custom::tabs(&conn)?;
     let c = compile(q, &features, &custom)?;
-    let cols = pick_columns(&c.tab, columns)?;
+    let grouped = crate::segments::prepare(&conn, segments, &features)?;
+    let mut cols = pick_columns(&c.tab, columns)?;
+    if columns.is_empty() && grouped {
+        cols.extend(
+            c.tab
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, col)| col.id == "segment"),
+        );
+    }
     let links = &features.link_settings;
     if c.derived.contains(&crate::tabs::Derived::LinkMetrics) && links.weighting.is_some() {
         crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
@@ -297,11 +329,30 @@ pub fn export_file_with(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
+    export_file_in(
+        crawl, q, columns, ranges, all_values, settings, None, dest, cancel, progress,
+    )
+}
+
+/// [`export_file_with`] grouping URLs by `segments` (see [`write_csv_in`]).
+#[allow(clippy::too_many_arguments)]
+pub fn export_file_in(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
+    segments: Option<&[Segment]>,
+    dest: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
     let part = part_path(dest);
     let result = (|| {
         let file = std::fs::File::create(&part)?;
-        let n = write_csv_with(
-            crawl, q, columns, ranges, all_values, settings, &file, cancel, progress,
+        let n = write_csv_in(
+            crawl, q, columns, ranges, all_values, settings, segments, &file, cancel, progress,
         )?;
         file.sync_all()?;
         drop(file);

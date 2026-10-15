@@ -174,6 +174,7 @@ impl Out<'_> {
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            segment: None,
         };
         let c = compile(&q, self.features)?;
         let ids: Vec<String> = t.columns.iter().map(|c| c.id.to_string()).collect();

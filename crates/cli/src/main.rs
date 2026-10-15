@@ -16,6 +16,7 @@ mod options;
 mod report_cmd;
 mod rules_cmd;
 mod schedule_cmd;
+mod segments_cmd;
 mod serp_cmd;
 mod sitemap_cmd;
 mod viz_cmd;
@@ -113,6 +114,8 @@ enum Command {
     /// AI search checks (AEO and GEO) on a crawl file.
     #[command(subcommand)]
     Aeo(aeo_cmd::AeoCommand),
+    /// URLs per segment of a crawl file.
+    Segments(segments_cmd::SegmentsArgs),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -230,6 +233,7 @@ fn main() -> ExitCode {
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
+        Command::Segments(args) => segments_cmd::run_segments(args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Rules(cmd) => rules_cmd::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),

@@ -40,6 +40,7 @@ fn main() {
             column: "link_score".into(),
             desc: true,
         }),
+        segment: None,
     };
     let page = r.open_view(&q, 50).expect("view");
     println!(

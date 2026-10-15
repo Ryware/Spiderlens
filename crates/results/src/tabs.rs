@@ -501,6 +501,14 @@ pub mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
+    /// Spec 027 FR-B03: the URL's segment, in every tab.
+    pub const SEGMENT: ColumnDef = col(
+        "segment",
+        "Segment",
+        crate::segments::SEGMENT_EXPR,
+        ValueKind::Text,
+        140,
+    );
     pub const ISSUES: ColumnDef = col(
         "issues",
         "Issues",
@@ -1079,6 +1087,14 @@ pub(crate) fn find(id: &str, custom: &[TabDef]) -> Option<Cow<'static, TabDef>> 
 }
 
 fn build() -> Vec<TabDef> {
+    let mut tabs = build_tabs();
+    for t in &mut tabs {
+        t.columns.push(c::SEGMENT.hidden());
+    }
+    tabs
+}
+
+fn build_tabs() -> Vec<TabDef> {
     use ValueKind::*;
     // Filters that test what an issue rule tests share its condition
     // (spec 009 FR-005).

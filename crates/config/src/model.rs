@@ -38,6 +38,9 @@ pub struct CrawlConfig {
     pub ai_checks: AiChecks,
     /// The last options used to generate XML sitemaps (spec 011 FR-025).
     pub sitemap_generate: SitemapGenerateOptions,
+    /// URL groups shown across the results (spec 027 part B). Results-only:
+    /// they never change what is crawled.
+    pub segments: Vec<crate::segments::Segment>,
 }
 
 /// Options for generating XML sitemaps from a crawl (spec 011 FR-020,

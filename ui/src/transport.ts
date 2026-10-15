@@ -87,6 +87,8 @@ import type { Run } from "./generated/Run";
 import type { Schedule } from "./generated/Schedule";
 import type { ScheduleDetail } from "./generated/ScheduleDetail";
 import type { ScheduleRow } from "./generated/ScheduleRow";
+import type { Segment } from "./generated/Segment";
+import type { SegmentCounts } from "./generated/SegmentCounts";
 import type { Report } from "./generated/Report";
 import type { FileOptions } from "./generated/FileOptions";
 import type { BulkOptions } from "./generated/BulkOptions";
@@ -147,6 +149,8 @@ export interface ScopeVerdict {
   label: string | null;
   detail: string | null;
   robots_checked: boolean;
+  /** The segment the URL would be in by its address (spec 027 FR-B08). */
+  segment?: string | null;
 }
 
 export type SaveResult = { result: "saved" } | { result: "name_taken" };
@@ -717,9 +721,13 @@ export interface Transport {
   viewRows(path: string, view: number, from: number, count: number): Promise<RowPage>;
   viewLocate(path: string, view: number, ids: number[]): Promise<(number | null)[]>;
   viewRefresh(path: string, view: number, anchors: number[]): Promise<Refresh | null>;
-  viewCounts(path: string, tab: string, scope: UrlScope): Promise<FilterCounts>;
+  /** `segment`: only URLs in that segment; 0 means in no segment (spec 027). */
+  viewCounts(path: string, tab: string, scope: UrlScope, segment?: number): Promise<FilterCounts>;
   /** URLs each result tab lists, for the sidebar. */
   tabCounts(path: string): Promise<TabCounts>;
+  /** Groups the open crawl's URLs by these segments; the file is not changed. */
+  segmentsSet(path: string, segments: Segment[]): Promise<SegmentCounts>;
+  segmentsCounts(path: string): Promise<SegmentCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   /** `position` keeps only links at that position (spec 023 FR-024). */
@@ -738,7 +746,7 @@ export interface Transport {
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   /** `allValues`: custom extraction columns hold every value joined by it (spec 013 FR-025). */
-  exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null): Promise<number>;
+  exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null, segments?: Segment[]): Promise<number>;
   exportCancel(job: number): Promise<void>;
   // Sitemap generation (spec 011, contracts/desktop-commands.md).
   sitemapFiles(path: string): Promise<SitemapFiles>;
@@ -963,8 +971,10 @@ export const tauriTransport: Transport = {
   viewRows: (path, view, from, count) => invoke("view_rows", { path, view, from, count }),
   viewLocate: (path, view, ids) => invoke("view_locate", { path, view, ids }),
   viewRefresh: (path, view, anchors) => invoke("view_refresh", { path, view, anchors }),
-  viewCounts: (path, tab, scope) => invoke("view_counts", { path, tab, scope }),
+  viewCounts: (path, tab, scope, segment) => invoke("view_counts", { path, tab, scope, segment: segment ?? null }),
   tabCounts: (path) => invoke("tab_counts", { path }),
+  segmentsSet: (path, segments) => invoke("segments_set", { path, segments }),
+  segmentsCounts: (path) => invoke("segments_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
@@ -974,7 +984,7 @@ export const tauriTransport: Transport = {
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
-  exportStart: (path, query, columns, ranges, dest, allValues) => invoke("export_start", { path, query, columns, ranges, dest, allValues: allValues ?? null }),
+  exportStart: (path, query, columns, ranges, dest, allValues, segments) => invoke("export_start", { path, query, columns, ranges, dest, allValues: allValues ?? null, segments: segments ?? null }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   sitemapFiles: (path) => invoke("sitemap_files", { path }),
   sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),

@@ -852,6 +852,35 @@ test("create_a_schedule_see_its_next_run_open_history_and_turn_it_off", async ({
   await expect(list.getByText("No upcoming runs")).toBeVisible();
 });
 
+test("segments_defined_in_settings_filter_every_tab", async ({ page }) => {
+  // Spec 027 part B: define two segments, filter by one, switch tab.
+  await openInternal(page);
+  await page.keyboard.press("Control+,");
+  const sheet = page.getByRole("dialog");
+  await sheet.getByRole("tab", { name: /^Segments/ }).click();
+  await sheet.getByRole("button", { name: "Add segment" }).click();
+  await sheet.getByLabel("Segment name").fill("Ones");
+  await sheet.getByLabel("Ones condition 1: value").fill("/page-1");
+  await sheet.getByRole("button", { name: "Add segment" }).click();
+  await sheet.getByLabel("Segment name").nth(1).fill("Twos");
+  await sheet.getByLabel("Twos condition 1: value").fill("/page-2");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+
+  const filter = page.getByLabel("Segment", { exact: true });
+  // page-1, page-10..19, page-100..199, page-1000..1999.
+  await expect(filter.locator("option", { hasText: "Ones" })).toHaveText("Ones (1,111)");
+  await filter.selectOption({ label: "Ones (1,111)" });
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1,111 URLs");
+  await expect(page.getByRole("grid").getByRole("row").nth(1)).toContainText("page-1");
+
+  await page.getByRole("button", { name: "Response codes" }).click();
+  await expect(filter).toHaveValue("1");
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1,111 URLs");
+});
+
 test("search_preview_measures_while_typing", async ({ page }) => {
   // Spec 027 US A2: the preview in the detail pane, a real font in a real
   // browser, the width and cut changing as the user types.

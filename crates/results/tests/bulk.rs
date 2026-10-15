@@ -64,6 +64,7 @@ fn single_export(crawl: &Path, tab_id: &str, dir: &Path) -> String {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let dest = dir.join(format!("single-{}.csv", tab_id.replace(':', "-")));
     export_file(
@@ -135,6 +136,7 @@ async fn us4_csv_folder_matches_single_exports() {
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            segment: None,
         };
         let page = r.open_view(&q, 100).unwrap();
         let rows = r.rows(page.view, 0, 100).unwrap().rows;

@@ -1017,3 +1017,20 @@ pub fn read_meta(path: &Path, key: &str) -> Option<String> {
     .ok()
     .flatten()
 }
+
+// ---------------------------------------------------------------------------
+// Segments (spec 027 part B)
+
+/// Meta key holding segments edited after the crawl; it replaces the
+/// segments of the stored configuration, which is never edited.
+pub const SEGMENTS_KEY: &str = "segments";
+
+/// Saves `segments` into a crawl file that no one is writing. A running
+/// crawl holds the file: the caller tries again once it has finished.
+pub fn save_segments(path: &Path, segments: &[spiderlens_config::Segment]) -> Result<(), FileError> {
+    let _lock = WriterLock::acquire(path)?;
+    let store = CrawlStore::open(path)?;
+    let json = serde_json::to_string(segments).expect("segments serialize");
+    store.set_meta(SEGMENTS_KEY, &json)?;
+    Ok(())
+}

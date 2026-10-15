@@ -23,6 +23,7 @@ fn issues_column_shows_highest_priority_and_count_per_url() {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let mut out = Vec::new();
     let never = AtomicBool::new(false);
@@ -76,6 +77,7 @@ fn with_issues_filter_keeps_exactly_the_urls_that_have_issues() {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let rows = r.open_view(&q, 1000).unwrap().rows;
     assert!(!rows.is_empty());

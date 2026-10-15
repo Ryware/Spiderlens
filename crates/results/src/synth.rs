@@ -308,3 +308,23 @@ impl Synth {
         Ok(())
     }
 }
+
+/// Stores `config` as the crawl's configuration in a synthetic file, so
+/// tests can give it segments (spec 027 part B).
+pub fn store_config(path: &Path, config: spiderlens_config::CrawlConfig) -> rusqlite::Result<()> {
+    let stored = spiderlens_config::StoredCrawlConfig::new(
+        config,
+        spiderlens_config::ModeInput::Spider {
+            start_url: "https://example.test/".into(),
+        },
+        vec!["example.test".into()],
+        jiff::Timestamp::UNIX_EPOCH,
+    );
+    let json =
+        serde_json::to_string(&stored).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
+    Connection::open(path)?.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('config', ?1)",
+        [json],
+    )?;
+    Ok(())
+}

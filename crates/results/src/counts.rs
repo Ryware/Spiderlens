@@ -29,6 +29,11 @@ pub struct FilterCounts {
 
 impl Reader {
     pub fn counts(&mut self, tab: &str, scope: UrlScope) -> Result<FilterCounts> {
+        self.counts_in(tab, scope, None)
+    }
+
+    /// [`Reader::counts`] within one segment (0: URLs in no segment).
+    pub fn counts_in(&mut self, tab: &str, scope: UrlScope, segment: Option<u32>) -> Result<FilterCounts> {
         let t = self.find_tab(tab)?;
         let available: Vec<_> = t.filters.iter().filter(|f| self.features.has(f.need)).collect();
         let derived: Vec<Derived> = t
@@ -54,6 +59,7 @@ impl Reader {
             (true, UrlScope::External) => sql.push_str(" AND u.internal = 0"),
             _ => {}
         }
+        sql.push_str(&crate::view::segment_sql(segment));
         // A tab whose data this file lacks (spec 024 tabs before a fetch) has
         // no filter to count.
         let values: Vec<i64> = if available.is_empty() {

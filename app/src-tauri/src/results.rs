@@ -12,13 +12,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
-use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule, SitemapGenerateOptions};
+use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule, Segment, SitemapGenerateOptions};
 use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError,
-    Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef,
-    TestedLink, UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
+    Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, SegmentCounts, TabCounts,
+    TabDef, TestedLink, UrlDetail, UrlScope, ViewQuery, export_file_in, issue_tabs, tabs,
 };
 use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter, Manager};
@@ -305,9 +305,10 @@ pub async fn view_counts(
     path: PathBuf,
     tab: String,
     scope: UrlScope,
+    segment: Option<u32>,
 ) -> Cmd<FilterCounts> {
     state
-        .with(&path, move |r| r.counts(&tab, scope).map_err(err))
+        .with(&path, move |r| r.counts_in(&tab, scope, segment).map_err(err))
         .await
 }
 
@@ -316,6 +317,33 @@ pub async fn view_counts(
 #[tauri::command]
 pub async fn tab_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<TabCounts> {
     state.with(&path, |r| r.tab_counts().map_err(err)).await
+}
+
+/// Groups the open crawl's URLs by `segments` (spec 027 FR-B06) and saves
+/// them in the crawl file when no crawl is writing it (the UI calls again
+/// when the crawl ends). Open views and counts follow on their next refresh.
+#[tauri::command]
+pub async fn segments_set(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    segments: Vec<Segment>,
+) -> Cmd<SegmentCounts> {
+    let issues = spiderlens_config::validate_segments(&segments);
+    if let Some(i) = issues.first() {
+        return Err(format!("{}: {}", i.path, i.message));
+    }
+    let counts = state
+        .with(&path, move |r| r.set_segments(segments).map_err(err))
+        .await?;
+    // Busy (a crawl is writing) or read-only: the grouping still applies here.
+    let _ = spiderlens_engine::crawl::file::save_segments(&path, &counts.segments);
+    Ok(counts)
+}
+
+/// URLs per segment in the open crawl (the segment filter's counts).
+#[tauri::command]
+pub async fn segments_counts(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<SegmentCounts> {
+    state.with(&path, |r| r.segment_counts().map_err(err)).await
 }
 
 #[tauri::command]
@@ -606,6 +634,7 @@ pub fn export_start(
     query: ViewQuery,
     columns: Vec<String>,
     ranges: Option<Vec<(u32, u32)>>,
+    segments: Option<Vec<Segment>>,
     dest: PathBuf,
     all_values: Option<String>,
 ) -> Cmd<u32> {
@@ -617,13 +646,14 @@ pub fn export_start(
         .spawn(move || {
             let events = ExportEvents::new(&app, job, dest.clone());
             let mut last = std::time::Instant::now();
-            let result = export_file_with(
+            let result = export_file_in(
                 &path,
                 &query,
                 &columns,
                 ranges.as_deref(),
                 all_values.as_deref(),
                 &settings,
+                segments.as_deref(),
                 &dest,
                 &cancel,
                 &mut |n, total| {

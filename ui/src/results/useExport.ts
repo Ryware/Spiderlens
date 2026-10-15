@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Segment } from "../generated/Segment";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { ExportProgress, Range, Transport } from "../transport";
 
@@ -46,8 +47,8 @@ export function useExport(transport: Transport) {
   );
 
   const start = useCallback(
-    (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null) =>
-      run(() => transport.exportStart(path, query, columns, ranges, dest, allValues), dest),
+    (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null, segments?: Segment[]) =>
+      run(() => transport.exportStart(path, query, columns, ranges, dest, allValues, segments), dest),
     [transport, run],
   );
 

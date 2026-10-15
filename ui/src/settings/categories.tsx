@@ -15,10 +15,11 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { CustomRulesPanel } from "./CustomRules";
+import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "links" | "issues" | "custom" | "storage" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -41,6 +42,7 @@ export const categories: Category[] = [
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "segments", title: "Segments", description: "Group URLs into parts of the site. Every results tab can show and filter by them.", prefixes: ["segments"] },
   { id: "links", title: "Link analysis", description: "Link Score, and where on the page each link sits.", prefixes: ["links"] },
   { id: "issues", title: "Issues", description: "Which checks run on the results, how urgent each is, and their limits. Changes apply to the open crawl right away.", prefixes: ["issues"] },
   { id: "custom", title: "Custom rules", description: "Extract values and search every page. Rules run on each page's HTML as it arrives.", prefixes: ["custom"] },
@@ -456,6 +458,8 @@ export function CategoryBody({
         </Group>
       );
 
+    case "segments":
+      return <SegmentsSettings segments={config.segments} issues={issuesAt(issues, "segments")} onChange={(segments) => set((c) => ({ ...c, segments }))} />;
     case "custom":
       return <CustomRulesPanel setup={setup} transport={transport} crawlPath={crawlPath} crawlRunning={crawlRunning} />;
     case "links":

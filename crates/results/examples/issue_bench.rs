@@ -47,6 +47,7 @@ fn main() {
         scope: Default::default(),
         search: String::new(),
         sort: None,
+        segment: None,
     };
     let t = Instant::now();
     let page = r.open_view(&q, 50).expect("view");
