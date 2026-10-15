@@ -166,7 +166,9 @@ fn crawled_urls(file: &std::path::Path) -> Vec<String> {
 
 /// Removes what differs between two runs: timings and the `Date` header.
 fn without_timings(v: &mut Value) {
-    const TIMINGS: [&str; 4] = ["response_ms", "fetched_at", "render_ms", "rendered_at"];
+    // `url_id` is the row id, given in discovery order, which concurrent
+    // fetches can change between two crawls; pages are matched by URL.
+    const TIMINGS: [&str; 5] = ["response_ms", "fetched_at", "render_ms", "rendered_at", "url_id"];
     match v {
         Value::Object(m) => {
             for k in TIMINGS {
@@ -230,6 +232,13 @@ fn cli_and_engine_render_the_same() {
         assert!(a["render"].is_object(), "{url} was rendered");
         without_timings(&mut a);
         without_timings(&mut b);
+        // A render that timed out once on a loaded runner is retried; the
+        // result is the same, only the attempt count differs.
+        for v in [&mut a, &mut b] {
+            if let Some(r) = v["render"].as_object_mut() {
+                r.remove("attempts");
+            }
+        }
         assert_eq!(a, b, "{url}");
     }
 }

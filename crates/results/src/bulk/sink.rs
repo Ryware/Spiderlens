@@ -484,7 +484,11 @@ impl Sink for XlsxSink {
             }
         }
         me.book.save(&me.tmp).map_err(xl)?;
-        File::open(&me.tmp)?.sync_all()?;
+        // Windows refuses to flush a handle opened for reading only.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&me.tmp)?
+            .sync_all()?;
         if me.dest.exists() && !me.overwrite {
             let _ = std::fs::remove_file(&me.tmp);
             return Err(ExportError::Exists(me.dest.clone()));
