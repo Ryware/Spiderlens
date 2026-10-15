@@ -104,7 +104,9 @@ impl Need {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
             Self::SitemapAudit => "Checked when the crawl ends.",
-            Self::Orphans => "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps.",
+            Self::Orphans => {
+                "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps."
+            }
             Self::Analysis => "Calculated when the crawl ends.",
             Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
@@ -404,6 +406,17 @@ impl TabDef {
         match self.rows {
             Some(d) => d.rows_eligible(),
             None => &self.eligible,
+        }
+    }
+
+    /// The condition on `urls` for the rows the All view lists: the
+    /// eligible rows, narrowed when the All filter is narrower (the
+    /// Sitemaps tab also holds pages missing from every sitemap).
+    pub fn all_on_urls(&self) -> Cow<'_, str> {
+        let eligible = self.eligible_on_urls();
+        match self.filter("all").map(|f| f.cond.as_ref()) {
+            Some(all) if self.rows.is_none() && all != "1" => Cow::Owned(format!("({eligible}) AND ({all})")),
+            _ => Cow::Borrowed(eligible),
         }
     }
 
@@ -2570,7 +2583,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 19);
+        assert_eq!(tab_ids.len(), 20);
     }
 
     #[test]

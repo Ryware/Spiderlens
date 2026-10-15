@@ -509,9 +509,7 @@ fn last_modified_at(headers_json: &str) -> Option<jiff::Timestamp> {
         .1
         .trim()
         .to_string();
-    jiff::fmt::rfc2822::DateTimeParser::new()
-        .parse_timestamp(&v)
-        .ok()
+    jiff::fmt::rfc2822::DateTimeParser::new().parse_timestamp(&v).ok()
 }
 
 fn w3c_from_ms(ms: i64) -> Option<String> {

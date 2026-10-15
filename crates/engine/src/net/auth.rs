@@ -76,7 +76,11 @@ fn as_param(item: &str) -> Option<(String, String)> {
     let (name, value) = item.split_once('=')?;
     let name = name.trim();
     let value = value.trim();
-    let token = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    };
     (token(name) && !value.is_empty() && !value.starts_with('='))
         .then(|| (name.to_ascii_lowercase(), unquote(value)))
 }
@@ -127,7 +131,12 @@ pub(crate) fn parse_challenges<'a>(values: impl IntoIterator<Item = &'a str>) ->
 }
 
 pub(crate) fn challenges_of(headers: &HeaderMap) -> Vec<Challenge> {
-    parse_challenges(headers.get_all(WWW_AUTHENTICATE).iter().filter_map(|v| v.to_str().ok()))
+    parse_challenges(
+        headers
+            .get_all(WWW_AUTHENTICATE)
+            .iter()
+            .filter_map(|v| v.to_str().ok()),
+    )
 }
 
 pub(crate) fn basic_header(user: &str, password: &str) -> String {
@@ -353,11 +362,6 @@ impl Auth {
             .cloned()
     }
 
-    /// Whether `url`'s origin has a sign-in at all.
-    pub fn has(&self, url: &Url) -> bool {
-        self.entry(url).is_some()
-    }
-
     /// The `Authorization` value to send pre-emptively, if the origin has
     /// settled on Basic or Digest.
     pub fn authorize(&self, url: &Url) -> Option<HeaderValue> {
@@ -406,11 +410,15 @@ impl Auth {
         }
         let mut state = entry.state.lock().unwrap_or_else(PoisonError::into_inner);
         let wants = |m: AuthMethod| entry.method == AuthMethod::Any || entry.method == m;
-        let find = |scheme: &str| challenges.iter().filter(|c| c.scheme == scheme);
+        let find = |scheme: &'static str| challenges.iter().filter(move |c| c.scheme == scheme);
 
         // A stale Digest nonce is not a rejection (RFC 7616 section 3.3).
         if matches!(*state, Some(Active::Digest(_)))
-            && let Some(c) = find("digest").find(|c| c.params.get("stale").is_some_and(|v| v.eq_ignore_ascii_case("true")))
+            && let Some(c) = find("digest").find(|c| {
+                c.params
+                    .get("stale")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+            })
             && let Some(d) = DigestState::from_challenge(c)
         {
             *state = Some(Active::Digest(d));
@@ -430,7 +438,9 @@ impl Auth {
             return AuthOutcome::UseNtlm;
         }
         if wants(AuthMethod::Digest)
-            && let Some(d) = find("digest").max_by_key(|c| digest_rank(c)).and_then(DigestState::from_challenge)
+            && let Some(d) = find("digest")
+                .max_by_key(|c| digest_rank(c))
+                .and_then(DigestState::from_challenge)
         {
             *state = Some(Active::Digest(d));
             return AuthOutcome::RetryWithCredentials;
@@ -467,7 +477,10 @@ mod tests {
 
     #[test]
     fn basic_header_is_base64_of_user_and_password() {
-        assert_eq!(basic_header("Aladdin", "open sesame"), "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        assert_eq!(
+            basic_header("Aladdin", "open sesame"),
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
     }
 
     /// RFC 7616 section 3.9.1, SHA-256 and MD5.
@@ -475,7 +488,10 @@ mod tests {
     fn digest_matches_rfc_7616_examples() {
         let url = Url::parse("http://www.example.org/dir/index.html").unwrap();
         for (algorithm, response) in [
-            ("SHA-256", "753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1"),
+            (
+                "SHA-256",
+                "753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1",
+            ),
             ("MD5", "8ca523f5e9506fed4657c9700eebdbec"),
         ] {
             let header = format!(
@@ -483,8 +499,16 @@ mod tests {
             );
             let parsed = parse_challenges([header.as_str()]);
             let d = DigestState::from_challenge(&parsed[0]).unwrap();
-            let header = d.answer_with("Mufasa", "Circle of Life", &url, "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ");
-            assert!(header.contains(&format!("response=\"{response}\"")), "{algorithm}: {header}");
+            let header = d.answer_with(
+                "Mufasa",
+                "Circle of Life",
+                &url,
+                "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ",
+            );
+            assert!(
+                header.contains(&format!("response=\"{response}\"")),
+                "{algorithm}: {header}"
+            );
             assert!(header.contains("nc=00000001"));
             // The counter goes up for the next pre-emptive answer.
             assert!(d.answer("Mufasa", "Circle of Life", &url).contains("nc=00000002"));
@@ -547,7 +571,11 @@ mod tests {
     #[test]
     fn method_basic_is_sent_from_the_first_request_and_ntlm_is_chosen_first() {
         let page = Url::parse("https://staging.example.com/").unwrap();
-        assert!(Auth::new(&[sign_in(AuthMethod::Basic)]).authorize(&page).is_some());
+        assert!(
+            Auth::new(&[sign_in(AuthMethod::Basic)])
+                .authorize(&page)
+                .is_some()
+        );
         let auth = Auth::new(&[sign_in(AuthMethod::Any)]);
         let mut h = challenge("NTLM");
         h.append(WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"x\""));
@@ -560,9 +588,15 @@ mod tests {
         let auth = Auth::new(&[sign_in(AuthMethod::Digest)]);
         let page = Url::parse("https://staging.example.com/").unwrap();
         let first = challenge(r#"Digest realm="r", nonce="one", qop="auth""#);
-        assert_eq!(auth.on_unauthorized(&page, &first, false), AuthOutcome::RetryWithCredentials);
+        assert_eq!(
+            auth.on_unauthorized(&page, &first, false),
+            AuthOutcome::RetryWithCredentials
+        );
         let stale = challenge(r#"Digest realm="r", nonce="two", qop="auth", stale=true"#);
-        assert_eq!(auth.on_unauthorized(&page, &stale, true), AuthOutcome::RetryWithCredentials);
+        assert_eq!(
+            auth.on_unauthorized(&page, &stale, true),
+            AuthOutcome::RetryWithCredentials
+        );
         let v = auth.authorize(&page).unwrap();
         assert!(v.to_str().unwrap().contains("nonce=\"two\""));
     }

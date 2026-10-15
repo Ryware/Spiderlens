@@ -124,7 +124,9 @@ pub fn login_open(
     if let Some(ua) = user_agent.as_deref().filter(|u| !u.trim().is_empty()) {
         builder = builder.user_agent(ua);
     }
-    let window = builder.build().map_err(|e| format!("Could not open the login window: {e}"))?;
+    let window = builder
+        .build()
+        .map_err(|e| format!("Could not open the login window: {e}"))?;
     let closed = app.clone();
     window.on_window_event(move |e| {
         if matches!(e, tauri::WindowEvent::Destroyed) {
@@ -151,7 +153,9 @@ pub async fn login_done(app: AppHandle) -> Cmd<Captured> {
         .expect("login lock")
         .take()
         .ok_or("The login window is not open.")?;
-    let window = app.get_webview_window(LABEL).ok_or("The login window was closed.")?;
+    let window = app
+        .get_webview_window(LABEL)
+        .ok_or("The login window was closed.")?;
     let cookies = window.cookies();
     let _ = window.close();
     remove_dir(&pending.data_dir);
@@ -190,7 +194,9 @@ pub async fn login_done(app: AppHandle) -> Cmd<Captured> {
             .collect(),
     };
     if session.cookies.is_empty() {
-        return Err("No cookies for this site were found. Sign in in the window first, then choose Signed in.".into());
+        return Err(
+            "No cookies for this site were found. Sign in in the window first, then choose Signed in.".into(),
+        );
     }
     let captured = Captured::of(&session);
     *state.session.lock().expect("login lock") = Some(session);
@@ -217,7 +223,12 @@ pub fn login_clear(state: tauri::State<'_, State>) {
 /// The captured session's summary, if there is one.
 #[tauri::command]
 pub fn login_status(state: tauri::State<'_, State>) -> Option<Captured> {
-    state.session.lock().expect("login lock").as_ref().map(Captured::of)
+    state
+        .session
+        .lock()
+        .expect("login lock")
+        .as_ref()
+        .map(Captured::of)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -244,12 +255,19 @@ impl From<(ImportCounts, Option<Captured>)> for Imported {
 /// Imports a browser's `cookies.txt` as the login session (FR-015): values
 /// stay here, only names and counts go back.
 #[tauri::command]
-pub fn cookies_import(state: tauri::State<'_, State>, path: PathBuf, internal_hosts: Vec<String>) -> Cmd<Imported> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
-    let name = path
-        .file_name()
-        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let (session, counts) = LoginSession::from_cookies_txt(&text, &name, now_ms(), internal_test(&internal_hosts));
+pub fn cookies_import(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    internal_hosts: Vec<String>,
+) -> Cmd<Imported> {
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let (session, counts) =
+        LoginSession::from_cookies_txt(&text, &name, now_ms(), internal_test(&internal_hosts));
     if session.cookies.is_empty() {
         return Ok((counts, None).into());
     }

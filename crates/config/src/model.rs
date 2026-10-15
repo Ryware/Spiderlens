@@ -826,10 +826,14 @@ impl AuthMethod {
 }
 
 /// Sign-out links a crawl with a login session never requests (FR-011).
-pub const DEFAULT_SIGN_OUT_PATTERNS: [&str; 6] = ["logout", "log-out", "signout", "sign-out", "logoff", "log-off"];
+pub const DEFAULT_SIGN_OUT_PATTERNS: [&str; 6] =
+    ["logout", "log-out", "signout", "sign-out", "logoff", "log-off"];
 
 fn default_sign_out_patterns() -> Vec<String> {
-    DEFAULT_SIGN_OUT_PATTERNS.iter().map(|p| (*p).to_string()).collect()
+    DEFAULT_SIGN_OUT_PATTERNS
+        .iter()
+        .map(|p| (*p).to_string())
+        .collect()
 }
 
 /// The login page (FR-007 to FR-012). Only these settings are stored; the
@@ -938,7 +942,13 @@ impl ProxyKind {
 /// suffix of the CLI's environment variables (data-model.md).
 pub fn env_suffix(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -997,11 +1007,7 @@ impl CrawlConfig {
             .iter()
             .filter(|s| !s.password.is_set())
             .map(|s| format!("sign_in:{}", s.origin));
-        let proxy = self
-            .access
-            .proxy
-            .needs_password()
-            .then(|| "proxy".to_string());
+        let proxy = self.access.proxy.needs_password().then(|| "proxy".to_string());
         headers.chain(cookies).chain(sign_ins).chain(proxy).collect()
     }
 
@@ -1525,7 +1531,10 @@ mod tests {
         .unwrap();
         assert_eq!(c.access.sign_ins[0].method, AuthMethod::Any);
         assert_eq!(c.access.login.as_ref().unwrap().sign_out_patterns.len(), 6);
-        assert_eq!(c.missing_secrets(), ["sign_in:https://staging.example.com:8443", "proxy"]);
+        assert_eq!(
+            c.missing_secrets(),
+            ["sign_in:https://staging.example.com:8443", "proxy"]
+        );
         assert_eq!(
             CrawlConfig::secret_env_var("sign_in:https://staging.example.com:8443"),
             "SPIDERLENS_PASSWORD_STAGING_EXAMPLE_COM_8443"
@@ -1536,7 +1545,10 @@ mod tests {
             "Password for staging.example.com (user ann)"
         );
         let left = c.fill_secrets(&[
-            ("sign_in:https://staging.example.com:8443".into(), "pw-site".into()),
+            (
+                "sign_in:https://staging.example.com:8443".into(),
+                "pw-site".into(),
+            ),
             ("proxy".into(), "pw-proxy".into()),
         ]);
         assert!(left.is_empty());

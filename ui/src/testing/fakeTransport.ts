@@ -249,11 +249,11 @@ export interface FakeSitemaps {
   files: SitemapFiles;
   /** File names already in each folder. */
   existing: Map<string, string[]>;
-  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean   /** The orphan notice above the Sitemaps tab. */
+  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
+  /** The orphan notice above the Sitemaps tab. */
   orphans: OrphanSummary;
   /** Sitemap entries per URL id, for the inspector. */
   entries: Map<number, UrlSitemapEntry[]>;
-}[];
   previews: number;
   /** When set, the next generate fails with this message. */
   fail: string | null;

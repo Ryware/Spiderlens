@@ -472,7 +472,11 @@ mod tests {
     fn catalogue_is_complete_and_consistent() {
         // FR-001, FR-003, FR-004, SC-008.
         let all = catalogue();
-        assert_eq!(all.len(), 102, "first rule set (spec table, with readability) and spec 011's 27");
+        assert_eq!(
+            all.len(),
+            102,
+            "first rule set (spec table, with readability) and spec 011's 27"
+        );
         let mut ids = HashSet::new();
         let mut cats = HashSet::new();
         for r in all {

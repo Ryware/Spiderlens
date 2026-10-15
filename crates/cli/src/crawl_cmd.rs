@@ -451,15 +451,20 @@ fn load_cookies_file(
     start_host: Option<&str>,
     quiet: bool,
 ) -> Result<spiderlens_engine::net::LoginSession, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     let internal = start_host.map(|h| {
-        spiderlens_config::InternalHosts::new(spiderlens_config::SubdomainMode::AllSubdomains, h.trim_start_matches("www."))
+        spiderlens_config::InternalHosts::new(
+            spiderlens_config::SubdomainMode::AllSubdomains,
+            h.trim_start_matches("www."),
+        )
     });
     let keep = |host: &str| internal.as_ref().is_none_or(|i| i.is_internal(host));
     let now = jiff::Timestamp::now().as_millisecond();
-    let name = path
-        .file_name()
-        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
     let (session, counts) = spiderlens_engine::net::LoginSession::from_cookies_txt(&text, &name, now, keep);
     if session.cookies.is_empty() {
         return Err(format!(

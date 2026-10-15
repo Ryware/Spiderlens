@@ -501,7 +501,9 @@ enum Msg {
     SiteFile(SiteFileRow),
     SiteFilesFinished,
     /// The signed-out check's answer (spec 025 FR-012).
-    SessionCheck { signed_out: bool },
+    SessionCheck {
+        signed_out: bool,
+    },
 }
 
 /// Every this many internal pages, the signed-out check runs (plan D5:
@@ -1147,11 +1149,19 @@ impl Crawler {
             // The site signed the last run out: what it fetched after the
             // last good check is login pages, so it is fetched again (SC-006).
             let ended = self.store.meta("pause_reason")?.as_deref() == Some("session_ended");
-            if ended && let Some(since) = self.store.meta("session_ok_at")?.and_then(|v| v.parse::<i64>().ok()) {
+            if ended
+                && let Some(since) = self
+                    .store
+                    .meta("session_ok_at")?
+                    .and_then(|v| v.parse::<i64>().ok())
+            {
                 let n = self.store.requeue_fetched_since(since)?;
                 self.store.record_event(
                     "signed_in_again",
-                    Some(&serde_json::json!({ "login_url": l.login_url, "cookies": names, "requeued": n }).to_string()),
+                    Some(
+                        &serde_json::json!({ "login_url": l.login_url, "cookies": names, "requeued": n })
+                            .to_string(),
+                    ),
                 )?;
             } else {
                 self.store.record_event(
@@ -1732,7 +1742,9 @@ impl Run {
     /// pages (FR-012). The check is not a crawled URL: it goes through the
     /// session's client and only its answer comes back.
     fn tick_session_check(&mut self) {
-        let Some(check) = &mut self.session_check else { return };
+        let Some(check) = &mut self.session_check else {
+            return;
+        };
         check.since += 1;
         if check.pending || check.since < SESSION_CHECK_EVERY {
             return;
@@ -1790,21 +1802,29 @@ impl Run {
                     "ntlm" => "NTLM".to_string(),
                     other => {
                         let mut c = other.chars();
-                        c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+                        c.next()
+                            .map(|f| f.to_ascii_uppercase().to_string() + c.as_str())
+                            .unwrap_or_default()
                     }
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
         let (kind, message) = match note {
-            AuthNote::Required { schemes, supported: true } => (
+            AuthNote::Required {
+                schemes,
+                supported: true,
+            } => (
                 "auth_required",
                 format!(
                     "{host} asks for a sign-in ({}). Add one for {origin} and its pages are fetched again.",
                     names(schemes)
                 ),
             ),
-            AuthNote::Required { schemes, supported: false } => (
+            AuthNote::Required {
+                schemes,
+                supported: false,
+            } => (
                 "auth_unsupported",
                 format!(
                     "{host} asks for a kind of sign-in SpiderLens cannot do ({}). Its pages are recorded as 401.",
@@ -1899,7 +1919,14 @@ impl Run {
                 self.auth_noticed.remove(&origin);
                 // The password stays in memory; the stored configuration
                 // gets the sign-in without it, so a resume asks for it.
-                if !self.c.config.access.sign_ins.iter().any(|s| s.origin_key().as_deref() == Some(origin.as_str())) {
+                if !self
+                    .c
+                    .config
+                    .access
+                    .sign_ins
+                    .iter()
+                    .any(|s| s.origin_key().as_deref() == Some(origin.as_str()))
+                {
                     self.c.config.access.sign_ins.push(sign_in.clone());
                     self.c.stored.config.access.sign_ins.push(sign_in);
                     self.c.store.set_meta(
@@ -3261,7 +3288,9 @@ impl Run {
             }
             Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
             Msg::SessionCheck { signed_out } => {
-                let Some(check) = &mut self.session_check else { return Ok(()) };
+                let Some(check) = &mut self.session_check else {
+                    return Ok(());
+                };
                 check.pending = false;
                 if !signed_out {
                     check.last_ok_ms = now_ms();

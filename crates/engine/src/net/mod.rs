@@ -81,7 +81,8 @@ impl NetSession {
         resolve: &[(String, SocketAddr)],
         login: Option<&LoginSession>,
     ) -> Result<Self, CheckError> {
-        let proxy = proxy::resolve(&access.proxy).map_err(|p| CheckError::new(ErrorClass::Connection, p.message()))?;
+        let proxy = proxy::resolve(&access.proxy)
+            .map_err(|p| CheckError::new(ErrorClass::Connection, p.message()))?;
         let proxy_in_effect = match &proxy {
             Some(r) => r.in_effect(access.proxy.mode),
             None if access.proxy.mode == spiderlens_config::ProxyMode::System => ProxyInEffect {
@@ -92,15 +93,16 @@ impl NetSession {
         };
         let builder = proxy::apply(client_builder(opts, resolve), proxy.as_ref())
             .map_err(|p| CheckError::new(ErrorClass::Connection, p.message()))?;
-        let jar = (CrawlJar::needed(access.cookie_policy, &access.cookies) || login.is_some_and(|l| !l.cookies.is_empty()))
-            .then(|| {
-                let mut jar = CrawlJar::new(access.cookie_policy, internal);
-                jar.supply(&access.cookies);
-                if let Some(l) = login {
-                    jar.supply_session(&l.cookies);
-                }
-                Arc::new(jar)
-            });
+        let jar = (CrawlJar::needed(access.cookie_policy, &access.cookies)
+            || login.is_some_and(|l| !l.cookies.is_empty()))
+        .then(|| {
+            let mut jar = CrawlJar::new(access.cookie_policy, internal);
+            jar.supply(&access.cookies);
+            if let Some(l) = login {
+                jar.supply_session(&l.cookies);
+            }
+            Arc::new(jar)
+        });
         let builder = match &jar {
             Some(jar) => builder.cookie_provider(Arc::clone(jar)),
             None => builder,
@@ -148,13 +150,21 @@ impl NetSession {
     pub fn add_sign_in(&self, sign_in: &SignIn) {
         self.auth.add(sign_in);
         if let Some(origin) = sign_in.origin_key() {
-            self.ntlm.lock().unwrap_or_else(PoisonError::into_inner).remove(&origin);
+            self.ntlm
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&origin);
         }
     }
 
     /// Credentials for a request: the `Authorization` header when the
     /// origin settled on Basic or Digest. Internal URLs only.
-    pub(crate) fn authorize(&self, request: RequestBuilder, url: &Url, internal: bool) -> (RequestBuilder, bool) {
+    pub(crate) fn authorize(
+        &self,
+        request: RequestBuilder,
+        url: &Url,
+        internal: bool,
+    ) -> (RequestBuilder, bool) {
         if !internal {
             return (request, false);
         }

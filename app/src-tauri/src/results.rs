@@ -21,7 +21,8 @@ use spiderlens_results::{
     TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in, issue_tabs, tabs,
 };
 use spiderlens_results::{
-    GenerateError, GenerateReport, OrphanSummary, SitemapFiles, SitemapOutput, UrlSitemapEntry, generate_sitemaps,
+    GenerateError, GenerateReport, OrphanSummary, SitemapFiles, SitemapOutput, UrlSitemapEntry,
+    generate_sitemaps,
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -793,7 +794,9 @@ pub async fn sitemap_entries_for_url(
     path: PathBuf,
     id: i64,
 ) -> Cmd<Vec<UrlSitemapEntry>> {
-    state.with(&path, move |r| r.sitemap_entries_for_url(id).map_err(err)).await
+    state
+        .with(&path, move |r| r.sitemap_entries_for_url(id).map_err(err))
+        .await
 }
 
 /// Counts for the Generate sitemap sheet's live preview (spec 011 FR-018);

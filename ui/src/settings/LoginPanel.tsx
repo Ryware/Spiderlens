@@ -259,8 +259,9 @@ export function LoginPanel({
               </Button>
             </span>
           ) : (
-            <span>
-              <Button id={id} size="sm" onClick={() => onChange({ ...login, check: { url: "", when: { redirects_to: "/login" } } })}>
+            // The row label would rename the button; it keeps its own name.
+            <span id={id}>
+              <Button size="sm" onClick={() => onChange({ ...login, check: { url: "", when: { redirects_to: "/login" } } })}>
                 Add a check
               </Button>
             </span>
