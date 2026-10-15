@@ -1,0 +1,30 @@
+[package]
+name = "spiderlens-schedule"
+description = "Scheduled crawls: schedules, due runs, history and OS scheduler registration (spec 021)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-config.workspace = true
+spiderlens-engine.workspace = true
+spiderlens-results.workspace = true
+jiff.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+ts-rs.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+spiderlens-test-fixtures.workspace = true
+tempfile.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

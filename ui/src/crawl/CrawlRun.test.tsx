@@ -37,6 +37,15 @@ test("start_runs_a_crawl_and_shows_live_figures", async () => {
   expect(within(overview).getByText("Discovered").nextSibling?.textContent).toBe("40");
 });
 
+test("analysis_phase_shows_in_the_status_bar_until_the_crawl_finishes", async () => {
+  // Spec 009 plan D12: passes run at crawl end, before crawl-finished.
+  const t = await startCrawl();
+  act(() => t.crawls.analyse({ label: "Link Score", done: 40, total: 100 }));
+  expect(within(status()).getByRole("status").textContent).toBe("Analysing: Link Score 40%");
+  act(() => t.crawls.finish({ report: fakeReport("completed", 12) }));
+  await waitFor(() => expect(within(status()).getByRole("status").textContent).toMatch(/^Completed/));
+});
+
 test("events_from_another_crawl_are_ignored", async () => {
   const t = await startCrawl();
   act(() => t.crawls.progress({ id: 99, crawled: 500 }));

@@ -11,6 +11,10 @@
 //! With `--flaky-per-mille N`, N pages in 1000 answer 503 the first time
 //! they are requested and normally after that (spec 004 retries).
 //!
+//! With `--pdfs N`, N pages also link to a PDF (`/pdf/0` .. `/pdf/{N-1}`),
+//! each about `--pdf-mb` MB (default 5) with 30 pages of text, for the PDF
+//! benchmark of spec 027 (SC-C2).
+//!
 //! `GET /__stats` returns what the server saw: requests, peak simultaneous
 //! requests and the most requests started in any one second, so caps can be
 //! checked from the server side (SC-003). `GET /__reset` clears them.
@@ -41,6 +45,8 @@ struct Stats {
 
 struct App {
     pages: u64,
+    pdfs: u64,
+    pdf: Vec<u8>,
     delay: Duration,
     max_open: Option<u64>,
     flaky_per_mille: u64,
@@ -61,6 +67,15 @@ fn arg(name: &str) -> Option<u64> {
 async fn main() {
     let app = Arc::new(App {
         pages: arg("--pages").unwrap_or(100_000),
+        pdfs: arg("--pdfs").unwrap_or(0),
+        pdf: {
+            let mb = arg("--pdf-mb").unwrap_or(5) as usize;
+            spiderlens_test_fixtures::pdf::PdfSpec {
+                padding: (mb * 1024 * 1024).saturating_sub(64 * 1024),
+                ..spiderlens_test_fixtures::pdf::PdfSpec::titled("Benchmark document", 30)
+            }
+            .build()
+        },
         delay: Duration::from_millis(arg("--delay-ms").unwrap_or(0)),
         max_open: arg("--max-open"),
         flaky_per_mille: arg("--flaky-per-mille").unwrap_or(0),
@@ -79,6 +94,7 @@ async fn main() {
     let port = arg("--port").unwrap_or(8700) as u16;
     let router = Router::new()
         .route("/p/{n}", get(page))
+        .route("/pdf/{n}", get(pdf))
         .route("/__stats", get(stats))
         .route("/__reset", get(reset))
         .fallback(|| async { StatusCode::NOT_FOUND })
@@ -170,8 +186,22 @@ async fn page(State(app): State<Arc<App>>, Path(n): Path<u64>) -> Response {
         let r = mix(n * 3 + k) % app.pages;
         let _ = write!(html, "<li><a href=\"/p/{r}\">Related {r}</a></li>");
     }
+    if app.pdfs > 0 && n % (app.pages / app.pdfs).max(1) == 0 {
+        let k = n / (app.pages / app.pdfs).max(1);
+        if k < app.pdfs {
+            let _ = write!(html, "<li><a href=\"/pdf/{k}\">Report {k}</a></li>");
+        }
+    }
     html.push_str("</ul></main></body></html>");
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+}
+
+async fn pdf(State(app): State<Arc<App>>, Path(n): Path<u64>) -> Response {
+    let _open = Open::new(&app.stats);
+    if n >= app.pdfs {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    ([(header::CONTENT_TYPE, "application/pdf")], app.pdf.clone()).into_response()
 }
 
 async fn stats(State(app): State<Arc<App>>) -> impl IntoResponse {

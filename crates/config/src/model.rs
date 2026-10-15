@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::custom::CustomRules;
+use crate::links::LinkAnalysisSettings;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
 use crate::secret::HeaderValue;
@@ -24,7 +26,130 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// Issue rule overrides (spec 009 FR-021, FR-022). Only what differs from
+    /// the rule catalogue's defaults is stored.
+    #[serde(skip_serializing_if = "IssueSettings::is_empty")]
+    pub issues: IssueSettings,
+    /// Custom extraction and search rules (spec 013).
+    pub custom: CustomRules,
+    /// Spec 023: Link Score and link positions.
+    pub links: LinkAnalysisSettings,
+    pub access: AccessSettings,
+    pub ai_checks: AiChecks,
+    /// The last options used to generate XML sitemaps (spec 011 FR-025).
+    pub sitemap_generate: SitemapGenerateOptions,
+    /// URL groups shown across the results (spec 027 part B). Results-only:
+    /// they never change what is crawled.
+    pub segments: Vec<crate::segments::Segment>,
     pub spelling: SpellingSettings,
+}
+
+/// Options for generating XML sitemaps from a crawl (spec 011 FR-020,
+/// FR-021). Defaults follow the spec's Assumptions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SitemapGenerateOptions {
+    pub include_noindex: bool,
+    pub include_canonicalised: bool,
+    /// Spec 002 patterns: when set, only matching pages are written.
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub lastmod: LastmodSource,
+    pub changefreq: Option<Changefreq>,
+    pub priority: PrioritySource,
+    pub images: ImageEntries,
+    /// Hosts besides the crawl's own whose images may be listed.
+    pub image_hosts: Vec<String>,
+    pub hreflang: bool,
+    pub max_urls_per_file: u32,
+    pub gzip: bool,
+    /// Where the files will be published; blank means the start host's root.
+    pub base_url: String,
+    pub file_prefix: String,
+}
+
+impl Default for SitemapGenerateOptions {
+    fn default() -> Self {
+        Self {
+            include_noindex: false,
+            include_canonicalised: false,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            lastmod: LastmodSource::LastModifiedHeader,
+            changefreq: None,
+            priority: PrioritySource::Off,
+            images: ImageEntries::Off,
+            image_hosts: Vec::new(),
+            hreflang: false,
+            max_urls_per_file: 50_000,
+            gzip: false,
+            base_url: String::new(),
+            file_prefix: "sitemap".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "date")]
+#[ts(export)]
+pub enum LastmodSource {
+    None,
+    /// The page's `Last-Modified` response header; entries without one get
+    /// no `lastmod`.
+    LastModifiedHeader,
+    /// The time the page was fetched.
+    CrawlDate,
+    /// One date for every entry, `YYYY-MM-DD`.
+    Fixed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Changefreq {
+    Always,
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+    Never,
+}
+
+impl Changefreq {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::Hourly => "hourly",
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+            Self::Never => "never",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+#[ts(export)]
+pub enum PrioritySource {
+    Off,
+    Fixed(f32),
+    /// 1.0 for the start page, then 0.8, 0.6, 0.4 and 0.2 by click depth.
+    ByDepth,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ImageEntries {
+    Off,
+    /// In the page sitemaps, with the image extension.
+    Inline,
+    /// In their own image sitemap files.
+    Separate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -50,8 +175,7 @@ pub struct Limits {
     pub list_depth: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub struct Scope {
     pub include: Vec<String>,
@@ -67,8 +191,123 @@ pub struct Scope {
     pub query_params: QueryParams,
     /// Longer URLs are recorded as malformed and not crawled.
     pub max_url_length: u32,
-    /// Seed the crawl with the sitemaps listed in the start host's robots.txt.
-    pub use_sitemaps: bool,
+    /// Where sitemaps come from and what is done with their URLs (spec 011).
+    pub sitemaps: SitemapSettings,
+}
+
+/// Spec 011 FR-001, FR-002, FR-009.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SitemapSettings {
+    /// Read sitemaps (robots.txt, the default locations, the ones below) and
+    /// keep every entry for the sitemap audit.
+    pub read: bool,
+    /// Queue internal URLs that only a sitemap lists; when off they are
+    /// recorded as "Found only in sitemap" and not requested.
+    pub crawl_sitemap_only: bool,
+    /// Sitemaps the user added by hand.
+    pub urls: Vec<String>,
+    /// Sitemap files on this computer, each with the URL it will live at.
+    pub files: Vec<LocalSitemap>,
+}
+
+impl Default for SitemapSettings {
+    fn default() -> Self {
+        Self {
+            read: true,
+            crawl_sitemap_only: true,
+            urls: Vec::new(),
+            files: Vec::new(),
+        }
+    }
+}
+
+impl SitemapSettings {
+    /// Both switches on or both off: the meaning of spec 003's single
+    /// "Use sitemaps from robots.txt" setting.
+    pub fn all(on: bool) -> Self {
+        Self {
+            read: on,
+            crawl_sitemap_only: on,
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LocalSitemap {
+    pub path: String,
+    /// Where the file will be published; the location rule is checked
+    /// against it (spec 011 US6 scenario 2).
+    pub base_url: String,
+}
+
+/// What a stored `scope` may look like: the current shape, or the spec 003
+/// one with `use_sitemaps`, which maps to both sitemap switches (spec 011
+/// FR-001, research R10). Only the current shape is ever written.
+#[derive(Deserialize)]
+#[serde(default)]
+struct ScopeWire {
+    include: Vec<String>,
+    exclude: Vec<String>,
+    subdomains: SubdomainMode,
+    stay_in_folder: bool,
+    check_external: bool,
+    follow_internal_nofollow: bool,
+    follow_external_nofollow: bool,
+    query_params: QueryParams,
+    max_url_length: u32,
+    sitemaps: Option<SitemapSettings>,
+    use_sitemaps: Option<bool>,
+}
+
+impl Default for ScopeWire {
+    fn default() -> Self {
+        let d = Scope::default();
+        Self {
+            include: d.include,
+            exclude: d.exclude,
+            subdomains: d.subdomains,
+            stay_in_folder: d.stay_in_folder,
+            check_external: d.check_external,
+            follow_internal_nofollow: d.follow_internal_nofollow,
+            follow_external_nofollow: d.follow_external_nofollow,
+            query_params: d.query_params,
+            max_url_length: d.max_url_length,
+            sitemaps: None,
+            use_sitemaps: None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Scope {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        ScopeWire::deserialize(d).map(Into::into)
+    }
+}
+
+impl From<ScopeWire> for Scope {
+    fn from(f: ScopeWire) -> Self {
+        let sitemaps = match (f.sitemaps, f.use_sitemaps) {
+            (Some(s), _) => s,
+            (None, Some(on)) => SitemapSettings::all(on),
+            (None, None) => SitemapSettings::default(),
+        };
+        Self {
+            include: f.include,
+            exclude: f.exclude,
+            subdomains: f.subdomains,
+            stay_in_folder: f.stay_in_folder,
+            check_external: f.check_external,
+            follow_internal_nofollow: f.follow_internal_nofollow,
+            follow_external_nofollow: f.follow_external_nofollow,
+            query_params: f.query_params,
+            max_url_length: f.max_url_length,
+            sitemaps,
+        }
+    }
 }
 
 impl Default for Scope {
@@ -83,7 +322,7 @@ impl Default for Scope {
             follow_external_nofollow: false,
             query_params: QueryParams::default(),
             max_url_length: 2000,
-            use_sitemaps: false,
+            sitemaps: SitemapSettings::default(),
         }
     }
 }
@@ -399,13 +638,229 @@ impl Default for RetrySettings {
 #[ts(export)]
 pub struct ExtractionSettings {
     /// Keep each page's raw HTML, compressed, in the crawl file (FR-030,
-    /// FR-031).
+    /// FR-031). PDF text follows the same setting (spec 027 FR-C05).
     pub store_html: bool,
+    /// PDF documents (spec 027 part C).
+    pub pdf: PdfSettings,
 }
 
 impl Default for ExtractionSettings {
     fn default() -> Self {
-        Self { store_html: true }
+        Self {
+            store_html: true,
+            pdf: PdfSettings::default(),
+        }
+    }
+}
+
+/// Reading PDFs (spec 027 FR-C01, FR-C03, FR-C04). Off by default, so the
+/// crawl does exactly what it did before unless asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct PdfSettings {
+    /// Download PDF bodies up to `max_mb` and read them.
+    pub crawl: bool,
+    /// Hand links found in PDFs to discovery (they are stored either way).
+    pub follow_links: bool,
+    /// PDF size limit, separate from the page size limit.
+    pub max_mb: u32,
+    /// Time limit for reading one PDF.
+    pub time_limit_secs: u32,
+}
+
+impl Default for PdfSettings {
+    fn default() -> Self {
+        Self {
+            crawl: false,
+            follow_links: true,
+            max_mb: 20,
+            time_limit_secs: 5,
+        }
+    }
+}
+
+/// How urgent an issue is (spec 009). Declaration order is display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, rename = "IssuePriority")]
+pub enum Priority {
+    High,
+    Medium,
+    Low,
+    Opportunity,
+}
+
+impl Priority {
+    pub const ALL: [Priority; 4] = [Self::High, Self::Medium, Self::Low, Self::Opportunity];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::High => "High",
+            Self::Medium => "Medium",
+            Self::Low => "Low",
+            Self::Opportunity => "Opportunity",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|p| p.label().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// Per-rule overrides of the issue rule catalogue (spec 009, plan D7). Rule
+/// ids are checked against the catalogue by `spiderlens-results`, which owns
+/// it; unknown ids are ignored there with a notice.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct IssueSettings {
+    pub rules: std::collections::BTreeMap<String, RuleOverride>,
+}
+
+impl IssueSettings {
+    pub fn is_empty(&self) -> bool {
+        self.rules.values().all(RuleOverride::is_empty)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RuleOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+}
+
+impl RuleOverride {
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.priority.is_none() && self.threshold.is_none()
+    }
+}
+
+/// Cookies and, later, sign-ins and proxy: how the crawl reaches a site
+/// (spec 025, data-model.md).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AccessSettings {
+    /// Sent to the crawl's internal hosts only (FR-015, FR-016).
+    pub cookies: Vec<SuppliedCookie>,
+    pub cookie_policy: CookiePolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SuppliedCookie {
+    pub name: String,
+    #[ts(type = "{ plain: string } | { secret: true, value?: string }")]
+    pub value: HeaderValue,
+    /// `example.com` also reaches its subdomains, as a `Domain` attribute
+    /// would.
+    pub domain: String,
+    #[serde(default = "root_path")]
+    pub path: String,
+    #[serde(default)]
+    pub secure_only: bool,
+}
+
+fn root_path() -> String {
+    "/".into()
+}
+
+/// What happens to cookies the site sets during the crawl (FR-017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CookiePolicy {
+    /// As search engines do, and as SpiderLens did before spec 025.
+    #[default]
+    Ignore,
+    /// Kept in memory for the rest of the crawl, never written.
+    Keep,
+}
+
+impl CrawlConfig {
+    /// Secrets the configuration needs but does not hold (loaded from a
+    /// file, where they are never written). Header names are reported as
+    /// they are; other secrets carry a `kind:` prefix (spec 025
+    /// data-model.md), which no header name can contain.
+    pub fn missing_secrets(&self) -> Vec<String> {
+        let headers = self
+            .identity
+            .headers
+            .iter()
+            .filter(|h| h.value.is_secret() && h.value.expose().is_none())
+            .map(|h| h.name.clone());
+        let cookies = self
+            .access
+            .cookies
+            .iter()
+            .filter(|c| c.value.is_secret() && c.value.expose().is_none())
+            .map(|c| format!("cookie:{}/{}", c.domain, c.name));
+        headers.chain(cookies).collect()
+    }
+
+    /// Puts secret values back from `(key, value)` pairs keyed as in
+    /// [`Self::missing_secrets`] (header names case-insensitively). Returns
+    /// the keys still missing.
+    pub fn fill_secrets(&mut self, secrets: &[(String, String)]) -> Vec<String> {
+        let find = |key: &str, case_insensitive: bool| {
+            secrets
+                .iter()
+                .find(|(k, _)| {
+                    if case_insensitive {
+                        k.eq_ignore_ascii_case(key)
+                    } else {
+                        k == key
+                    }
+                })
+                .map(|(_, v)| v.clone())
+        };
+        for h in &mut self.identity.headers {
+            if h.value.is_secret()
+                && h.value.expose().is_none()
+                && let Some(v) = find(&h.name, true)
+            {
+                h.value = HeaderValue::secret(v);
+            }
+        }
+        for c in &mut self.access.cookies {
+            if c.value.is_secret()
+                && c.value.expose().is_none()
+                && let Some(v) = find(&format!("cookie:{}/{}", c.domain, c.name), false)
+            {
+                c.value = HeaderValue::secret(v);
+            }
+        }
+        self.missing_secrets()
+    }
+}
+
+/// AI search checks (spec 015 FR-002, FR-003, FR-010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AiChecks {
+    /// Run the AI checks when the crawl finishes.
+    pub auto: bool,
+    /// Fetch `/llms.txt`, `/llms-full.txt` and `/.well-known/tdmrep.json`
+    /// once per internal host at the end of the crawl.
+    pub site_files: bool,
+}
+
+impl Default for AiChecks {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            site_files: true,
+        }
     }
 }
 
@@ -452,6 +907,70 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn issue_settings_store_only_overrides() {
+        // Spec 009 FR-022: old profiles load unchanged and defaults are not written.
+        let c = CrawlConfig::default();
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("issues").is_none());
+        let back: CrawlConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(back, c);
+
+        let mut c = CrawlConfig::default();
+        c.issues.rules.insert(
+            "title.over".into(),
+            RuleOverride {
+                threshold: Some(70.0),
+                ..Default::default()
+            },
+        );
+        c.issues
+            .rules
+            .insert("canonical.missing".into(), RuleOverride::default());
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["issues"]["rules"]["title.over"], json!({ "threshold": 70.0 }));
+        let back: CrawlConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(back.issues.rules["title.over"].threshold, Some(70.0));
+    }
+
+    #[test]
+    fn priorities_parse_and_order() {
+        assert_eq!(Priority::parse("high"), Some(Priority::High));
+        assert_eq!(Priority::parse(" Opportunity "), Some(Priority::Opportunity));
+        assert_eq!(Priority::parse("urgent"), None);
+        assert!(Priority::High < Priority::Opportunity);
+        assert_eq!(serde_json::to_value(Priority::Medium).unwrap(), json!("medium"));
+    }
+
+    #[test]
+    fn spec_003_sitemap_setting_maps_to_both_switches() {
+        for on in [true, false] {
+            let s: Scope =
+                serde_json::from_value(json!({ "use_sitemaps": on, "max_url_length": 500 })).unwrap();
+            assert_eq!(s.sitemaps, SitemapSettings::all(on));
+            assert_eq!(s.max_url_length, 500);
+            let written = serde_json::to_value(&s).unwrap();
+            assert!(
+                written.get("use_sitemaps").is_none(),
+                "only the new shape is written"
+            );
+            let back: Scope = serde_json::from_value(written).unwrap();
+            assert_eq!(back, s);
+        }
+        let s: Scope = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(s, Scope::default());
+        let s: Scope = serde_json::from_value(json!({
+            "use_sitemaps": true,
+            "sitemaps": { "read": false, "urls": ["https://a.test/s.xml"] }
+        }))
+        .unwrap();
+        assert!(
+            !s.sitemaps.read && s.sitemaps.crawl_sitemap_only,
+            "the new key wins"
+        );
+        assert_eq!(s.sitemaps.urls, vec!["https://a.test/s.xml"]);
+    }
+
+    #[test]
     fn all_defaults_match_spec() {
         let c = CrawlConfig::default();
         assert_eq!(c.mode, Mode::Spider);
@@ -467,7 +986,8 @@ mod tests {
         assert_eq!(c.scope.subdomains, SubdomainMode::ThisHost);
         assert!(c.scope.check_external);
         assert!(!c.scope.follow_internal_nofollow && !c.scope.follow_external_nofollow);
-        assert!(!c.scope.stay_in_folder && !c.scope.use_sitemaps);
+        assert!(!c.scope.stay_in_folder);
+        assert!(c.scope.sitemaps.read && c.scope.sitemaps.crawl_sitemap_only);
         assert_eq!(c.scope.max_url_length, 2000);
         assert_eq!(c.scope.query_params.mode, QueryMode::Keep);
         assert_eq!(c.limits.list_depth, 0);
@@ -487,6 +1007,8 @@ mod tests {
         assert_eq!(c.retry.attempts, 3);
         assert_eq!(c.retry.max_wait_secs, 60.0);
         assert!(c.extraction.store_html);
+        assert!(c.access.cookies.is_empty());
+        assert_eq!(c.access.cookie_policy, CookiePolicy::Ignore);
     }
 
     #[test]
@@ -502,11 +1024,34 @@ mod tests {
             "network",
             "retry",
             "extraction",
+            "links",
+            "access",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");
         }
         assert_eq!(v["limits"]["max_urls"], json!(null));
         assert_eq!(v["speed"]["preset"], "polite");
+    }
+
+    #[test]
+    fn secret_cookies_are_listed_and_filled() {
+        let mut c: CrawlConfig = serde_json::from_value(json!({
+            "identity": {"headers": [{"name": "X-Key", "value": {"secret": true}}]},
+            "access": {"cookies": [
+                {"name": "sid", "value": {"secret": true}, "domain": "example.com"},
+                {"name": "consent", "value": {"plain": "yes"}, "domain": "example.com"}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(c.access.cookies[0].path, "/");
+        assert_eq!(c.missing_secrets(), ["X-Key", "cookie:example.com/sid"]);
+        let left = c.fill_secrets(&[
+            ("x-key".into(), "k".into()),
+            ("cookie:example.com/sid".into(), "v".into()),
+        ]);
+        assert!(left.is_empty());
+        assert_eq!(c.access.cookies[0].value.expose(), Some("v"));
+        assert!(!serde_json::to_string(&c).unwrap().contains("\"v\""));
     }
 
     #[test]

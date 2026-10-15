@@ -53,9 +53,11 @@ export const Grid = forwardRef<
     onCopy: () => void;
     /** New column order after a header is dragged. */
     onReorder: (ids: string[]) => void;
+    /** Enter on the focused row: show it in the inspector (FR-018). */
+    onOpen?: () => void;
     empty?: React.ReactNode;
   }
->(function Grid({ label, columns, widths, onWidths, total, row, ensure, selection, onSelection, sort, onSort, onCopy, onReorder, empty }, ref) {
+>(function Grid({ label, columns, widths, onWidths, total, row, ensure, selection, onSelection, sort, onSort, onCopy, onReorder, onOpen, empty }, ref) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
@@ -148,6 +150,9 @@ export const Grid = forwardRef<
     } else if ((matches(e, "Mod+ArrowUp") || matches(e, "Mod+Shift+ArrowUp"))) {
       e.preventDefault();
       moveTo(0, e.shiftKey);
+    } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection.focus !== null && onOpen) {
+      e.preventDefault();
+      onOpen();
     } else if (keys[e.key] && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       keys[e.key]();

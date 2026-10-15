@@ -59,6 +59,22 @@ pub struct SiteSpeed {
     cool_down: u32,
     /// The allowance at which the site last pushed back.
     ceiling: Option<u32>,
+    /// The last time the allowance was cut, and why (FR-021, FR-029).
+    last_cut: Option<(Instant, Cut)>,
+    /// Response times change nothing while every site is slow at once: the
+    /// user's connection, not this site, is struggling (FR-019).
+    hold: bool,
+}
+
+/// Why a site's allowance was cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cut {
+    /// 429 or 503.
+    Overloaded,
+    /// Responses got much slower than usual.
+    Slower,
+    /// A request timed out.
+    TimedOut,
 }
 
 impl SiteSpeed {
@@ -75,6 +91,8 @@ impl SiteSpeed {
             steady_streak: 0,
             cool_down: 0,
             ceiling: None,
+            last_cut: None,
+            hold: false,
         }
     }
 
@@ -101,21 +119,61 @@ impl SiteSpeed {
         match signal {
             Signal::Answered => {
                 self.observe(took);
-                self.adjust_for_latency();
+                if !self.hold {
+                    self.adjust_for_latency(now);
+                }
                 None
             }
             Signal::Overloaded { retry_after } => {
-                self.cut(0.5);
+                self.cut(0.5, Cut::Overloaded, now);
                 retry_after.map(|d| now + d.min(MAX_RETRY_AFTER))
             }
             Signal::TimedOut => {
-                if self.adaptive {
-                    self.cut(0.75);
+                if self.adaptive && !self.hold {
+                    self.cut(0.75, Cut::TimedOut, now);
                 }
                 None
             }
             Signal::Other => None,
         }
+    }
+
+    /// Freezes the allowance against response times (FR-019): no growth and
+    /// no cuts for slowness. Overload answers still cut.
+    pub fn set_hold(&mut self, hold: bool) {
+        self.hold = hold;
+        self.steady_streak = 0;
+    }
+
+    pub fn max(&self) -> u32 {
+        self.max
+    }
+
+    pub fn adaptive(&self) -> bool {
+        self.adaptive
+    }
+
+    /// The running average response time, once there is one.
+    pub fn typical_ms(&self) -> Option<f64> {
+        self.typical_ms
+    }
+
+    /// Responses are much slower than this site's usual (the rule that cuts
+    /// its allowance), once enough have arrived to tell.
+    pub fn is_slow(&self) -> bool {
+        match (self.typical_ms, self.baseline_ms) {
+            (Some(t), Some(b)) => t > SLOW * b.max(1.0),
+            _ => false,
+        }
+    }
+
+    /// The usual response time this site is measured against.
+    pub fn baseline_ms(&self) -> Option<f64> {
+        self.baseline_ms
+    }
+
+    pub fn last_cut(&self) -> Option<(Instant, Cut)> {
+        self.last_cut
     }
 
     fn observe(&mut self, took: Duration) {
@@ -135,7 +193,7 @@ impl SiteSpeed {
         }
     }
 
-    fn adjust_for_latency(&mut self) {
+    fn adjust_for_latency(&mut self, now: Instant) {
         if !self.adaptive {
             // Recover from an overload cut back to the fixed cap.
             self.grow();
@@ -148,7 +206,7 @@ impl SiteSpeed {
         // Sub-millisecond noise on a local or very fast site is not a trend.
         let base = base.max(1.0);
         if typical > SLOW * base {
-            self.cut(0.75);
+            self.cut(0.75, Cut::Slower, now);
         } else if typical <= STEADY * base {
             self.grow();
         } else {
@@ -177,20 +235,16 @@ impl SiteSpeed {
         }
     }
 
-    fn cut(&mut self, factor: f64) {
+    fn cut(&mut self, factor: f64, why: Cut, now: Instant) {
         self.steady_streak = 0;
         if self.cool_down > 0 {
             return;
         }
+        self.last_cut = Some((now, why));
         let before = self.allowance;
         self.allowance = ((f64::from(before) * factor).floor() as u32).max(1);
         self.cool_down = before;
         self.ceiling = Some(before);
-    }
-
-    #[cfg(test)]
-    pub fn max(&self) -> u32 {
-        self.max
     }
 }
 

@@ -3,4 +3,4 @@
 /**
  * How a column's values are compared, aligned and formatted.
  */
-export type ValueKind = "text" | "url" | "int" | "bytes" | "ms" | "status" | "state" | "bool";
+export type ValueKind = "text" | "url" | "int" | "bytes" | "ms" | "status" | "state" | "bool" | "score" | "percent" | "decimal" | "issues";

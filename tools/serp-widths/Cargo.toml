@@ -1,0 +1,11 @@
+[package]
+name = "serp-widths"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Generates the SERP pixel-width table (spec 027 plan D1). Not shipped."
+
+[dependencies]
+ttf-parser = "0.25"
+unicode-normalization = "0.1"
