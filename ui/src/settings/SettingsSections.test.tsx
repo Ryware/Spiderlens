@@ -90,7 +90,7 @@ test("every_category_renders_its_fields", async () => {
     ],
   };
   const switches: Record<string, string[]> = {
-    Scope: ["Check external links", "Follow internal nofollow links", "Follow external nofollow links", "Stay in the start folder", "Use sitemaps from robots.txt", "Sort parameters"],
+    Scope: ["Check external links", "Follow internal nofollow links", "Follow external nofollow links", "Stay in the start folder", "Read sitemaps", "Crawl URLs found only in sitemaps", "Sort parameters"],
     Speed: ["Slow down automatically when a site struggles"],
     "robots.txt": ["Honour crawl-delay"],
     "Network and retries": ["Retry server errors (5xx)", "Retry rate limiting (429)"],
@@ -111,7 +111,7 @@ test("url_list_category_appears_only_in_list_mode", async () => {
   await setup();
   const n = await openSettings();
   expect(within(n).queryByRole("tab", { name: /^URL list/ })).toBeNull();
-  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Page data", "Appearance", "AI assistants"]);
+  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Sign-in and cookies", "Page data", "Segments", "Link analysis", "Issues", "Custom rules", "Storage", "Spelling", "Appearance", "AI assistants"]);
   await closeSettings();
   fireEvent.click(screen.getByLabelText("List"));
   fireEvent.click(await screen.findByRole("button", { name: "Add a list of URLs…" }));

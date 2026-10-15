@@ -31,7 +31,7 @@ ignored tests now and enabled when spec 005 lands.
 - [x] T011 [US1] Windowing component with scaled scrolling (cap 2^24 px), wheel and keys in row units when scaled; tests at 1k, 1.5M and 5M rows (position ↔ index round-trip, last row reachable)
 - [ ] T012 [US1] `usePagedRows`: 100-row pages, 30-page LRU, version-tagged requests, skeleton rows; tests for stale replies and eviction (done: cache keeps the 30 pages nearest the last one loaded, stale replies dropped by version; open: dedicated tests)
 - [x] T013 [US1] Grid: TanStack Table column model, 28 px rows, cell renderers per kind (status badge, state, URL with readable form, numbers tabular), truncation with tooltip
-- [ ] T014 [US1] ResultsView in the main area; sidebar result tabs live with counts; empty states ("results will appear…", "No URLs match this filter") (open: sidebar counts per tab)
+- [x] T014 [US1] ResultsView in the main area; sidebar result tabs live with counts; empty states ("results will appear…", "No URLs match this filter") (sidebar counts: `tab_counts`, one pass over `urls` for every tab, cached per data version; ~35 ms on 100k URLs)
 - [x] T015 [US1] Live refresh: `view_refresh` driven by progress `version`, adaptive interval, anchor and selection kept; Rust and UI tests
 - [x] T016 [US1] Engine: `active_ms` in meta and progress events; status bar and overview use it (FR-004); `stopping` state shown
 - [x] T017 [US1] Engine + overview: failures by error class in the completeness summary (FR-005); counts equal stored states (FR-006 test)
@@ -43,16 +43,16 @@ ignored tests now and enabled when spec 005 lands.
 - [x] T020 [US2] Filter strip: chips with counts (refresh ≤ 5 s live, exact at end), disabled with reason when unavailable; Response codes scope switch (all, internal, external)
 - [x] T021 [US2] Sort by header click asc/desc with indicator; natural text, numeric numbers, empty last
 - [x] T022 [US2] Search field (debounced) on URL + main column; count updates
-- [ ] T023 [US2] Column menu: show, hide, reorder (drag and keyboard), resize, reset; persisted per tab across restarts (open: reorder by keyboard (drag works))
-- [ ] T024 [US2] Per-tab session memory of filter, search, sort (FR-014); keyboard operation of the table: arrows, Shift range, Home/End, Page keys, Enter to inspector, ⌘1..⌘9 tabs (FR-018) (open: Enter to inspector, ⌘1..⌘9 tabs)
+- [x] T023 [US2] Column menu: show, hide, reorder (drag and keyboard: Alt/⌥+↑/↓ on a shown column, announced), resize, reset; persisted per tab across restarts
+- [x] T024 [US2] Per-tab session memory of filter, search, sort (FR-014); keyboard operation of the table: arrows, Shift range, Home/End, Page keys, Enter to inspector (Escape back), ⌘1..⌘9 tabs (FR-018)
 - [x] T025 [US2] Issues-site acceptance tests for every base filter (SC-002 now); content filters **after 005**
 
 ## Phase 5: US3 inspector (P2)
 
 - [x] T026 [US3] `detail.rs`: response details, redirect chain with loop and over-limit flags, counts; inlinks and outlinks paged (anchor text and rel **after 005**)
-- [ ] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (open: copy and "show in table" on list rows)
-- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component)
-- [ ] T029 [US3] Headers, images, headings, raw HTML sections: UI and queries behind `needs` (**after 005** for data)
+- [x] T027 [US3] Inspector UI replacing the placeholder: sections, "does not apply" and "not collected yet" states, copy and "show in table" on list rows; follows keyboard selection (link, image and redirect rows: Copy URL and Show in table on hover, focus and right-click; show in table picks a tab from `url_tabs` and clears a filter or search that hides the URL)
+- [ ] T028 [US3] Paged lists in the inspector reuse the windowing component; 100,000-inlink test (FR-025, SC-006) (open: lists page with "Show more", not the windowing component; the lists live inside the scrolling inspector with rows of varying height, so windowing them needs their own fixed-height scroller first)
+- [x] T029 [US3] Headers, images, headings, raw HTML sections: UI and queries behind `needs` (**after 005** for data). Raw HTML: `Reader::page_html` (decoded through the engine's one `bodies` reader, `extract::body::unpack`, in the encoding extraction used) and `url_html`; the detail pane's Page HTML section opens a windowed, line-numbered, searchable source viewer with Copy, and explains the Store page HTML setting when the crawl did not keep it
 
 ## Phase 6: US4 copy and export (P2)
 
@@ -64,11 +64,11 @@ ignored tests now and enabled when spec 005 lands.
 
 ## Phase 7: US5 scale (P2)
 
-- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries; thresholds not asserted yet)
+- [ ] T035 [US5] Perf harness (Rust): open, sort every column, search, filter counts, deep jumps on a 1M gen-crawl file; thresholds from SC-003..SC-006, SC-009 (partly: `examples/bench.rs` times the queries, and `-- <file> page-titles` the Page titles tab before and after a commit; `gen_crawl --pages [--result-indexes]` writes page content; thresholds not asserted yet)
 - [ ] T036 [US5] UI scroll test in the real webview (Playwright on Linux CI; manual run on Ryware's Mac): drag top to bottom, frame times, row fill ≤ 200 ms
 - [ ] T037 [US5] Memory check 100k vs 1M (SC-008)
 - [ ] T038 [US5] Live: crawl the 100k bench site with the app open and a sorted view, compare to CLI speed (SC-007 ≥ 95%)
-- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget)
+- [ ] T039 [US5] Fix what T035–T038 find (indexes on temp tables, page size, refresh budget) (partly: Page titles reads `temp.titles`, built once and appended to per data version, 3–10× faster, see research R8; other content tabs still scan per query; open: T036–T038 findings on the Mac)
 - [ ] T040 [US5] Record the numbers in research.md, including a run on Ryware's Mac
 
 ## Phase 8: Polish

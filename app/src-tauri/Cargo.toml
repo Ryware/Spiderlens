@@ -20,12 +20,24 @@ spiderlens-engine.workspace = true
 spiderlens-config.workspace = true
 spiderlens-results.workspace = true
 spiderlens-mcp.workspace = true
+spiderlens-compare.workspace = true
+spiderlens-integrations.workspace = true
+spiderlens-aeo.workspace = true
+rusqlite.workspace = true
+spiderlens-schedule.workspace = true
+spiderlens-spell.workspace = true
+reqwest.workspace = true
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+jiff.workspace = true
+trash = "5.2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

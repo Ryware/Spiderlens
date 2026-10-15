@@ -1,0 +1,190 @@
+{
+ "format": "spiderlens-rules",
+ "version": 1,
+ "extractors": [
+  {
+   "name": "CSS 0",
+   "kind": "css",
+   "expr": "h1"
+  },
+  {
+   "name": "CSS 1",
+   "kind": "css",
+   "expr": "main p"
+  },
+  {
+   "name": "CSS 2",
+   "kind": "css",
+   "expr": "nav a",
+   "mode": "attribute",
+   "attr": "href"
+  },
+  {
+   "name": "CSS 3",
+   "kind": "css",
+   "expr": "title"
+  },
+  {
+   "name": "CSS 4",
+   "kind": "css",
+   "expr": "li a"
+  },
+  {
+   "name": "XPath 0",
+   "kind": "xpath",
+   "expr": "//h1",
+   "mode": "text"
+  },
+  {
+   "name": "XPath 1",
+   "kind": "xpath",
+   "expr": "count(//a)",
+   "mode": "value"
+  },
+  {
+   "name": "XPath 2",
+   "kind": "xpath",
+   "expr": "//meta[@name='description']/@content",
+   "mode": "text"
+  },
+  {
+   "name": "XPath 3",
+   "kind": "xpath",
+   "expr": "//ul/li[2]/a/@href",
+   "mode": "text"
+  },
+  {
+   "name": "XPath 4",
+   "kind": "xpath",
+   "expr": "string(//title)",
+   "mode": "value"
+  },
+  {
+   "name": "Regex 0",
+   "kind": "regex",
+   "expr": "Page (\\d+)",
+   "mode": "value"
+  },
+  {
+   "name": "Regex 1",
+   "kind": "regex",
+   "expr": "href=\\\"/p/(\\d+)\\\">Child",
+   "mode": "value"
+  },
+  {
+   "name": "Regex 2",
+   "kind": "regex",
+   "expr": "Synthetic benchmark page (\\d+)",
+   "mode": "value"
+  },
+  {
+   "name": "Regex 3",
+   "kind": "regex",
+   "expr": "Related (\\d+)",
+   "mode": "value"
+  },
+  {
+   "name": "Regex 4",
+   "kind": "regex",
+   "expr": "<h1>([^<]+)</h1>",
+   "mode": "value"
+  },
+  {
+   "name": "JSON-LD 0",
+   "kind": "json_ld",
+   "expr": "name",
+   "mode": "value",
+   "json_type": "Product"
+  },
+  {
+   "name": "JSON-LD 1",
+   "kind": "json_ld",
+   "expr": "offers.price",
+   "mode": "value",
+   "json_type": "Product"
+  },
+  {
+   "name": "JSON-LD 2",
+   "kind": "json_ld",
+   "expr": "author.name",
+   "mode": "value",
+   "json_type": "Product"
+  },
+  {
+   "name": "JSON-LD 3",
+   "kind": "json_ld",
+   "expr": "$..price",
+   "mode": "value",
+   "json_type": null
+  },
+  {
+   "name": "JSON-LD 4",
+   "kind": "json_ld",
+   "expr": "aggregateRating.reviewCount",
+   "mode": "value",
+   "json_type": "Product"
+  }
+ ],
+ "searches": [
+  {
+   "name": "HTML 0",
+   "term": "Lorem",
+   "target": "html",
+   "condition": "contains"
+  },
+  {
+   "name": "HTML 1",
+   "term": "consent-v2.js",
+   "target": "html",
+   "condition": "not_contains"
+  },
+  {
+   "name": "HTML 2",
+   "term": "Child 5",
+   "target": "html",
+   "condition": "contains"
+  },
+  {
+   "name": "HTML 3",
+   "term": "googletagmanager",
+   "target": "html",
+   "condition": "contains"
+  },
+  {
+   "name": "HTML 4",
+   "term": "veniam",
+   "target": "html",
+   "condition": "contains"
+  },
+  {
+   "name": "Text 0",
+   "term": "lorem ipsum",
+   "target": "text",
+   "ignore_case": true
+  },
+  {
+   "name": "Text 1",
+   "term": "Section 1",
+   "target": "text",
+   "ignore_case": true
+  },
+  {
+   "name": "Text 2",
+   "term": "free shipping",
+   "target": "text",
+   "ignore_case": true
+  },
+  {
+   "name": "Text 3",
+   "term": "magna",
+   "target": "text",
+   "ignore_case": true
+  },
+  {
+   "name": "Text 4",
+   "term": "dolore",
+   "target": "text",
+   "ignore_case": true
+  }
+ ]
+}

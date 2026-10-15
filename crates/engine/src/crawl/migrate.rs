@@ -81,13 +81,451 @@ pub const STEPS: &[Step] = &[
     )
     WHERE headers.headers LIKE '%set-cookie%';",
     },
+    // Spec 015 (data-model.md): per-host site files fetched by the crawl and
+    // the AI checks' results, written by `spiderlens_aeo::analyze`.
+    Step {
+        version: 6,
+        additive: true,
+        sql: AEO_TABLES,
+    },
+    // The cookie audit (spec 025 data-model.md): attributes of each cookie a
+    // response set, never its value.
+    Step {
+        version: 7,
+        additive: true,
+        sql: "CREATE TABLE cookies (
+        url_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        host_only INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        expires INTEGER,
+        max_age INTEGER,
+        secure INTEGER NOT NULL,
+        http_only INTEGER NOT NULL,
+        same_site TEXT,
+        size INTEGER NOT NULL,
+        party TEXT NOT NULL,
+        source TEXT NOT NULL,
+        extra TEXT
+    );
+    CREATE INDEX cookies_url ON cookies(url_id);
+    CREATE INDEX cookies_key ON cookies(name, domain, path);",
+    },
+    // Spec 011: every sitemap file and entry the crawl read
+    // (specs/011-sitemaps-orphan-pages/data-model.md).
+    Step {
+        version: 8,
+        additive: true,
+        sql: "CREATE TABLE sitemap_files (
+        id INTEGER PRIMARY KEY,
+        location TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER NOT NULL,
+        base_url TEXT,
+        kind TEXT,
+        http_status INTEGER,
+        final_url TEXT,
+        redirected INTEGER,
+        compressed INTEGER,
+        bytes INTEGER,
+        entry_count INTEGER NOT NULL DEFAULT 0,
+        over_limit INTEGER,
+        error_class TEXT,
+        error TEXT,
+        error_line INTEGER,
+        read_at INTEGER
+    );
+    CREATE TABLE sitemap_entries (
+        id INTEGER PRIMARY KEY,
+        file_id INTEGER NOT NULL,
+        pos INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        loc TEXT NOT NULL,
+        url_id INTEGER,
+        invalid TEXT,
+        lastmod_raw TEXT,
+        lastmod INTEGER,
+        changefreq TEXT,
+        priority TEXT
+    );
+    CREATE INDEX sitemap_entries_url ON sitemap_entries(url_id);
+    CREATE INDEX sitemap_entries_file ON sitemap_entries(file_id, pos);
+    CREATE TABLE sitemap_refs (
+        entry_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        raw TEXT NOT NULL,
+        url TEXT,
+        url_id INTEGER,
+        lang TEXT
+    );
+    CREATE INDEX sitemap_refs_entry ON sitemap_refs(entry_id);",
+    },
+    Step {
+        // External integrations (spec 024, data-model.md). Tables only.
+        version: 9,
+        additive: true,
+        sql: INTEGRATIONS,
+    },
+    // Spec 013: custom extraction and search rules stored with the crawl, one
+    // packed results row and one compressed values row per page
+    // (data-model.md). `IF NOT EXISTS` because a rerun on an older file
+    // creates them without upgrading it (`CrawlStore::ensure_custom_schema`).
+    Step {
+        version: 10,
+        additive: true,
+        sql: CUSTOM_SCHEMA,
+    },
+    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    Step {
+        version: 11,
+        additive: true,
+        sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
+        ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
+    },
+    // Spec 027 part C: what was read from each PDF.
+    Step {
+        version: 12,
+        additive: true,
+        sql: "CREATE TABLE pdfs (
+        url_id INTEGER PRIMARY KEY,
+        status TEXT NOT NULL,
+        status_reason TEXT,
+        title TEXT,
+        author TEXT,
+        subject TEXT,
+        keywords TEXT,
+        creator TEXT,
+        producer TEXT,
+        created_at TEXT,
+        modified_at TEXT,
+        page_count INTEGER,
+        pages_read INTEGER,
+        word_count INTEGER,
+        lang TEXT,
+        encrypted INTEGER,
+        no_text INTEGER,
+        tagged INTEGER,
+        link_count INTEGER,
+        text_stored INTEGER
+    );",
+    },
+    // Spec 027 part D: spelling, written by the spelling pass after a crawl.
+    Step {
+        version: 13,
+        additive: true,
+        sql: "CREATE TABLE spell_pages (
+        url_id INTEGER PRIMARY KEY,
+        lang TEXT,
+        status TEXT NOT NULL,
+        words INTEGER,
+        errors INTEGER,
+        lang_mismatch INTEGER
+    );
+    CREATE TABLE spell_findings (
+        url_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        word TEXT NOT NULL,
+        source TEXT NOT NULL,
+        pos INTEGER NOT NULL,
+        context TEXT NOT NULL,
+        suggestions TEXT,
+        block INTEGER,
+        site_wide INTEGER
+    );
+    CREATE INDEX spell_findings_url ON spell_findings(url_id);
+    CREATE INDEX spell_findings_word ON spell_findings(word);",
+    },
+    // Spec 027 part E: AMP pages and their failed checks.
+    Step {
+        version: 14,
+        additive: true,
+        sql: "CREATE TABLE amp_pages (
+        url_id INTEGER PRIMARY KEY,
+        format TEXT NOT NULL,
+        failures INTEGER NOT NULL,
+        style_bytes INTEGER
+    );
+    CREATE TABLE amp_checks (
+        url_id INTEGER NOT NULL,
+        check_id TEXT NOT NULL,
+        pos INTEGER,
+        detail TEXT NOT NULL
+    );
+    CREATE INDEX amp_checks_url ON amp_checks(url_id, check_id);",
+    },
     Step {
         // Spec 016: forms, actions, agent entry points and agent readiness scores.
-        version: 6,
+        version: 15,
         additive: true,
         sql: AGENTS,
     },
 ];
+
+const AEO_TABLES: &str = r#"
+-- Facts a page hook read while the crawl had the page parsed (spec 015
+-- reads its content facts here instead of parsing stored HTML again).
+CREATE TABLE page_facts (
+    url_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (url_id, kind)
+);
+CREATE TABLE site_files (
+    host_key TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER,
+    final_url TEXT,
+    content_type TEXT,
+    size INTEGER,
+    body BLOB,
+    outcome TEXT NOT NULL,
+    error TEXT,
+    fetched_at INTEGER,
+    PRIMARY KEY (host_key, path)
+);
+CREATE TABLE aeo_hosts (
+    host_key TEXT PRIMARY KEY,
+    robots TEXT NOT NULL,
+    signals TEXT,
+    llms_txt TEXT,
+    llms_full_txt TEXT,
+    tdmrep TEXT
+);
+CREATE TABLE aeo_bot_access (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    home_verdict TEXT NOT NULL,
+    matched_group TEXT,
+    urls_total INTEGER NOT NULL,
+    urls_blocked INTEGER NOT NULL,
+    rules TEXT,
+    PRIMARY KEY (host_key, bot)
+);
+CREATE TABLE aeo_pages (
+    url_id INTEGER PRIMARY KEY,
+    page_type TEXT NOT NULL,
+    page_type_reason TEXT,
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    checks_used INTEGER NOT NULL,
+    checks_total INTEGER NOT NULL,
+    provisional INTEGER NOT NULL,
+    blocked_bots INTEGER NOT NULL,
+    flags INTEGER NOT NULL,
+    version_used TEXT NOT NULL,
+    js_dependence REAL,
+    published TEXT,
+    modified TEXT,
+    dates_agree INTEGER,
+    author TEXT,
+    author_url_id INTEGER,
+    question_headings INTEGER,
+    direct_answers INTEGER,
+    figures INTEGER,
+    quotations INTEGER,
+    citations INTEGER,
+    lists INTEGER,
+    tables INTEGER,
+    longest_paragraph INTEGER,
+    snippet_limits TEXT
+);
+CREATE TABLE aeo_findings (
+    url_id INTEGER,
+    rule_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    points_lost INTEGER NOT NULL,
+    evidence TEXT
+);
+CREATE INDEX aeo_findings_rule ON aeo_findings(rule_id, url_id);
+CREATE INDEX aeo_findings_url ON aeo_findings(url_id);
+CREATE TABLE aeo_site (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    site_checks INTEGER,
+    distribution TEXT,
+    entity TEXT,
+    pages_found TEXT,
+    coverage TEXT,
+    top_fixes TEXT,
+    site_outcomes TEXT,
+    profile TEXT,
+    versions TEXT,
+    ran_at INTEGER,
+    pages_analyzed INTEGER,
+    duration_ms INTEGER
+);
+CREATE TABLE aeo_probe (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    url_id INTEGER NOT NULL,
+    status INTEGER,
+    size INTEGER,
+    content_type TEXT,
+    outcome TEXT NOT NULL,
+    detail TEXT,
+    probed_at INTEGER,
+    PRIMARY KEY (host_key, bot, url_id)
+);
+"#;
+
+const INTEGRATIONS: &str = "
+CREATE TABLE integration_runs (
+  id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL,
+  account_label TEXT,
+  property TEXT,
+  params TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  resume_at INTEGER,
+  cursor TEXT,
+  requested INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  matched INTEGER,
+  unmatched INTEGER,
+  usage INTEGER,
+  usage_cap INTEGER,
+  message TEXT,
+  app_version TEXT NOT NULL
+);
+CREATE TABLE integration_queue (
+  run_id INTEGER NOT NULL,
+  url_id INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  PRIMARY KEY (run_id, url_id)
+);
+CREATE INDEX integration_queue_pending ON integration_queue(run_id, state, pos);
+CREATE TABLE integration_status (
+  url_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  error_class TEXT,
+  attempts INTEGER,
+  detail TEXT,
+  PRIMARY KEY (url_id, provider)
+);
+CREATE TABLE gsc_pages (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  clicks INTEGER NOT NULL,
+  impressions INTEGER NOT NULL,
+  ctr REAL NOT NULL,
+  position REAL NOT NULL
+);
+CREATE TABLE gsc_queries (
+  url_id INTEGER NOT NULL,
+  run_id INTEGER NOT NULL,
+  query TEXT NOT NULL,
+  clicks INTEGER NOT NULL,
+  impressions INTEGER NOT NULL,
+  ctr REAL NOT NULL,
+  position REAL NOT NULL,
+  PRIMARY KEY (url_id, query)
+);
+CREATE TABLE gsc_inspection (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  verdict TEXT,
+  coverage_state TEXT,
+  indexing_state TEXT,
+  robots_state TEXT,
+  page_fetch_state TEXT,
+  google_canonical TEXT,
+  user_canonical TEXT,
+  canonical_mismatch INTEGER,
+  last_crawl INTEGER,
+  crawled_as TEXT,
+  inspected_at INTEGER NOT NULL,
+  raw BLOB
+);
+CREATE TABLE ga4_pages (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  sessions INTEGER NOT NULL,
+  engaged_sessions INTEGER NOT NULL,
+  engagement_rate REAL,
+  key_events REAL,
+  revenue REAL
+);
+CREATE TABLE cwv_field (
+  url_id INTEGER NOT NULL,
+  form_factor TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  lcp_ms INTEGER, inp_ms INTEGER, cls REAL, fcp_ms INTEGER, ttfb_ms INTEGER,
+  lcp_rating TEXT, inp_rating TEXT, cls_rating TEXT, fcp_rating TEXT, ttfb_rating TEXT,
+  period_start TEXT, period_end TEXT,
+  PRIMARY KEY (url_id, form_factor)
+);
+CREATE TABLE psi_lab (
+  url_id INTEGER NOT NULL,
+  strategy TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  performance INTEGER, accessibility INTEGER, best_practices INTEGER, seo INTEGER,
+  lcp_ms INTEGER, cls REAL, tbt_ms INTEGER, speed_index_ms INTEGER,
+  opportunities TEXT,
+  audits BLOB,
+  tested_at INTEGER NOT NULL,
+  PRIMARY KEY (url_id, strategy)
+);
+CREATE TABLE link_metrics (
+  url_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  metrics TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (url_id, provider)
+);
+CREATE TABLE orphan_candidates (
+  id INTEGER PRIMARY KEY,
+  url TEXT NOT NULL,
+  source TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  clicks INTEGER, impressions INTEGER, sessions INTEGER,
+  UNIQUE (url, source)
+);
+";
+
+/// Step 10's tables.
+pub(crate) const CUSTOM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS custom_rules (
+        id INTEGER PRIMARY KEY,
+        slot INTEGER NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        def_json TEXT NOT NULL,
+        pos INTEGER NOT NULL,
+        last_run_at TEXT,
+        run_pages INTEGER,
+        run_state TEXT,
+        UNIQUE (kind, name)
+    );
+    CREATE TABLE IF NOT EXISTS custom_results (
+        url_id INTEGER PRIMARY KEY,
+        slots BLOB NOT NULL,
+        firsts TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS custom_values (
+        url_id INTEGER PRIMARY KEY,
+        data BLOB NOT NULL
+    );";
+
 
 /// Spec 016 data-model.md. `source` is `raw` or `rendered` (spec 014).
 const AGENTS: &str = "

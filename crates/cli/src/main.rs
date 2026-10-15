@@ -3,9 +3,24 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod aeo_cmd;
+mod compare_cmd;
+mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
+mod files_cmd;
+mod integrations_cmd;
+mod issues_cmd;
+mod links_cmd;
 mod options;
+mod report_cmd;
+mod rules_cmd;
+mod schedule_cmd;
+mod segments_cmd;
+mod serp_cmd;
+mod sitemap_cmd;
+mod spell_cmd;
+mod viz_cmd;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -32,6 +47,15 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
+    /// `spiderlens compare` found a regression it was told to fail on
+    /// (spec 012).
+    pub const COMPARE_FAILED: u8 = 8;
+    /// `issues --fail-on`: an issue at or above that priority has URLs
+    /// (spec 009 FR-027).
+    pub const ISSUES_FOUND: u8 = 7;
+    /// A quality gate failed (`aeo run --fail-under`); the same number as
+    /// `ISSUES_FOUND`, both being "the checks found what you asked to fail on".
+    pub const QUALITY_GATE: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -64,13 +88,55 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// List the cookies the site set during a crawl (no values).
+    Cookies(cookies_cmd::CookiesArgs),
+    /// List crawl files in a folder with their size and stored HTML.
+    Files(files_cmd::FilesArgs),
+    /// Remove the stored page HTML from a crawl file, keeping its results.
+    PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
     /// Serve crawl files to AI assistants over MCP (standard input and output).
     Mcp(McpCmd),
+    /// What changed between two crawl files of a site.
+    Compare(Box<compare_cmd::CompareArgs>),
+    /// List the issue rules: what each checks, why it matters, how to fix.
+    Rules(issues_cmd::RulesArgs),
+    /// List the issues found in a crawl file, or export them as CSV.
+    Issues(Box<issues_cmd::IssuesArgs>),
+    /// Run the crawl analysis passes that have not run on a crawl file yet.
+    Analyse(issues_cmd::AnalyseArgs),
+    /// External data: Search Console and other providers (spec 024).
+    #[command(subcommand)]
+    Integrations(Box<integrations_cmd::IntegrationsCommand>),
+    /// Write a visualisation of a crawl file as SVG, PNG or CSV (same as the app's export).
+    Viz(Box<viz_cmd::VizArgs>),
+    /// Link Score and link positions of a crawl file.
+    #[command(subcommand)]
+    Links(links_cmd::LinksCommand),
+    /// AI search checks (AEO and GEO) on a crawl file.
+    #[command(subcommand)]
+    Aeo(aeo_cmd::AeoCommand),
+    /// URLs per segment of a crawl file.
+    Segments(segments_cmd::SegmentsArgs),
+    /// Check the spelling of a crawl file, or manage dictionaries.
+    Spell(Box<spell_cmd::SpellArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Validate, test and run custom extraction and search rules.
+    #[command(subcommand)]
+    Rules(rules_cmd::RulesCommand),
+    /// Generate XML sitemaps from a crawl file.
+    #[command(subcommand)]
+    Sitemap(sitemap_cmd::SitemapCommand),
+    /// List the sitemap files a crawl read, as a tree.
+    Sitemaps(sitemap_cmd::SitemapsArgs),
+    /// Recurring crawls that run without the app (spec 021).
+    #[command(subcommand)]
+    Schedule(Box<schedule_cmd::ScheduleCommand>),
+    /// Title and description pixel widths for a CSV of drafts (no network).
+    Serp(serp_cmd::SerpArgs),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -175,13 +241,31 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Cookies(args) => cookies_cmd::run_cookies(args),
+        Command::Files(args) => files_cmd::run_files(args),
+        Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Mcp(args) => ExitCode::from(spiderlens_mcp::run(spiderlens_mcp::McpArgs {
             allow_read: args.allow_read,
             folders: args.folder,
             self_test: args.self_test,
         }) as u8),
+        Command::Compare(args) => compare_cmd::run_compare(*args),
+        Command::Rules(args) => issues_cmd::run_rules(args),
+        Command::Issues(args) => issues_cmd::run_issues(*args),
+        Command::Analyse(args) => issues_cmd::run_analyse(args),
+        Command::Integrations(cmd) => integrations_cmd::run(*cmd),
+        Command::Viz(args) => viz_cmd::run_viz(*args),
+        Command::Links(cmd) => links_cmd::run(cmd),
+        Command::Aeo(cmd) => aeo_cmd::run(cmd),
+        Command::Segments(args) => segments_cmd::run_segments(args),
+        Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Rules(cmd) => rules_cmd::run(cmd),
+        Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
+        Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
+        Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
+        Command::Serp(args) => serp_cmd::run_serp(args),
     }
 }
 

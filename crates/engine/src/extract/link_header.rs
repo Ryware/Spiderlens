@@ -16,6 +16,8 @@ pub(super) fn rel_has(rel: Option<&str>, token: &str) -> bool {
 pub(super) fn link_kind(rel: Option<&str>, has_hreflang: bool) -> Option<LinkKind> {
     if rel_has(rel, "canonical") {
         Some(LinkKind::Canonical)
+    } else if rel_has(rel, "amphtml") {
+        Some(LinkKind::AmpHtml)
     } else if rel_has(rel, "alternate") && has_hreflang {
         Some(LinkKind::Hreflang)
     } else if rel_has(rel, "next") {

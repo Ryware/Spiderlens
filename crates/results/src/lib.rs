@@ -9,25 +9,53 @@
 //! constitution principle VI).
 
 pub mod agents;
+pub mod analysis;
+mod cookies;
+pub mod bulk;
 mod counts;
+mod custom;
 mod detail;
 mod export;
 mod features;
+pub mod issues;
 mod reader;
+mod segments;
+pub mod serp;
+pub mod report;
+mod sitemaps;
 mod sql;
 #[doc(hidden)]
 pub mod synth;
-mod tabs;
-mod view;
+pub(crate) mod tabs;
+pub(crate) mod view;
+pub mod viz;
 
-pub use counts::FilterCounts;
-pub use detail::{HeadingRow, LinkRow, ListKind, ListPage, RedirectHop, UrlDetail};
-pub use export::{COPY_LIMIT, ExportError, export_file, write_csv, write_tsv_row};
+pub use analysis::link_positions::TestedLink;
+pub use analysis::{AnalysisProgress, AnalysisRun};
+pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage};
+pub use counts::{FilterCounts, TabCounts};
+pub use custom::CustomResult;
+pub use detail::{
+    AmpDetail, AmpFailure, HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
+};
+pub use export::{
+    COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv, write_csv_in,
+    write_csv_with,
+    write_tsv_row,
+};
 pub use features::Features;
-pub use reader::Reader;
+pub use reader::{Reader, connect_attachable};
 pub use rusqlite::InterruptHandle;
+pub use segments::SegmentCounts;
+pub use sitemaps::{
+    GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput, SitemapFileRow, SitemapFiles,
+    check_structure as check_sitemap_structure, generate as generate_sitemaps,
+};
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
-pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, tab, tabs};
+pub use tabs::{
+    ColumnDef, Derived, FilterDef, Need, TabDef, ValueKind, build_derived, c as columns, issue_tabs, tab,
+    tabs,
+};
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +66,8 @@ pub enum Error {
     Invalid(String),
     #[error("{0}")]
     Unavailable(String),
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl Error {
