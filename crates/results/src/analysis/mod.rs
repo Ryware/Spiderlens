@@ -10,6 +10,7 @@
 pub mod link_metrics;
 pub mod link_positions;
 
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -54,6 +55,28 @@ impl Reader {
             weighted: self.features.link_settings.weighting.is_some(),
             ms: started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
         })
+    }
+
+    /// [`Reader::test_positions`] for a URL as typed. None when the URL is
+    /// not in the crawl or its HTML was not stored.
+    pub fn test_positions_url(
+        &self,
+        url: &str,
+        rules: &[spiderlens_config::PositionRule],
+    ) -> Result<Option<Vec<link_positions::TestedLink>>> {
+        let url = url.trim();
+        let id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM urls WHERE url = ?1 OR url = ?1 || '/' ORDER BY length(url) LIMIT 1",
+                [url],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match id {
+            Some(id) => self.test_positions(id, rules),
+            None => Ok(None),
+        }
     }
 
     /// The rules tester (FR-022): `rules` applied to one stored page,

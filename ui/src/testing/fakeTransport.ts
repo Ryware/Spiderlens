@@ -237,6 +237,11 @@ export function fakeTransport(
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      config.links.position_rules.forEach((r, i) => {
+        // Stand-in for the CSS parser: an unclosed bracket is invalid.
+        if (r.selector.trim() === "" || r.selector.split("[").length !== r.selector.split("]").length)
+          issues.push({ path: `links.position_rules[${i}].selector`, severity: "error", code: "selector_syntax", message: "Not a valid CSS selector." });
+      });
       const r = config.retry;
       if (!(r.base_wait_secs >= 0.1 && r.base_wait_secs <= 60)) {
         issues.push({ path: "retry.base_wait_secs", severity: "error", code: "out_of_range", message: "The first wait must be between 0.1 and 60 seconds." });

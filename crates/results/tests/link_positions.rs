@@ -160,15 +160,26 @@ async fn positions_filter_tester_and_weighting() {
     let promo = tested.iter().find(|l| l.raw == "/promo").unwrap();
     assert_eq!((promo.position, promo.rule), (Position::Navigation, Some(0)));
 
+    // The tester also takes the URL as typed.
+    let by_url = r.test_positions_url(&c.site.url(E, "/"), &[]).unwrap().unwrap();
+    assert_eq!(by_url.len(), tested.len());
+    assert!(
+        r.test_positions_url("https://nowhere.test/", &[])
+            .unwrap()
+            .is_none()
+    );
+
     // FR-025: with weighting on, the footer-only page drops, the content
     // page gains; changing settings recalculates (FR-023).
     let legal = score(&mut r, &c, "/legal");
     let story = score(&mut r, &c, "/story");
     assert!((legal - score(&mut r, &c, "/promo")).abs() < 1e-9);
+    let version = r.version().unwrap();
     r.set_link_settings(LinkAnalysisSettings {
         weighting: Some(PositionWeights::default()),
         ..r.link_settings().clone()
     });
+    assert!(r.version().unwrap() > version, "open views refresh");
     assert!(score(&mut r, &c, "/legal") < legal);
     assert!(score(&mut r, &c, "/story") >= story);
     assert!(

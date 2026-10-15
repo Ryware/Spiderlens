@@ -155,6 +155,8 @@ impl Reader {
             self.features.link_settings = settings;
             self.derived.remove(&Derived::LinkPositions);
             self.derived.remove(&Derived::LinkMetrics);
+            // Open views read the new values on their next refresh.
+            self.version += 1;
         }
     }
 

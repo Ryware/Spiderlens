@@ -29,6 +29,10 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { AnalysisRun } from "./generated/AnalysisRun";
+import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
+import type { PositionRule } from "./generated/PositionRule";
+import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
 import type { AeoRule } from "./generated/AeoRule";
 import type { AiBot } from "./generated/AiBot";
@@ -618,6 +622,12 @@ export interface Transport {
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
+  analysisRun(path: string): Promise<AnalysisRun>;
+  /** Uses these link analysis settings for the open file from now on. */
+  analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
+  /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
+  positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
@@ -746,6 +756,9 @@ export const tauriTransport: Transport = {
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
+  positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),

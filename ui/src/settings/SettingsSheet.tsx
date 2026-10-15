@@ -30,6 +30,7 @@ export function SettingsSheet({
   level,
   systemDark,
   onAppearance,
+  crawlPath = null,
   onSchedule,
 }: {
   open: boolean;
@@ -43,6 +44,8 @@ export function SettingsSheet({
   level: Level;
   systemDark: boolean;
   onAppearance: (patch: Partial<Appearance>) => void;
+  /** The open crawl file, for the link position tester. */
+  crawlPath?: string | null;
   /** Opens the schedule editor with these settings (spec 021 FR-002). */
   onSchedule?: () => void;
 }) {
@@ -119,7 +122,7 @@ export function SettingsSheet({
               <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
             ) : (
               <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
-                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} />
+                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} />
               </fieldset>
             )}
           </div>

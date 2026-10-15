@@ -9,12 +9,13 @@ import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../comp
 import { Group, issuesAt, Row } from "./fields";
 import { CookiesEditor, hostOf } from "./CookiesEditor";
 import { HeadersEditor } from "./HeadersEditor";
+import { LinkAnalysisBody } from "./LinkAnalysisSettings";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "storage" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "links" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -37,6 +38,7 @@ export const categories: Category[] = [
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  { id: "links", title: "Link analysis", description: "Link Score, and where on the page each link sits.", prefixes: ["links"] },
   {
     id: "storage",
     title: "Storage",
@@ -64,7 +66,20 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 }
 
 /** `live`: a crawl is running and only the settings it can take on at once are editable. */
-export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
+export function CategoryBody({
+  id,
+  setup,
+  transport,
+  live,
+  crawlPath = null,
+}: {
+  id: CategoryId;
+  setup: CrawlSetup;
+  transport: Transport;
+  live?: boolean;
+  /** The open crawl file, for testers that read it. */
+  crawlPath?: string | null;
+}): ReactNode {
   if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
@@ -426,5 +441,8 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
           </Row>
         </Group>
       );
+
+    case "links":
+      return <LinkAnalysisBody links={config.links} issues={issues} transport={transport} path={crawlPath} onChange={(links) => set((c) => ({ ...c, links }))} />;
   }
 }

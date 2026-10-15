@@ -140,6 +140,18 @@ export function AppShell({ transport }: { transport: Transport }) {
     document.documentElement.dataset.platform = platform;
   }, []);
 
+  // Edited link analysis settings apply to the open crawl file too, which
+  // then works out positions and Link Score again (spec 023 FR-023). The
+  // file's own settings stand until the user changes them.
+  const links = setup.config?.links;
+  const linksKey = links ? JSON.stringify(links) : null;
+  const lastLinks = useRef<string | null>(null);
+  useEffect(() => {
+    const before = lastLinks.current;
+    lastLinks.current = linksKey;
+    if (links && crawl.path && before !== null && before !== linksKey) void transport.analysisSettings(crawl.path, links).catch(() => {});
+  }, [linksKey, crawl.path, transport]);
+
   // Focus the start URL once the window is ready (US1-2).
   const configReady = setup.config !== null;
   useEffect(() => {
@@ -416,6 +428,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         level={level}
         systemDark={systemDark}
         onAppearance={updateUi}
+        crawlPath={crawl.path}
         onSchedule={scheduleThisCrawl}
       />
       <ScheduleEditor
