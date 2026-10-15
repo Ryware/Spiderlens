@@ -27,7 +27,7 @@ fn issues_column_shows_highest_priority_and_count_per_url() {
     let mut out = Vec::new();
     let never = AtomicBool::new(false);
     let cols = ["address".to_string(), "issues".to_string()];
-    write_csv(&path, &q, &cols, None, &mut out, &never, &mut |_, _| {}).unwrap();
+    write_csv(&path, &q, &cols, None, None, &mut out, &never, &mut |_, _| {}).unwrap();
     let csv = String::from_utf8(out).unwrap();
     let mut reader = Reader::open(&path).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();

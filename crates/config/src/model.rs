@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::custom::CustomRules;
 use crate::links::LinkAnalysisSettings;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
@@ -29,6 +30,8 @@ pub struct CrawlConfig {
     /// the rule catalogue's defaults is stored.
     #[serde(skip_serializing_if = "IssueSettings::is_empty")]
     pub issues: IssueSettings,
+    /// Custom extraction and search rules (spec 013).
+    pub custom: CustomRules,
     /// Spec 023: Link Score and link positions.
     pub links: LinkAnalysisSettings,
     pub access: AccessSettings,

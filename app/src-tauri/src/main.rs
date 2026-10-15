@@ -6,6 +6,7 @@
 
 mod aeo;
 mod crawl;
+mod custom;
 mod files;
 mod integrations;
 mod manage;
@@ -46,6 +47,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(custom::State::default());
             app.manage(integrations::State::open()?);
             app.manage(aeo::State::default());
             // Windows and Linux pass a double-clicked crawl file as an
@@ -146,6 +148,15 @@ fn main() {
             results::passes_run,
             results::issues_summary,
             results::url_issues,
+            results::url_custom,
+            custom::custom_validate,
+            custom::custom_test_page,
+            custom::custom_test_url,
+            custom::custom_rules_of_crawl,
+            custom::custom_run,
+            custom::custom_cancel,
+            custom::custom_import,
+            custom::custom_export,
             integrations::integrations_status,
             integrations::integrations_settings_save,
             integrations::integrations_google_client,

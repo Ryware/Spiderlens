@@ -16,7 +16,7 @@ use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule, Sitem
 use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
-    AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, ExportError, Features,
+    AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError, Features,
     FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, TestedLink,
     UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
 };
@@ -146,10 +146,22 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 /// Tab, column and filter definitions (D2): the UI keeps no copy of them.
+/// With a crawl file, its custom extraction and search tabs too (spec 013).
 #[tauri::command]
-pub fn results_tabs() -> Vec<&'static TabDef> {
-    // One tab per issue rule too (spec 009 D10): `issue:<rule id>`.
-    tabs().iter().chain(issue_tabs()).collect()
+pub async fn results_tabs(state: tauri::State<'_, State>, path: Option<PathBuf>) -> Cmd<Vec<TabDef>> {
+    match path {
+        // One tab per issue rule too (spec 009 D10): `issue:<rule id>`.
+        None => Ok(tabs().iter().chain(issue_tabs()).cloned().collect()),
+        Some(p) => state.with(&p, |r| r.tabs().map_err(err)).await,
+    }
+}
+
+/// Every rule's result on one page, for the detail pane (spec 013 FR-024).
+#[tauri::command]
+pub async fn url_custom(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<CustomResult>> {
+    state
+        .with(&path, move |r| r.custom_results(id).map_err(err))
+        .await
 }
 
 #[derive(Serialize)]
@@ -539,6 +551,7 @@ pub async fn copy_rows(
 /// Starts a CSV export on its own thread; progress arrives as
 /// `export-progress` events (FR-030).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn export_start(
     app: AppHandle,
     state: tauri::State<'_, State>,
@@ -547,6 +560,7 @@ pub fn export_start(
     columns: Vec<String>,
     ranges: Option<Vec<(u32, u32)>>,
     dest: PathBuf,
+    all_values: Option<String>,
 ) -> Cmd<u32> {
     let job = state.next_export.fetch_add(1, Ordering::Relaxed) + 1;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -579,6 +593,7 @@ pub fn export_start(
                 &query,
                 &columns,
                 ranges.as_deref(),
+                all_values.as_deref(),
                 &settings,
                 &dest,
                 &cancel,

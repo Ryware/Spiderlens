@@ -254,7 +254,7 @@ fn export(
             sort: None,
         };
         let dest = dir.join(format!("{id}.csv"));
-        match export_file_with(file, &q, &[], None, settings, &dest, &never, &mut |_, _| {}) {
+        match export_file_with(file, &q, &[], None, None, settings, &dest, &never, &mut |_, _| {}) {
             Ok(n) => eprintln!("{n} rows  {}", dest.display()),
             Err(e) => {
                 eprintln!("error: {id}: {e}");

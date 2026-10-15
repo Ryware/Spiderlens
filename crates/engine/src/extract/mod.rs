@@ -10,6 +10,8 @@ mod microdata;
 pub mod text;
 mod walk;
 
+pub(crate) use walk::visible_text_into;
+
 use serde::Serialize;
 use url::Url;
 
@@ -165,6 +167,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// Custom rule outcomes; `None` when the crawl has no rules (spec 013).
+    pub custom: Option<crate::custom::PageRules>,
     /// Static accessibility checks (spec 026), when asked for.
     pub a11y: Option<a11y::A11yStatic>,
     /// What the crawl's [`PageHook`] read from the parsed page.
@@ -242,6 +246,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            custom: None,
             a11y: None,
             facts: None,
         }
@@ -267,7 +272,13 @@ pub struct PageInput<'a> {
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
-    extract(input, false).1
+    extract(input, false, None).1
+}
+
+/// [`extract_page`] plus the crawl's custom rules on the same parse
+/// (spec 013). Pages with no readable content get every rule as no match.
+pub fn extract_page_with(input: &PageInput<'_>, rules: Option<&crate::custom::CompiledRules>) -> PageData {
+    extract(input, false, rules).1
 }
 
 /// A stored page parsed again after the crawl, with the element each
@@ -283,7 +294,7 @@ pub struct ParsedPage {
 /// Parses a stored body for [`ParsedPage`]. None when the body is not a
 /// document.
 pub fn parse_page(input: &PageInput<'_>) -> Option<ParsedPage> {
-    let (doc, data, nodes) = extract(input, true);
+    let (doc, data, nodes) = extract(input, true, None);
     let doc = doc?;
     Some(ParsedPage {
         doc,
@@ -292,10 +303,15 @@ pub fn parse_page(input: &PageInput<'_>) -> Option<ParsedPage> {
     })
 }
 
-fn extract(input: &PageInput<'_>, track: bool) -> (Option<scraper::Html>, PageData, Vec<ego_tree::NodeId>) {
+fn extract(
+    input: &PageInput<'_>,
+    track: bool,
+    rules: Option<&crate::custom::CompiledRules>,
+) -> (Option<scraper::Html>, PageData, Vec<ego_tree::NodeId>) {
     let encoding = page_encoding(input.charset, input.body, input.truncated);
     if looks_binary(input.body) {
-        let data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        let mut data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        data.custom = rules.map(crate::custom::CompiledRules::on_empty_page);
         return (None, data, Vec::new());
     }
     let (text, used, had_errors) = encoding.decode(input.body);
@@ -308,6 +324,7 @@ fn extract(input: &PageInput<'_>, track: bool) -> (Option<scraper::Html>, PageDa
         input.a11y,
         hook,
         track,
+        rules,
     );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
@@ -349,8 +366,11 @@ fn utf8_or_cut(body: &[u8], truncated: bool) -> bool {
 
 /// Like [`extract_page`], but a panic inside the parser becomes an error
 /// message instead of taking the crawl down (FR-033).
-pub fn extract_page_caught(input: &PageInput<'_>) -> Result<PageData, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_page(input))).map_err(|p| {
+pub fn extract_page_caught(
+    input: &PageInput<'_>,
+    rules: Option<&crate::custom::CompiledRules>,
+) -> Result<PageData, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_page_with(input, rules))).map_err(|p| {
         let msg = p
             .downcast_ref::<&str>()
             .map(|s| s.to_string())

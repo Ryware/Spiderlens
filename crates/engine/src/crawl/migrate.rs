@@ -168,9 +168,18 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: INTEGRATIONS,
     },
-    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    // Spec 013: custom extraction and search rules stored with the crawl, one
+    // packed results row and one compressed values row per page
+    // (data-model.md). `IF NOT EXISTS` because a rerun on an older file
+    // creates them without upgrading it (`CrawlStore::ensure_custom_schema`).
     Step {
         version: 10,
+        additive: true,
+        sql: CUSTOM_SCHEMA,
+    },
+    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    Step {
+        version: 11,
         additive: true,
         sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
         ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
@@ -416,6 +425,29 @@ CREATE TABLE orphan_candidates (
   UNIQUE (url, source)
 );
 ";
+
+/// Step 10's tables.
+pub(crate) const CUSTOM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS custom_rules (
+        id INTEGER PRIMARY KEY,
+        slot INTEGER NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        def_json TEXT NOT NULL,
+        pos INTEGER NOT NULL,
+        last_run_at TEXT,
+        run_pages INTEGER,
+        run_state TEXT,
+        UNIQUE (kind, name)
+    );
+    CREATE TABLE IF NOT EXISTS custom_results (
+        url_id INTEGER PRIMARY KEY,
+        slots BLOB NOT NULL,
+        firsts TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS custom_values (
+        url_id INTEGER PRIMARY KEY,
+        data BLOB NOT NULL
+    );";
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();

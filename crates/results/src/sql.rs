@@ -42,6 +42,7 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
         let s: Option<String> = ctx.get(0)?;
         Ok(s.is_some_and(|s| weak_anchor(&s)))
     })?;
+    register_custom(conn)?;
     conn.create_scalar_function("natkey", 1, FLAGS, |ctx| {
         let s: Option<String> = ctx.get(0)?;
         Ok(s.map(|s| natkey(&s)))
@@ -534,6 +535,52 @@ fn percent_decode_utf8(s: &str) -> String {
         }
     }
     out
+}
+
+/// Spec 013: reading the packed rule results (plan D9). A slot the rule
+/// never ran on reads as NULL.
+fn register_custom(conn: &Connection) -> rusqlite::Result<()> {
+    use spiderlens_engine::crawl::store::custom::{unpack_slot, unpack_values};
+    use spiderlens_engine::custom::flags;
+
+    fn slot(ctx: &rusqlite::functions::Context<'_>) -> rusqlite::Result<Option<(u32, u16)>> {
+        let packed: Option<Vec<u8>> = ctx.get(0)?;
+        let i: i64 = ctx.get(1)?;
+        Ok(packed
+            .and_then(|p| unpack_slot(&p, usize::try_from(i).ok()?))
+            .filter(|(_, f)| f & flags::RUN != 0))
+    }
+    conn.create_scalar_function("custom_count", 2, FLAGS, |ctx| {
+        Ok(slot(ctx)?.map(|(c, _)| i64::from(c)))
+    })?;
+    conn.create_scalar_function("custom_flags", 2, FLAGS, |ctx| {
+        Ok(slot(ctx)?.map(|(_, f)| i64::from(f)))
+    })?;
+    conn.create_scalar_function("custom_num", 1, FLAGS, |ctx| {
+        let s: Option<String> = ctx.get(0)?;
+        Ok(s.and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|n| n.is_finite()))
+    })?;
+    // custom_all(firsts, values_blob, slot, sep): every stored value.
+    conn.create_scalar_function("custom_all", 4, FLAGS, |ctx| {
+        let firsts: Option<String> = ctx.get(0)?;
+        let data: Option<Vec<u8>> = ctx.get(1)?;
+        let slot: i64 = ctx.get(2)?;
+        let sep: String = ctx.get(3)?;
+        let first = firsts
+            .and_then(|f| serde_json::from_str::<Vec<serde_json::Value>>(&f).ok())
+            .and_then(|f| f.get(usize::try_from(slot).ok()?)?.as_str().map(str::to_string));
+        let Some(first) = first else { return Ok(None) };
+        let mut all = vec![first];
+        if let Some(data) = data
+            && let Ok(mut values) = unpack_values(&data)
+            && let Some((rest, _)) = u32::try_from(slot).ok().and_then(|s| values.remove(&s))
+        {
+            all.extend(rest);
+        }
+        Ok(Some(all.join(&sep)))
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]

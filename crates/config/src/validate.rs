@@ -138,6 +138,15 @@ pub fn validate(config: &CrawlConfig, input: &ModeInput) -> Vec<Issue> {
 pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
     let mut i = Issues(Vec::new());
 
+    // Custom rules (spec 013)
+    for p in crate::custom::check_rules(&c.custom) {
+        if p.warning {
+            i.warn(p.path, p.code, p.message);
+        } else {
+            i.error(p.path, p.code, p.message);
+        }
+    }
+
     // Limits
     if c.limits.max_urls == Some(0) {
         i.error(

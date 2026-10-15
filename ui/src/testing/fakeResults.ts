@@ -111,7 +111,7 @@ export interface FakeResults {
   /** Cookies the crawl recorded; seen only when features include "cookies". */
   cookies: FakeCookie[];
   copied: string[];
-  exports: { columns: string[]; ranges: Range[] | null; dest: string }[];
+  exports: { columns: string[]; ranges: Range[] | null; dest: string; allValues: string | null }[];
   opened: { tab: string; filter: string; search: string; sort: string | null }[];
   /** How often the sidebar asked for its tab counts. */
   tabCountCalls: number;
@@ -126,6 +126,10 @@ export interface FakeResults {
   vizExports: { view: ViewState; options: ExportOptions; file: string }[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
+  /** The open file's custom tabs (spec 013); none unless a test adds them. */
+  customTabs: TabDef[];
+  /** Custom column values by URL id; pages without an entry are not in the custom tabs. */
+  customCells: Map<number, Record<string, string | number | null>>;
   /** Link analysis settings sent for the open file (spec 023). */
   linkSettings: LinkAnalysisSettings[];
   /** Crawl Analysis runs started (file paths) and cancels asked for. */
@@ -135,6 +139,7 @@ export interface FakeResults {
   analysisProgress(p: Partial<AnalysisProgress>): void;
   /** Ends the running analysis: with a run, or cancelled or failed. */
   analysisDone(d?: Partial<AnalysisDone>): void;
+
 }
 
 export function fakeResultsTransport(initial: FakeUrl[]): Pick<
@@ -212,13 +217,24 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.urls.push(...urls);
       version++;
     },
+    customTabs: [],
+    customCells: new Map(),
   };
   const issuesApi = fakeIssuesTransport(() => results.urls);
+  const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
+  const tabOf = (id: string) => [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
+  const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
-    const tab = [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === q.tab)!;
+    const tab = tabOf(q.tab);
     const rule = q.tab.startsWith("issue:") ? issuesApi.issues.rules().find((r) => `issue:${r.id}` === q.tab) : undefined;
     let us = rule ? hits(rule, results.urls) : results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    if (isCustom(q.tab)) {
+      us = us.filter((u) => results.customCells.has(u.id));
+      // `<column>_has`: a value; `<column>_none`: none.
+      const [, col, kind] = /^(.*)_(has|none)$/.exec(q.filter) ?? [];
+      if (col) us = us.filter((u) => (valueOf(u, col) !== null && valueOf(u, col) !== "") === (kind === "has"));
+    }
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
@@ -231,8 +247,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       const k = q.sort.column;
       const d = q.sort.desc ? -1 : 1;
       us = [...us].sort((a, b) => {
-        const x = cell(a, k);
-        const y = cell(b, k);
+        const x = valueOf(a, k);
+        const y = valueOf(b, k);
         if (x === y) return a.id - b.id;
         if (x === null) return 1;
         if (y === null) return -1;
@@ -243,7 +259,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const row = (tab: TabDef, id: number) => {
     const u = results.urls.find((x) => x.id === id)!;
-    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? cell(u, c.id) : null))];
+    return [id, ...tab.columns.map((c) => (results.features.includes(c.need) ? valueOf(u, c.id) : null))];
   };
   const page = (view: number, from: number, count: number) => {
     const v = views.get(view)!;
@@ -252,7 +268,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   return {
     results,
     ...issuesApi,
-    resultsTabs: async () => [...fakeTabs, ...fakeIssueTabs],
+    resultsTabs: async (path) => (path ? [...fakeTabs, ...fakeIssueTabs, ...results.customTabs] : [...fakeTabs, ...fakeIssueTabs]),
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -274,7 +290,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return { version, total: fresh.ids.length, positions: anchors.map((a) => (fresh.ids.indexOf(a) < 0 ? null : fresh.ids.indexOf(a))), build_ms: 1 };
     },
     viewCounts: async (_p, tab, scope) => {
-      const t = [...fakeTabs, ...fakeIssueTabs].find((x) => x.id === tab)!;
+      const t = tabOf(tab);
       const counts: Record<string, number | null> = {};
       const unavailable: Record<string, string> = {};
       for (const f of t.filters) {
@@ -420,8 +436,9 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       });
       return { rows, total: ids.length };
     },
-    exportStart: async (_p, _q, columns, ranges, dest) => {
-      results.exports.push({ columns, ranges, dest });
+    exportStart: async (_p, _q, columns, ranges, dest, allValues) => {
+      results.exports.push({ columns, ranges, dest, allValues: allValues ?? null });
+
       return 1;
     },
     exportCancel: async () => {},

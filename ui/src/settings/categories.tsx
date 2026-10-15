@@ -14,10 +14,11 @@ import { LinkAnalysisBody } from "./LinkAnalysisSettings";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
+import { CustomRulesPanel } from "./CustomRules";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "links" | "issues" | "storage" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "links" | "issues" | "custom" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -42,6 +43,7 @@ export const categories: Category[] = [
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
   { id: "links", title: "Link analysis", description: "Link Score, and where on the page each link sits.", prefixes: ["links"] },
   { id: "issues", title: "Issues", description: "Which checks run on the results, how urgent each is, and their limits. Changes apply to the open crawl right away.", prefixes: ["issues"] },
+  { id: "custom", title: "Custom rules", description: "Extract values and search every page. Rules run on each page's HTML as it arrives.", prefixes: ["custom"] },
   {
     id: "storage",
     title: "Storage",
@@ -75,13 +77,17 @@ export function CategoryBody({
   transport,
   live,
   crawlPath = null,
+  crawlRunning = false,
+
 }: {
   id: CategoryId;
   setup: CrawlSetup;
   transport: Transport;
   live?: boolean;
-  /** The open crawl file, for testers that read it. */
+  /** The open crawl, which custom rules can run on again (spec 013 US3). */
   crawlPath?: string | null;
+  crawlRunning?: boolean;
+
 }): ReactNode {
   if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
@@ -450,6 +456,8 @@ export function CategoryBody({
         </Group>
       );
 
+    case "custom":
+      return <CustomRulesPanel setup={setup} transport={transport} crawlPath={crawlPath} crawlRunning={crawlRunning} />;
     case "links":
       return <LinkAnalysisBody links={config.links} issues={issues} transport={transport} path={crawlPath} onChange={(links) => set((c) => ({ ...c, links }))} />;
     case "issues":

@@ -54,6 +54,7 @@ fn cli_csv_equals_desktop_export_for_the_same_view() {
         &q,
         &cols,
         None,
+        None,
         &dest,
         &AtomicBool::new(false),
         &mut |_, _| {},

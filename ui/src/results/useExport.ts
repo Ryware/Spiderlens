@@ -30,10 +30,10 @@ export function useExport(transport: Transport) {
   }, [result]);
 
   const start = useCallback(
-    async (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string) => {
+    async (path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null) => {
       setResult(null);
       try {
-        const id = await transport.exportStart(path, query, columns, ranges, dest);
+        const id = await transport.exportStart(path, query, columns, ranges, dest, allValues);
         jobRef.current = id;
         setJob(id);
         setProgress({ job: id, rows_written: 0, total: 0, state: "running", error: null, path: dest });

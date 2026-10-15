@@ -282,6 +282,10 @@ pub struct CrawlArgs {
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
 
+    /// Custom extraction and search rules (a rule file). Rules with the
+    /// profile's names replace them.
+    #[arg(long, value_name = "FILE", help_heading = "Custom rules")]
+    pub rules: Option<PathBuf>,
     /// Do not run the AI search checks when the crawl finishes.
     #[arg(long, help_heading = "AI search")]
     pub no_ai_checks: bool,
@@ -615,6 +619,12 @@ impl CrawlArgs {
         }
         if self.no_store_html {
             c.extraction.store_html = false;
+        }
+        if let Some(path) = &self.rules {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let more =
+                spiderlens_config::import_rules(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            spiderlens_config::merge_rules(&mut c.custom, more);
         }
         Ok(Resolved { config: c, notices })
     }

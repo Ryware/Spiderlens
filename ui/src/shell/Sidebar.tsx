@@ -1,4 +1,5 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
+
 import { cn, Tooltip } from "../components/ui";
 import type { IssuesSummary } from "../generated/IssuesSummary";
 import { IssuesNav } from "../issues/IssuesNav";
@@ -45,6 +46,8 @@ const later: NavItem[] = [
 ];
 
 /** Where you are (FR-003). Result tabs open once a crawl exists (spec 007). */
+export const customIcon = (id: string): LucideIcon => (id === "custom_search" ? TextSearch : Braces);
+
 export function Sidebar({
   active,
   onSelect,
@@ -53,6 +56,7 @@ export function Sidebar({
   results,
   issues = null,
   counting = false,
+  custom = [],
   counts,
 }: {
   active: string;
@@ -64,6 +68,8 @@ export function Sidebar({
   issues?: IssuesSummary | null;
   /** The counts are partial: the issues are still being evaluated. */
   counting?: boolean;
+  /** The open crawl's custom extraction and search tabs (spec 013), when it ran rules. */
+  custom?: { id: string; title: string }[];
   /** URLs per result tab; absent while unknown (T014). */
   counts?: Record<string, number> | null;
 }) {
@@ -125,10 +131,17 @@ export function Sidebar({
       )}
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
+      {results && custom.length > 0 && (
+        <>
+          {heading("Custom")}
+          <ul className="m-0 flex list-none flex-col gap-px p-0">{custom.map((t) => item({ id: t.id, title: t.title, icon: customIcon(t.id) }, true))}</ul>
+        </>
+      )}
       {heading("Visualisations")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{vizTabs.map((t) => item(t, results))}</ul>
       {heading("External data")}
       <ul className="m-0 list-none p-0">{item({ id: "integrations", title: "Integrations", icon: Cable }, true)}</ul>
+
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">
