@@ -21,6 +21,35 @@ pub struct RedirectHop {
     pub final_state: String,
 }
 
+/// One misspelt word on the page (spec 027 part D).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct SpellFinding {
+    pub word: String,
+    /// title | description | heading | body
+    pub source: String,
+    /// The sentence around the word.
+    pub context: String,
+    pub suggestions: Vec<String>,
+    /// In a text block on most pages, such as a footer.
+    pub site_wide: bool,
+}
+
+/// What the spelling pass found on the page.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct SpellDetail {
+    /// The dictionary used, or the language without one.
+    pub lang: Option<String>,
+    /// checked | partly_checked | no_dictionary | no_text
+    pub status: String,
+    pub words: u32,
+    pub errors: u32,
+    pub lang_mismatch: bool,
+    /// Up to 200, in page order.
+    pub findings: Vec<SpellFinding>,
+}
+
 /// One URL's spec 023 values (FR-008).
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -107,6 +136,8 @@ pub struct UrlDetail {
     /// Title and meta description as served, for the search preview (spec
     /// 027 part A). `None` for anything that is not an HTML page.
     pub snippet: Option<Snippet>,
+    /// Spelling results, when the page was checked.
+    pub spelling: Option<SpellDetail>,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
@@ -473,6 +504,11 @@ impl Reader {
         if !self.features.has(Need::Pdf) && sql::content_kind(content_type.as_deref()) == "pdf" {
             unavailable.insert("pdf".into(), Need::Pdf.unavailable_reason().to_string());
         }
+        let spelling = if self.features.has(Need::Spelling) {
+            self.spelling(id)?
+        } else {
+            None
+        };
         let reason_label = reason.as_deref().and_then(|r| {
             spiderlens_engine::crawl::NotCrawledReason::parse(r).map(|r| r.label().to_string())
         });
@@ -519,8 +555,51 @@ impl Reader {
             manual_retry,
             pdf,
             snippet,
+            spelling,
             unavailable,
         })
+    }
+
+    fn spelling(&self, id: i64) -> Result<Option<SpellDetail>> {
+        let page = self
+            .conn
+            .query_row(
+                "SELECT lang, status, words, errors, lang_mismatch FROM spell_pages WHERE url_id = ?1",
+                [id],
+                |r| {
+                    Ok(SpellDetail {
+                        lang: r.get(0)?,
+                        status: r.get(1)?,
+                        words: r.get::<_, Option<u32>>(2)?.unwrap_or(0),
+                        errors: r.get::<_, Option<u32>>(3)?.unwrap_or(0),
+                        lang_mismatch: r.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                        findings: Vec::new(),
+                    })
+                },
+            )
+            .optional()?;
+        let Some(mut page) = page else { return Ok(None) };
+        page.findings = self
+            .conn
+            .prepare_cached(
+                "SELECT word, source, context, suggestions, site_wide FROM spell_findings WHERE url_id = ?1
+                 ORDER BY CASE source WHEN 'title' THEN 0 WHEN 'description' THEN 1 WHEN 'heading' THEN 2 ELSE 3 END, pos
+                 LIMIT 200",
+            )?
+            .query_map([id], |r| {
+                let suggestions: Option<String> = r.get(3)?;
+                Ok(SpellFinding {
+                    word: r.get(0)?,
+                    source: r.get(1)?,
+                    context: r.get(2)?,
+                    suggestions: suggestions
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default(),
+                    site_wide: r.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Some(page))
     }
 
     /// The stored HTML of one page, decoded as extraction read it. Errors

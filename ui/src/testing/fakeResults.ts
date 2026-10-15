@@ -37,6 +37,8 @@ export interface FakeUrl {
   pdf?: PdfDetail;
   /** Meta description, for the search preview. */
   description?: string | null;
+  /** Spelling errors, once spelling was checked. */
+  spellErrors?: number;
 }
 
 /** A PDF's detail with sensible defaults. */
@@ -121,6 +123,17 @@ export const fakeTabs: TabDef[] = [
     search_column: "pdf_title",
     scoped: false,
   },
+  {
+    id: "spelling",
+    title: "Spelling",
+    columns: [col("address", "Address", "url", 420), col("spell_errors", "Spelling errors", "int", 110, "spelling")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "errors", label: "Spelling errors", need: "spelling" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
 /**
@@ -164,7 +177,7 @@ export function fakeSegmentOf(segments: Segment[], u: FakeUrl): Segment | null {
 /** A made-up Link Score: the start URL is the strongest page. */
 const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
 const cell = (u: FakeUrl, c: string, segments: Segment[] = []) =>
-  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null })[c] ?? null;
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null })[c] ?? null;
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
 export interface FakeCookie extends Omit<CookieRow, "urls"> {
@@ -326,6 +339,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.segment !== undefined && q.segment !== null) us = us.filter((u) => (fakeSegmentOf(results.segments, u)?.id ?? 0) === q.segment);
     if (q.tab === "pdfs") us = us.filter((u) => u.pdf);
     if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
+    if (q.filter === "errors") us = us.filter((u) => (u.spellErrors ?? 0) > 0);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
@@ -473,6 +487,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         pdf: u.pdf && results.features.includes("pdf") ? u.pdf : null,
         snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
         link_metrics: null,
+        spelling: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

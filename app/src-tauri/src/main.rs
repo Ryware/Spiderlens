@@ -15,6 +15,7 @@ mod report;
 mod results;
 mod schedules;
 mod settings;
+mod spelling;
 
 use spiderlens_engine::BuildInfo;
 use tauri::webview::PageLoadEvent;
@@ -49,6 +50,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(spelling::State::default());
             app.manage(compare::State::default());
             app.manage(custom::State::default());
             app.manage(integrations::State::open()?);
@@ -149,6 +151,13 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            spelling::spell_dictionaries,
+            spelling::spell_download,
+            spelling::spell_add,
+            spelling::spell_remove,
+            spelling::spell_start,
+            spelling::spell_cancel,
+            spelling::spell_summary,
             compare::compare_suggest,
             compare::compare_setup,
             compare::compare_test_mapping,

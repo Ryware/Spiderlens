@@ -4,6 +4,7 @@ import type { LinkMetrics } from "./LinkMetrics";
 import type { PdfDetail } from "./PdfDetail";
 import type { RedirectHop } from "./RedirectHop";
 import type { Snippet } from "./Snippet";
+import type { SpellDetail } from "./SpellDetail";
 
 export type UrlDetail = { id: number, url: string, 
 /**
@@ -69,10 +70,15 @@ manual_retry: boolean,
  * What was read from the document, for a PDF the crawl read.
  */
 pdf: PdfDetail | null, 
+/**
  * Title and meta description as served, for the search preview (spec
  * 027 part A). `None` for anything that is not an HTML page.
  */
 snippet: Snippet | null, 
+/**
+ * Spelling results, when the page was checked.
+ */
+spelling: SpellDetail | null, 
 /**
  * Fields and sections this file has no data for, with the reason.
  */

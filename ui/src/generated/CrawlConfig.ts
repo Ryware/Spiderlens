@@ -5,6 +5,7 @@ import type { IssueSettings } from "./IssueSettings";
 import type { Mode } from "./Mode";
 import type { Segment } from "./Segment";
 import type { SpeedSettings } from "./SpeedSettings";
+import type { SpellingSettings } from "./SpellingSettings";
 import type { AiChecks } from "./AiChecks";
 import type { NetworkSettings } from "./NetworkSettings";
 import type { RobotsSettings } from "./RobotsSettings";
@@ -38,4 +39,4 @@ sitemap_generate: SitemapGenerateOptions,
  * URL groups shown across the results (spec 027 part B). Results-only:
  * they never change what is crawled.
  */
-segments: Array<Segment>, };
+segments: Array<Segment>, spelling: SpellingSettings, };

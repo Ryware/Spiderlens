@@ -109,4 +109,5 @@ export const needReason: Record<Need, string> = {
   analysis: "Calculated when the crawl ends.",
   cookies: "This crawl was made before SpiderLens recorded the cookies each page sets.",
   ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
+  spelling: "Spelling has not been checked for this crawl. Use Check spelling on the Spelling tab.",
 };

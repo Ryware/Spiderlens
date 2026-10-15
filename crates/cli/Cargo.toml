@@ -20,6 +20,7 @@ spiderlens-compare.workspace = true
 spiderlens-aeo.workspace = true
 rusqlite.workspace = true
 spiderlens-schedule.workspace = true
+spiderlens-spell.workspace = true
 tokio.workspace = true
 clap.workspace = true
 serde.workspace = true

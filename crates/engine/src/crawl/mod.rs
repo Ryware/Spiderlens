@@ -20,6 +20,7 @@ pub mod scope;
 pub mod site_files;
 pub mod sitemap;
 mod speed;
+mod spelling;
 pub mod store;
 mod window;
 
@@ -33,6 +34,7 @@ pub use runner::{
     retry_preview,
 };
 pub use scope::{ScopeRules, ScopeTest, Verdict, test_url};
+pub use spelling::{SpellFindingRow, SpellPage, SpellPageRow, open_for_spelling};
 pub use store::{CrawlStore, LogEntry, UrlRow};
 
 /// The scope tester (spec 003 FR-016): what the crawler would do with each

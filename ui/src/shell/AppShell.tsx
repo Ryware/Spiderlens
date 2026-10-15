@@ -5,6 +5,8 @@ import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
+import { SpellingBar } from "../spelling/SpellingBar";
+import { useSpelling } from "../spelling/useSpelling";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { IntegrationsView } from "../integrations/IntegrationsView";
 import { categories, type CategoryId } from "../settings/categories";
@@ -165,6 +167,20 @@ export function AppShell({ transport }: { transport: Transport }) {
       if (ui.openReportOnFinish) setSection("report");
     }
   }, [crawl.running, finished, ui.openReportOnFinish]);
+  // Spelling runs after a crawl ends, never during it (spec 027 part D).
+  const spellPhase = useRef(crawl.phase);
+  const [crawlDone, setCrawlDone] = useState(false);
+  useEffect(() => {
+    const was = spellPhase.current;
+    spellPhase.current = crawl.phase;
+    setCrawlDone(crawl.phase === "completed" && (was === "running" || was === "stopping"));
+  }, [crawl.phase]);
+  const spelling = useSpelling(transport, crawl.path, setup.config?.spelling ?? null, crawlDone, results.reload);
+  const ignoreWord = useCallback(
+    (word: string) =>
+      setup.set((c) => (c.spelling.ignore.some((w) => w.toLowerCase() === word.toLowerCase()) ? c : { ...c, spelling: { ...c.spelling, ignore: [...c.spelling.ignore, word] } })),
+    [setup.set],
+  );
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
   // "Show in table" from the inspector (T027): the URL is selected in the
@@ -470,6 +486,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              toolbar={resultTab.id === "spelling" ? <SpellingBar spelling={spelling} live={crawl.running} /> : undefined}
               issue={issueId ? (issues.byId.get(issueId) ?? null) : null}
               onIssueSettings={() => openSettings("issues")}
               customRun={isCustomTab(resultTab.id) ? customRun : undefined}
@@ -536,6 +553,8 @@ export function AppShell({ transport }: { transport: Transport }) {
                   epoch={results.epoch}
                   rules={setup.config?.custom}
                   aiChecks={results.features?.available.includes("ai_checks") ?? false}
+                  onIgnoreWord={ignoreWord}
+                  ignored={setup.config?.spelling.ignore}
                   onIssue={(id) => setSection(issueTab(id))}
                   onOpenUrl={(url) => {
                     results.update("internal", { search: url, filter: "all" });

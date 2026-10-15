@@ -35,7 +35,7 @@ pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage}
 pub use counts::{FilterCounts, TabCounts};
 pub use custom::CustomResult;
 pub use detail::{
-    HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, Snippet, UrlDetail,
+    HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
     COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv, write_csv_in,

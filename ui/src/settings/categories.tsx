@@ -15,11 +15,12 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { CustomRulesPanel } from "./CustomRules";
+import { DictionaryManager } from "../spelling/DictionaryManager";
 import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -52,6 +53,12 @@ export const categories: Category[] = [
     description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
     prefixes: [],
     app: true,
+  },
+  {
+    id: "spelling",
+    title: "Spelling",
+    description: "Spelling is checked after the crawl, from the stored pages, so it never slows crawling. Dictionaries stay on this computer.",
+    prefixes: ["spelling"],
   },
   {
     id: "appearance",
@@ -474,6 +481,37 @@ export function CategoryBody({
             </Row>
             <Row label="Time to read one PDF (seconds)" help="A PDF that takes longer is listed as partly read, with what was read by then." issues={at("extraction.pdf.time_limit_secs")}>
               {(i) => <NumberInput id={i} disabled={!pdf.crawl} value={pdf.time_limit_secs} onChange={(v) => setPdf({ time_limit_secs: v ?? NaN })} />}
+            </Row>
+          </Group>
+        </>
+      );
+    }
+    case "spelling": {
+      const sp = config.spelling;
+      const setSp = (p: Partial<typeof sp>) => set((c) => ({ ...c, spelling: { ...c.spelling, ...p } }));
+      return (
+        <>
+          <Group>
+            <Row label="Check spelling after the crawl" help="Or check any time with Check spelling on the Spelling tab.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.check} onChange={(v) => setSp({ check: v })} />}
+            </Row>
+            <Row label="Language of pages without a lang attribute" issues={at("spelling.default_lang")}>
+              {(i) => <Input id={i} className="w-32" value={sp.default_lang} onChange={(e) => setSp({ default_lang: e.target.value })} />}
+            </Row>
+            <Row label="Skip words in capitals" help="Words like NASA or SKU are usually names, not mistakes.">
+              {(_, l) => <Switch labelledBy={l} checked={sp.skip_all_caps} onChange={(v) => setSp({ skip_all_caps: v })} />}
+            </Row>
+            <Row label="Words to ignore" help="One per line: brand names, product names, jargon. Case is ignored." stacked>
+              {(i) => <Lines id={i} value={sp.ignore} onChange={(ignore) => setSp({ ignore })} placeholder="SpiderLens" />}
+            </Row>
+          </Group>
+          <Group title="Dictionaries">
+            <Row
+              label="Pages are checked with the dictionary for their language"
+              help="Words in another script, such as Hebrew on an English page, use that script's dictionary when one is installed."
+              stacked
+            >
+              {() => <DictionaryManager transport={transport} />}
             </Row>
           </Group>
         </>

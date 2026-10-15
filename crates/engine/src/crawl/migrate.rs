@@ -211,6 +211,32 @@ pub const STEPS: &[Step] = &[
         text_stored INTEGER
     );",
     },
+    // Spec 027 part D: spelling, written by the spelling pass after a crawl.
+    Step {
+        version: 13,
+        additive: true,
+        sql: "CREATE TABLE spell_pages (
+        url_id INTEGER PRIMARY KEY,
+        lang TEXT,
+        status TEXT NOT NULL,
+        words INTEGER,
+        errors INTEGER,
+        lang_mismatch INTEGER
+    );
+    CREATE TABLE spell_findings (
+        url_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        word TEXT NOT NULL,
+        source TEXT NOT NULL,
+        pos INTEGER NOT NULL,
+        context TEXT NOT NULL,
+        suggestions TEXT,
+        block INTEGER,
+        site_wide INTEGER
+    );
+    CREATE INDEX spell_findings_url ON spell_findings(url_id);
+    CREATE INDEX spell_findings_word ON spell_findings(word);",
+    },
 ];
 
 const AEO_TABLES: &str = r#"

@@ -95,6 +95,10 @@ impl Features {
         if cookies {
             available.push(Need::Cookies);
         }
+        // Written by the spelling pass, not the crawl (spec 027 part D).
+        if meta("spelling")?.is_some() {
+            available.push(Need::Spelling);
+        }
         let redirect_limit = config
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))

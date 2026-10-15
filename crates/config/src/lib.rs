@@ -36,7 +36,7 @@ pub use model::{
     HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
     ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
     RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
-    SubdomainMode, SuppliedCookie, UserAgent,
+    SpellingSettings, SubdomainMode, SuppliedCookie, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};

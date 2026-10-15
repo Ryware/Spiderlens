@@ -17,6 +17,7 @@ import { fakeResultsTransport, fakeSegmentOf, fakeUrls, type FakeResults, type F
 import { fakeAuditTransport, type FakeAudit } from "./fakeAudit";
 import type { FakeIssues } from "./fakeIssues";
 import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
+import { fakeSpellingTransport, type FakeSpelling } from "./fakeSpelling";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 
 import type {
@@ -106,6 +107,7 @@ export function defaultConfig(): CrawlConfig {
     access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
     segments: [],
+    spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
   };
 }
 
@@ -265,7 +267,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -336,6 +338,7 @@ export function fakeTransport(
     schedules,
 
     ...fakeAuditTransport(),
+    ...fakeSpellingTransport(),
     saved,
     crawls,
     picks,

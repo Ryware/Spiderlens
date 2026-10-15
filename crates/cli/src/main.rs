@@ -19,6 +19,7 @@ mod schedule_cmd;
 mod segments_cmd;
 mod serp_cmd;
 mod sitemap_cmd;
+mod spell_cmd;
 mod viz_cmd;
 
 use std::io::Write;
@@ -116,6 +117,8 @@ enum Command {
     Aeo(aeo_cmd::AeoCommand),
     /// URLs per segment of a crawl file.
     Segments(segments_cmd::SegmentsArgs),
+    /// Check the spelling of a crawl file, or manage dictionaries.
+    Spell(Box<spell_cmd::SpellArgs>),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -234,6 +237,7 @@ fn main() -> ExitCode {
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Segments(args) => segments_cmd::run_segments(args),
+        Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Rules(cmd) => rules_cmd::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),

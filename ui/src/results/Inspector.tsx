@@ -9,6 +9,7 @@ import type { LinkMetrics } from "../generated/LinkMetrics";
 
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { UrlIssue } from "../generated/UrlIssue";
@@ -44,6 +45,7 @@ const fieldLabels: Record<string, string> = {
   pdf: "PDF properties",
   link_metrics: "Link Score",
   cookies: "Cookies",
+  spelling: "Spelling",
 };
 
 /** What was read from a PDF (spec 027 part C). */
@@ -69,6 +71,47 @@ function PdfSection({ pdf }: { pdf: PdfDetail }) {
     <Section title="PDF">
       {pdf.status_reason && <Notice kind={pdf.status === "failed" ? "bad" : "warn"}>{pdf.status_reason}</Notice>}
       <Facts rows={rows} />
+    </Section>
+  );
+}
+
+const sourceLabel: Record<string, string> = { title: "Title", description: "Meta description", heading: "Heading", body: "Body" };
+
+/** Misspelt words on the page, with suggestions (spec 027 part D). */
+function SpellingSection({ spell, ignored, onIgnore }: { spell: SpellDetail; ignored: string[]; onIgnore?: (word: string) => void }) {
+  const isIgnored = (w: string) => ignored.some((x) => x.toLowerCase() === w.toLowerCase());
+  const status =
+    spell.status === "no_dictionary"
+      ? `Not checked: no dictionary for ${spell.lang ?? "this language"}.`
+      : spell.status === "partly_checked"
+        ? "Only the title, description and headings were checked: this crawl did not keep page HTML."
+        : null;
+  return (
+    <Section title={`Spelling (${spell.errors.toLocaleString()})`} aside={spell.lang && <span className="text-xs text-fg-3">Dictionary {spell.lang}</span>}>
+      {status && <Notice kind="warn">{status}</Notice>}
+      {spell.lang_mismatch && <Notice kind="warn">Most words are in another script than the page's language. Check its lang attribute.</Notice>}
+      {spell.findings.length === 0 && !status && <p className="m-0 text-sm text-fg-3">No spelling errors.</p>}
+      <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-sm" data-selectable>
+        {spell.findings.map((f, i) => (
+          <li key={`${f.word}-${f.source}-${i}`} className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-bad">{f.word}</span>
+              <span className="text-xs text-fg-3">{sourceLabel[f.source] ?? f.source}</span>
+              {f.site_wide && <Badge tone="neutral">Site-wide</Badge>}
+              {onIgnore && (
+                <Button size="sm" variant="quiet" className="ml-auto" disabled={isIgnored(f.word)} onClick={() => onIgnore(f.word)}>
+                  {isIgnored(f.word) ? "Ignored" : "Ignore"}
+                </Button>
+              )}
+            </div>
+            {f.suggestions.length > 0 && <span className="text-xs text-fg-2">Did you mean {f.suggestions.slice(0, 3).join(", ")}?</span>}
+            <span className="text-xs break-words text-fg-3" dir="auto">
+              {f.context}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {ignored.length > 0 && onIgnore && <p className="m-0 text-xs text-fg-3">Ignored words apply from the next check.</p>}
     </Section>
   );
 }
@@ -421,6 +464,8 @@ export function Inspector({
   transport,
   path,
   id,
+  onIgnoreWord,
+  ignored = [],
   issuesVersion = 0,
   rulesVersion,
   onIssue,
@@ -435,6 +480,9 @@ export function Inspector({
   transport: Transport;
   path: string | null;
   id: number | null;
+  /** Adds a word to the crawl settings' ignore list. */
+  onIgnoreWord?: (word: string) => void;
+  ignored?: string[];
   /** Changes when issue settings change, so the list is fetched again. */
   issuesVersion?: number;
   onIssue?: (ruleId: string) => void;
@@ -648,6 +696,7 @@ export function Inspector({
       </Section>
 
       <CustomSection transport={transport} path={path} id={d.id} epoch={epoch} rules={rules} htmlStored={d.html_stored} />
+      {d.spelling && <SpellingSection spell={d.spelling} ignored={ignored} onIgnore={onIgnoreWord} />}
 
       {d.headers.length > 0 && (
         <Section title={`Response headers (${d.headers.length})`}>

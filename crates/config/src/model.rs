@@ -41,6 +41,7 @@ pub struct CrawlConfig {
     /// URL groups shown across the results (spec 027 part B). Results-only:
     /// they never change what is crawled.
     pub segments: Vec<crate::segments::Segment>,
+    pub spelling: SpellingSettings,
 }
 
 /// Options for generating XML sitemaps from a crawl (spec 011 FR-020,
@@ -859,6 +860,34 @@ impl Default for AiChecks {
         Self {
             auto: true,
             site_files: true,
+        }
+    }
+}
+
+/// Spelling checks (spec 027 part D). They run over the crawl file after
+/// the crawl, so they never slow fetching.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct SpellingSettings {
+    /// Check spelling when the crawl ends.
+    pub check: bool,
+    /// For pages that do not declare a language, as a BCP 47 tag.
+    pub default_lang: String,
+    /// Words written in capitals only are names or acronyms more often than
+    /// mistakes.
+    pub skip_all_caps: bool,
+    /// Words never reported, matched without regard to case.
+    pub ignore: Vec<String>,
+}
+
+impl Default for SpellingSettings {
+    fn default() -> Self {
+        Self {
+            check: false,
+            default_lang: "en".into(),
+            skip_all_caps: true,
+            ignore: Vec::new(),
         }
     }
 }
