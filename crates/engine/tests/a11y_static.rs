@@ -19,6 +19,7 @@ fn every_fixture_page_gives_exactly_its_findings() {
             content: None,
             a11y: true,
             hook: None,
+            keep_text: false,
         });
         let found = data.a11y.expect("checks were asked for");
         let mut got: Vec<(&str, u32)> = found
@@ -81,6 +82,7 @@ fn malformed_pages_are_safe_and_unchanged() {
             content: None,
             a11y,
             hook: None,
+            keep_text: false,
         };
         let off = extract_page(&input(false));
         let mut on = extract_page(&input(true));

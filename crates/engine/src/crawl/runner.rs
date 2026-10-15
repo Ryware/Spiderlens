@@ -22,7 +22,7 @@ use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
 use super::file::{self, LocalError, LockError, WriterLock};
-use super::health::{HostHealth, Transition};
+use super::health::Transition;
 use super::hosts::{Host, RobotsState};
 use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, SpeedLimit};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
@@ -33,11 +33,12 @@ use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Root};
-use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
+use super::speed::{Cut, Signal, parse_retry_after};
 use super::store::custom::{EncodedCustom, Slots, encode_custom};
 use super::store::{
-    Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
-    ConsoleRow, RenderRecord, RenderStatus, RenderedPageRecord, ResourceRow, Response, SitemapEntryRecord, SitemapFileRecord, SitemapRow, StateCounts, StoreError,
+    ConsoleRow, Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey,
+    Recorded, RenderRecord, RenderStatus, RenderedPageRecord, ResourceRow, Response, SitemapEntryRecord,
+    SitemapFileRecord, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
 use crate::custom::CompiledRules;
@@ -49,7 +50,9 @@ struct CustomRun {
     slots: Slots,
 }
 use crate::extract::directives::page_flags;
-use crate::extract::{self, ContentRules, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body};
+use crate::extract::{
+    self, ContentRules, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body,
+};
 use crate::fetch::{Once, fetch_once};
 use crate::net::NetSession;
 use crate::pdf::{self, PdfFacts};
@@ -452,51 +455,6 @@ pub fn host_key(url: &Url) -> String {
         url.host_str().unwrap_or(""),
         url.port_or_known_default().unwrap_or(0)
     )
-}
-
-#[derive(Debug, Clone)]
-enum RobotsState {
-    Unknown,
-    Fetching,
-    Known(Arc<RobotsPolicy>, Option<String>),
-}
-
-#[derive(Debug)]
-struct Host {
-    robots: RobotsState,
-    in_flight: u32,
-    /// No request before this: crawl-delay spacing or a Retry-After pause.
-    next_start: Instant,
-    delay: Option<Duration>,
-    speed: SiteSpeed,
-    /// Circuit breaker (spec 004 plan D6).
-    health: HostHealth,
-    /// When it last answered, for "every site is slow at once" (FR-019).
-    last_answer: Instant,
-}
-
-impl Host {
-    fn new(speed: &SpeedSettings) -> Self {
-        Self {
-            robots: RobotsState::Unknown,
-            in_flight: 0,
-            next_start: Instant::now(),
-            delay: None,
-            speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
-            health: HostHealth::default(),
-            last_answer: Instant::now(),
-        }
-    }
-
-    /// Requests this host may have open now.
-    fn limit(&self) -> u32 {
-        let usual = if self.delay.is_some() {
-            1
-        } else {
-            self.speed.allowance()
-        };
-        self.health.limit().map_or(usual, |l| l.min(usual))
-    }
 }
 
 /// A cut, a requested wait, the allowance after them, and the site's typical
@@ -1874,7 +1832,10 @@ impl Run {
             if self.in_flight == 0 && !self.fetch_completed && self.render.is_some() {
                 self.note_fetch_completed()?;
             }
-            if self.in_flight == 0 && self.pdf_pending == 0 && self.render.as_ref().is_none_or(|r| r.open == 0) {
+            if self.in_flight == 0
+                && self.pdf_pending == 0
+                && self.render.as_ref().is_none_or(|r| r.open == 0)
+            {
                 match self.state() {
                     Control::Pause => {
                         let reason = self.local.as_ref().map_or("user", |l| l.kind.as_str());

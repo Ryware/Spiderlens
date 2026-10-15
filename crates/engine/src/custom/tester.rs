@@ -75,6 +75,7 @@ pub async fn test_url(
             content: None,
             a11y: false,
             hook: None,
+            keep_text: false,
         },
         Some(rules),
     );

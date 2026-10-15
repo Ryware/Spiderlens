@@ -252,6 +252,7 @@ fn export(
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            values: None,
             segment: None,
         };
         let dest = dir.join(format!("{id}.csv"));

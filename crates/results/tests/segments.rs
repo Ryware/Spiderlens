@@ -110,6 +110,7 @@ fn q(segment: Option<u32>) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment,
+        values: None,
     }
 }
 

@@ -60,6 +60,7 @@ fn main() {
         search: String::new(),
         sort: None,
         segment: Some(100),
+        values: None,
     };
     let t = Instant::now();
     let page = r.open_view(&q, 60).expect("view");
@@ -70,7 +71,7 @@ fn main() {
     );
     let t = Instant::now();
     for tab in spiderlens_results::tabs() {
-        r.counts_in(tab.id, UrlScope::All, Some(100)).expect("counts");
+        r.counts_in(&tab.id, UrlScope::All, Some(100)).expect("counts");
     }
     println!(
         "{:>8.0} ms  counts for every tab in Blog",

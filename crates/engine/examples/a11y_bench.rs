@@ -63,6 +63,7 @@ fn time(pages: &[String], a11y: bool, rounds: usize) -> Duration {
                 content: None,
                 a11y,
                 hook: None,
+                keep_text: false,
             }));
         }
     }

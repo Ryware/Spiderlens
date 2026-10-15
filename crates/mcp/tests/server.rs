@@ -349,7 +349,7 @@ async fn crawled_text_never_appears_outside_crawled() {
         answers.push(ok(
             &s,
             "query_pages",
-            json!({"crawl": id, "tab": tab, "columns": spiderlens_results::tab(tab).unwrap().columns.iter().map(|c| c.id).collect::<Vec<_>>()}),
+            json!({"crawl": id, "tab": tab, "columns": spiderlens_results::tab(tab).unwrap().columns.iter().map(|c| c.id.clone()).collect::<Vec<_>>()}),
         ));
     }
     let mut found_inside = 0;

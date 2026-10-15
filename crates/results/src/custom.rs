@@ -38,6 +38,8 @@ fn column(id: String, label: String, expr: String, kind: ValueKind, width: u16) 
         default_visible: true,
         need: Need::Base,
         derived: None,
+        rendered: None,
+        rendered_derived: None,
         sort_key: None,
         key: None,
     }
@@ -50,6 +52,7 @@ fn filter(id: String, label: String, cond: String) -> FilterDef {
         cond: Cow::Owned(cond),
         need: Need::Base,
         derived: None,
+        rendered: None,
         threshold: None,
         hide_when_empty: None,
     }

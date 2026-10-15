@@ -511,6 +511,8 @@ fn w3c_from_ms(ms: i64) -> Option<String> {
 
 /// A file being written: plain or deterministic gzip, counting uncompressed
 /// bytes.
+// One open at a time, so boxing the encoder would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 enum Sink {
     Plain(BufWriter<File>),
     Gz(flate2::write::GzEncoder<BufWriter<File>>),

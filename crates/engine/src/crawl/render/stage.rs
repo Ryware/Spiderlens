@@ -308,15 +308,20 @@ impl RenderStage {
             let page_url = url.clone();
             let work = tokio::task::spawn_blocking(move || {
                 let input = |body: &[u8], charset: Option<&str>| {
-                    extract::extract_page_caught(&PageInput {
-                        url: &page_url,
-                        charset,
-                        body,
-                        truncated: false,
-                        robots_token: &token,
-                        content: None,
-                        keep_text: true,
-                    })
+                    extract::extract_page_caught(
+                        &PageInput {
+                            url: &page_url,
+                            charset,
+                            body,
+                            truncated: false,
+                            robots_token: &token,
+                            content: None,
+                            keep_text: true,
+                            a11y: false,
+                            hook: None,
+                        },
+                        None,
+                    )
                 };
                 let raw = input(&raw_body, charset.as_deref()).ok();
                 let rendered = html.as_deref().map(|h| input(h.as_bytes(), Some("utf-8")));

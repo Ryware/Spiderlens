@@ -660,6 +660,7 @@ mod tests {
             content: None,
             a11y,
             hook: None,
+            keep_text: false,
         })
     }
 

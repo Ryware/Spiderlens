@@ -2,8 +2,8 @@
 //! (plan D1). Everything here is a pure function of the response: bytes and
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
-pub mod agents;
 pub mod a11y;
+pub mod agents;
 pub mod amp;
 pub mod body;
 pub mod challenge;

@@ -10,19 +10,19 @@
 
 pub mod agents;
 pub mod analysis;
-mod cookies;
 pub mod bulk;
+mod cookies;
 mod counts;
 mod custom;
 mod detail;
 mod export;
 mod features;
-pub mod near_dup;
 pub mod issues;
+pub mod near_dup;
 mod reader;
+pub mod report;
 mod segments;
 pub mod serp;
-pub mod report;
 mod sitemaps;
 mod sql;
 #[doc(hidden)]
@@ -38,12 +38,12 @@ pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage}
 pub use counts::{FilterCounts, TabCounts};
 pub use custom::CustomResult;
 pub use detail::{
-    AmpDetail, AmpFailure, HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
+    AmpDetail, AmpFailure, HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml,
+    PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
-    COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv, write_csv_in,
-    write_csv_with,
-    write_tsv_row,
+    COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv,
+    write_csv_in, write_csv_with, write_tsv_row,
 };
 pub use features::Features;
 pub use reader::{Reader, connect_attachable};

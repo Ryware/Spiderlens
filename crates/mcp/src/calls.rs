@@ -262,17 +262,17 @@ fn strings_arg(args: &Args, key: &str) -> Result<Vec<String>, ToolError> {
 fn tab_arg(args: &Args) -> Result<&'static TabDef, ToolError> {
     let id = str_arg(args, "tab")?.ok_or_else(|| ToolError::invalid("`tab` is required."))?;
     find_tab(id).ok_or_else(|| {
-        let ids: Vec<&str> = all_tabs().iter().map(|t| t.id).collect();
+        let ids: Vec<&str> = all_tabs().iter().map(|t| &*t.id).collect();
         ToolError::invalid(format!("Unknown tab. Tabs: {}.", ids.join(", ")))
     })
 }
 
-fn filter_arg(args: &Args, tab: &TabDef) -> Result<&'static str, ToolError> {
+fn filter_arg(args: &Args, tab: &'static TabDef) -> Result<&'static str, ToolError> {
     let id = str_arg(args, "filter")?.unwrap_or("all");
     tab.filters
         .iter()
         .find(|f| f.id == id)
-        .map(|f| f.id)
+        .map(|f| &*f.id)
         .ok_or_else(|| {
             ToolError::invalid(format!(
                 "Unknown filter on {}. Call list_tabs for its filters.",
@@ -333,10 +333,10 @@ fn list_tabs(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
     }
     let mut out = Vec::new();
     for t in all_tabs() {
-        let counts = if only == Some(t.id) {
+        let counts = if only == Some(&*t.id) {
             Some(
                 o.reader
-                    .counts(t.id, UrlScope::All)
+                    .counts(&t.id, UrlScope::All)
                     .map_err(ToolError::from_results)?,
             )
         } else {
@@ -352,7 +352,7 @@ fn list_tabs(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
                     v["unavailable_reason"] = f.need.unavailable_reason().into();
                 }
                 if let Some(c) = &counts {
-                    v["count"] = c.counts.get(f.id).cloned().flatten().into();
+                    v["count"] = c.counts.get(&*f.id).cloned().flatten().into();
                 }
                 v
             })
@@ -474,11 +474,13 @@ fn query_pages(o: &mut Open, crawl: &str, args: &Args) -> Result<Value, ToolErro
         .unwrap_or(DEFAULT_LIMIT)
         .clamp(1, MAX_LIMIT);
     let q = ViewQuery {
-        tab: tab.id.into(),
+        tab: tab.id.to_string(),
         filter: filter.into(),
         scope: UrlScope::All,
         search,
         sort,
+        values: None,
+        segment: None,
     };
     let view_key = serde_json::to_string(&q).expect("query serializes");
     let conds: Vec<&Condition> = conditions.iter().map(|(_, c)| c).collect();
@@ -528,7 +530,7 @@ fn query_pages(o: &mut Open, crawl: &str, args: &Args) -> Result<Value, ToolErro
                 let mut obj = Map::new();
                 obj.insert("url_id".into(), row[0].clone());
                 for &i in &cols {
-                    obj.insert(tab.columns[i].id.into(), row[i + 1].clone());
+                    obj.insert(tab.columns[i].id.to_string(), row[i + 1].clone());
                 }
                 let r = wrap(Value::Object(obj), &["url_id"]);
                 let n = envelope::size(&r) + 1;
@@ -680,11 +682,13 @@ fn export_rows(path: &Path, args: &Args) -> Result<Value, ToolError> {
         .unwrap_or(MAX_EXPORT_ROWS)
         .clamp(1, MAX_EXPORT_ROWS);
     let q = ViewQuery {
-        tab: tab.id.into(),
+        tab: tab.id.to_string(),
         filter: filter.into(),
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        values: None,
+        segment: None,
     };
     let mut buf = Vec::new();
     let rows = spiderlens_results::write_csv(
@@ -692,6 +696,7 @@ fn export_rows(path: &Path, args: &Args) -> Result<Value, ToolError> {
         &q,
         &cols,
         Some(&[(0, limit)]),
+        None,
         &mut buf,
         &AtomicBool::new(false),
         &mut |_, _| {},

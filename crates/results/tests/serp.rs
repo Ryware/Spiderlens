@@ -85,6 +85,7 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     }
 }
 

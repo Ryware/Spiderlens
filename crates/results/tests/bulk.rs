@@ -65,12 +65,14 @@ fn single_export(crawl: &Path, tab_id: &str, dir: &Path) -> String {
         search: String::new(),
         sort: None,
         segment: None,
+        values: None,
     };
     let dest = dir.join(format!("single-{}.csv", tab_id.replace(':', "-")));
     export_file(
         crawl,
         &q,
         &cols,
+        None,
         None,
         &dest,
         &AtomicBool::new(false),
@@ -102,7 +104,7 @@ async fn us4_csv_folder_matches_single_exports() {
     // FR-020, SC-007: every tab equals its single export, byte for byte.
     for t in tabs() {
         let bulk = std::fs::read_to_string(out.join(format!("tab-{}.csv", t.id))).unwrap();
-        assert_eq!(bulk, single_export(&c.path, t.id, c.dir.path()), "tab {}", t.id);
+        assert_eq!(bulk, single_export(&c.path, &t.id, c.dir.path()), "tab {}", t.id);
     }
     // And every issue with URLs.
     let mut r = Reader::open(&c.path).unwrap();
@@ -137,6 +139,7 @@ async fn us4_csv_folder_matches_single_exports() {
             search: String::new(),
             sort: None,
             segment: None,
+            values: None,
         };
         let page = r.open_view(&q, 100).unwrap();
         let rows = r.rows(page.view, 0, 100).unwrap().rows;

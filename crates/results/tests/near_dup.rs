@@ -249,6 +249,8 @@ async fn content_tab_filters_match_the_analysis() {
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            values: None,
+            segment: None,
         };
         let page = r.open_view(&q, 100).unwrap();
         let n = r.materialize(page.view).unwrap();

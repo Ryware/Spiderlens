@@ -352,20 +352,20 @@ pub struct TabDef {
 
 impl ColumnDef {
     /// The SQL expression for these values.
-    pub(crate) fn sql(&self, values: Values) -> &'static str {
+    pub(crate) fn sql(&self, values: Values) -> &str {
         match (values, self.rendered) {
             (Values::Rendered, Some(r)) => r,
-            _ => self.expr,
+            _ => &self.expr,
         }
     }
 }
 
 impl FilterDef {
     /// The SQL condition for these values.
-    pub(crate) fn sql(&self, values: Values) -> &'static str {
+    pub(crate) fn sql(&self, values: Values) -> &str {
         match (values, self.rendered) {
             (Values::Rendered, Some(r)) => r,
-            _ => self.cond,
+            _ => &self.cond,
         }
     }
 }
@@ -1773,9 +1773,9 @@ fn build_tabs() -> Vec<TabDef> {
             rows: None,
         },
         TabDef {
-            id: "pdfs",
-            title: "PDFs",
-            eligible: "u.internal = 1 AND u.state = 'crawled' AND content_kind(u.content_type) = 'pdf'",
+            id: Cow::Borrowed("pdfs"),
+            title: Cow::Borrowed("PDFs"),
+            eligible: Cow::Borrowed("u.internal = 1 AND u.state = 'crawled' AND content_kind(u.content_type) = 'pdf'"),
             columns: vec![
                 c::ADDRESS,
                 pdf_col("pdf_title", "PDF title", pdf_fact!("title"), Text, 280),
@@ -1823,13 +1823,14 @@ fn build_tabs() -> Vec<TabDef> {
                 pdf_filter("untagged", "Not tagged", "(SELECT p.tagged FROM pdfs p WHERE p.url_id = u.id) = 0"),
                 filter("noindex", "Noindex", "u.noindex = 1"),
             ],
-            search_column: Some("pdf_title"),
+            search_column: Some(Cow::Borrowed("pdf_title")),
             scoped: false,
+            rows: None,
         },
         TabDef {
-            id: "spelling",
-            title: "Spelling",
-            eligible: HTML_OK,
+            id: Cow::Borrowed("spelling"),
+            title: Cow::Borrowed("Spelling"),
+            eligible: Cow::Borrowed(HTML_OK),
             columns: vec![
                 c::ADDRESS,
                 spell_col("spell_errors", "Spelling errors", spell_fact!("errors"), Int, 110),
@@ -1880,16 +1881,19 @@ fn build_tabs() -> Vec<TabDef> {
                     concat!(spell_fact!("status"), " = 'partly_checked'"),
                 ),
             ],
-            search_column: Some("spell_words"),
+            search_column: Some(Cow::Borrowed("spell_words")),
             scoped: false,
+            rows: None,
         },
         TabDef {
-            id: "amp",
-            title: "AMP",
+            id: Cow::Borrowed("amp"),
+            title: Cow::Borrowed("AMP"),
             // AMP pages, and pages an amphtml link points to.
-            eligible: "u.internal = 1 AND u.state = 'crawled' AND (\
+            eligible: Cow::Borrowed(
+                "u.internal = 1 AND u.state = 'crawled' AND (\
                 EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
                 OR EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml'))",
+            ),
             columns: vec![
                 c::ADDRESS,
                 amp_col(
@@ -1946,6 +1950,7 @@ fn build_tabs() -> Vec<TabDef> {
             ],
             search_column: None,
             scoped: false,
+            rows: None,
         },
         content_tab(
             "canonicals",

@@ -314,7 +314,9 @@ pub async fn view_counts(
     values: Option<Values>,
 ) -> Cmd<FilterCounts> {
     state
-        .with(&path, move |r| r.counts_for(&tab, scope, segment, values).map_err(err))
+        .with(&path, move |r| {
+            r.counts_for(&tab, scope, segment, values).map_err(err)
+        })
         .await
 }
 

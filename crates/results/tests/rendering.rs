@@ -58,6 +58,7 @@ fn q(tab: &str, filter: &str, values: Option<Values>) -> ViewQuery {
         search: String::new(),
         sort: None,
         values,
+        segment: None,
     }
 }
 
@@ -238,6 +239,7 @@ fn synth() -> (tempfile::TempDir, PathBuf) {
         links_per_page: 4,
         seed: 5,
         rendered: true,
+        ..Synth::default()
     }
     .write(&path)
     .unwrap();

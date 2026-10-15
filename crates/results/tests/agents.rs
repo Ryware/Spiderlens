@@ -102,6 +102,8 @@ fn paths(r: &mut Reader, c: &Crawled, filter: &str) -> BTreeSet<String> {
         scope: UrlScope::All,
         search: String::new(),
         sort: None,
+        values: None,
+        segment: None,
     };
     let page = r.open_view(&q, 500).unwrap();
     r.materialize(page.view).unwrap();
@@ -139,10 +141,10 @@ async fn us2_filters_list_exactly_the_expected_pages() {
             continue;
         }
         let want = expected
-            .get(f.id)
+            .get(&*f.id)
             .unwrap_or_else(|| panic!("filter {} has no expectation", f.id));
         let want: BTreeSet<String> = want.iter().map(|s| s.to_string()).collect();
-        assert_eq!(paths(&mut r, &c, f.id), want, "filter {}", f.id);
+        assert_eq!(paths(&mut r, &c, &f.id), want, "filter {}", f.id);
     }
     let no_md = paths(&mut r, &c, "no_markdown");
     assert_eq!(no_md.len(), 8, "{no_md:?}");

@@ -89,6 +89,7 @@ fn links_of<T>(
         // Positions only need the links, not the accessibility checks.
         a11y: false,
         hook: None,
+        keep_text: false,
     };
     let Some(page) = parse_page(&input) else {
         return Vec::new();
@@ -414,6 +415,7 @@ mod tests {
             content: None,
             a11y: false,
             hook: None,
+            keep_text: false,
         });
         let anchors: Vec<u32> = data
             .refs

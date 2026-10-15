@@ -174,26 +174,24 @@ impl Out<'_> {
             scope: UrlScope::All,
             search: String::new(),
             sort: None,
+            values: None,
             segment: None,
         };
-        let c = compile(&q, self.features)?;
+        let c = compile(&q, self.features, &[])?;
         let ids: Vec<String> = t.columns.iter().map(|c| c.id.to_string()).collect();
-        let cols = pick_columns(c.tab, &ids)?;
+        let cols = pick_columns(&c.tab, &ids)?;
         let select: String = cols
             .iter()
             .map(|(_, col)| {
                 if self.features.has(col.need) {
-                    col.expr
+                    col.sql(c.values)
                 } else {
                     "NULL"
                 }
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let sql = format!(
-            "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {}",
-            c.where_sql, c.order_sql
-        );
+        let sql = format!("SELECT {select} {} ORDER BY {}", c.source_where(), c.order_sql);
         let sink_cols: Vec<Col> = cols
             .iter()
             .map(|(_, col)| Col {
@@ -267,6 +265,11 @@ pub fn run_bulk_with(
         // rows added, never by rows lost).
         let mut derived = vec![Derived::IssueHits, Derived::Redirects];
         for t in tabs::tabs() {
+            if let Some(d) = t.rows
+                && !derived.contains(&d)
+            {
+                derived.push(d);
+            }
             for c in &t.columns {
                 if let Some(d) = c.derived
                     && features.has(c.need)
@@ -311,9 +314,9 @@ pub fn run_bulk_with(
                 "tabs" => {
                     for tab in tabs::tabs() {
                         out.view(
-                            tab.id,
+                            &tab.id,
                             &format!("tab-{}", tab.id),
-                            tab.title,
+                            &tab.title,
                             OverviewExtra::default(),
                         )?;
                     }
