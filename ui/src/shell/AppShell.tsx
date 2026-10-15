@@ -9,7 +9,8 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { reportTabs, resultTabs, Sidebar } from "./Sidebar";
+import { reportTabs, resultTabs, Sidebar, vizTabs } from "./Sidebar";
+import { VizView, vizViews } from "../viz/VizView";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -113,6 +114,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const results = useResults(transport, crawl.path, crawl.running);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
@@ -290,6 +292,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...reportTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
@@ -385,6 +388,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
+          ) : vizView && crawl.path ? (
+            <VizView key={`${crawl.path}\n${vizView.id}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
@@ -408,7 +413,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab || cookiesOpen ? (
+              {resultTab || vizView || cookiesOpen ? (
                 <Inspector
                   transport={transport}
                   path={crawl.path}

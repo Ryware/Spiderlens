@@ -20,6 +20,7 @@ mod sql;
 pub mod synth;
 mod tabs;
 mod view;
+pub mod viz;
 
 pub use analysis::link_positions::TestedLink;
 pub use analysis::{AnalysisProgress, AnalysisRun};

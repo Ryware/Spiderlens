@@ -8,6 +8,8 @@ import type { CookieRow } from "../generated/CookieRow";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
+import type { ViewState } from "../generated/ViewState";
+import { fakeScene } from "./fakeViz";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { AnalysisRun } from "../generated/AnalysisRun";
@@ -116,6 +118,8 @@ export interface FakeResults {
   /** Announces that the open view's full order is ready. */
   ready(): void;
   progress(p: Partial<ExportProgress>): void;
+  /** Visualisation states asked for (spec 022). */
+  viz: ViewState[];
   /** Adds URLs, as a running crawl would; the next refresh sees them. */
   add(urls: FakeUrl[]): void;
   /** Link analysis settings sent for the open file (spec 023). */
@@ -142,6 +146,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "viewClose"
   | "urlDetail"
   | "urlList"
+  | "vizScene"
   | "cookiesList"
   | "cookieUrls"
   | "urlHtml"
@@ -173,6 +178,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     urls: [...initial],
     cookies: [],
     copied: [],
+    viz: [],
     linkSettings: [],
     analyses: [],
     analysisCancels: 0,
@@ -270,6 +276,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     viewClose: async (_p, view) => {
       views.delete(view);
+    },
+    vizScene: async (_p, state) => {
+      results.viz.push(state);
+      return fakeScene(results.urls, state);
     },
     urlDetail: async (_p, id) => {
       const u = results.urls.find((x) => x.id === id)!;

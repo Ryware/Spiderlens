@@ -414,6 +414,17 @@ pub async fn positions_test(
         .await
 }
 
+/// One visualisation scene for the open file (spec 022): the crawl tree or
+/// the directory tree, as `state` asks.
+#[tauri::command]
+pub async fn viz_scene(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+) -> Cmd<spiderlens_results::viz::Scene> {
+    state.with(&path, move |r| r.viz_scene(&view).map_err(err)).await
+}
+
 /// The URLs that set one cookie (spec 025 FR-028).
 #[tauri::command]
 pub async fn cookie_urls(

@@ -122,6 +122,10 @@ pub enum Derived {
     /// `link_metrics`: Link Score and link counts (spec 023), built in
     /// `temp` when the file holds no current copy.
     LinkMetrics,
+    /// `temp.viz_crawl_tree`: each URL's crawl tree parent (spec 022).
+    VizCrawlTree,
+    /// `temp.viz_dirs` and `temp.viz_dir_urls`: the directory tree.
+    VizDirs,
     /// `link_positions`: where on its page each body link sits (spec 023
     /// US4), from the stored HTML.
     LinkPositions,
@@ -137,6 +141,8 @@ impl Derived {
             Self::OccH2 => "occ_h2",
             Self::LinkMetrics => "link_metrics",
             Self::LinkPositions => "link_positions",
+            Self::VizCrawlTree => "viz_crawl_tree",
+            Self::VizDirs => "viz_dirs",
         }
     }
 
@@ -150,7 +156,9 @@ impl Derived {
             | Self::OccH1
             | Self::OccH2
             | Self::LinkMetrics
-            | Self::LinkPositions => "1",
+            | Self::LinkPositions
+            | Self::VizCrawlTree
+            | Self::VizDirs => "1",
         }
     }
 }
@@ -1244,6 +1252,8 @@ pub(crate) fn build_derived(
         Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
             crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
         }),
+        Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
+        Derived::VizDirs => crate::viz::dirs::build(conn),
     }
 }
 

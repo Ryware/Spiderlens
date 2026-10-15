@@ -1,0 +1,265 @@
+// A visualisation in the main area (spec 022 plan D11): toolbar, canvas,
+// legend, what was left out, and a tooltip. Rust builds every scene; this
+// only asks for the next one and draws it.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Maximize2, Minus, Plus, RefreshCw } from "lucide-react";
+import type { ColourBy } from "../generated/ColourBy";
+import type { Layout } from "../generated/Layout";
+import type { Scene } from "../generated/Scene";
+import type { SceneNode } from "../generated/SceneNode";
+import type { SizeBy } from "../generated/SizeBy";
+import type { ViewKind } from "../generated/ViewKind";
+import type { ViewState } from "../generated/ViewState";
+import type { Transport } from "../transport";
+import { Button, cn, Input, Notice, Segmented, Select } from "../components/ui";
+import { categoryShape, categoryToken, VizCanvas, type VizCanvasHandle } from "./VizCanvas";
+
+export const vizViews: { id: string; view: ViewKind; title: string }[] = [
+  { id: "crawl-tree", view: "crawl_tree", title: "Crawl tree" },
+  { id: "directory-tree", view: "directory_tree", title: "Directory tree" },
+];
+
+const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--fg-2", "--bg", "--font-ui"];
+
+/** The token values the canvas draws with, read again when the theme changes. */
+function useTokenColours(): Record<string, string> {
+  const read = () => {
+    const css = getComputedStyle(document.documentElement);
+    return Object.fromEntries(TOKENS.map((t) => [t, css.getPropertyValue(t).trim() || "currentColor"]));
+  };
+  const [colours, setColours] = useState(read);
+  useEffect(() => {
+    const mo = new MutationObserver(() => setColours(read()));
+    mo.observe(document.documentElement, { attributes: true });
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const on = () => setColours(read());
+    mq?.addEventListener?.("change", on);
+    return () => {
+      mo.disconnect();
+      mq?.removeEventListener?.("change", on);
+    };
+  }, []);
+  return colours;
+}
+
+/** A small swatch in the legend, in the node's shape. */
+function Swatch({ category, colour }: { category: SceneNode["category"]; colour: string }) {
+  const shape = categoryShape[category];
+  const common = { fill: shape === "ring" || shape === "dashed" ? "none" : colour, stroke: colour, strokeWidth: shape === "ring" || shape === "dashed" ? 1.5 : 0 };
+  return (
+    <svg aria-hidden width="12" height="12" viewBox="-6 -6 12 12" className="shrink-0">
+      {shape === "diamond" ? (
+        <path d="M0 -5 L5 0 L0 5 L-5 0 Z" {...common} />
+      ) : shape === "triangle" ? (
+        <path d="M0 -5 L4.5 3.5 L-4.5 3.5 Z" {...common} />
+      ) : shape === "square" ? (
+        <rect x="-4" y="-4" width="8" height="8" {...common} />
+      ) : shape === "rounded" ? (
+        <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" {...common} />
+      ) : (
+        <circle r="4" strokeDasharray={shape === "dashed" ? "2 1.5" : undefined} {...common} />
+      )}
+    </svg>
+  );
+}
+
+export function VizView({
+  transport,
+  path,
+  view,
+  live,
+  focusId,
+  onFocusId,
+}: {
+  transport: Transport;
+  path: string;
+  view: ViewKind;
+  live: boolean;
+  focusId: number | null;
+  onFocusId: (id: number | null) => void;
+}) {
+  const [layout, setLayout] = useState<Layout>("tree");
+  const [colour, setColour] = useState<ColourBy>("status");
+  const [size, setSize] = useState<SizeBy>("uniform");
+  const [expanded, setExpanded] = useState<string[] | null>(null);
+  const [pages, setPages] = useState<Record<string, number>>({});
+  const [scene, setScene] = useState<Scene | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [anchor, setAnchor] = useState<{ key: string; sx: number; sy: number } | null>(null);
+  const [tip, setTip] = useState<{ node: SceneNode; x: number; y: number } | null>(null);
+  const [search, setSearch] = useState("");
+  const canvas = useRef<VizCanvasHandle>(null);
+  const colours = useTokenColours();
+
+  const state: ViewState = useMemo(() => ({ view, layout, colour, size, expanded, pages, budget: null }), [view, layout, colour, size, expanded, pages]);
+  useEffect(() => {
+    let off = false;
+    setLoading(true);
+    setError(null);
+    transport.vizScene(path, state).then(
+      (s) => {
+        if (off) return;
+        setScene(s);
+        setLoading(false);
+      },
+      (e) => {
+        if (off) return;
+        setError(String(e));
+        setLoading(false);
+      },
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, state, refresh]);
+
+  // The inspector follows the selection (FR-002), and the reverse.
+  const select = useCallback(
+    (key: string | null) => {
+      setSelected(key);
+      const n = key && scene?.nodes.find((x) => x.key === key);
+      if (n && n.url_id !== null) onFocusId(n.url_id);
+    },
+    [scene, onFocusId],
+  );
+  useEffect(() => {
+    if (!scene || focusId === null) return;
+    const n = scene.nodes.find((x) => x.url_id === focusId);
+    if (n) setSelected(n.key);
+  }, [scene, focusId]);
+
+  const activate = (key: string, at: { sx: number; sy: number }) => {
+    if (!scene) return;
+    setAnchor({ key, ...at });
+    if (key.startsWith("m:")) {
+      // "+N more": the next page of the parent's children.
+      const parent = key.slice(2);
+      setPages((p) => ({ ...p, [parent]: (p[parent] ?? 1) + 1 }));
+      setAnchor(null);
+      return;
+    }
+    const open = scene.nodes.filter((n) => n.expanded).map((n) => n.key);
+    const node = scene.nodes.find((n) => n.key === key);
+    setExpanded(node?.expanded ? open.filter((k) => k !== key) : [...open, key]);
+  };
+
+  const find = (q: string) => {
+    if (!scene || !q.trim()) return;
+    const needle = q.trim().toLowerCase();
+    const i = scene.nodes.findIndex((n) => n.label.toLowerCase().includes(needle) || n.url?.toLowerCase().includes(needle));
+    if (i < 0) return;
+    select(scene.nodes[i].key);
+    canvas.current?.reveal(i);
+  };
+
+  const title = vizViews.find((v) => v.view === view)?.title ?? "Visualisation";
+  return (
+    <section aria-label={title} className="flex h-full flex-col">
+      <div role="toolbar" aria-label={`${title} options`} className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+        <Segmented
+          label="Layout"
+          size="sm"
+          value={layout}
+          onChange={(v) => {
+            setAnchor(null);
+            setLayout(v);
+          }}
+          options={[
+            { value: "tree", label: "Tree" },
+            { value: "radial", label: "Radial" },
+          ]}
+        />
+        <Select aria-label="Colour" className="w-36" value={colour} onChange={(e) => setColour(e.target.value as ColourBy)}>
+          <option value="status">Colour: status</option>
+          <option value="depth">Colour: depth</option>
+        </Select>
+        <Select aria-label="Size" className="w-40" value={size} onChange={(e) => setSize(e.target.value as SizeBy)}>
+          <option value="uniform">Size: same</option>
+          <option value="score">Size: Link Score</option>
+          <option value="inlinks">Size: inlinks</option>
+        </Select>
+        <form
+          className="flex min-w-40 flex-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            find(search);
+          }}
+        >
+          <Input aria-label="Find in view" placeholder="Find a URL or folder" className="w-full max-w-72" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </form>
+        <div className="ml-auto flex items-center gap-1">
+          {loading && <span className="text-xs text-fg-3">Working…</span>}
+          {scene && live && <span className="text-xs text-fg-3">As of {new Date(scene.snapshot_at).toLocaleTimeString()}</span>}
+          <Button variant="quiet" icon size="sm" aria-label="Zoom out" onClick={() => canvas.current?.zoom(0.8)}>
+            <Minus className="size-3.5" />
+          </Button>
+          <Button variant="quiet" icon size="sm" aria-label="Zoom in" onClick={() => canvas.current?.zoom(1.25)}>
+            <Plus className="size-3.5" />
+          </Button>
+          <Button variant="quiet" icon size="sm" aria-label="Fit to view" onClick={() => canvas.current?.fit()}>
+            <Maximize2 className="size-3.5" />
+          </Button>
+          <Button variant="quiet" icon size="sm" aria-label="Refresh" onClick={() => (setAnchor(null), setRefresh((r) => r + 1))}>
+            <RefreshCw className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+      <div className="relative min-h-0 flex-1">
+        {error && (
+          <div className="p-3">
+            <Notice kind="bad">{error}</Notice>
+          </div>
+        )}
+        {scene && scene.nodes.length === 0 && <div className="p-6 text-sm text-fg-3">No URLs to show yet.</div>}
+        {scene && scene.nodes.length > 0 && (
+          <VizCanvas
+            ref={canvas}
+            scene={scene}
+            colour={colour}
+            selected={selected}
+            onSelect={select}
+            onActivate={activate}
+            anchor={anchor}
+            colours={colours}
+            onHover={(node, at) => setTip(node && at ? { node, ...at } : null)}
+          />
+        )}
+        {tip && (
+          <div role="tooltip" className="pointer-events-none absolute z-10 max-w-80 rounded-md border border-line bg-surface px-2 py-1 text-xs shadow-raised" style={{ left: tip.x + 14, top: tip.y + 10 }}>
+            <div className="truncate font-medium text-fg">{tip.node.url ?? tip.node.label}</div>
+            <div className="text-fg-3">
+              {scene?.legend.find((l) => l.category === tip.node.category)?.label ?? (tip.node.category === "folder" ? "Folder" : "")}
+              {tip.node.count > 1 && ` · ${tip.node.count.toLocaleString()} URLs`}
+              {tip.node.score !== null && ` · Link Score ${tip.node.score.toFixed(1)}`}
+              {tip.node.hidden > 0 && ` · ${tip.node.hidden.toLocaleString()} folded`}
+            </div>
+          </div>
+        )}
+        {scene && scene.nodes.length > 0 && (
+          <div aria-label="Legend" role="group" className="absolute bottom-3 left-3 flex max-w-72 flex-col gap-1 rounded-md border border-line bg-surface/95 px-2.5 py-2 text-xs shadow-raised">
+            {colour === "status" ? (
+              scene.legend.map((l) => (
+                <div key={l.category} className="flex items-center gap-2">
+                  <Swatch category={l.category} colour={colours[categoryToken[l.category]]} />
+                  <span className="min-w-0 flex-1 truncate text-fg-2">{l.label}</span>
+                  <span className="tabular text-fg-3">{l.count.toLocaleString()}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-fg-2">Colour: crawl depth, darker is closer to the start</div>
+            )}
+            {scene.size_legend && <div className="text-fg-3">{scene.size_legend}</div>}
+          </div>
+        )}
+        {scene?.omitted && (
+          <div role="note" className={cn("absolute right-3 bottom-3 max-w-80 rounded-md border border-line bg-surface/95 px-2.5 py-2 text-xs text-fg-2 shadow-raised")}>
+            Showing {(scene.total - scene.omitted.count).toLocaleString()} of {scene.total.toLocaleString()} URLs. {scene.omitted.reason}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
