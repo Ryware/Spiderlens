@@ -26,7 +26,7 @@ spiderlens-schedule = { path = "crates/schedule" }
 spiderlens-spell = { path = "crates/spell" }
 spiderlens-test-fixtures = { path = "crates/test-fixtures" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "cookies"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "cookies", "socks"] }
 cookie_store = { version = "0.22", default-features = false }
 cookie = "0.18"
 url = { version = "2", features = ["serde"] }
@@ -82,6 +82,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "async-
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+md5 = { package = "md-5", version = "0.10" }
 spiderlens-integrations = { path = "crates/integrations" }
 
 [workspace.lints.rust]

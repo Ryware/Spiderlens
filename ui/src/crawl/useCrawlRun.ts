@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PassProgress } from "../generated/PassProgress";
+import type { AuthMethod } from "../generated/AuthMethod";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
@@ -51,6 +52,8 @@ export interface CrawlRunState {
   local: LocalError | null;
   /** The Crawl Analysis pass running after the crawl (spec 009 plan D12). */
   analysis: PassProgress | null;
+  /** Sites that answered 401 and take a sign-in now (spec 025 FR-004): origin and the engine's words. */
+  signInAsks: { origin: string; message: string }[];
 }
 
 const initial: CrawlRunState = {
@@ -66,6 +69,7 @@ const initial: CrawlRunState = {
   applied: null,
   local: null,
   analysis: null,
+  signInAsks: [],
 };
 
 /** Only the newest notices stay on screen; the crawl log keeps them all. */
@@ -124,6 +128,16 @@ export function useCrawlRun(transport: Transport) {
       }),
       transport.onCrawlNotice((n) => {
         if (n.id !== idRef.current) return;
+        // A sign-in request gets its own form instead of a line (spec 025 FR-004).
+        if (n.kind === "auth_required" && n.host) {
+          const origin = n.host;
+          setState((s) => (s.signInAsks.some((a) => a.origin === origin) ? s : { ...s, signInAsks: [...s.signInAsks, { origin, message: n.message }] }));
+          return;
+        }
+        if (n.kind === "signed_in" && n.host) {
+          const origin = n.host;
+          setState((s) => ({ ...s, signInAsks: s.signInAsks.filter((a) => a.origin !== origin) }));
+        }
         setState((s) => (s.notices.includes(n.message) ? s : { ...s, notices: [...s.notices, n.message].slice(-MAX_NOTICES) }));
       }),
       transport.onCrawlFinished((f) => {
@@ -222,6 +236,23 @@ export function useCrawlRun(transport: Transport) {
     },
     [transport, state.id],
   );
+
+  /**
+   * Adds a sign-in to the running crawl: the origin's 401 URLs are fetched
+   * again. Resolves to how many were queued (spec 025 FR-004).
+   */
+  const addSignIn = useCallback(
+    async (origin: string, user: string, password: string, method: AuthMethod | null) => {
+      if (state.id === null) return null;
+      const queued = await transport.crawlAddSignIn(state.id, origin, user, password, method);
+      setState((s) => ({ ...s, signInAsks: s.signInAsks.filter((a) => a.origin !== origin) }));
+      return queued;
+    },
+    [transport, state.id],
+  );
+
+  /** "Not now": the URLs stay recorded as 401. */
+  const dismissSignIn = useCallback((origin: string) => setState((s) => ({ ...s, signInAsks: s.signInAsks.filter((a) => a.origin !== origin) })), []);
 
   /** Sends changed speed or retry settings to the running crawl (spec 004 D13). */
   const applySettings = useCallback(
@@ -338,6 +369,8 @@ export function useCrawlRun(transport: Transport) {
     retryFailed,
     resumeHost,
     applySettings,
+    addSignIn,
+    dismissSignIn,
     moved,
     dismissLocal,
     close,

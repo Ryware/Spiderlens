@@ -7,6 +7,8 @@ use std::error::Error as _;
 use reqwest::{Client, ClientBuilder, Response, StatusCode, header};
 use url::Url;
 
+use crate::net::ntlm::NtlmPool;
+use crate::net::{AuthNote, AuthOutcome, NetSession};
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, RedirectHop, RequestHeader};
 
 pub(crate) fn build_client(opts: &CheckOptions) -> Result<Client, CheckError> {
@@ -196,6 +198,9 @@ pub(crate) struct Once {
     pub content_length: Option<u64>,
     /// A PDF body, when PDFs are read (spec 027 part C).
     pub pdf: Option<PdfBody>,
+    /// A 401 no sign-in answered, or that refused the credentials (spec
+    /// 025 FR-004, FR-005).
+    pub auth: Option<AuthNote>,
 }
 
 /// A downloaded PDF. Over the PDF size limit nothing is kept: a partial
@@ -216,8 +221,12 @@ pub(crate) fn is_pdf(url: &Url, content_type: Option<&str>) -> bool {
     }
 }
 
+/// One request through the crawl's session: its proxy and cookies, and
+/// for internal URLs its sign-ins (spec 025 plan D3). A 401 that a sign-in
+/// can answer is sent once more with credentials; the 401s that remain are
+/// noted for the URL.
 pub(crate) async fn fetch_once(
-    client: &Client,
+    net: &NetSession,
     url: &Url,
     headers: &[RequestHeader],
     internal: bool,
@@ -225,11 +234,74 @@ pub(crate) async fn fetch_once(
     max_bytes: u64,
     pdf_max_bytes: Option<u64>,
 ) -> Result<Once, CheckError> {
-    let mut request = client.get(url.clone());
-    for h in headers.iter().filter(|h| h.all_hosts || internal) {
-        request = request.header(&h.name, &h.value);
+    let build = |client: &Client| {
+        let mut request = client.get(url.clone());
+        for h in headers.iter().filter(|h| h.all_hosts || internal) {
+            request = request.header(&h.name, &h.value);
+        }
+        request
+    };
+    // NTLM origins answer on their own connections (plan D4).
+    if let Some(pool) = net.ntlm_for(url, internal) {
+        return via_ntlm(&pool, &build, url, read_body, max_bytes, pdf_max_bytes).await;
     }
-    let response = request.send().await.map_err(|e| classify(&e))?;
+    let (request, sent) = net.authorize(build(net.client()), url, internal);
+    let mut response = request.send().await.map_err(|e| classify(&e))?;
+    let mut auth = None;
+    if internal && response.status() == StatusCode::UNAUTHORIZED {
+        match net.on_unauthorized(url, response.headers(), sent) {
+            AuthOutcome::RetryWithCredentials => {
+                drop(response);
+                let (request, sent) = net.authorize(build(net.client()), url, internal);
+                response = request.send().await.map_err(|e| classify(&e))?;
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    auth = Some(match net.on_unauthorized(url, response.headers(), sent) {
+                        AuthOutcome::Required { schemes, supported } => AuthNote::Required { schemes, supported },
+                        AuthOutcome::Rejected { method } => AuthNote::Rejected { method },
+                        // A second stale nonce in a row counts as refused.
+                        AuthOutcome::RetryWithCredentials | AuthOutcome::UseNtlm => {
+                            AuthNote::Rejected { method: "digest" }
+                        }
+                    });
+                }
+            }
+            AuthOutcome::UseNtlm => {
+                if let Some(pool) = net.ntlm_for(url, internal) {
+                    drop(response);
+                    return via_ntlm(&pool, &build, url, read_body, max_bytes, pdf_max_bytes).await;
+                }
+            }
+            AuthOutcome::Rejected { method } => auth = Some(AuthNote::Rejected { method }),
+            AuthOutcome::Required { schemes, supported } => auth = Some(AuthNote::Required { schemes, supported }),
+        }
+    }
+    read_once(response, url, read_body, max_bytes, pdf_max_bytes, auth).await
+}
+
+/// A request on an NTLM connection, kept reserved until the body is read.
+async fn via_ntlm(
+    pool: &NtlmPool,
+    build: &(dyn Fn(&Client) -> reqwest::RequestBuilder + Sync),
+    url: &Url,
+    read_body: bool,
+    max_bytes: u64,
+    pdf_max_bytes: Option<u64>,
+) -> Result<Once, CheckError> {
+    let (response, slot, refused) = pool.send(build).await.map_err(|e| classify(&e))?;
+    let auth = refused.then_some(AuthNote::Rejected { method: "ntlm" });
+    let once = read_once(response, url, read_body, max_bytes, pdf_max_bytes, auth).await;
+    drop(slot);
+    once
+}
+
+async fn read_once(
+    response: Response,
+    url: &Url,
+    read_body: bool,
+    max_bytes: u64,
+    pdf_max_bytes: Option<u64>,
+    auth: Option<AuthNote>,
+) -> Result<Once, CheckError> {
     let status = response.status().as_u16();
     let location = redirect_location(&response).map(str::to_string);
     let (content_type, charset) = parse_content_type(&response);
@@ -310,6 +382,7 @@ pub(crate) async fn fetch_once(
         headers: all_headers,
         content_length,
         pdf,
+        auth,
     })
 }
 

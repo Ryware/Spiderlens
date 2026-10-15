@@ -8,6 +8,9 @@ import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
 import { CookiesEditor, hostOf } from "./CookiesEditor";
+import { LoginPanel } from "./LoginPanel";
+import { ProxyPanel } from "./ProxyPanel";
+import { originOf, SignInsEditor } from "./SignInsEditor";
 import { HeadersEditor } from "./HeadersEditor";
 import { IssueSettingsPanel } from "../issues/IssueSettingsPanel";
 import { LinkAnalysisBody } from "./LinkAnalysisSettings";
@@ -41,7 +44,7 @@ export const categories: Category[] = [
   { id: "speed", title: "Speed", description: "How hard SpiderLens works the site. Polite is right for sites you don't own.", prefixes: ["speed"] },
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
-  { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
+  { id: "access", title: "Sign-in and cookies", description: "Sign-ins, the login page, cookies sent to the site, what happens to the cookies it sets, and the proxy. Passwords and secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
   {
     id: "content",
@@ -429,9 +432,37 @@ export function CategoryBody({
         </>
       );
 
-    case "access":
+    case "access": {
+      const host = hostOf(setup.startUrl);
+      const ua = config.identity.user_agent;
+      const userAgent = ua.preset === "custom" ? ua.custom_string : (presets.user_agents.find((p) => p.preset === ua.preset)?.user_agent ?? null);
       return (
         <>
+          <Group title="Sign-in">
+            <Row
+              label="Sites that ask for a user name and password"
+              stacked
+              help="For password-protected staging sites (Basic, Digest or NTLM). Sent only to the site it is for."
+              issues={at("access.sign_ins")}
+            >
+              {() => (
+                <SignInsEditor
+                  signIns={config.access.sign_ins}
+                  defaultOrigin={originOf(setup.startUrl)}
+                  onChange={(sign_ins) => set((c) => ({ ...c, access: { ...c.access, sign_ins } }))}
+                />
+              )}
+            </Row>
+            <LoginPanel
+              login={config.access.login}
+              startUrl={setup.startUrl}
+              internalHosts={host ? [host] : []}
+              userAgent={userAgent}
+              transport={transport}
+              issues={at}
+              onChange={(login) => set((c) => ({ ...c, access: { ...c.access, login } }))}
+            />
+          </Group>
           <Group title="Cookies">
             <Row
               label="Cookies sent with every request"
@@ -442,7 +473,7 @@ export function CategoryBody({
               {() => (
                 <CookiesEditor
                   cookies={config.access.cookies}
-                  defaultDomain={hostOf(setup.startUrl)}
+                  defaultDomain={host}
                   onChange={(cookies) => set((c) => ({ ...c, access: { ...c.access, cookies } }))}
                 />
               )}
@@ -469,8 +500,18 @@ export function CategoryBody({
               )}
             </Row>
           </Group>
+          <Group title="Proxy">
+            <ProxyPanel
+              proxy={config.access.proxy}
+              probeUrl={setup.startUrl}
+              transport={transport}
+              issues={at}
+              onChange={(proxy) => set((c) => ({ ...c, access: { ...c.access, proxy } }))}
+            />
+          </Group>
         </>
       );
+    }
 
     case "rendering":
       return (

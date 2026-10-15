@@ -20,6 +20,7 @@ import type { FakeIssues } from "./fakeIssues";
 import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSpellingTransport, type FakeSpelling } from "./fakeSpelling";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
+import { fakeLoginTransport, type FakeLogin } from "./fakeLogin";
 
 import type {
   CrawlFinished,
@@ -106,7 +107,13 @@ export function defaultConfig(): CrawlConfig {
     custom: { extractors: [], searches: [] },
     sitemap_generate: defaultGenerateOptions(),
     links: { auto_analyse: true, position_rules: [], weighting: null },
-    access: { cookies: [], cookie_policy: "ignore" },
+    access: {
+      sign_ins: [],
+      login: null,
+      cookies: [],
+      cookie_policy: "ignore",
+      proxy: { mode: "none", kind: "http", host: "", port: 0, user: null, password: { secret: true }, bypass: [] },
+    },
     ai_checks: { auto: true, site_files: true },
     segments: [],
     spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
@@ -285,7 +292,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -349,7 +356,10 @@ export function fakeTransport(
     () => resultsApi.results.features,
   );
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
+  const { login, api: loginApi } = fakeLoginTransport();
   return {
+    ...loginApi,
+    login,
     ...resultsApi,
     ...agentsApi,
     ...compareApi,

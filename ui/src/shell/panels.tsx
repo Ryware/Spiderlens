@@ -10,6 +10,7 @@ import { PausedSites, siteName } from "./PausedSites";
 import { CrawlSpeed } from "./CrawlSpeed";
 import { classLabel } from "../crawl/errorClasses";
 import { LocalErrorNotice } from "../files/LocalErrorNotice";
+import { AuthRequiredNotice } from "../crawl/AuthRequiredNotice";
 import { RecentCrawls, StorageWarning, UnsavedCrawls } from "../files/RecentCrawls";
 import type { CrawlLibrary } from "../files/useCrawlLibrary";
 
@@ -47,6 +48,7 @@ const count = (n: number | undefined) => (n ?? 0).toLocaleString();
 const pauseReasons: Record<string, string> = {
   network: "SpiderLens paused this crawl because your network connection seemed to be down. No URL was marked as failed.",
   local: "SpiderLens paused this crawl because of a problem on this computer. No URL was marked as failed.",
+  session_ended: "The site signed the crawl out, so SpiderLens paused it. Sign in again in Settings, then resume: pages fetched after the session ended are fetched again.",
 };
 
 /** Live crawl figures (FR-006), from the engine's progress events. */
@@ -198,6 +200,15 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs, onReport }: { r
             {run.error}
           </Notice>
         )}
+        {run.signInAsks.map((a) => (
+          <AuthRequiredNotice
+            key={a.origin}
+            origin={a.origin}
+            message={a.message}
+            onSignIn={(user, password, method) => run.addSignIn(a.origin, user, password, method)}
+            onDismiss={() => run.dismissSignIn(a.origin)}
+          />
+        ))}
         {s?.pause_reason && <Notice kind="warn">{pauseReasons[s.pause_reason] ?? `SpiderLens paused this crawl (${s.pause_reason}).`}</Notice>}
         {s?.url_limit_reached && <Notice kind="info">The URL limit was reached: the remaining URLs are listed as "Over URL limit".</Notice>}
         {warnings.map((w) => (

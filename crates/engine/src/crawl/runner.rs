@@ -54,7 +54,7 @@ use crate::extract::{
     self, ContentRules, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body,
 };
 use crate::fetch::{Once, fetch_once};
-use crate::net::NetSession;
+use crate::net::{AuthNote, LoginSession, NetSession};
 use crate::pdf::{self, PdfFacts};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
@@ -156,6 +156,12 @@ pub enum RunCommand {
     /// Apply changed speed or retry settings at once; recorded in the
     /// crawl's stored configuration (spec 002 FR-040, spec 004 plan D13).
     Apply(Change),
+    /// Sign in to an origin that asked for it and fetch its 401 URLs again
+    /// (spec 025 FR-004). Replies with how many URLs were queued again.
+    AddSignIn {
+        sign_in: spiderlens_config::SignIn,
+        reply: oneshot::Sender<u64>,
+    },
 }
 
 /// A host that is paused right now (spec 004 FR-028).
@@ -494,6 +500,22 @@ enum Msg {
     },
     SiteFile(SiteFileRow),
     SiteFilesFinished,
+    /// The signed-out check's answer (spec 025 FR-012).
+    SessionCheck { signed_out: bool },
+}
+
+/// Every this many internal pages, the signed-out check runs (plan D5:
+/// half the SC-006 budget of 50 requests).
+const SESSION_CHECK_EVERY: u32 = 25;
+
+/// The signed-out check of a crawl with a login session (FR-012).
+struct SessionCheck {
+    url: Url,
+    when: spiderlens_config::CheckCondition,
+    since: u32,
+    pending: bool,
+    /// When the check last passed, in ms since the epoch.
+    last_ok_ms: i64,
 }
 
 /// The per-host AI site files (spec 015 FR-010), fetched after the last page.
@@ -650,6 +672,8 @@ struct PageOutcome {
     page: Option<Extracted>,
     /// A PDF body was handed to the reader pool; a `Msg::Pdf` follows.
     pdf: bool,
+    /// A 401 a sign-in did not answer (spec 025).
+    auth: Option<AuthNote>,
 }
 
 /// What the extraction step produced for an HTML body.
@@ -736,6 +760,7 @@ async fn finish_page(
         header_facts,
         page,
         pdf: false,
+        auth: o.auth,
     }
 }
 
@@ -772,9 +797,18 @@ pub struct Crawler {
     /// How to start it; through the guard process when not given.
     render_launch: Option<spiderlens_render::LaunchOptions>,
     page_hook: Option<PageHook>,
+    /// The login session the crawl signs in with (spec 025 plan D5); held
+    /// in memory only.
+    login: Option<LoginSession>,
 }
 
 impl Crawler {
+    /// Crawls signed in with the cookies of a login session (spec 025
+    /// US2). Sign-out links are not requested while it is in use.
+    pub fn set_login(&mut self, session: LoginSession) {
+        self.login = Some(session);
+    }
+
     /// Reads more from every parsed page during this crawl (see
     /// [`PageHook`]); its facts are stored in `page_facts`.
     pub fn set_page_hook(&mut self, hook: PageHook) {
@@ -890,6 +924,7 @@ impl Crawler {
             browser: None,
             render_launch: None,
             page_hook: None,
+            login: None,
         })
     }
 
@@ -1000,6 +1035,7 @@ impl Crawler {
             browser: None,
             render_launch: None,
             page_hook: None,
+            login: None,
         })
     }
 
@@ -1078,19 +1114,52 @@ impl Crawler {
 
     /// [`Self::run`] that also takes requests such as Save As.
     pub async fn run_with(
-        self,
+        mut self,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
-        let net = NetSession::new(
+        let mut net = NetSession::with_login(
             &opts,
             &self.config.access,
             self.rules.internal().clone(),
             &self.resolve,
+            self.login.as_ref(),
         )
         .map_err(CrawlError::Client)?;
+        net.set_ntlm_connections(self.config.speed.max_per_host as usize);
+        // The proxy a crawl used is part of its record (FR-024); nothing is
+        // written on the default path.
+        if self.config.access.proxy.mode != spiderlens_config::ProxyMode::None {
+            self.store.set_meta(
+                "proxy_in_effect",
+                &serde_json::to_string(net.proxy_in_effect()).expect("serializes"),
+            )?;
+        }
+        if let Some(l) = &self.login {
+            // Names only, never values (data-model.md).
+            let names: Vec<String> = l
+                .summary()
+                .into_iter()
+                .map(|(d, n)| format!("{d}: {}", n.join(", ")))
+                .collect();
+            // The site signed the last run out: what it fetched after the
+            // last good check is login pages, so it is fetched again (SC-006).
+            let ended = self.store.meta("pause_reason")?.as_deref() == Some("session_ended");
+            if ended && let Some(since) = self.store.meta("session_ok_at")?.and_then(|v| v.parse::<i64>().ok()) {
+                let n = self.store.requeue_fetched_since(since)?;
+                self.store.record_event(
+                    "signed_in_again",
+                    Some(&serde_json::json!({ "login_url": l.login_url, "cookies": names, "requeued": n }).to_string()),
+                )?;
+            } else {
+                self.store.record_event(
+                    "signed_in",
+                    Some(&serde_json::json!({ "login_url": l.login_url, "cookies": names }).to_string()),
+                )?;
+            }
+        }
         let mut run = Run::new(self, opts, net, control, events, commands)?;
         if run.c.config.rendering.is_on() {
             run.start_render().await?;
@@ -1173,8 +1242,16 @@ struct Run {
     c: Crawler,
     opts: CheckOptions,
     client: Client,
-    net: NetSession,
+    net: Arc<NetSession>,
     headers: Arc<Vec<RequestHeader>>,
+    /// Origins already told about a sign-in they need or refused (spec
+    /// 025 FR-004, FR-005): once each.
+    auth_noticed: HashSet<String>,
+    /// Sign-out patterns while a login session is in use (FR-011).
+    sign_out_guard: Option<Vec<String>>,
+    session_check: Option<SessionCheck>,
+    /// The signed-out check failed: the crawl pauses (FR-012).
+    session_ended: bool,
     control: watch::Receiver<Control>,
     control_closed: bool,
     events: Option<mpsc::UnboundedSender<CrawlEvent>>,
@@ -1361,12 +1438,43 @@ impl Run {
                 }
             }
         };
+        let sign_out_guard = c.login.as_ref().filter(|l| !l.cookies.is_empty()).map(|_| {
+            c.config.access.login.as_ref().map_or_else(
+                || {
+                    spiderlens_config::DEFAULT_SIGN_OUT_PATTERNS
+                        .iter()
+                        .map(|p| (*p).to_string())
+                        .collect()
+                },
+                |l| l.sign_out_patterns.clone(),
+            )
+        });
+        let session_check = c
+            .login
+            .as_ref()
+            .filter(|l| !l.cookies.is_empty())
+            .and_then(|_| c.config.access.login.as_ref()?.check.clone())
+            .and_then(|check| {
+                Some(SessionCheck {
+                    url: Url::parse(check.url.trim()).ok()?,
+                    when: check.when,
+                    // The first check runs early, so a session that does
+                    // not work is seen at once.
+                    since: SESSION_CHECK_EVERY - 1,
+                    pending: false,
+                    last_ok_ms: now_ms(),
+                })
+            });
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
             opts,
             client: net.client().clone(),
-            net,
+            net: Arc::new(net),
+            auth_noticed: HashSet::new(),
+            sign_out_guard,
+            session_check,
+            session_ended: false,
             control,
             control_closed: false,
             events,
@@ -1620,6 +1728,100 @@ impl Run {
         out
     }
 
+    /// Runs the signed-out check every [`SESSION_CHECK_EVERY`] internal
+    /// pages (FR-012). The check is not a crawled URL: it goes through the
+    /// session's client and only its answer comes back.
+    fn tick_session_check(&mut self) {
+        let Some(check) = &mut self.session_check else { return };
+        check.since += 1;
+        if check.pending || check.since < SESSION_CHECK_EVERY {
+            return;
+        }
+        check.since = 0;
+        check.pending = true;
+        let client = self.client.clone();
+        let url = check.url.clone();
+        let when = check.when.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let signed_out = match client.get(url).send().await {
+                Ok(r) => {
+                    let status = r.status().as_u16();
+                    let location = r
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    let body = match &when {
+                        spiderlens_config::CheckCondition::Contains(_) if location.is_none() => {
+                            r.text().await.ok()
+                        }
+                        _ => None,
+                    };
+                    crate::net::login::signed_out(
+                        &when,
+                        &crate::net::login::CheckResponse {
+                            status,
+                            location: location.as_deref(),
+                            body: body.as_deref(),
+                        },
+                    )
+                }
+                // A failed check says nothing about the session; the
+                // network checks of spec 004 handle failures.
+                Err(_) => false,
+            };
+            let _ = tx.send(Msg::SessionCheck { signed_out });
+        });
+    }
+
+    /// Tells the user once per origin that it needs a sign-in, or refused
+    /// the one given (spec 025 FR-004, FR-005).
+    fn auth_notice(&mut self, url: &Url, note: &AuthNote) -> Result<(), CrawlError> {
+        let origin = url.origin().ascii_serialization();
+        if !self.auth_noticed.insert(origin.clone()) {
+            return Ok(());
+        }
+        let host = url.host_str().unwrap_or_default().to_string();
+        let names = |schemes: &[String]| {
+            schemes
+                .iter()
+                .map(|s| match s.as_str() {
+                    "ntlm" => "NTLM".to_string(),
+                    other => {
+                        let mut c = other.chars();
+                        c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let (kind, message) = match note {
+            AuthNote::Required { schemes, supported: true } => (
+                "auth_required",
+                format!(
+                    "{host} asks for a sign-in ({}). Add one for {origin} and its pages are fetched again.",
+                    names(schemes)
+                ),
+            ),
+            AuthNote::Required { schemes, supported: false } => (
+                "auth_unsupported",
+                format!(
+                    "{host} asks for a kind of sign-in SpiderLens cannot do ({}). Its pages are recorded as 401.",
+                    names(schemes)
+                ),
+            ),
+            AuthNote::Rejected { method } => (
+                "auth_rejected",
+                format!(
+                    "{host} refused the sign-in ({}). Check the user name and password; its pages are recorded as 401.",
+                    names(&[(*method).to_string()])
+                ),
+            ),
+        };
+        self.notice(kind, Some(&origin), None, message)
+    }
+
     /// Records a crawl log row and tells the user (spec 004 FR-035).
     fn notice(
         &mut self,
@@ -1661,7 +1863,7 @@ impl Run {
 
     fn state(&self) -> Control {
         let asked = *self.control.borrow();
-        if self.local.is_some() && asked == Control::Run {
+        if (self.local.is_some() || self.session_ended) && asked == Control::Run {
             Control::Pause
         } else {
             asked
@@ -1690,6 +1892,37 @@ impl Run {
                 self.commit()?;
                 let result = self.move_to(&dest);
                 let _ = reply.send(result.as_ref().map(|()| dest.clone()).map_err(|e| e.to_string()));
+            }
+            RunCommand::AddSignIn { sign_in, reply } => {
+                self.net.add_sign_in(&sign_in);
+                let origin = sign_in.origin_key().unwrap_or_default();
+                self.auth_noticed.remove(&origin);
+                // The password stays in memory; the stored configuration
+                // gets the sign-in without it, so a resume asks for it.
+                if !self.c.config.access.sign_ins.iter().any(|s| s.origin_key().as_deref() == Some(origin.as_str())) {
+                    self.c.config.access.sign_ins.push(sign_in.clone());
+                    self.c.stored.config.access.sign_ins.push(sign_in);
+                    self.c.store.set_meta(
+                        "config",
+                        &serde_json::to_string(&self.c.stored).expect("config serializes"),
+                    )?;
+                }
+                // The open batch first: the re-queue writes outside it.
+                self.commit()?;
+                let entries = self.c.store.requeue_unauthorized(&origin)?;
+                let n = entries.len() as u64;
+                for e in entries {
+                    self.window.on_queued(e);
+                }
+                if n > 0 {
+                    self.notice(
+                        "signed_in",
+                        Some(&origin),
+                        None,
+                        format!("Signed in to {origin}; {n} URLs that answered 401 are fetched again."),
+                    )?;
+                }
+                let _ = reply.send(n);
             }
             RunCommand::ResumeHost(key) => {
                 let resumed = self.hosts.get_mut(&key).is_some_and(|h| h.health.resume_now());
@@ -1838,9 +2071,22 @@ impl Run {
             {
                 match self.state() {
                     Control::Pause => {
-                        let reason = self.local.as_ref().map_or("user", |l| l.kind.as_str());
+                        let reason = match &self.local {
+                            Some(l) => l.kind.as_str(),
+                            None if self.session_ended => "session_ended",
+                            None => "user",
+                        };
                         self.c.store.set_meta("status", "paused")?;
                         self.c.store.set_meta("pause_reason", reason)?;
+                        if self.session_ended && self.local.is_none() {
+                            let since = self.session_check.as_ref().map_or(0, |c| c.last_ok_ms);
+                            self.c.store.set_meta("session_ok_at", &since.to_string())?;
+                            self.c.store.record_event(
+                                "session_ended",
+                                Some(&serde_json::json!({ "since": since }).to_string()),
+                            )?;
+                            break;
+                        }
                         match &self.local {
                             Some(l) => self.c.store.record_event(
                                 "local_error",
@@ -2102,6 +2348,14 @@ impl Run {
                     continue;
                 }
                 robots_rule = Some(rule);
+            }
+            // A signed-in crawl never requests a sign-out link (FR-011).
+            if !e.check_only
+                && let Some(patterns) = &self.sign_out_guard
+                && let Some(p) = crate::net::login::is_sign_out(&url, patterns)
+            {
+                self.block(e, NotCrawledReason::SessionGuard, format!("matches \"{p}\""))?;
+                continue;
             }
             if self.next_global > now {
                 soonest(self.next_global, &mut wake);
@@ -2576,7 +2830,7 @@ impl Run {
 
         let url = Url::parse(&e.url).expect("stored URLs parse");
         let internal = !e.check_only && self.c.rules.is_internal(&url);
-        let client = self.client.clone();
+        let net = Arc::clone(&self.net);
         let headers = self.headers.clone();
         let max_body = self.opts.max_body_bytes;
         let token = self.opts.robots_token.clone();
@@ -2599,7 +2853,7 @@ impl Run {
         let content = self.content_rules.clone();
         tokio::spawn(async move {
             let sent = Instant::now();
-            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body, pdf_max).await;
+            let fetched = fetch_once(&net, &url, &headers, internal, !check_only, max_body, pdf_max).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let (id, depth, page_url) = (e.id, e.depth, url.to_string());
@@ -3006,6 +3260,26 @@ impl Run {
                 Ok(())
             }
             Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SessionCheck { signed_out } => {
+                let Some(check) = &mut self.session_check else { return Ok(()) };
+                check.pending = false;
+                if !signed_out {
+                    check.last_ok_ms = now_ms();
+                    return Ok(());
+                }
+                if !self.session_ended {
+                    self.session_ended = true;
+                    self.notice(
+                        "session_ended",
+                        None,
+                        None,
+                        "The site signed the crawl out, so it paused. Sign in again and resume: pages fetched \
+                         since the last good check are fetched again."
+                            .into(),
+                    )?;
+                }
+                Ok(())
+            }
             Msg::SiteFilesFinished => {
                 self.site_files = SiteFiles::Done;
                 Ok(())
@@ -3386,6 +3660,13 @@ impl Run {
                     response.error_message = Some(p.message.clone());
                 }
                 let url = Url::parse(&entry.url).expect("stored URLs parse");
+                if let Some(note) = &o.auth {
+                    response.reason_detail = Some(note.detail());
+                    self.auth_notice(&url, note)?;
+                }
+                if internal && !entry.check_only {
+                    self.tick_session_check();
+                }
                 // External checks record their redirect target too; it is
                 // queued as another check, so the chain ends where it lands.
                 if let Some(loc) = o.location.as_deref() {

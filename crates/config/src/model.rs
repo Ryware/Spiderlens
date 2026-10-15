@@ -11,7 +11,7 @@ use crate::custom::CustomRules;
 use crate::links::LinkAnalysisSettings;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
-use crate::secret::HeaderValue;
+use crate::secret::{HeaderValue, Secret};
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[serde(default)]
@@ -750,15 +750,196 @@ impl RuleOverride {
     }
 }
 
-/// Cookies and, later, sign-ins and proxy: how the crawl reaches a site
-/// (spec 025, data-model.md).
+/// Sign-ins, the login page, cookies and the proxy: how the crawl reaches
+/// a site (spec 025, data-model.md).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export)]
 pub struct AccessSettings {
+    /// HTTP sign-ins, one per origin (FR-001).
+    pub sign_ins: Vec<SignIn>,
+    /// The login page whose session the crawl uses (FR-007). The session
+    /// itself is never stored.
+    pub login: Option<LoginSettings>,
     /// Sent to the crawl's internal hosts only (FR-015, FR-016).
     pub cookies: Vec<SuppliedCookie>,
     pub cookie_policy: CookiePolicy,
+    pub proxy: ProxySettings,
+}
+
+/// An HTTP sign-in for one origin (FR-001 to FR-006).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SignIn {
+    /// Scheme, host and port only, such as `https://staging.example.com`.
+    pub origin: String,
+    /// May be `DOMAIN\user` for NTLM.
+    pub user: String,
+    #[serde(default)]
+    #[ts(type = "{ secret: true, value?: string }")]
+    pub password: Secret,
+    #[serde(default)]
+    pub method: AuthMethod,
+}
+
+impl SignIn {
+    /// The origin in the form URLs give it (`https://host` or
+    /// `http://host:8080`), for matching requests.
+    pub fn origin_key(&self) -> Option<String> {
+        let url = url::Url::parse(self.origin.trim()).ok()?;
+        Some(url.origin().ascii_serialization())
+    }
+}
+
+/// Which challenge a sign-in answers. `Any` takes the strongest the
+/// server offers: NTLM, then Digest, then Basic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AuthMethod {
+    #[default]
+    Any,
+    Basic,
+    Digest,
+    Ntlm,
+}
+
+impl AuthMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Basic => "basic",
+            Self::Digest => "digest",
+            Self::Ntlm => "ntlm",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "any" => Some(Self::Any),
+            "basic" => Some(Self::Basic),
+            "digest" => Some(Self::Digest),
+            "ntlm" => Some(Self::Ntlm),
+            _ => None,
+        }
+    }
+}
+
+/// Sign-out links a crawl with a login session never requests (FR-011).
+pub const DEFAULT_SIGN_OUT_PATTERNS: [&str; 6] = ["logout", "log-out", "signout", "sign-out", "logoff", "log-off"];
+
+fn default_sign_out_patterns() -> Vec<String> {
+    DEFAULT_SIGN_OUT_PATTERNS.iter().map(|p| (*p).to_string()).collect()
+}
+
+/// The login page (FR-007 to FR-012). Only these settings are stored; the
+/// cookies captured from it stay in memory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LoginSettings {
+    pub login_url: String,
+    /// Plain substrings of the path and query, compared ignoring case.
+    #[serde(default = "default_sign_out_patterns")]
+    pub sign_out_patterns: Vec<String>,
+    #[serde(default)]
+    pub check: Option<SignedOutCheck>,
+}
+
+impl LoginSettings {
+    pub fn new(login_url: impl Into<String>) -> Self {
+        Self {
+            login_url: login_url.into(),
+            sign_out_patterns: default_sign_out_patterns(),
+            check: None,
+        }
+    }
+}
+
+/// How the crawl notices that the session ended (FR-012).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SignedOutCheck {
+    pub url: String,
+    pub when: CheckCondition,
+}
+
+/// The condition that means "signed out".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CheckCondition {
+    /// The check URL redirects to a URL containing this text.
+    RedirectsTo(String),
+    /// The check URL answers this status code.
+    Status(u16),
+    /// The check URL's page contains this text.
+    Contains(String),
+}
+
+/// The proxy every request goes through (FR-020 to FR-024).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ProxySettings {
+    pub mode: ProxyMode,
+    pub kind: ProxyKind,
+    pub host: String,
+    pub port: u16,
+    pub user: Option<String>,
+    #[ts(type = "{ secret: true, value?: string }")]
+    pub password: Secret,
+    /// Hosts reached directly: `localhost`, `*.example.com`, `10.0.0.0/8`.
+    pub bypass: Vec<String>,
+}
+
+impl ProxySettings {
+    /// A manual proxy with a user needs its password.
+    pub fn needs_password(&self) -> bool {
+        self.mode == ProxyMode::Manual
+            && self.user.as_deref().is_some_and(|u| !u.trim().is_empty())
+            && !self.password.is_set()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ProxyMode {
+    /// Direct connections, whatever the shell's environment says.
+    #[default]
+    None,
+    /// The operating system's settings, read when the crawl starts.
+    System,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ProxyKind {
+    #[default]
+    Http,
+    Https,
+    Socks5,
+}
+
+impl ProxyKind {
+    pub fn scheme(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+            // DNS goes through the proxy too.
+            Self::Socks5 => "socks5h",
+        }
+    }
+}
+
+/// `staging.example.com:8443` becomes `STAGING_EXAMPLE_COM_8443`: the
+/// suffix of the CLI's environment variables (data-model.md).
+pub fn env_suffix(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -810,7 +991,77 @@ impl CrawlConfig {
             .iter()
             .filter(|c| c.value.is_secret() && c.value.expose().is_none())
             .map(|c| format!("cookie:{}/{}", c.domain, c.name));
-        headers.chain(cookies).collect()
+        let sign_ins = self
+            .access
+            .sign_ins
+            .iter()
+            .filter(|s| !s.password.is_set())
+            .map(|s| format!("sign_in:{}", s.origin));
+        let proxy = self
+            .access
+            .proxy
+            .needs_password()
+            .then(|| "proxy".to_string());
+        headers.chain(cookies).chain(sign_ins).chain(proxy).collect()
+    }
+
+    /// A readable label for a [`Self::missing_secrets`] key, for prompts
+    /// and the resume dialog.
+    pub fn secret_label(&self, key: &str) -> String {
+        if let Some(origin) = key.strip_prefix("sign_in:") {
+            let user = self
+                .access
+                .sign_ins
+                .iter()
+                .find(|s| s.origin == origin)
+                .map(|s| s.user.as_str())
+                .unwrap_or_default();
+            let host = url::Url::parse(origin)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| origin.to_string());
+            return format!("Password for {host} (user {user})");
+        }
+        if key == "proxy" {
+            let p = &self.access.proxy;
+            return format!(
+                "Proxy password for user {} at {}:{}",
+                p.user.as_deref().unwrap_or_default(),
+                p.host,
+                p.port
+            );
+        }
+        if let Some(rest) = key.strip_prefix("cookie:")
+            && let Some((domain, name)) = rest.rsplit_once('/')
+        {
+            return format!("Value of cookie {name} for {domain}");
+        }
+        format!("Value of header {key}")
+    }
+
+    /// The CLI's environment variable for a [`Self::missing_secrets`] key
+    /// (contracts/cli.md).
+    pub fn secret_env_var(key: &str) -> String {
+        if let Some(origin) = key.strip_prefix("sign_in:") {
+            let host = url::Url::parse(origin)
+                .ok()
+                .map(|u| match (u.host_str(), u.port()) {
+                    (Some(h), Some(p)) => format!("{h}:{p}"),
+                    (Some(h), None) => h.to_string(),
+                    _ => origin.to_string(),
+                })
+                .unwrap_or_else(|| origin.to_string());
+            return format!("SPIDERLENS_PASSWORD_{}", env_suffix(&host));
+        }
+        if key == "proxy" {
+            return "SPIDERLENS_PROXY_PASSWORD".into();
+        }
+        if let Some(rest) = key.strip_prefix("cookie:")
+            && let Some((_, name)) = rest.rsplit_once('/')
+        {
+            return format!("SPIDERLENS_COOKIE_{}", env_suffix(name));
+        }
+        format!("SPIDERLENS_HEADER_{}", env_suffix(key))
     }
 
     /// Puts secret values back from `(key, value)` pairs keyed as in
@@ -844,6 +1095,18 @@ impl CrawlConfig {
             {
                 c.value = HeaderValue::secret(v);
             }
+        }
+        for s in &mut self.access.sign_ins {
+            if !s.password.is_set()
+                && let Some(v) = find(&format!("sign_in:{}", s.origin), false)
+            {
+                s.password = Secret::new(v);
+            }
+        }
+        if self.access.proxy.needs_password()
+            && let Some(v) = find("proxy", false)
+        {
+            self.access.proxy.password = Secret::new(v);
         }
         self.missing_secrets()
     }
@@ -1248,6 +1511,40 @@ mod tests {
         assert!(left.is_empty());
         assert_eq!(c.access.cookies[0].value.expose(), Some("v"));
         assert!(!serde_json::to_string(&c).unwrap().contains("\"v\""));
+    }
+
+    #[test]
+    fn sign_in_and_proxy_passwords_are_listed_filled_and_never_written() {
+        let mut c: CrawlConfig = serde_json::from_value(json!({
+            "access": {
+                "sign_ins": [{"origin": "https://staging.example.com:8443", "user": "ann", "password": {"secret": true}}],
+                "proxy": {"mode": "manual", "host": "proxy.corp", "port": 8080, "user": "ann", "password": {"secret": true}},
+                "login": {"login_url": "https://example.com/login"}
+            }
+        }))
+        .unwrap();
+        assert_eq!(c.access.sign_ins[0].method, AuthMethod::Any);
+        assert_eq!(c.access.login.as_ref().unwrap().sign_out_patterns.len(), 6);
+        assert_eq!(c.missing_secrets(), ["sign_in:https://staging.example.com:8443", "proxy"]);
+        assert_eq!(
+            CrawlConfig::secret_env_var("sign_in:https://staging.example.com:8443"),
+            "SPIDERLENS_PASSWORD_STAGING_EXAMPLE_COM_8443"
+        );
+        assert_eq!(CrawlConfig::secret_env_var("proxy"), "SPIDERLENS_PROXY_PASSWORD");
+        assert_eq!(
+            c.secret_label("sign_in:https://staging.example.com:8443"),
+            "Password for staging.example.com (user ann)"
+        );
+        let left = c.fill_secrets(&[
+            ("sign_in:https://staging.example.com:8443".into(), "pw-site".into()),
+            ("proxy".into(), "pw-proxy".into()),
+        ]);
+        assert!(left.is_empty());
+        assert_eq!(c.access.sign_ins[0].password.expose(), Some("pw-site"));
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("pw-site") && !json.contains("pw-proxy"));
+        let back: CrawlConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.missing_secrets().len(), 2);
     }
 
     #[test]
