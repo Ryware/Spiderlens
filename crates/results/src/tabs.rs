@@ -32,6 +32,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Forms, actions and agent links (spec 016).
+    Agents,
     /// AMP checks (spec 027 part E).
     Amp,
     /// What was read from PDFs (spec 027 part C).
@@ -66,6 +68,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Agents => {
+                "Forms and actions were not collected in this crawl file; it was made before SpiderLens checked agent readiness."
+            }
             Self::Amp => "This crawl did not check AMP. Turn on Check AMP in the crawl settings to check it.",
             Self::Pdf => {
                 "This crawl did not read PDFs. Turn on Crawl PDFs in the crawl settings to read them."
@@ -94,6 +99,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Agents => "agents",
             Self::Amp => "amp",
             Self::Pdf => "pdf",
             Self::Readability => "readability",
@@ -397,7 +403,7 @@ const H1_1: &str = "(SELECT p.h1_1 FROM pages p WHERE p.url_id = u.id)";
 const IMG_ALT: &str =
     "(SELECT l.alt FROM links l WHERE l.to_id = u.id AND l.kind = 'image' ORDER BY l.rowid LIMIT 1)";
 
-const fn col(
+pub(crate) const fn col(
     id: &'static str,
     label: &'static str,
     expr: &'static str,
@@ -419,11 +425,11 @@ const fn col(
 }
 
 impl ColumnDef {
-    const fn hidden(mut self) -> Self {
+    pub(crate) const fn hidden(mut self) -> Self {
         self.default_visible = false;
         self
     }
-    const fn needs(mut self, need: Need) -> Self {
+    pub(crate) const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
     }
@@ -541,7 +547,7 @@ const fn amp_filter(id: &'static str, label: &'static str, cond: &'static str) -
     filter(id, label, cond).needs(Need::Amp)
 }
 
-const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+pub(crate) const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     FilterDef {
         id: Cow::Borrowed(id),
         label: Cow::Borrowed(label),
@@ -579,7 +585,7 @@ impl FilterDef {
         self.hide_when_empty = Some(true);
         self
     }
-    const fn needs(mut self, need: Need) -> Self {
+    pub(crate) const fn needs(mut self, need: Need) -> Self {
         self.need = need;
         self
     }
@@ -1760,6 +1766,7 @@ fn build_tabs() -> Vec<TabDef> {
             ],
             "meta_robots",
         ),
+        crate::agents::tab(),
         TabDef {
             id: Cow::Borrowed("search-console"),
             title: Cow::Borrowed("Search Console"),
@@ -2214,7 +2221,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 17);
+        assert_eq!(tab_ids.len(), 18);
     }
 
     #[test]

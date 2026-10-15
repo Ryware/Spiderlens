@@ -14,6 +14,7 @@ use scraper::node::Element;
 use scraper::{Html, HtmlTreeSink, Node};
 use url::Url;
 
+use super::agents::{AgentCtx, Collector};
 use super::a11y::A11yCollector;
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
@@ -66,6 +67,7 @@ struct Ctx {
     in_body: bool,
     noscript: bool,
     in_item: bool,
+    agent: AgentCtx,
 }
 
 /// Text being collected for an element that is still open.
@@ -90,6 +92,7 @@ struct Walker<'p> {
     visible: String,
     anchor: Option<Open>,
     heading: Option<Open>,
+    agents: Collector,
     /// Record the element each reference came from (spec 023 link
     /// positions, after the crawl only).
     track: bool,
@@ -133,6 +136,7 @@ pub(super) fn walk_doc(
         visible: String::new(),
         anchor: None,
         heading: None,
+        agents: Collector::default(),
         track,
         at: None,
         nodes: Vec::new(),
@@ -204,6 +208,7 @@ pub(super) fn walk_doc(
             .ok()
             .flatten();
     }
+    w.data.agents = w.agents.finish(&doc);
     (doc, w.data, w.nodes)
 }
 
@@ -369,6 +374,9 @@ impl Walker<'_> {
             self.at = Some(node.id());
         }
         let name = e.name.local.clone();
+        if name != local_name!("template") {
+            ctx.agent = self.agents.enter(node, e, ctx.agent);
+        }
         let inline = is_inline(&name);
         if !inline {
             self.separate();

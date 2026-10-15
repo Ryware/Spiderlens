@@ -255,6 +255,12 @@ pub const STEPS: &[Step] = &[
     );
     CREATE INDEX amp_checks_url ON amp_checks(url_id, check_id);",
     },
+    Step {
+        // Spec 016: forms, actions, agent entry points and agent readiness scores.
+        version: 15,
+        additive: true,
+        sql: AGENTS,
+    },
 ];
 
 const AEO_TABLES: &str = r#"
@@ -519,6 +525,106 @@ pub(crate) const CUSTOM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS custom_rules 
         url_id INTEGER PRIMARY KEY,
         data BLOB NOT NULL
     );";
+
+
+/// Spec 016 data-model.md. `source` is `raw` or `rendered` (spec 014).
+const AGENTS: &str = "
+CREATE TABLE page_agent (
+    url_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    forms INTEGER NOT NULL,
+    search_forms INTEGER NOT NULL,
+    fields INTEGER NOT NULL,
+    unlabelled_fields INTEGER NOT NULL,
+    placeholder_only_fields INTEGER NOT NULL,
+    nameless_buttons INTEGER NOT NULL,
+    actions_without_link INTEGER NOT NULL,
+    challenges INTEGER NOT NULL,
+    forms_without_submit INTEGER NOT NULL,
+    declared_tools INTEGER NOT NULL,
+    tools_missing_description INTEGER NOT NULL,
+    md_alternate TEXT,
+    md_status INTEGER,
+    md_outcome TEXT,
+    PRIMARY KEY (url_id, source)
+) WITHOUT ROWID;
+CREATE TABLE page_forms (
+    url_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    pos INTEGER NOT NULL,
+    method TEXT NOT NULL,
+    action TEXT,
+    is_search INTEGER NOT NULL,
+    has_submit INTEGER NOT NULL,
+    field_count INTEGER NOT NULL,
+    challenge TEXT,
+    tool_name TEXT,
+    tool_description TEXT,
+    tool_autosubmit INTEGER,
+    PRIMARY KEY (url_id, source, pos)
+) WITHOUT ROWID;
+CREATE TABLE form_fields (
+    url_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    pos INTEGER NOT NULL,
+    form_pos INTEGER,
+    name TEXT,
+    kind TEXT NOT NULL,
+    required INTEGER NOT NULL,
+    accessible_name TEXT,
+    name_source TEXT NOT NULL,
+    description TEXT,
+    tool_param_description TEXT,
+    PRIMARY KEY (url_id, source, pos)
+) WITHOUT ROWID;
+CREATE TABLE page_actions (
+    url_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    pos INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (url_id, source, pos)
+) WITHOUT ROWID;
+CREATE TABLE agent_links (
+    url_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    pos INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    href TEXT NOT NULL,
+    via TEXT NOT NULL,
+    PRIMARY KEY (url_id, source, pos)
+) WITHOUT ROWID;
+CREATE TABLE agent_entry_points (
+    id INTEGER PRIMARY KEY,
+    host_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    url TEXT NOT NULL,
+    found_via TEXT NOT NULL,
+    found_on INTEGER,
+    status INTEGER,
+    outcome TEXT NOT NULL,
+    content_type TEXT,
+    size INTEGER,
+    convention_version TEXT,
+    problems TEXT,
+    summary TEXT,
+    mcp_discovery TEXT
+);
+CREATE INDEX agent_entry_points_host ON agent_entry_points(host_key, kind);
+CREATE TABLE agent_scores (
+    url_id INTEGER,
+    total REAL,
+    access REAL,
+    discovery REAL,
+    reading REAL,
+    acting REAL,
+    not_checked INTEGER NOT NULL,
+    failed_rules TEXT NOT NULL,
+    weights_version INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX agent_scores_url ON agent_scores(url_id);
+CREATE UNIQUE INDEX agent_scores_crawl ON agent_scores((url_id IS NULL)) WHERE url_id IS NULL;
+";
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();

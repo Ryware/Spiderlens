@@ -8,6 +8,7 @@
 //! temporary table on disk and hand out one page of rows at a time (plan D4,
 //! constitution principle VI).
 
+pub mod agents;
 pub mod analysis;
 mod cookies;
 pub mod bulk;

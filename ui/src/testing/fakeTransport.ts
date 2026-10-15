@@ -10,6 +10,8 @@ import type { SitemapFiles } from "../generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeAgentsTransport, type FakeAssistants } from "./fakeAgents";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
@@ -267,6 +269,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants } {
 ): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
@@ -326,9 +329,14 @@ export function fakeTransport(
   const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const agentsApi = fakeAgentsTransport(
+    () => resultsApi.results.urls,
+    () => resultsApi.results.features,
+  );
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
+    ...agentsApi,
     ...compareApi,
     ...fakeCustomTransport(),
     ...integrationsApi,
@@ -343,7 +351,7 @@ export function fakeTransport(
     crawls,
     picks,
     sitemaps,
-    pickFolder: async () => picks.folder,
+    pickFolder: async () => picks.folder ?? (await agentsApi.pickFolder()),
     sitemapFiles: async () => structuredClone(sitemaps.files),
     sitemapPreview: async (_path, options, folder) => {
       sitemaps.previews += 1;

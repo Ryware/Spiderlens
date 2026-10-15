@@ -96,6 +96,8 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Serve crawl files to AI assistants over MCP (standard input and output).
+    Mcp(McpCmd),
     /// What changed between two crawl files of a site.
     Compare(Box<compare_cmd::CompareArgs>),
     /// List the issue rules: what each checks, why it matters, how to fix.
@@ -141,6 +143,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// `spiderlens mcp` (spec 016 contracts/cli.md). Without flags, access
+/// comes from the desktop app's Settings › AI assistants.
+#[derive(Args)]
+struct McpCmd {
+    /// Allow reading crawls for this process only.
+    #[arg(long)]
+    allow_read: bool,
+    /// Also allow crawl files in this folder, for this process only.
+    #[arg(long, value_name = "DIR")]
+    folder: Vec<PathBuf>,
+    /// Print the server name, access and tool list as JSON, then exit.
+    #[arg(long)]
+    self_test: bool,
 }
 
 #[derive(Subcommand)]
@@ -228,6 +245,11 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Mcp(args) => ExitCode::from(spiderlens_mcp::run(spiderlens_mcp::McpArgs {
+            allow_read: args.allow_read,
+            folders: args.folder,
+            self_test: args.self_test,
+        }) as u8),
         Command::Compare(args) => compare_cmd::run_compare(*args),
         Command::Rules(args) => issues_cmd::run_rules(args),
         Command::Issues(args) => issues_cmd::run_issues(*args),

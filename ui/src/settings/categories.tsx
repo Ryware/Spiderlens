@@ -20,7 +20,7 @@ import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "appearance" | "assistants";
 
 export interface Category {
   id: CategoryId;
@@ -64,6 +64,13 @@ export const categories: Category[] = [
     id: "appearance",
     title: "Appearance",
     description: "Brightness and accent colour. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
+  {
+    id: "assistants",
+    title: "AI assistants",
+    description: "Let assistants such as Claude read your crawls through SpiderLens's local MCP server. Saved on this computer.",
     prefixes: [],
     app: true,
   },

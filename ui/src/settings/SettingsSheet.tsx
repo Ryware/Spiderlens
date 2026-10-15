@@ -7,6 +7,7 @@ import { categories, CategoryBody, type CategoryId, issuesFor, liveCategories } 
 import { IssueList } from "./fields";
 import { ProfilePicker } from "./ProfilePicker";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { AssistantsSettings } from "./AssistantsSettings";
 import type { Appearance, Level } from "../shell/appearance";
 
 /**
@@ -124,6 +125,8 @@ export function SettingsSheet({
             <IssueList issues={general} />
             {current.id === "appearance" ? (
               <AppearanceSettings appearance={appearance} level={level} systemDark={systemDark} onChange={onAppearance} />
+            ) : current.id === "assistants" ? (
+              <AssistantsSettings transport={transport} />
             ) : (
               <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
                 <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} crawlRunning={crawlRunning} />

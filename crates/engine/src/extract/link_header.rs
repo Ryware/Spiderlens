@@ -3,6 +3,7 @@
 //!
 //! `Link: <https://a.test/p>; rel="canonical", <...>; rel="alternate"; hreflang="de"`
 
+use super::agents::{AgentLink, AgentLinkKind};
 use super::{Ref, RefSource};
 use crate::crawl::LinkKind;
 
@@ -28,46 +29,81 @@ pub(super) fn link_kind(rel: Option<&str>, has_hreflang: bool) -> Option<LinkKin
     }
 }
 
-pub(super) fn parse(value: &str) -> Vec<Ref> {
+/// One `Link` entry: target, rel, hreflang and type.
+struct Entry<'a> {
+    target: &'a str,
+    rel: Option<String>,
+    hreflang: Option<String>,
+    mime: Option<String>,
+}
+
+fn entries(value: &str) -> Vec<Entry<'_>> {
     // Entries are separated by commas; a comma not followed by `<` belongs
     // to a parameter value.
-    let mut parts: Vec<String> = Vec::new();
-    for piece in value.split(',') {
-        match parts.last_mut() {
-            Some(last) if !piece.trim_start().starts_with('<') => {
-                last.push(',');
-                last.push_str(piece);
-            }
-            _ => parts.push(piece.trim_start().to_string()),
+    let mut parts: Vec<&str> = Vec::new();
+    let mut start = 0;
+    for (i, _) in value.match_indices(',') {
+        if value[i + 1..].trim_start().starts_with('<') {
+            parts.push(&value[start..i]);
+            start = i + 1;
         }
     }
+    parts.push(&value[start..]);
     let mut out = Vec::new();
-    for part in parts.iter().map(|p| p.trim_start_matches('<')) {
+    for part in parts.iter().map(|p| p.trim_start().trim_start_matches('<')) {
         let Some((target, params)) = part.split_once('>') else {
             continue;
         };
-        let mut rel = None;
-        let mut hreflang = None;
+        let mut e = Entry {
+            target: target.trim(),
+            rel: None,
+            hreflang: None,
+            mime: None,
+        };
         for p in params.split(';') {
             let Some((k, v)) = p.split_once('=') else { continue };
             let v = v.trim().trim_matches('"');
             match k.trim().to_ascii_lowercase().as_str() {
-                "rel" => rel = Some(v.to_string()),
-                "hreflang" => hreflang = Some(v.to_string()),
+                "rel" => e.rel = Some(v.to_string()),
+                "hreflang" => e.hreflang = Some(v.to_string()),
+                "type" => e.mime = Some(v.to_string()),
                 _ => {}
             }
         }
-        let Some(kind) = link_kind(rel.as_deref(), hreflang.is_some()) else {
+        out.push(e);
+    }
+    out
+}
+
+pub(super) fn parse(value: &str) -> Vec<Ref> {
+    let mut out = Vec::new();
+    for e in entries(value) {
+        let Some(kind) = link_kind(e.rel.as_deref(), e.hreflang.is_some()) else {
             continue;
         };
-        let mut r = Ref::new(kind, target.trim(), RefSource::Header);
-        r.rel = rel;
+        let mut r = Ref::new(kind, e.target, RefSource::Header);
+        r.rel = e.rel;
         if kind == LinkKind::Hreflang {
-            r.lang = hreflang;
+            r.lang = e.hreflang;
         }
         out.push(r);
     }
     out
+}
+
+/// Markdown alternates and service links (spec 016), which are not crawl
+/// links.
+pub(super) fn parse_agent(value: &str) -> Vec<AgentLink> {
+    entries(value)
+        .into_iter()
+        .filter_map(|e| {
+            Some(AgentLink {
+                kind: AgentLinkKind::from_rel(e.rel.as_deref(), e.mime.as_deref())?,
+                href: e.target.to_string(),
+                source: RefSource::Header,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -92,6 +128,21 @@ mod tests {
             ]
         );
         assert!(got.iter().all(|r| r.source == RefSource::Header));
+    }
+
+    #[test]
+    fn agent_links() {
+        let got = parse_agent(
+            r#"</p.md>; rel="alternate"; type="text/markdown", </openapi.json>; rel="service-desc", </c>; rel=canonical"#,
+        );
+        let kinds: Vec<_> = got.iter().map(|l| (l.kind, l.href.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [
+                (AgentLinkKind::MarkdownAlternate, "/p.md"),
+                (AgentLinkKind::ServiceDesc, "/openapi.json"),
+            ]
+        );
     }
 
     #[test]

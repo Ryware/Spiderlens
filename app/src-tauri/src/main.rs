@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod assistants;
 mod aeo;
 mod compare;
 mod crawl;
@@ -32,6 +33,19 @@ fn build_info() -> BuildInfo {
 const SMOKE_TEST_ENV: &str = "SPIDERLENS_SMOKE_TEST";
 
 fn main() {
+    // AI assistants start the app's executable with `mcp` (spec 016 plan
+    // D8): serve MCP on standard input and output, with no window.
+    let mut args = std::env::args_os().skip(1);
+    if args.next().is_some_and(|a| a == "mcp") {
+        let code = match spiderlens_mcp::McpArgs::parse(args) {
+            Ok(a) => spiderlens_mcp::run(a),
+            Err(e) => {
+                eprintln!("spiderlens mcp: {e}");
+                2
+            }
+        };
+        std::process::exit(code);
+    }
     // The system scheduler starts the app with these flags; no window opens
     // (spec 021 plan D1).
     let args: Vec<String> = std::env::args().collect();
@@ -50,6 +64,10 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(assistants::State::new(spiderlens_config::AppDirs {
+                config: app.path().app_config_dir()?,
+                data: app.path().app_data_dir()?,
+            }));
             app.manage(spelling::State::default());
             app.manage(compare::State::default());
             app.manage(custom::State::default());
@@ -140,6 +158,12 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::agents_page,
+            assistants::assistants_get,
+            assistants::assistants_set,
+            assistants::assistants_test,
+            assistants::assistants_activity,
+            assistants::assistants_activity_clear,
             results::viz_scene,
             results::viz_term_links,
             results::viz_export,

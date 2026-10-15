@@ -356,6 +356,18 @@ pub async fn url_detail(state: tauri::State<'_, State>, path: PathBuf, id: i64) 
     state.with(&path, move |r| r.detail(id).map_err(err)).await
 }
 
+/// One page's agent findings, for the detail pane (spec 016 FR-019).
+#[tauri::command]
+pub async fn agents_page(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    id: i64,
+) -> Cmd<spiderlens_results::agents::PageAgentFindings> {
+    state
+        .with(&path, move |r| r.agent_findings(id).map_err(err))
+        .await
+}
+
 #[tauri::command]
 pub async fn url_list(
     state: tauri::State<'_, State>,

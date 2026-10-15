@@ -15,7 +15,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 pub mod custom;
 
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
-use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
+use crate::extract::agents::{AgentLink, AgentLinkKind, FormMethod};
+use crate::extract::{AgentData, Directive, PageData, Ref, RefSource, body, text};
 
 pub const FORMAT: &str = "spiderlens-crawl";
 /// 2: page data extraction (spec 005). 3 and later: the steps in
@@ -458,6 +459,22 @@ pub struct NewLink<'a> {
     pub context: Option<&'a Ref>,
 }
 
+/// Which version of a page agent data came from (spec 016, spec 014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSource {
+    Raw,
+    Rendered,
+}
+
+impl AgentSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Rendered => "rendered",
+        }
+    }
+}
+
 /// Extracted data for one HTML page, for [`CrawlStore::record_page`].
 pub struct PageRecord<'a> {
     /// None when extraction failed.
@@ -465,6 +482,8 @@ pub struct PageRecord<'a> {
     pub extract_error: Option<&'a str>,
     /// Compressed body and its uncompressed size.
     pub html: Option<(&'a [u8], usize)>,
+    /// Agent links from the `Link` response header (spec 016).
+    pub header_agent_links: &'a [AgentLink],
 }
 
 /// Totals from [`CrawlStore::counts`].
@@ -1107,6 +1126,9 @@ impl CrawlStore {
                 )?
                 .execute(params![id, f.kind, f.version, f.data])?;
         }
+        if page.data.is_some() {
+            self.record_agents(id, AgentSource::Raw, &d.agents, page.header_agent_links)?;
+        }
         Ok(())
     }
 
@@ -1147,6 +1169,137 @@ impl CrawlStore {
                     "INSERT OR REPLACE INTO bodies (url_id, codec, size, body) VALUES (?1, ?2, ?3, ?4)",
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
+        }
+        Ok(())
+    }
+
+    /// Stores one page's forms, fields, actions and agent links (spec 016
+    /// data-model.md), replacing any earlier rows for the same source.
+    pub fn record_agents(
+        &self,
+        id: i64,
+        source: AgentSource,
+        a: &AgentData,
+        header_links: &[AgentLink],
+    ) -> Result<()> {
+        let src = source.as_str();
+        // Most pages are stored once; four deletes on every page halved crawl
+        // speed (spec 008 benchmark), so they run only when an earlier
+        // record exists.
+        let earlier = self
+            .conn
+            .prepare_cached("SELECT 1 FROM page_agent WHERE url_id = ?1 AND source = ?2")?
+            .exists(params![id, src])?;
+        if earlier {
+            for table in ["page_forms", "form_fields", "page_actions", "agent_links"] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} WHERE url_id = ?1 AND source = ?2"))?
+                    .execute(params![id, src])?;
+            }
+        }
+        let links: Vec<&AgentLink> = a.links.iter().chain(header_links).collect();
+        let md = links
+            .iter()
+            .find(|l| l.kind == AgentLinkKind::MarkdownAlternate)
+            .map(|l| l.href.as_str());
+        let tools = a.forms.iter().filter_map(|f| f.tool.as_ref().map(|t| (f, t)));
+        let tools_missing = tools.filter(|(_, t)| t.description.is_none()).count()
+            + a.forms
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| {
+                    f.tool.as_ref().is_some_and(|t| t.description.is_some())
+                        && a.fields
+                            .iter()
+                            .any(|x| x.form == Some(*i as u16) && x.tool_param_description.is_none())
+                })
+                .count();
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO page_agent (url_id, source, forms, search_forms, fields,
+                 unlabelled_fields, placeholder_only_fields, nameless_buttons, actions_without_link,
+                 challenges, forms_without_submit, declared_tools, tools_missing_description, md_alternate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            )?
+            .execute(params![
+                id,
+                src,
+                a.forms.len() as i64,
+                a.forms.iter().filter(|f| f.is_search).count() as i64,
+                a.fields.len() as i64,
+                a.unlabelled_fields(),
+                a.placeholder_only_fields(),
+                a.nameless_buttons,
+                a.actions_total,
+                a.forms.iter().filter(|f| f.challenge.is_some()).count() as i64,
+                a.forms
+                    .iter()
+                    .filter(|f| !f.has_submit && f.method != FormMethod::Dialog)
+                    .count() as i64,
+                a.forms.iter().filter(|f| f.tool.is_some()).count() as i64,
+                tools_missing as i64,
+                md,
+            ])?;
+        let mut form = self.conn.prepare_cached(
+            "INSERT INTO page_forms (url_id, source, pos, method, action, is_search, has_submit,
+             field_count, challenge, tool_name, tool_description, tool_autosubmit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for (pos, f) in a.forms.iter().enumerate() {
+            let fields = a.fields.iter().filter(|x| x.form == Some(pos as u16)).count();
+            form.execute(params![
+                id,
+                src,
+                pos as i64,
+                f.method.as_str(),
+                f.action,
+                f.is_search,
+                f.has_submit,
+                fields as i64,
+                f.challenge,
+                f.tool.as_ref().map(|t| t.name.as_str()),
+                f.tool.as_ref().and_then(|t| t.description.as_deref()),
+                f.tool.as_ref().map(|t| t.autosubmit),
+            ])?;
+        }
+        let mut field = self.conn.prepare_cached(
+            "INSERT INTO form_fields (url_id, source, pos, form_pos, name, kind, required,
+             accessible_name, name_source, description, tool_param_description)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        for (pos, x) in a.fields.iter().enumerate() {
+            field.execute(params![
+                id,
+                src,
+                pos as i64,
+                x.form,
+                x.name,
+                x.kind,
+                x.required,
+                x.accessible_name,
+                x.name_source.as_str(),
+                x.description,
+                x.tool_param_description,
+            ])?;
+        }
+        let mut action = self.conn.prepare_cached(
+            "INSERT INTO page_actions (url_id, source, pos, kind, text) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (pos, x) in a.actions.iter().enumerate() {
+            action.execute(params![id, src, pos as i64, x.kind.as_str(), x.text])?;
+        }
+        let mut link = self.conn.prepare_cached(
+            "INSERT INTO agent_links (url_id, source, pos, kind, href, via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (pos, l) in links.iter().enumerate() {
+            link.execute(params![
+                id,
+                src,
+                pos as i64,
+                l.kind.as_str(),
+                l.href,
+                l.source.as_str()
+            ])?;
         }
         Ok(())
     }

@@ -796,9 +796,9 @@ impl Crawler {
         }
         // What readers will find in this file (spec 007 plan D3).
         let mut features = String::from(if config.extraction.store_html {
-            "extraction,timing,attempts,raw_html,readability,sitemap_entries"
+            "extraction,timing,attempts,raw_html,readability,sitemap_entries,agents"
         } else {
-            "extraction,timing,attempts,readability,sitemap_entries"
+            "extraction,timing,attempts,readability,sitemap_entries,agents"
         });
         if config.extraction.pdf.crawl {
             features.push_str(",pdf");
@@ -2987,6 +2987,7 @@ impl Run {
                             data: p.data.as_ref().ok(),
                             extract_error: p.data.as_ref().err().map(String::as_str),
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+                            header_agent_links: &o.header_facts.agent_links,
                         },
                     )?;
                     if self.c.config.extraction.check_amp

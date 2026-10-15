@@ -64,6 +64,7 @@ impl Features {
             Need::Attempts,
             Need::Timing,
             Need::RawHtml,
+            Need::Agents,
             Need::Amp,
             Need::Pdf,
             Need::Readability,

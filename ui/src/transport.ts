@@ -54,6 +54,10 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantSettings } from "./generated/AssistantSettings";
+import type { AssistantSnippet } from "./generated/AssistantSnippet";
+import type { PageAgentFindings } from "./generated/PageAgentFindings";
 import type { CompareSettings } from "./generated/CompareSettings";
 import type { ComparisonReport } from "./generated/ComparisonReport";
 import type { ElementDelta } from "./generated/ElementDelta";
@@ -552,6 +556,24 @@ export interface ExportProgress {
   path: string;
 }
 
+/** Settings › AI assistants (spec 016): the saved switches, this app's
+ * program file and the configuration snippets that start it as an MCP server. */
+export interface AssistantsView {
+  settings: AssistantSettings;
+  executable: string;
+  snippets: AssistantSnippet[];
+}
+
+/** What `<app> mcp --self-test` printed: the tools an assistant would see. */
+export interface McpSelfTest {
+  server: string;
+  version: string;
+  protocol: string;
+  read_access: boolean;
+  crawl_access: boolean;
+  tools: string[];
+}
+
 /** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
 export interface CompareProgress {
   comparison: number;
@@ -786,6 +808,15 @@ export interface Transport {
   positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // AI agents (spec 016, contracts/desktop-commands.md).
+  agentsPage(path: string, id: number): Promise<PageAgentFindings>;
+  assistantsGet(): Promise<AssistantsView>;
+  /** Rejects with a sentence when a folder does not exist. */
+  assistantsSet(settings: AssistantSettings): Promise<AssistantSettings>;
+  /** Rejects with a sentence when the server does not start or answer. */
+  assistantsTest(): Promise<McpSelfTest>;
+  assistantsActivity(limit: number): Promise<ActivityEntry[]>;
+  assistantsActivityClear(): Promise<void>;
 
   // Spelling (spec 027 part D)
   spellDictionaries(): Promise<Dictionaries>;
@@ -1033,6 +1064,12 @@ export const tauriTransport: Transport = {
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  agentsPage: (path, id) => invoke("agents_page", { path, id }),
+  assistantsGet: () => invoke("assistants_get"),
+  assistantsSet: (settings) => invoke("assistants_set", { settings }),
+  assistantsTest: () => invoke("assistants_test"),
+  assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
+  assistantsActivityClear: () => invoke("assistants_activity_clear"),
   spellDictionaries: () => invoke("spell_dictionaries"),
   spellDownload: (lang) => invoke("spell_download", { lang }),
   pickDictionaryFiles: async () => {

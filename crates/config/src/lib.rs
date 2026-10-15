@@ -4,6 +4,7 @@
 //! crawl store. Validation lives here too, so every surface reports the same
 //! issues. This crate has no dependency on the desktop shell.
 
+mod assistants;
 pub mod ai_bots;
 mod compare;
 pub mod custom;
@@ -24,6 +25,7 @@ mod stored;
 mod url_norm;
 mod validate;
 
+pub use assistants::{APP_IDENTIFIER, AppDirs, AssistantSettings, AssistantStore};
 pub use compare::{CompareSettings, CompareSettingsError, ElementSetting, IssueSettingsChoice, MapRule};
 pub use custom::{
     CustomRules, ElementKind, ElementLimit, ExtractMode, Extractor, ExtractorKind, Search, SearchCondition,
