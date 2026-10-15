@@ -296,9 +296,15 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       };
       return d;
     },
-    urlList: async (_p, id, kind, from) =>
+    urlList: async (_p, id, kind, from, _count, position) =>
       kind === "inlinks"
-        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" }].filter(() => id !== -1), headings: [], unavailable: null }
+        ? (() => {
+            const rows = [
+              { id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" },
+              { id: 2, url: results.urls[1 % results.urls.length].url, raw: "/story", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Read on", sponsored: false, ugc: false, position: "content" },
+            ].filter((r) => id !== -1 && (!position || r.position === position));
+            return { total: rows.length, from, rows, headings: [], unavailable: null };
+          })()
         : kind === "headings"
           ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
           : kind === "images"

@@ -132,6 +132,10 @@ async fn positions_filter_tester_and_weighting() {
     let home = id(&c, "/");
     let before = r.list(home, ListKind::Outlinks, 0, 100).unwrap();
     assert!(before.rows.iter().all(|l| l.position.is_none()));
+    assert!(matches!(
+        r.list_at(home, ListKind::Outlinks, Some("footer"), 0, 100),
+        Err(spiderlens_results::Error::Unavailable(_))
+    ));
     let run = r.analyse().unwrap();
     assert_eq!(run.pages_without_html, 0);
     assert!(!run.weighted);
@@ -142,6 +146,34 @@ async fn positions_filter_tester_and_weighting() {
     assert_eq!(by_raw("/promo").as_deref(), Some("navigation"), "custom rule");
     assert_eq!(by_raw("/story").as_deref(), Some("content"));
     assert_eq!(by_raw("/legal").as_deref(), Some("footer"));
+
+    // FR-024: the lists filter by position, with totals to match.
+    let nav = r
+        .list_at(home, ListKind::Outlinks, Some("navigation"), 0, 100)
+        .unwrap();
+    let mut raws: Vec<_> = nav.rows.iter().map(|l| l.raw.as_str()).collect();
+    raws.sort();
+    assert_eq!(raws, ["/news", "/promo"]);
+    assert_eq!(nav.total, 2);
+    let story = id(&c, "/story");
+    let content = r
+        .list_at(story, ListKind::Inlinks, Some("content"), 0, 100)
+        .unwrap();
+    assert_eq!(content.total, 2, "from / and /news");
+    assert!(
+        content
+            .rows
+            .iter()
+            .all(|l| l.position.as_deref() == Some("content"))
+    );
+    assert_eq!(
+        r.list_at(story, ListKind::Inlinks, Some("footer"), 0, 100)
+            .unwrap()
+            .total,
+        0
+    );
+    assert!(r.list_at(home, ListKind::Outlinks, Some("menu"), 0, 100).is_err());
+    assert!(r.list_at(home, ListKind::Images, Some("footer"), 0, 100).is_err());
 
     // US4 filter: every page but /story is linked only from boilerplate.
     assert_eq!(

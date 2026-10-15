@@ -7,7 +7,7 @@ import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
-import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
+import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, Select, type Tone } from "../components/ui";
 import { AiPageSection } from "./AiPageSection";
 import { CookieFlags, expiresText } from "./CookiesView";
 import { cellTone, formatBytes, toneText } from "./format";
@@ -149,34 +149,67 @@ const positionLabel: Record<string, string> = {
   unknown: "Position unknown",
 };
 
+/** Filter by position on the Inlinks and Outlinks lists (FR-024). */
+function PositionFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <Select aria-label="Link position" className="mb-1 w-44 self-start" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">All positions</option>
+      {Object.entries(positionLabel).map(([v, label]) => (
+        <option key={v} value={v}>
+          {v === "unknown" ? "Unknown" : label}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 function LinkList({ transport, path, id, kind, total, actions }: { transport: Transport; path: string; id: number; kind: ListKind; total: number; actions: RowActions }) {
   const [page, setPage] = useState<ListPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [position, setPosition] = useState("");
+  // Positions exist once Crawl Analysis has worked them out; the filter
+  // shows from then on, even when it leaves the list empty.
+  // Keyed by URL and list, so both reset when either changes.
+  const [positioned, setPositioned] = useState(false);
   useEffect(() => {
     let off = false;
     setPage(null);
     setError(null);
-    transport.urlList(path, id, kind, 0, LIST_PAGE).then(
-      (p) => !off && setPage(p),
+    transport.urlList(path, id, kind, 0, LIST_PAGE, position || null).then(
+      (p) => {
+        if (off) return;
+        setPage(p);
+        if (p.rows.some((r) => r.position !== null)) setPositioned(true);
+      },
       (e) => !off && setError(String(e)),
     );
     return () => {
       off = true;
     };
-  }, [transport, path, id, kind]);
+  }, [transport, path, id, kind, position]);
   const more = () =>
     page &&
-    transport.urlList(path, id, kind, page.rows.length, LIST_PAGE).then(
+    transport.urlList(path, id, kind, page.rows.length, LIST_PAGE, position || null).then(
       (p) => setPage({ ...p, from: 0, rows: [...page.rows, ...p.rows], headings: [...page.headings, ...p.headings] }),
       (e) => setError(String(e)),
     );
+  const filter = positioned && (kind === "inlinks" || kind === "outlinks") && <PositionFilter value={position} onChange={setPosition} />;
   if (error) return <Notice kind="bad">{error}</Notice>;
   if (!page) return <div className="text-sm text-fg-3">Loading…</div>;
   if (page.unavailable) return <div className="text-sm text-fg-3">{page.unavailable}</div>;
   const shown = kind === "headings" ? page.headings.length : page.rows.length;
-  if (shown === 0) return <div className="text-sm text-fg-3">None.</div>;
+  // With a position chosen, the list's own total is the filtered count.
+  const all = position ? page.total : total;
+  if (shown === 0)
+    return (
+      <div className="flex flex-col">
+        {filter}
+        <div className="text-sm text-fg-3">{position ? "No links at this position." : "None."}</div>
+      </div>
+    );
   return (
     <div className="flex flex-col">
+      {filter}
       {kind === "headings" ? (
         <ol className="m-0 flex list-none flex-col p-0" data-selectable>
           {page.headings.map((h, i) => (
@@ -212,9 +245,9 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
         })}
       </ul>
       )}
-      {shown < total && (
+      {shown < all && (
         <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={() => void more()}>
-          Show more ({(total - shown).toLocaleString()} left)
+          Show more ({(all - shown).toLocaleString()} left)
         </Button>
       )}
     </div>
@@ -397,7 +430,7 @@ export function Inspector({
           />
         }
       >
-        <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} actions={actions} />
+        <LinkList key={`${path}|${d.id}|${list}`} transport={transport} path={path} id={d.id} kind={list} total={counts[list]} actions={actions} />
       </Section>
 
       {d.headers.length > 0 && (

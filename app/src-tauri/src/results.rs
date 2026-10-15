@@ -265,9 +265,12 @@ pub async fn url_list(
     kind: ListKind,
     from: u32,
     count: u32,
+    position: Option<String>,
 ) -> Cmd<ListPage> {
     state
-        .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
+        .with(&path, move |r| {
+            r.list_at(id, kind, position.as_deref(), from, count).map_err(err)
+        })
         .await
 }
 

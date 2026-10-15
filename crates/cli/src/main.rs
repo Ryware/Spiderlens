@@ -8,6 +8,7 @@ mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;
+mod links_cmd;
 mod options;
 mod schedule_cmd;
 
@@ -79,6 +80,9 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Link Score and link positions of a crawl file.
+    #[command(subcommand)]
+    Links(links_cmd::LinksCommand),
     /// AI search checks (AEO and GEO) on a crawl file.
     #[command(subcommand)]
     Aeo(aeo_cmd::AeoCommand),
@@ -181,6 +185,7 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
