@@ -99,6 +99,64 @@ impl<'de> Deserialize<'de> for HeaderValue {
     }
 }
 
+/// A password or token (spec 025): like [`HeaderValue::Secret`], it is
+/// accepted on input but never serialized, redacted in `Debug` and wiped on
+/// drop. `None` means not known: loaded from a file, or not entered yet.
+#[derive(Clone, Default)]
+pub struct Secret(Option<SecretString>);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(Some(SecretString::from(value.into())))
+    }
+
+    pub fn expose(&self) -> Option<&str> {
+        self.0.as_ref().map(|s| s.expose_secret())
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "Secret([REDACTED])"
+        } else {
+            "Secret(missing)"
+        })
+    }
+}
+
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        self.expose() == other.expose()
+    }
+}
+
+impl Serialize for Secret {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // The value itself is never written.
+        Wire {
+            plain: None,
+            secret: true,
+            value: None,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let wire = Wire::deserialize(d)?;
+        if wire.plain.is_some() {
+            return Err(D::Error::custom("a secret is {\"secret\": true}, never plain"));
+        }
+        Ok(Self(wire.value.map(SecretString::from)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +176,18 @@ mod tests {
         assert_eq!(from_ui.expose(), Some("abc"));
         let from_file: HeaderValue = serde_json::from_str(r#"{"secret":true}"#).unwrap();
         assert_eq!(from_file.expose(), None);
+    }
+
+    #[test]
+    fn password_is_never_serialized() {
+        let p = Secret::new("hunter2");
+        assert_eq!(serde_json::to_string(&p).unwrap(), r#"{"secret":true}"#);
+        assert!(!format!("{p:?}").contains("hunter2"));
+        let back: Secret = serde_json::from_str(r#"{"secret":true}"#).unwrap();
+        assert!(!back.is_set());
+        let typed: Secret = serde_json::from_str(r#"{"secret":true,"value":"pw"}"#).unwrap();
+        assert_eq!(typed.expose(), Some("pw"));
+        assert!(serde_json::from_str::<Secret>(r#"{"plain":"pw"}"#).is_err());
     }
 
     #[test]

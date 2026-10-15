@@ -38,6 +38,7 @@ fn run(html: &str, rules: CustomRules) -> PageRules {
             truncated: false,
             robots_token: "spiderlens",
             a11y: false,
+            hook: None,
         },
         Some(&compiled),
     );
@@ -367,6 +368,7 @@ fn cost_by_kind() {
         truncated: false,
         robots_token: "spiderlens",
         a11y: false,
+        hook: None,
     };
     let time = |rules: Option<&CompiledRules>| {
         let n = 3_000;

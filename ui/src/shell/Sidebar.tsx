@@ -1,4 +1,5 @@
-import { Activity, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Braces, TextSearch, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
+
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -12,6 +13,7 @@ export interface NavItem {
 
 export const resultTabs: NavItem[] = [
   { id: "internal", title: "Internal", icon: Globe },
+  { id: "links", title: "Links", icon: Network },
   { id: "external", title: "External", icon: ExternalLink },
   { id: "response-codes", title: "Response codes", icon: ListOrdered },
   { id: "url", title: "URL", icon: Link2 },
@@ -22,7 +24,19 @@ export const resultTabs: NavItem[] = [
   { id: "images", title: "Images", icon: Image },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
+  { id: "search-console", title: "Search Console", icon: Search },
+  { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];
+
+/** Spec 022: pictures of the crawl, built from the same crawl file. */
+export const vizTabs: NavItem[] = [
+  { id: "crawl-tree", title: "Crawl tree", icon: GitFork },
+  { id: "directory-tree", title: "Directory tree", icon: FolderTree },
+  { id: "link-graph", title: "Link graph", icon: Waypoints },
+  { id: "anchor-text", title: "Anchor text", icon: TextQuote },
+];
+/** Reports with their own view rather than a results table (spec 025). */
+export const reportTabs: NavItem[] = [{ id: "cookies", title: "Cookies", icon: Cookie }];
 
 const later: NavItem[] = [
   { id: "ai-crawlers", title: "AI crawlers", icon: Bot, later: "M4" },
@@ -98,16 +112,22 @@ export function Sidebar({
     <nav aria-label="Sections" data-material-region className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 flex list-none flex-col gap-px p-0">
         {item({ id: "overview", title: "Overview", icon: Activity }, true)}
+        {item({ id: "schedules", title: "Schedules", icon: CalendarClock }, true)}
         {item({ id: "log", title: "Crawl log", icon: ScrollText }, results)}
       </ul>
       {heading("Crawl results")}
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
       {results && custom.length > 0 && (
         <>
           {heading("Custom")}
           <ul className="m-0 flex list-none flex-col gap-px p-0">{custom.map((t) => item({ id: t.id, title: t.title, icon: customIcon(t.id) }, true))}</ul>
         </>
       )}
+      {heading("Visualisations")}
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{vizTabs.map((t) => item(t, results))}</ul>
+      {heading("External data")}
+      <ul className="m-0 list-none p-0">{item({ id: "integrations", title: "Integrations", icon: Cable }, true)}</ul>
+
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

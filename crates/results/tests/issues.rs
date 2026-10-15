@@ -220,8 +220,18 @@ async fn us2_filters_list_exactly_the_seeded_urls_and_counts_agree() {
     let sidebar = r.tab_counts().unwrap();
     assert_eq!(sidebar.counts.len(), tabs().len());
     for tab in tabs() {
+        // Tabs whose data this crawl does not have (Search Console before a
+        // fetch, spec 024) list nothing to compare with.
+        if r.counts(&tab.id, UrlScope::All)
+            .unwrap()
+            .unavailable
+            .contains_key("all")
+        {
+            continue;
+        }
         let listed = paths(&mut r, &c, &q(&tab.id, "all")).len() as u64;
         assert_eq!(sidebar.counts[tab.id.as_ref()], listed, "{}", tab.id);
+
     }
 
     // Every available filter's count equals the rows it lists (FR-009, SC-002).
@@ -347,7 +357,7 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     // "Show in table": the tabs that list a URL, in display order.
     assert_eq!(
         &r.tabs_of(home).unwrap()[..4],
-        ["internal", "response-codes", "url", "page-titles"]
+        ["internal", "links", "response-codes", "url"]
     );
     assert_eq!(r.tabs_of(missing).unwrap(), ["internal", "response-codes", "url"]);
     let private = out

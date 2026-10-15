@@ -40,7 +40,7 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+pub(crate) fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))
@@ -149,7 +149,11 @@ pub fn write_csv(
     let custom = crate::custom::tabs(&conn)?;
     let c = compile(q, &features, &custom)?;
     let cols = pick_columns(&c.tab, columns)?;
+    let links = &features.link_settings;
     for d in &c.derived {
+        if *d == crate::tabs::Derived::LinkMetrics && links.weighting.is_some() {
+            crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
+        }
         crate::tabs::build_derived(&conn, *d, &features)?;
     }
     let mut out = BufWriter::with_capacity(1 << 16, out);

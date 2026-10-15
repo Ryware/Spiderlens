@@ -17,6 +17,7 @@ fn every_fixture_page_gives_exactly_its_findings() {
             truncated: false,
             robots_token: "SpiderLens",
             a11y: true,
+            hook: None,
         });
         let found = data.a11y.expect("checks were asked for");
         let mut got: Vec<(&str, u32)> = found
@@ -77,6 +78,7 @@ fn malformed_pages_are_safe_and_unchanged() {
             truncated: false,
             robots_token: "SpiderLens",
             a11y,
+            hook: None,
         };
         let off = extract_page(&input(false));
         let mut on = extract_page(&input(true));

@@ -31,9 +31,12 @@ regex.workspace = true
 sxd-document.workspace = true
 sxd-xpath.workspace = true
 serde_json_path.workspace = true
+cookie_store.workspace = true
+cookie.workspace = true
 fastrand.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 spiderlens-test-fixtures.workspace = true
 

@@ -264,6 +264,7 @@ fn apply_stored(rules: &CompiledRules, page: &StoredBody, token: &str) -> PageRu
         truncated: page.partial,
         robots_token: token,
         a11y: false,
+        hook: None,
     };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         extract_page_with(&input, Some(rules))
@@ -293,6 +294,7 @@ pub fn test_stored_page(
             truncated: partial,
             robots_token: "SpiderLens",
             a11y: false,
+            hook: None,
         },
         Some(rules),
     );

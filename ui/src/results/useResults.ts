@@ -72,12 +72,25 @@ export function useResults(transport: Transport, path: string | null, live: bool
     };
   }, [transport, path, live, retry]);
 
+  // The AI checks add data to the open file (spec 015): read the list again.
+  useEffect(() => {
+    if (!path) return;
+    const off = transport.onAeoFinished((f) => {
+      if (f.path === path && f.summary) setRetry((n) => n + 1);
+    });
+    return () => void off.then((f) => f());
+  }, [transport, path]);
+
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
+  /** Reads which data the file has again, after external data changed it. */
+  const reload = useCallback(() => setRetry((n) => n + 1), []);
+
   const counts = useTabCounts(transport, features ? path : null, live);
 
-  return { tabs, features, session, update, focusId, setFocusId, counts, epoch };
+  return { tabs, features, session, update, focusId, setFocusId, counts, epoch, reload };
+
 }
 
 /**

@@ -32,6 +32,7 @@ const link = (i: number, kind = "a"): LinkRow => ({
   text: null,
   sponsored: false,
   ugc: false,
+  position: null,
 });
 
 test("nothing_selected_shows_an_empty_state", () => {
@@ -153,6 +154,18 @@ test("link_list_switches_between_in_out_and_images", async () => {
   expect(within(switcher).getByRole("radio", { name: "Images 1" }).getAttribute("aria-checked")).toBe("true");
 });
 
+test("inlinks_offer_the_anchor_text_cloud", async () => {
+  const t = withDetail({ inlinks: 1, outlinks: 2, images: 0 });
+  const open = vi.fn();
+  render(<Inspector transport={t} path={PATH} id={2} onAnchorCloud={open} />);
+  await loaded();
+  fireEvent.click(await within(details()).findByRole("button", { name: "Anchor text cloud" }));
+  expect(open).toHaveBeenCalledTimes(1);
+  // Only beside the inlinks.
+  fireEvent.click(within(details()).getByRole("radio", { name: "Out 2" }));
+  expect(within(details()).queryByRole("button", { name: "Anchor text cloud" })).toBeNull();
+});
+
 test("empty_link_list_says_none", async () => {
   const t = withDetail({ inlinks: 1, outlinks: 0 });
   render(<Inspector transport={t} path={PATH} id={2} />);
@@ -168,6 +181,56 @@ test("nofollow_links_are_marked", async () => {
   await loaded();
   expect(await within(details()).findByText("nofollow")).toBeTruthy();
   expect(within(details()).getByText("not followed")).toBeTruthy();
+});
+
+test("link_positions_show_once_worked_out", async () => {
+  const t = withDetail({ inlinks: 3 });
+  t.urlList = async (_p, _id, _kind, from) => ({
+    total: 3,
+    from,
+    rows: [{ ...link(0), position: "footer" }, { ...link(1), position: "unknown" }, link(2)],
+    headings: [],
+    unavailable: null,
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const rows = await within(details()).findAllByRole("listitem");
+  expect(rows[0].textContent).toContain("Footer");
+  expect(rows[1].textContent).toContain("Position unknown");
+  // Not worked out yet: nothing is shown rather than a guess.
+  expect(rows[2].textContent).not.toMatch(/Content|Position/);
+});
+
+test("link_lists_filter_by_position", async () => {
+  const t = withDetail({ inlinks: 3 });
+  const asked: (string | null | undefined)[] = [];
+  const all = [{ ...link(0), position: "footer" }, { ...link(1), position: "content" }, { ...link(2), position: "footer" }];
+  t.urlList = async (_p, _id, _kind, from, _count, position) => {
+    asked.push(position);
+    const rows = all.filter((r) => !position || r.position === position);
+    return { total: rows.length, from, rows, headings: [], unavailable: null };
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const filter = await within(details()).findByRole("combobox", { name: "Link position" });
+  fireEvent.change(filter, { target: { value: "footer" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(2));
+  expect(within(details()).queryByText("https://example.com/linked-1")).toBeNull();
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "sidebar" } });
+  expect(await within(details()).findByText("No links at this position.")).toBeTruthy();
+  // The filter stays, so the choice can be undone.
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(3));
+  expect(asked).toEqual([null, "footer", "sidebar", null]);
+});
+
+test("no_position_filter_before_positions_are_worked_out", async () => {
+  const t = withDetail({ inlinks: 2 });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [link(0), link(1)], headings: [], unavailable: null });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  await within(details()).findAllByRole("listitem");
+  expect(within(details()).queryByRole("combobox", { name: "Link position" })).toBeNull();
 });
 
 test("show_more_pages_in_the_rest_of_the_list", async () => {
@@ -281,6 +344,31 @@ test("changing_the_selected_url_loads_its_details", async () => {
   expect((await loaded()).textContent).toBe("https://example.com/page-1");
   rerender(<Inspector transport={t} path={PATH} id={5} />);
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-4"));
+});
+
+// --- Link Score (spec 023 FR-008) -------------------------------------------
+
+test("link_score_section_shows_score_rank_and_counts", async () => {
+  const t = withDetail({
+    link_metrics: { score: 72.44, rank: 12, of: 4812, unique_inlinks: 40, followed_inlinks: 38, all_inlinks: 95, unique_outlinks: 17, external_outlinks: 3, pct_linking: 0.83 },
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const section = within(details()).getByRole("heading", { name: "Link Score" }).closest("section")!;
+  expect(within(section).getByText("72.4")).toBeTruthy();
+  expect(within(section).getByText(`Rank 12 of ${(4812).toLocaleString()} internal URLs`)).toBeTruthy();
+  expect(within(section).getByRole("meter", { name: "Link Score" }).getAttribute("aria-valuenow")).toBe("72");
+  expect(within(section).getByText("38")).toBeTruthy();
+  expect(within(section).getByText("0.8%")).toBeTruthy();
+});
+
+test("link_score_while_the_crawl_runs_says_when_it_comes", async () => {
+  const t = withDetail({ link_metrics: null, unavailable: { link_metrics: "Calculated when the crawl ends." } });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).queryByRole("heading", { name: "Link Score" })).toBeNull();
+  expect(within(details()).getByText("Link Score.")).toBeTruthy();
+  expect(within(details()).getByText(/Calculated when the crawl ends/)).toBeTruthy();
 });
 
 // Copy URL and Show in table on list rows (T027).

@@ -167,6 +167,44 @@ pub struct PageData {
     pub custom: Option<crate::custom::PageRules>,
     /// Static accessibility checks (spec 026), when asked for.
     pub a11y: Option<a11y::A11yStatic>,
+    /// What the crawl's [`PageHook`] read from the parsed page.
+    #[serde(skip)]
+    pub facts: Option<PageFacts>,
+}
+
+/// Facts a [`PageHook`] read from a parsed page, stored in `page_facts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageFacts {
+    /// Who wrote them, such as `aeo_content` (spec 015).
+    pub kind: &'static str,
+    /// Bumped when the reader changes, so older rows are read again.
+    pub version: i64,
+    pub data: Vec<u8>,
+}
+
+/// What a [`PageHook`] is given besides the parsed page.
+pub struct HookInput<'a> {
+    pub url: &'a Url,
+    /// Length of the body as received, before decoding.
+    pub body_len: usize,
+    /// The `lang` of the root element, as stored in `pages.lang`.
+    pub lang: Option<&'a str>,
+}
+
+/// Reads more from each page while extraction has it parsed, so a later
+/// pass need not parse the stored HTML again (spec 015 reads its content
+/// facts this way). Runs on the extraction threads; a panic only loses the
+/// facts of that page.
+#[derive(Clone)]
+pub struct PageHook(pub std::sync::Arc<PageHookFn>);
+
+/// The function behind a [`PageHook`].
+pub type PageHookFn = dyn Fn(&scraper::Html, &HookInput<'_>) -> Option<PageFacts> + Send + Sync;
+
+impl std::fmt::Debug for PageHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PageHook")
+    }
 }
 
 impl PageData {
@@ -204,6 +242,7 @@ impl PageData {
             structured: Vec::new(),
             custom: None,
             a11y: None,
+            facts: None,
         }
     }
 }
@@ -221,44 +260,93 @@ pub struct PageInput<'a> {
     pub robots_token: &'a str,
     /// Run the static accessibility checks (spec 026).
     pub a11y: bool,
+    pub hook: Option<&'a PageHook>,
 }
 
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
-    extract_page_with(input, None)
+    extract(input, false, None).1
 }
 
 /// [`extract_page`] plus the crawl's custom rules on the same parse
 /// (spec 013). Pages with no readable content get every rule as no match.
 pub fn extract_page_with(input: &PageInput<'_>, rules: Option<&crate::custom::CompiledRules>) -> PageData {
-    let declared = crate::title::declared_encoding(input.charset, input.body);
-    let encoding = match declared {
-        Some(enc) => enc,
-        // Undeclared and not valid UTF-8: legacy pages of this kind are
-        // almost always windows-1252, which is what browsers in Western
-        // locales fall back to. A sequence cut by truncation does not count.
-        None if !utf8_or_cut(input.body, input.truncated) => encoding_rs::WINDOWS_1252,
-        None => encoding_rs::UTF_8,
-    };
+    extract(input, false, rules).1
+}
+
+/// A stored page parsed again after the crawl, with the element each
+/// reference came from (spec 023 link positions). The same decoding and
+/// walk as [`extract_page`], so `refs[i]` is the link stored with `pos = i`.
+pub struct ParsedPage {
+    pub doc: scraper::Html,
+    pub refs: Vec<Ref>,
+    /// The element of `refs[i]`, in `doc`.
+    pub nodes: Vec<ego_tree::NodeId>,
+}
+
+/// Parses a stored body for [`ParsedPage`]. None when the body is not a
+/// document.
+pub fn parse_page(input: &PageInput<'_>) -> Option<ParsedPage> {
+    let (doc, data, nodes) = extract(input, true, None);
+    let doc = doc?;
+    Some(ParsedPage {
+        doc,
+        refs: data.refs,
+        nodes,
+    })
+}
+
+fn extract(
+    input: &PageInput<'_>,
+    track: bool,
+    rules: Option<&crate::custom::CompiledRules>,
+) -> (Option<scraper::Html>, PageData, Vec<ego_tree::NodeId>) {
+    let encoding = page_encoding(input.charset, input.body, input.truncated);
     if looks_binary(input.body) {
-        let mut d = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
-        d.custom = rules.map(crate::custom::CompiledRules::on_empty_page);
-        return d;
+        let mut data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        data.custom = rules.map(crate::custom::CompiledRules::on_empty_page);
+        return (None, data, Vec::new());
     }
     let (text, used, had_errors) = encoding.decode(input.body);
-    let mut data = walk::walk_with(
+    let hook = input.hook.map(|h| (h, input.body.len()));
+    let (doc, mut data, nodes) = walk::walk_doc(
         &text,
         input.url,
         input.robots_token,
         walk::PARSE_BUDGET,
         input.a11y,
+        hook,
+        track,
         rules,
     );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
-    data
+    (Some(doc), data, nodes)
+}
+
+/// The encoding extraction decodes a body with.
+fn page_encoding(charset: Option<&str>, body: &[u8], truncated: bool) -> &'static encoding_rs::Encoding {
+    match crate::title::declared_encoding(charset, body) {
+        Some(enc) => enc,
+        // Undeclared and not valid UTF-8: legacy pages of this kind are
+        // almost always windows-1252, which is what browsers in Western
+        // locales fall back to. A sequence cut by truncation does not count.
+        None if !utf8_or_cut(body, truncated) => encoding_rs::WINDOWS_1252,
+        None => encoding_rs::UTF_8,
+    }
+}
+
+/// Decodes and parses a stored body exactly as [`extract_page`] does
+/// (same encoding rules, scripting off, same time budget), for analyses
+/// that need the DOM after the crawl (spec 015). `None` for binary bodies.
+pub fn parse_body(charset: Option<&str>, body: &[u8], truncated: bool) -> Option<scraper::Html> {
+    if looks_binary(body) {
+        return None;
+    }
+    let (text, _, _) = page_encoding(charset, body, truncated).decode(body);
+    Some(walk::parse(&text, walk::PARSE_BUDGET).0)
 }
 
 /// Whether `body` is valid UTF-8, allowing a sequence cut off at the end

@@ -32,6 +32,8 @@ export function SettingsSheet({
   onAppearance,
   crawlPath = null,
   crawlRunning = false,
+  onSchedule,
+
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -44,8 +46,12 @@ export function SettingsSheet({
   level: Level;
   systemDark: boolean;
   onAppearance: (patch: Partial<Appearance>) => void;
+  /** The open crawl file, for the link position tester and the custom rules. */
   crawlPath?: string | null;
   crawlRunning?: boolean;
+  /** Opens the schedule editor with these settings (spec 021 FR-002). */
+  onSchedule?: () => void;
+
 }) {
   const navRef = useRef<HTMLButtonElement>(null);
   const mode = setup.config?.mode ?? "spider";
@@ -121,6 +127,7 @@ export function SettingsSheet({
             ) : (
               <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
                 <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} crawlRunning={crawlRunning} />
+
               </fieldset>
             )}
           </div>
@@ -133,6 +140,7 @@ export function SettingsSheet({
                 Apply to running crawl
               </Button>
             )}
+            {onSchedule && !current.app && <Button onClick={onSchedule}>Schedule this crawl…</Button>}
             <SheetClose render={<Button variant="primary" />}>
               Done <Kbd keys="Escape" onAccent />
             </SheetClose>

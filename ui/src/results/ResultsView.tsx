@@ -11,6 +11,7 @@ import type { UrlScope } from "../generated/UrlScope";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../components/ui";
+import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
@@ -307,6 +308,7 @@ export function ResultsView({
             />
           </div>
         </div>
+        {tab.id === "ai-search" && <AiOverview transport={transport} path={path} live={live} />}
         <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
       </header>
 

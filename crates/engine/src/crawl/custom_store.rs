@@ -106,7 +106,7 @@ impl CrawlStore {
         has_rules(&self.conn)
     }
 
-    /// The tables are created by migration step 6; a file older than that
+    /// The tables are created by migration step 10; a file older than that
     /// gets them here when rules first run on it, without a full upgrade.
     pub fn ensure_custom_schema(&self) -> Result<()> {
         if !has_tables(&self.conn)? {

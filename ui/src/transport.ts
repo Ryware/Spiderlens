@@ -6,6 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { CookieFilter } from "./generated/CookieFilter";
+import type { CookiePage } from "./generated/CookiePage";
+import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
 import type { CustomResult } from "./generated/CustomResult";
 import type { CustomRules } from "./generated/CustomRules";
@@ -21,6 +24,22 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { CacheInfo } from "./generated/CacheInfo";
+import type { Connection } from "./generated/Connection";
+import type { OrphanPage } from "./generated/OrphanPage";
+import type { PageRequest } from "./generated/PageRequest";
+import type { Property } from "./generated/Property";
+import type { ProviderSettings } from "./generated/ProviderSettings";
+import type { ProviderStatus } from "./generated/ProviderStatus";
+import type { QueryRow } from "./generated/QueryRow";
+import type { RunProgress } from "./generated/RunProgress";
+import type { Status as IntegrationStatus } from "./generated/Status";
+import type { Scene } from "./generated/Scene";
+import type { TermLinks } from "./generated/TermLinks";
+import type { ExportDone } from "./generated/ExportDone";
+import type { ExportFormat } from "./generated/ExportFormat";
+import type { ExportOptions } from "./generated/ExportOptions";
+import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
@@ -28,7 +47,27 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { GenerateReport } from "./generated/GenerateReport";
+import type { SitemapFiles } from "./generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
+import type { AnalysisRun } from "./generated/AnalysisRun";
+import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
+import type { PositionRule } from "./generated/PositionRule";
+import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
+import type { AeoRule } from "./generated/AeoRule";
+import type { AiBot } from "./generated/AiBot";
+import type { AiPageResult } from "./generated/AiPageResult";
+import type { AiProgress } from "./generated/AiProgress";
+import type { AiSummary } from "./generated/AiSummary";
+import type { Frequency } from "./generated/Frequency";
+import type { Preview } from "./generated/Preview";
+import type { RepairReport } from "./generated/RepairReport";
+import type { Run } from "./generated/Run";
+import type { Schedule } from "./generated/Schedule";
+import type { ScheduleDetail } from "./generated/ScheduleDetail";
+import type { ScheduleRow } from "./generated/ScheduleRow";
 
 export interface BuildInfo {
   product: string;
@@ -516,6 +555,32 @@ export interface CustomRunDone {
   error: string | null;
 }
 
+// AI checks (spec 015, contracts/desktop-commands.md).
+
+export type AeoProgress = AiProgress & { run_id: number; path: string };
+
+export interface AeoFinished {
+  run_id: number;
+  path: string;
+  /** Null when the run was cancelled or failed; earlier results stay. */
+  summary: AiSummary | null;
+  error: string | null;
+}
+
+export interface AiBotList {
+  version: number;
+  date: string;
+  bots: AiBot[];
+}
+
+/** A saved schedule (spec 021): its detail, warnings, and why the OS refused the registration. */
+export interface ScheduleSaved {
+  detail: ScheduleDetail;
+  warnings: Issue[];
+  refused: string | null;
+}
+
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -530,6 +595,7 @@ export interface Transport {
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
+  pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
@@ -610,7 +676,13 @@ export interface Transport {
   tabCounts(path: string): Promise<TabCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  // Cookie audit (spec 025, contracts/desktop-commands.md).
+  /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
+  cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
+  /** The URLs that set one cookie, in crawl order. */
+  cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
   /** The page's stored HTML, or why there is none. */
   urlHtml(path: string, id: number): Promise<PageHtml>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
@@ -622,6 +694,29 @@ export interface Transport {
   /** `allValues`: custom extraction columns hold every value joined by it (spec 013 FR-025). */
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string, allValues?: string | null): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  // Sitemap generation (spec 011, contracts/desktop-commands.md).
+  sitemapFiles(path: string): Promise<SitemapFiles>;
+  sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
+  sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
+  /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
+  vizScene(path: string, view: ViewState): Promise<Scene>;
+  /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
+  vizTermLinks(path: string, view: ViewState, term: string, limit?: number): Promise<TermLinks>;
+  /** Writes the view to `file` as SVG, PNG or CSV (spec 022 FR-024). */
+  vizExport(path: string, view: ViewState, options: ExportOptions, file: string): Promise<ExportDone>;
+  pickVizPath(name: string, format: ExportFormat): Promise<string | null>;
+  /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
+  analysisRun(path: string): Promise<AnalysisRun>;
+  /** Starts Crawl Analysis in the background: progress and done arrive as events. */
+  analysisStart(path: string): Promise<void>;
+  /** Cancels the running Crawl Analysis; earlier results stay. */
+  analysisCancel(): Promise<void>;
+  onAnalysisProgress(cb: (p: AnalysisProgressEvent) => void): Promise<() => void>;
+  onAnalysisDone(cb: (d: AnalysisDone) => void): Promise<() => void>;
+  /** Uses these link analysis settings for the open file from now on. */
+  analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
+  /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
+  positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
   // Custom extraction and search (spec 013).
@@ -639,7 +734,68 @@ export interface Transport {
   pickRulesSavePath(name: string): Promise<string | null>;
   customImport(path: string): Promise<CustomRules>;
   customExport(path: string, rules: CustomRules): Promise<void>;
+  // External data (spec 024, contracts/desktop-commands.md).
+  integrationsStatus(): Promise<IntegrationStatus>;
+  integrationsSettingsSave(provider: string, settings: ProviderSettings): Promise<ProviderStatus>;
+  /** Saves the user's own Google client; an empty id goes back to the built-in one. */
+  integrationsGoogleClient(clientId: string, clientSecret: string | null): Promise<void>;
+  /** Opens Google's consent page in the system browser and resolves when the user answers. */
+  integrationsConnectGoogle(features: string[]): Promise<Connection>;
+  integrationsConnectCancel(): Promise<void>;
+  integrationsSaveKey(provider: string, label: string, key: string): Promise<Connection>;
+  /** True when Google confirmed the revoke. */
+  integrationsForget(kind: string, label: string): Promise<boolean>;
+  integrationsProperties(account: string | null, path: string | null): Promise<Property[]>;
+  integrationsDefaultRequest(property: string): Promise<PageRequest>;
+  integrationsRunSearchConsole(path: string, account: string | null, request: PageRequest): Promise<RunProgress>;
+  integrationsRunResume(path: string, runId: number | null): Promise<RunProgress>;
+  integrationsRunPause(): Promise<void>;
+  integrationsRunCancel(): Promise<void>;
+  integrationsRuns(path: string): Promise<RunProgress[]>;
+  integrationsQueries(path: string, urlId: number): Promise<QueryRow[]>;
+  integrationsOrphans(path: string, source: string | null, offset: number, limit: number): Promise<OrphanPage>;
+  integrationsRemove(path: string, provider: string | null): Promise<void>;
+  integrationsCacheInfo(): Promise<CacheInfo>;
+  integrationsCacheClear(provider: string | null): Promise<number>;
+  integrationsOpenTerms(provider: string): Promise<void>;
+  onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
+  // AI checks (spec 015).
+  /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
+  aeoRun(path: string): Promise<{ run_id: number }>;
+  aeoCancel(runId: number): Promise<void>;
+  /** Null when the checks have not run on this file. */
+  aeoSummary(path: string): Promise<AiSummary | null>;
+  aeoPage(path: string, urlId: number): Promise<AiPageResult | null>;
+  aeoLlmsTxtDraft(path: string, maxLinks: number): Promise<{ text: string }>;
+  aeoRules(): Promise<AeoRule[]>;
+  aiBotsList(): Promise<AiBotList>;
+  onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
+  onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
+  // Scheduled crawls (spec 021, contracts/desktop-commands.md).
+  schedulesList(): Promise<ScheduleRow[]>;
+  scheduleGet(id: string): Promise<ScheduleDetail>;
+  schedulePreview(frequency: Frequency): Promise<Preview>;
+  scheduleValidate(draft: Schedule): Promise<Issue[]>;
+  /** Rejects with the errors' messages when the draft is invalid. */
+  scheduleSave(draft: Schedule): Promise<ScheduleSaved>;
+  scheduleSetEnabled(id: string, enabled: boolean): Promise<ScheduleSaved>;
+  scheduleDuplicate(id: string, name: string): Promise<Schedule>;
+  scheduleDelete(id: string): Promise<void>;
+  scheduleRunNow(id: string): Promise<void>;
+  scheduleStop(id: string): Promise<void>;
+  scheduleHistory(id: string, limit: number): Promise<Run[]>;
+  scheduleUpdateFromProfile(id: string): Promise<ScheduleSaved>;
+  schedulesRepair(): Promise<RepairReport>;
+  schedulesRemoveAll(): Promise<number>;
+  scheduleDefaultOutput(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
+
 }
+
+/** `analysis-progress` (spec 023 FR-013). */
+export type AnalysisProgressEvent = AnalysisProgress & { path: string };
+/** `analysis-done`: `run` is null when cancelled or failed. */
+export type AnalysisDone = { path: string; run: AnalysisRun | null; cancelled: boolean; error: string | null };
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
 
@@ -655,10 +811,13 @@ export const tauriTransport: Transport = {
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
+  pickSitemapFile: async () =>
+    asPath(await open({ filters: [{ name: "XML sitemaps", extensions: ["xml", "gz"] }] })),
   pickProfileFile: async () =>
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>
     save({ defaultPath: `${name}.spiderlens-profile.json`, filters: [{ name: "SpiderLens profile", extensions: ["json"] }] }),
+  pickFolder: async () => asPath(await open({ directory: true })),
   profiles: () => invoke("profiles_list"),
   loadProfile: (name) => invoke("profile_load", { name }),
   saveProfile: (name, config, startUrl, overwrite) => invoke("profile_save", { name, config, startUrl, overwrite }),
@@ -726,13 +885,33 @@ export const tauriTransport: Transport = {
   tabCounts: (path) => invoke("tab_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
+  cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   urlHtml: (path, id) => invoke("url_html", { path, id }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest, allValues) => invoke("export_start", { path, query, columns, ranges, dest, allValues: allValues ?? null }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  sitemapFiles: (path) => invoke("sitemap_files", { path }),
+  sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
+  sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
+  vizScene: (path, view) => invoke("viz_scene", { path, view }),
+  vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
+  vizExport: (path, view, options, file) => invoke("viz_export", { path, view, options, file }),
+  pickVizPath: (name, format) =>
+    save({
+      defaultPath: `${name}.${format}`,
+      filters: [{ name: format === "csv" ? "CSV" : `${format.toUpperCase()} image`, extensions: [format] }],
+    }),
+  analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisStart: (path) => invoke("analysis_start", { path }),
+  analysisCancel: () => invoke("analysis_cancel"),
+  onAnalysisProgress: (cb) => listen<AnalysisProgressEvent>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisDone: (cb) => listen<AnalysisDone>("analysis-done", (e) => cb(e.payload)),
+  analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
+  positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
   urlCustom: (path, id) => invoke("url_custom", { path, id }),
@@ -747,4 +926,50 @@ export const tauriTransport: Transport = {
   pickRulesSavePath: (name) => save({ defaultPath: `${name}.spiderlens-rules.json`, filters: [{ name: "SpiderLens rules", extensions: ["json"] }] }),
   customImport: (path) => invoke("custom_import", { path }),
   customExport: (path, rules) => invoke("custom_export", { path, rules }),
+  integrationsStatus: () => invoke("integrations_status"),
+  integrationsSettingsSave: (provider, settings) => invoke("integrations_settings_save", { provider, settings }),
+  integrationsGoogleClient: (clientId, clientSecret) => invoke("integrations_google_client", { clientId, clientSecret }),
+  integrationsConnectGoogle: (features) => invoke("integrations_connect_google", { features }),
+  integrationsConnectCancel: () => invoke("integrations_connect_cancel"),
+  integrationsSaveKey: (provider, label, key) => invoke("integrations_save_key", { provider, label, key }),
+  integrationsForget: (kind, label) => invoke("integrations_forget", { kind, label }),
+  integrationsProperties: (account, path) => invoke("integrations_properties", { account, path }),
+  integrationsDefaultRequest: (property) => invoke("integrations_default_request", { property }),
+  integrationsRunSearchConsole: (path, account, request) => invoke("integrations_run_search_console", { path, account, request }),
+  integrationsRunResume: (path, runId) => invoke("integrations_run_resume", { path, runId }),
+  integrationsRunPause: () => invoke("integrations_run_pause"),
+  integrationsRunCancel: () => invoke("integrations_run_cancel"),
+  integrationsRuns: (path) => invoke("integrations_runs", { path }),
+  integrationsQueries: (path, urlId) => invoke("integrations_queries", { path, urlId }),
+  integrationsOrphans: (path, source, offset, limit) => invoke("integrations_orphans", { path, source, offset, limit }),
+  integrationsRemove: (path, provider) => invoke("integrations_remove", { path, provider }),
+  integrationsCacheInfo: () => invoke("integrations_cache_info"),
+  integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
+  integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
+  aeoRun: (path) => invoke("aeo_run", { path }),
+  aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
+  aeoSummary: (path) => invoke("aeo_summary", { path }),
+  aeoPage: (path, urlId) => invoke("aeo_page", { path, urlId }),
+  aeoLlmsTxtDraft: (path, maxLinks) => invoke("aeo_llms_txt_draft", { path, maxLinks }),
+  aeoRules: () => invoke("aeo_rules"),
+  aiBotsList: () => invoke("ai_bots_list"),
+  onAeoProgress: (cb) => listen<AeoProgress>("aeo-progress", (e) => cb(e.payload)),
+  onAeoFinished: (cb) => listen<AeoFinished>("aeo-finished", (e) => cb(e.payload)),
+  schedulesList: () => invoke("schedules_list"),
+  scheduleGet: (id) => invoke("schedule_get", { id }),
+  schedulePreview: (frequency) => invoke("schedule_preview", { frequency }),
+  scheduleValidate: (draft) => invoke("schedule_validate", { draft }),
+  scheduleSave: (draft) => invoke("schedule_save", { draft }),
+  scheduleSetEnabled: (id, enabled) => invoke("schedule_set_enabled", { id, enabled }),
+  scheduleDuplicate: (id, name) => invoke("schedule_duplicate", { id, name }),
+  scheduleDelete: (id) => invoke("schedule_delete", { id }),
+  scheduleRunNow: (id) => invoke("schedule_run_now", { id }),
+  scheduleStop: (id) => invoke("schedule_stop", { id }),
+  scheduleHistory: (id, limit) => invoke("schedule_history", { id, limit }),
+  scheduleUpdateFromProfile: (id) => invoke("schedule_update_from_profile", { id }),
+  schedulesRepair: () => invoke("schedules_repair"),
+  schedulesRemoveAll: () => invoke("schedules_remove_all"),
+  scheduleDefaultOutput: () => invoke("schedule_default_output"),
+
 };

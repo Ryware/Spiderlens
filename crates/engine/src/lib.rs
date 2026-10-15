@@ -11,6 +11,7 @@ pub mod custom;
 mod error;
 pub mod extract;
 mod fetch;
+pub mod net;
 mod result;
 pub mod robots;
 mod title;
