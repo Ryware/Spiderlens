@@ -88,6 +88,30 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: AEO_TABLES,
     },
+    // The cookie audit (spec 025 data-model.md): attributes of each cookie a
+    // response set, never its value.
+    Step {
+        version: 7,
+        additive: true,
+        sql: "CREATE TABLE cookies (
+        url_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        host_only INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        expires INTEGER,
+        max_age INTEGER,
+        secure INTEGER NOT NULL,
+        http_only INTEGER NOT NULL,
+        same_site TEXT,
+        size INTEGER NOT NULL,
+        party TEXT NOT NULL,
+        source TEXT NOT NULL,
+        extra TEXT
+    );
+    CREATE INDEX cookies_url ON cookies(url_id);
+    CREATE INDEX cookies_key ON cookies(name, domain, path);",
+    },
 ];
 
 const AEO_TABLES: &str = r#"
