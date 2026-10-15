@@ -8,7 +8,7 @@ use spiderlens_engine::extract::body;
 use ts_rs::TS;
 
 use crate::reader::Reader;
-use crate::tabs::Need;
+use crate::tabs::{Derived, Need};
 use crate::{Error, Result, sql};
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -138,6 +138,10 @@ pub struct LinkRow {
     pub text: Option<String>,
     pub sponsored: bool,
     pub ugc: bool,
+    /// Where the anchor sits on its page (spec 023 US4): a `Position` or
+    /// "unknown" (HTML not stored). Null when not worked out yet, or not
+    /// an anchor.
+    pub position: Option<String>,
 }
 
 /// One heading of a page, in document order (FR-023).
@@ -514,8 +518,16 @@ impl Reader {
         } else {
             "COALESCE(NULLIF(l.text, ''), l.alt), l.sponsored, l.ugc"
         };
+        let position = if kind != ListKind::Images && self.has_derived(Derived::LinkPositions)? {
+            "CASE WHEN l.kind = 'anchor' THEN COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' \
+             WHEN 2 THEN 'header' WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
+             FROM link_positions p WHERE p.from_id = l.from_id AND p.pos = l.pos), 'unknown') END"
+        } else {
+            "NULL"
+        };
         let sql = format!(
-            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text}
+            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text},
+                    {position}
              FROM links l JOIN urls x ON x.id = {join}
              WHERE {cond} ORDER BY l.rowid LIMIT ?2 OFFSET ?3"
         );
@@ -535,6 +547,7 @@ impl Reader {
                     text: r.get(9)?,
                     sponsored: r.get(10)?,
                     ugc: r.get(11)?,
+                    position: r.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

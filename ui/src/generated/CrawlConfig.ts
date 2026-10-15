@@ -4,6 +4,7 @@ import type { AiChecks } from "./AiChecks";
 import type { ExtractionSettings } from "./ExtractionSettings";
 import type { Identity } from "./Identity";
 import type { Limits } from "./Limits";
+import type { LinkAnalysisSettings } from "./LinkAnalysisSettings";
 import type { Mode } from "./Mode";
 import type { NetworkSettings } from "./NetworkSettings";
 import type { RetrySettings } from "./RetrySettings";
@@ -11,4 +12,8 @@ import type { RobotsSettings } from "./RobotsSettings";
 import type { Scope } from "./Scope";
 import type { SpeedSettings } from "./SpeedSettings";
 
-export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, access: AccessSettings, ai_checks: AiChecks, };
+export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, 
+/**
+ * Spec 023: Link Score and link positions.
+ */
+links: LinkAnalysisSettings, access: AccessSettings, ai_checks: AiChecks, };

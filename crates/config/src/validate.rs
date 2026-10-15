@@ -489,6 +489,28 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Link analysis (spec 023)
+    for (index, rule) in c.links.position_rules.iter().enumerate() {
+        if let Err(message) = crate::check_selector(&rule.selector) {
+            i.error(
+                format!("links.position_rules[{index}].selector"),
+                "selector_syntax",
+                message,
+            );
+        }
+    }
+    if let Some(w) = &c.links.weighting {
+        for (name, value) in w.fields() {
+            if !(value.is_finite() && (0.0..=1.0).contains(&value)) {
+                i.error(
+                    format!("links.weighting.{name}"),
+                    "out_of_range",
+                    "Weights must be between 0 and 1.",
+                );
+            }
+        }
+    }
+
     i.0
 }
 
@@ -513,6 +535,36 @@ mod tests {
             .iter()
             .map(|i| (i.path.as_str(), i.code.as_str(), i.severity))
             .collect()
+    }
+
+    #[test]
+    fn link_position_rules_and_weights_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.links.position_rules = vec![
+            crate::PositionRule {
+                selector: ".mega-menu".into(),
+                position: crate::Position::Navigation,
+            },
+            crate::PositionRule {
+                selector: "div[".into(),
+                position: crate::Position::Footer,
+            },
+        ];
+        c.links.weighting = Some(crate::PositionWeights {
+            footer: 1.5,
+            ..Default::default()
+        });
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                (
+                    "links.position_rules[1].selector",
+                    "selector_syntax",
+                    Severity::Error
+                ),
+                ("links.weighting.footer", "out_of_range", Severity::Error),
+            ]
+        );
     }
 
     #[test]

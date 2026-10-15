@@ -6,6 +6,7 @@
 //! order make the result bit-for-bit the same on every platform (FR-005).
 
 use rusqlite::{Connection, params};
+use spiderlens_config::PositionWeights;
 
 /// The damping factor of FR-001.
 pub const DAMPING: f64 = 0.85;
@@ -33,6 +34,10 @@ pub struct Graph {
     pub ids: Vec<i64>,
     pub offsets: Vec<u32>,
     pub targets: Vec<u32>,
+    /// With position weighting on (FR-025): each edge's weight, the highest
+    /// among the links forming it, and each node's total. Empty when off.
+    pub weights: Vec<f32>,
+    pub out_weight: Vec<f64>,
     /// Distinct internal pages with a followed anchor to each node
     /// (redirect edges are not anchors and are not counted).
     pub followed_in: Vec<u32>,
@@ -58,12 +63,22 @@ impl Graph {
     fn out(&self, i: usize) -> &[u32] {
         &self.targets[self.offsets[i] as usize..self.offsets[i + 1] as usize]
     }
+
+    /// A node that passes nothing on: its rank is spread over every node.
+    fn dangling(&self, i: usize) -> bool {
+        if self.weights.is_empty() {
+            self.offsets[i] == self.offsets[i + 1]
+        } else {
+            self.out_weight[i] <= 0.0
+        }
+    }
 }
 
 /// One source page's anchors while the scan is on it.
 #[derive(Default)]
 struct Pending {
-    followed: Vec<u32>,
+    /// Target and the link's position weight (1 when weighting is off).
+    followed: Vec<(u32, f32)>,
     internal: Vec<u32>,
     external: Vec<i64>,
 }
@@ -72,7 +87,8 @@ struct Pending {
 /// distinct followed body anchors between them, except that a redirecting
 /// URL has one edge, to its redirect target (none when the chain loops or
 /// leaves the site). Two sequential scans: `urls` by id, `links` by source.
-pub fn read_graph(conn: &Connection) -> rusqlite::Result<Graph> {
+/// With `weighting`, `link_positions` must be built first.
+pub fn read_graph(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite::Result<Graph> {
     let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
     let slots = usize::try_from(max_id).unwrap_or(0) + 1;
     let mut index = vec![NONE; slots];
@@ -111,9 +127,19 @@ pub fn read_graph(conn: &Connection) -> rusqlite::Result<Graph> {
         ..Graph::default()
     };
     g.offsets.push(0);
+    let weighted = weighting.is_some();
+    if weighted {
+        g.out_weight = vec![0.0; n];
+    }
     let finish = |g: &mut Graph, i: usize, p: &mut Pending| {
-        p.followed.sort_unstable();
-        p.followed.dedup();
+        p.followed.sort_unstable_by_key(|&(t, _)| t);
+        p.followed.dedup_by(|later, kept| {
+            let same = later.0 == kept.0;
+            if same {
+                kept.1 = kept.1.max(later.1);
+            }
+            same
+        });
         p.internal.sort_unstable();
         p.internal.dedup();
         p.external.sort_unstable();
@@ -126,12 +152,20 @@ pub fn read_graph(conn: &Connection) -> rusqlite::Result<Graph> {
         if redirect_to[i].is_some() {
             if redirect[i] != NONE {
                 g.targets.push(redirect[i]);
+                if weighted {
+                    g.weights.push(1.0);
+                    g.out_weight[i] = 1.0;
+                }
             }
         } else {
-            for &t in &p.followed {
+            for &(t, w) in &p.followed {
                 g.followed_in[t as usize] += 1;
+                g.targets.push(t);
+                if weighted {
+                    g.weights.push(w);
+                    g.out_weight[i] += f64::from(w);
+                }
             }
-            g.targets.extend_from_slice(&p.followed);
         }
         p.followed.clear();
         p.internal.clear();
@@ -140,10 +174,15 @@ pub fn read_graph(conn: &Connection) -> rusqlite::Result<Graph> {
     };
     let mut pending = Pending::default();
     let mut next = 0usize;
-    let mut stmt = conn.prepare(
-        "SELECT from_id, to_id, nofollow OR page_nofollow OR sponsored OR ugc FROM links
-         WHERE kind = 'anchor' AND to_id IS NOT NULL ORDER BY from_id",
-    )?;
+    let mut stmt = conn.prepare(if weighted {
+        "SELECT l.from_id, l.to_id, l.nofollow OR l.page_nofollow OR l.sponsored OR l.ugc,
+                COALESCE(p.position, 0)
+         FROM links l LEFT JOIN link_positions p ON p.from_id = l.from_id AND p.pos = l.pos
+         WHERE l.kind = 'anchor' AND l.to_id IS NOT NULL ORDER BY l.from_id"
+    } else {
+        "SELECT from_id, to_id, nofollow OR page_nofollow OR sponsored OR ugc, 0 FROM links
+         WHERE kind = 'anchor' AND to_id IS NOT NULL ORDER BY from_id"
+    })?;
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
         let from = node(r.get(0)?);
@@ -165,7 +204,11 @@ pub fn read_graph(conn: &Connection) -> rusqlite::Result<Graph> {
             g.all_in[to as usize] += 1;
             pending.internal.push(to);
             if !r.get::<_, bool>(2)? {
-                pending.followed.push(to);
+                let w = match weighting {
+                    Some(w) => w.for_code(r.get(3)?),
+                    None => 1.0,
+                };
+                pending.followed.push((to, w));
             }
         }
     }
@@ -210,18 +253,27 @@ pub fn rank(g: &Graph) -> (Vec<f64>, u32) {
         rounds += 1;
         let mut dangling = 0.0;
         for (i, ri) in r.iter().enumerate() {
-            if g.offsets[i] == g.offsets[i + 1] {
+            if g.dangling(i) {
                 dangling += ri;
             }
         }
         let base = (1.0 - DAMPING) / nf + DAMPING * dangling / nf;
         next.fill(base);
         for (i, ri) in r.iter().enumerate() {
+            if g.dangling(i) {
+                continue;
+            }
             let out = g.out(i);
-            if !out.is_empty() {
+            if g.weights.is_empty() {
                 let share = DAMPING * ri / out.len() as f64;
                 for &t in out {
                     next[t as usize] += share;
+                }
+            } else {
+                let unit = DAMPING * ri / g.out_weight[i];
+                let w = &g.weights[g.offsets[i] as usize..g.offsets[i + 1] as usize];
+                for (&t, &w) in out.iter().zip(w) {
+                    next[t as usize] += unit * f64::from(w);
                 }
             }
         }
@@ -248,10 +300,7 @@ pub fn scale(g: &Graph, r: &[f64]) -> Vec<f64> {
     // The rank a node with no inlinks ends with: the teleport share plus the
     // spread dangling mass of the last round.
     let nf = n as f64;
-    let dangling: f64 = (0..n)
-        .filter(|&i| g.offsets[i] == g.offsets[i + 1])
-        .map(|i| r[i])
-        .sum();
+    let dangling: f64 = (0..n).filter(|&i| g.dangling(i)).map(|i| r[i]).sum();
     let floor = (1.0 - DAMPING) / nf + DAMPING * dangling / nf;
     let max = r.iter().copied().fold(f64::MIN, f64::max);
     let span = (max / floor).ln();
@@ -284,7 +333,7 @@ pub fn ranks(scores: &[f64]) -> Vec<u32> {
 }
 
 /// Builds `temp.link_metrics` (data model) from the crawl on `conn`.
-pub fn build(conn: &Connection) -> rusqlite::Result<Stats> {
+pub fn build(conn: &Connection, weighting: Option<&PositionWeights>) -> rusqlite::Result<Stats> {
     let t0 = std::time::Instant::now();
     let lap = |l: &str| {
         if std::env::var_os("SPIDERLENS_TIMING").is_some() {
@@ -294,7 +343,7 @@ pub fn build(conn: &Connection) -> rusqlite::Result<Stats> {
             );
         }
     };
-    let g = read_graph(conn)?;
+    let g = read_graph(conn, weighting)?;
     lap("graph");
     let (r, rounds) = rank(&g);
     let scores = scale(&g, &r);
@@ -387,6 +436,48 @@ mod tests {
             r = next;
         }
         r
+    }
+
+    /// `graph` with a weight per edge.
+    fn weighted(edges: &[&[(u32, f32)]]) -> Graph {
+        let plain: Vec<Vec<u32>> = edges.iter().map(|e| e.iter().map(|x| x.0).collect()).collect();
+        let refs: Vec<&[u32]> = plain.iter().map(Vec::as_slice).collect();
+        let mut g = graph(&refs);
+        for e in edges {
+            g.weights.extend(e.iter().map(|x| x.1));
+            g.out_weight.push(e.iter().map(|x| f64::from(x.1)).sum());
+        }
+        g
+    }
+
+    #[test]
+    fn weights_of_one_change_nothing() {
+        let edges: &[&[u32]] = &[&[1, 2, 3], &[0, 2], &[0], &[], &[0, 1, 2, 3], &[4]];
+        let w: Vec<Vec<(u32, f32)>> = edges
+            .iter()
+            .map(|e| e.iter().map(|&t| (t, 1.0)).collect())
+            .collect();
+        let w: Vec<&[(u32, f32)]> = w.iter().map(Vec::as_slice).collect();
+        let (a, _) = rank(&graph(edges));
+        let (b, _) = rank(&weighted(&w));
+        for (a, b) in a.iter().zip(&b) {
+            assert!((a - b).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn footer_weight_lowers_a_footer_only_page() {
+        // 0 links to 1 from content and to 2 from the footer.
+        let even = weighted(&[&[(1, 1.0), (2, 1.0)], &[(0, 1.0)], &[(0, 1.0)]]);
+        let footer = weighted(&[&[(1, 1.0), (2, 0.2)], &[(0, 1.0)], &[(0, 1.0)]]);
+        let (e, _) = rank(&even);
+        let (f, _) = rank(&footer);
+        assert!((e[1] - e[2]).abs() < 1e-12);
+        assert!(f[2] < e[2] && f[1] > e[1]);
+        assert!((f.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        // A page whose links all weigh 0 passes nothing: it is dangling.
+        let zero = weighted(&[&[(1, 0.0)], &[(0, 1.0)]]);
+        assert!(zero.dangling(0));
     }
 
     #[test]

@@ -291,14 +291,14 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     urlList: async (_p, id, kind, from) =>
       kind === "inlinks"
-        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false }].filter(() => id !== -1), headings: [], unavailable: null }
+        ? { total: 1, from, rows: [{ id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" }].filter(() => id !== -1), headings: [], unavailable: null }
         : kind === "headings"
           ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
           : kind === "images"
             ? {
                 total: 2,
                 from,
-                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false })),
+                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false, position: null })),
                 headings: [],
                 unavailable: null,
               }

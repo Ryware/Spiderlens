@@ -5,6 +5,7 @@
 //! issues. This crate has no dependency on the desktop shell.
 
 pub mod ai_bots;
+mod links;
 mod list_input;
 mod model;
 mod patterns;
@@ -19,6 +20,7 @@ mod stored;
 mod url_norm;
 mod validate;
 
+pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
     AccessSettings, AiChecks, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget,
