@@ -8,6 +8,7 @@ import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
+import { AiPageSection } from "./AiPageSection";
 import { cellTone, formatBytes, toneText } from "./format";
 import { HtmlViewer } from "./HtmlViewer";
 
@@ -223,12 +224,14 @@ export function Inspector({
   path,
   id,
   onShowInTable,
+  aiChecks = false,
 }: {
   transport: Transport;
   path: string | null;
   id: number | null;
   /** Selects the URL in a results tab; false when no tab lists it. */
   onShowInTable?: (id: number) => Promise<boolean>;
+  aiChecks?: boolean;
 }) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -346,6 +349,15 @@ export function Inspector({
       </Section>
 
       {d.link_metrics && <LinkScoreSection m={d.link_metrics} />}
+
+      {aiChecks && d.internal && (
+        <AiPageSection
+          transport={transport}
+          path={path}
+          id={d.id}
+          section={(title, body) => <Section title={title}>{body}</Section>}
+        />
+      )}
 
       {d.redirects.length > 0 && (
         <Section title={`Redirects (${d.redirects.length - 1} ${d.redirects.length === 2 ? "hop" : "hops"})`}>
