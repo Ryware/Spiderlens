@@ -20,6 +20,7 @@ import { CookieFlags, expiresText } from "./CookiesView";
 
 import { cellTone, formatBytes, toneText } from "./format";
 import { HtmlViewer } from "./HtmlViewer";
+import { SearchPreview } from "./SearchPreview";
 
 const LIST_PAGE = 100;
 
@@ -582,6 +583,12 @@ export function Inspector({
               );
             })}
           </ol>
+        </Section>
+      )}
+
+      {d.snippet && (
+        <Section title="Search preview">
+          <SearchPreview url={d.url} snippet={d.snippet} />
         </Section>
       )}
 

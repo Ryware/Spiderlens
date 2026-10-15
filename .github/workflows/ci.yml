@@ -79,6 +79,14 @@ jobs:
         if: runner.os == 'Linux'
         run: git diff --exit-code -- ui/src/generated
 
+      # The SERP width table is generated from the fonts in tools/serp-widths
+      # (spec 027 plan D1); a diff means the table was edited by hand.
+      - name: SERP width table is current
+        if: runner.os == 'Linux'
+        run: |
+          cargo run --quiet --manifest-path tools/serp-widths/Cargo.toml
+          git diff --exit-code -- crates/results/src/serp/widths.rs ui/src/generated/serpWidths.json
+
       - name: UI tests
         run: pnpm test
 

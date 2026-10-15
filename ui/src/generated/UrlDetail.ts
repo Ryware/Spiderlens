@@ -2,6 +2,7 @@
 import type { CookieRow } from "./CookieRow";
 import type { LinkMetrics } from "./LinkMetrics";
 import type { RedirectHop } from "./RedirectHop";
+import type { Snippet } from "./Snippet";
 
 export type UrlDetail = { id: number, url: string, 
 /**
@@ -63,6 +64,11 @@ error_reason: string | null,
  * The result came from "Retry failed URLs" (US5.3).
  */
 manual_retry: boolean, 
+/**
+ * Title and meta description as served, for the search preview (spec
+ * 027 part A). `None` for anything that is not an HTML page.
+ */
+snippet: Snippet | null, 
 /**
  * Fields and sections this file has no data for, with the reason.
  */

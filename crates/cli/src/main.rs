@@ -16,6 +16,7 @@ mod options;
 mod report_cmd;
 mod rules_cmd;
 mod schedule_cmd;
+mod serp_cmd;
 mod sitemap_cmd;
 mod viz_cmd;
 
@@ -126,6 +127,8 @@ enum Command {
     /// Recurring crawls that run without the app (spec 021).
     #[command(subcommand)]
     Schedule(Box<schedule_cmd::ScheduleCommand>),
+    /// Title and description pixel widths for a CSV of drafts (no network).
+    Serp(serp_cmd::SerpArgs),
     /// Print product version, engine version and build identifier.
     Version {
         /// Print as JSON.
@@ -232,6 +235,7 @@ fn main() -> ExitCode {
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
+        Command::Serp(args) => serp_cmd::run_serp(args),
     }
 }
 

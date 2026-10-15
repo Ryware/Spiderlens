@@ -852,6 +852,24 @@ test("create_a_schedule_see_its_next_run_open_history_and_turn_it_off", async ({
   await expect(list.getByText("No upcoming runs")).toBeVisible();
 });
 
+test("search_preview_measures_while_typing", async ({ page }) => {
+  // Spec 027 US A2: the preview in the detail pane, a real font in a real
+  // browser, the width and cut changing as the user types.
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(2).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByText("Search preview")).toBeVisible();
+  await expect(details.getByTestId("preview-title")).toHaveText("Page 1");
+  await details.getByRole("button", { name: "Try other wording" }).click();
+  await details
+    .getByRole("textbox", { name: "Title" })
+    .fill("The Complete Beginner Guide To Choosing The Right Running Shoes For Every Kind Of Runner");
+  await expect(details.getByTestId("preview-title")).toHaveText(/…$/);
+  await expect(details.getByText("Cut")).toBeVisible();
+  await details.getByRole("radio", { name: "Mobile" }).click();
+  await expect(details.getByRole("figure", { name: "Mobile search result" })).toBeVisible();
+});
+
 test("report_fits_the_window_and_its_figures_open_rows", async ({ page }) => {
   await crawl(page);
   await page.getByRole("button", { name: "View report" }).click();

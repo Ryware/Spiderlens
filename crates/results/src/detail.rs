@@ -102,9 +102,23 @@ pub struct UrlDetail {
     pub error_reason: Option<String>,
     /// The result came from "Retry failed URLs" (US5.3).
     pub manual_retry: bool,
+    /// Title and meta description as served, for the search preview (spec
+    /// 027 part A). `None` for anything that is not an HTML page.
+    pub snippet: Option<Snippet>,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
+}
+
+/// What a search result is built from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct Snippet {
+    /// The primary title (spec 005), `None` when the page has none.
+    pub title: Option<String>,
+    /// The meta description; `None` when missing, or when the file has no
+    /// page content.
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -312,6 +326,27 @@ impl Reader {
                 [id],
                 |r| r.get(0),
             )?;
+        let md = if content {
+            "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)"
+        } else {
+            "NULL"
+        };
+        let snippet = self
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT u.title, {md} FROM urls u WHERE u.id = ?1
+                     AND content_kind(u.content_type) = 'html' AND u.status BETWEEN 200 AND 299"
+                ),
+                [id],
+                |r| {
+                    Ok(Snippet {
+                        title: r.get(0)?,
+                        description: r.get(1)?,
+                    })
+                },
+            )
+            .optional()?;
         let link_metrics = if internal && self.features.has(Need::Analysis) {
             self.ensure_derived([crate::tabs::Derived::LinkMetrics])?;
             self.conn
@@ -399,6 +434,7 @@ impl Reader {
             attempts,
             error_reason,
             manual_retry,
+            snippet,
             unavailable,
         })
     }

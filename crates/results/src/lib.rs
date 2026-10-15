@@ -18,6 +18,7 @@ mod export;
 mod features;
 pub mod issues;
 mod reader;
+pub mod serp;
 pub mod report;
 mod sitemaps;
 mod sql;
@@ -33,7 +34,7 @@ pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage}
 pub use counts::{FilterCounts, TabCounts};
 pub use custom::CustomResult;
 pub use detail::{
-    HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail,
+    HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, Snippet, UrlDetail,
 };
 pub use export::{
     COPY_LIMIT, ExportError, csv_field, export_file, export_file_with, write_csv, write_csv_with,

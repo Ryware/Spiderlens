@@ -100,6 +100,13 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
             .collect();
         Ok(Some(names.join(", ")))
     })?;
+    conn.create_scalar_function("px_width", 2, FLAGS, |ctx| {
+        let text: Option<String> = ctx.get(0)?;
+        let style: String = ctx.get(1)?;
+        let style = crate::serp::SerpStyle::parse(&style)
+            .ok_or_else(|| rusqlite::Error::UserFunctionError(format!("unknown style {style}").into()))?;
+        Ok(text.map(|t| crate::serp::px_width(&t, style)))
+    })?;
     conn.create_scalar_function("indexability", 7, FLAGS, |ctx| {
         Ok(indexability(&IndexabilityArgs {
             state: ctx.get::<String>(0)?,
