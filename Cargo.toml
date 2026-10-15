@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
+members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
 # `cargo test` without --workspace skips the desktop app, which needs
 # webview system libraries. CI always uses --workspace.
-default-members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/cli", "crates/test-fixtures"]
+default-members = ["crates/config", "crates/engine", "crates/results", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +18,7 @@ spiderlens-config = { path = "crates/config" }
 spiderlens-engine = { path = "crates/engine" }
 spiderlens-results = { path = "crates/results" }
 spiderlens-aeo = { path = "crates/aeo" }
+spiderlens-schedule = { path = "crates/schedule" }
 spiderlens-test-fixtures = { path = "crates/test-fixtures" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli"] }
@@ -46,6 +47,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 jiff = { version = "0.2", features = ["serde"] }
 fastrand = "2"
+dirs = "7"
 proptest = "1"
 tempfile = "3"
 axum = "0.8"
