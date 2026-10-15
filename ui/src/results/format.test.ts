@@ -22,6 +22,11 @@ test("format_cell_by_kind", () => {
   expect(formatCell("bool", false)).toBe("No");
   expect(formatCell("url", "https://example.com/")).toBe("https://example.com/");
   expect(formatCell("status", 404)).toBe("404");
+  // Link Score: whole in the table (spec 023 FR-004); shares with one decimal.
+  expect(formatCell("score", 72.4)).toBe("72");
+  expect(formatCell("score", 72.5)).toBe("73");
+  expect(formatCell("score", null)).toBe("");
+  expect(formatCell("percent", 12.345)).toBe("12.3%");
 });
 
 test("cell_tone_follows_status_class_and_state", () => {
@@ -37,7 +42,7 @@ test("cell_tone_follows_status_class_and_state", () => {
 });
 
 test("numeric_kinds_align_right", () => {
-  expect(["int", "bytes", "ms", "status"].every((k) => numeric(k as never))).toBe(true);
+  expect(["int", "bytes", "ms", "status", "score", "percent"].every((k) => numeric(k as never))).toBe(true);
   expect(numeric("text")).toBe(false);
   expect(numeric("url")).toBe(false);
 });

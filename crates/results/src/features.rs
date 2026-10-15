@@ -62,6 +62,10 @@ impl Features {
                 available.push(need);
             }
         }
+        // Crawl Analysis runs once fetching has ended (spec 023 FR-029).
+        if meta("status")?.as_deref() != Some("running") {
+            available.push(Need::Analysis);
+        }
         // Spec 015: the AI checks record their run in the meta table.
         if meta("aeo_analysis")?.is_some() {
             available.push(Need::AiChecks);

@@ -32,6 +32,9 @@ pub enum Need {
     RawHtml,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
+    /// Crawl Analysis results such as Link Score (spec 023), calculated
+    /// once fetching has ended.
+    Analysis,
     /// The cookie audit (spec 025).
     Cookies,
     /// AI search check results (spec 015).
@@ -53,6 +56,7 @@ impl Need {
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
+            Self::Analysis => "Calculated when the crawl ends.",
             Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
         }
@@ -67,6 +71,7 @@ impl Need {
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
             Self::SitemapEntries => "sitemap_entries",
+            Self::Analysis => "analysis",
             Self::Cookies => "cookies",
             Self::AiChecks => "ai_checks",
         }
@@ -86,6 +91,10 @@ pub enum ValueKind {
     Status,
     State,
     Bool,
+    /// Link Score: 0-100, shown whole in the table, one decimal elsewhere.
+    Score,
+    /// A share of pages, 0-100.
+    Percent,
 }
 
 impl ValueKind {
@@ -116,6 +125,9 @@ pub enum Derived {
     OccH1,
     /// `temp.occ_h2(v, n)`: each first H2 and how many pages use it.
     OccH2,
+    /// `link_metrics`: Link Score and link counts (spec 023), built in
+    /// `temp` when the file holds no current copy.
+    LinkMetrics,
 }
 
 impl Derived {
@@ -126,6 +138,7 @@ impl Derived {
             Self::OccMeta => "occ_md",
             Self::OccH1 => "occ_h1",
             Self::OccH2 => "occ_h2",
+            Self::LinkMetrics => "link_metrics",
         }
     }
 
@@ -134,7 +147,7 @@ impl Derived {
     pub(crate) fn rows_eligible(self) -> &'static str {
         match self {
             Self::Titles => HTML_OK,
-            Self::Redirects | Self::OccMeta | Self::OccH1 | Self::OccH2 => "1",
+            Self::Redirects | Self::OccMeta | Self::OccH1 | Self::OccH2 | Self::LinkMetrics => "1",
         }
     }
 }
@@ -250,7 +263,7 @@ const PERMANENT: &str = "u.fetched_at IS NOT NULL AND (\
 
 /// Internal pages that were fetched successfully as HTML: the rows of the
 /// content tabs (FR-010).
-const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
+pub(crate) const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND content_kind(u.content_type) = 'html'";
 
 const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
@@ -310,6 +323,22 @@ impl ColumnDef {
     }
 }
 
+/// A spec 023 link metric, read from `link_metrics` (unqualified: a fresh
+/// copy in `temp` shadows a stored one, plan D5).
+macro_rules! lm {
+    ($id:literal, $label:literal, $field:literal, $kind:expr, $width:literal $(,)?) => {
+        col(
+            $id,
+            $label,
+            concat!("(SELECT ", $field, " FROM link_metrics m WHERE m.url_id = u.id)"),
+            $kind,
+            $width,
+        )
+        .needs(Need::Analysis)
+        .reads(Derived::LinkMetrics)
+    };
+}
+
 const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     FilterDef {
         id,
@@ -319,6 +348,13 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         derived: None,
         hide_when_empty: None,
     }
+}
+
+/// A Links tab filter on the spec 023 metrics.
+const fn link_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond)
+        .needs(Need::Analysis)
+        .reads(Derived::LinkMetrics)
 }
 
 impl FilterDef {
@@ -436,6 +472,51 @@ mod c {
     pub const SOURCE: ColumnDef = col("source", "Discovered via", "u.source", ValueKind::Text, 120).hidden();
     pub const IN_SITEMAP: ColumnDef =
         col("in_sitemap", "In sitemap", "u.in_sitemap", ValueKind::Bool, 100).hidden();
+    pub const LINK_SCORE: ColumnDef = lm!(
+        "link_score",
+        "Link Score",
+        "round(m.score, 1)",
+        ValueKind::Score,
+        100
+    );
+    pub const LINK_RANK: ColumnDef = lm!("link_rank", "Link Score rank", "m.rank", ValueKind::Int, 120);
+    pub const UNIQUE_INLINKS: ColumnDef = lm!(
+        "unique_inlinks",
+        "Unique inlinks",
+        "m.unique_inlinks",
+        ValueKind::Int,
+        120
+    );
+    pub const FOLLOWED_INLINKS: ColumnDef = lm!(
+        "followed_inlinks",
+        "Unique followed inlinks",
+        "m.followed_inlinks",
+        ValueKind::Int,
+        170
+    );
+    pub const ALL_INLINKS: ColumnDef =
+        lm!("all_inlinks", "All inlinks", "m.all_inlinks", ValueKind::Int, 100);
+    pub const UNIQUE_OUTLINKS: ColumnDef = lm!(
+        "unique_outlinks",
+        "Unique outlinks",
+        "m.unique_outlinks",
+        ValueKind::Int,
+        120
+    );
+    pub const EXTERNAL_OUTLINKS: ColumnDef = lm!(
+        "external_outlinks",
+        "Unique external outlinks",
+        "m.external_outlinks",
+        ValueKind::Int,
+        170,
+    );
+    pub const PCT_LINKING: ColumnDef = lm!(
+        "pct_linking",
+        "% of pages linking",
+        "round(m.pct_linking, 1)",
+        ValueKind::Percent,
+        140
+    );
 }
 
 /// Filters by content type (Internal and External tabs).
@@ -751,8 +832,16 @@ fn build() -> Vec<TabDef> {
                 c::SIZE,
                 c::RESPONSE_TIME,
                 c::DEPTH,
+                c::LINK_SCORE,
                 c::INLINKS,
                 c::OUTLINKS,
+                c::LINK_RANK.hidden(),
+                c::UNIQUE_INLINKS.hidden(),
+                c::FOLLOWED_INLINKS.hidden(),
+                c::ALL_INLINKS.hidden(),
+                c::UNIQUE_OUTLINKS.hidden(),
+                c::EXTERNAL_OUTLINKS.hidden(),
+                c::PCT_LINKING.hidden(),
                 c::REDIRECT_TARGET.hidden(),
                 c::ERROR_CLASS.hidden(),
                 c::FOUND_ON,
@@ -761,6 +850,53 @@ fn build() -> Vec<TabDef> {
             ],
             filters: TYPE_FILTERS.to_vec(),
             search_column: Some("title"),
+            scoped: false,
+            rows: None,
+        },
+        TabDef {
+            id: "links",
+            title: "Links",
+            eligible: HTML_OK,
+            columns: vec![
+                c::ADDRESS,
+                c::LINK_SCORE,
+                col("depth", "Crawl depth", "u.depth", Int, 100),
+                c::UNIQUE_INLINKS,
+                c::FOLLOWED_INLINKS,
+                c::UNIQUE_OUTLINKS,
+                c::INDEXABILITY,
+                c::LINK_RANK.hidden(),
+                c::ALL_INLINKS.hidden(),
+                c::EXTERNAL_OUTLINKS.hidden(),
+                c::PCT_LINKING.hidden(),
+                c::TITLE.hidden(),
+            ],
+            filters: vec![
+                filter("all", "All", "1"),
+                filter("depth_4", "Crawl depth 4 or more", "u.depth >= 4"),
+                link_filter(
+                    "one_followed",
+                    "One followed inlink",
+                    "(SELECT m.followed_inlinks FROM link_metrics m WHERE m.url_id = u.id) = 1",
+                ),
+                link_filter(
+                    "no_followed",
+                    "No followed inlinks",
+                    "u.source <> 'start' AND (SELECT m.followed_inlinks FROM link_metrics m WHERE m.url_id = u.id) = 0",
+                ),
+                link_filter(
+                    "no_outlinks",
+                    "No internal outlinks",
+                    "(SELECT m.unique_outlinks FROM link_metrics m WHERE m.url_id = u.id) = 0",
+                ),
+                filter(
+                    "nofollow_outlinks",
+                    "Nofollow internal outlinks",
+                    "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id \
+                     AND l.kind = 'anchor' AND t.internal = 1 AND (l.nofollow = 1 OR l.page_nofollow = 1))",
+                ),
+            ],
+            search_column: None,
             scoped: false,
             rows: None,
         },
@@ -1087,6 +1223,7 @@ pub(crate) fn build_derived(
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
+        Derived::LinkMetrics => crate::analysis::link_metrics::build(conn).map(|_| ()),
     }
 }
 
@@ -1167,7 +1304,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 12);
+        assert_eq!(tab_ids.len(), 13);
     }
 
     #[test]

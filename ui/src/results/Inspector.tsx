@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import type { LinkMetrics } from "../generated/LinkMetrics";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
-import { Badge, Button, cn, ContextMenu, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
+import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
 import { AiPageSection } from "./AiPageSection";
 import { CookieFlags, expiresText } from "./CookiesView";
 import { cellTone, formatBytes, toneText } from "./format";
@@ -30,6 +31,7 @@ const fieldLabels: Record<string, string> = {
   response_time: "Response time",
   attempts: "Retry attempts",
   raw_html: "Page HTML",
+  link_metrics: "Link Score",
   cookies: "Cookies",
 };
 
@@ -42,6 +44,34 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
       </div>
       {children}
     </section>
+  );
+}
+
+/** Link Score and link counts (spec 023 FR-008). */
+function LinkScoreSection({ m }: { m: LinkMetrics }) {
+  const n = (v: number) => v.toLocaleString();
+  return (
+    <Section title="Link Score">
+      <div className="flex items-center gap-3">
+        <span className="text-xl font-semibold tabular text-fg">{m.score.toFixed(1)}</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <Bar value={m.score / 100} tone="accent" label="Link Score" className="w-full" />
+          <span className="text-xs text-fg-3">
+            Rank {n(m.rank)} of {n(m.of)} internal URLs
+          </span>
+        </div>
+      </div>
+      <Facts
+        rows={[
+          ["Unique inlinks", n(m.unique_inlinks)],
+          ["Followed inlinks", n(m.followed_inlinks)],
+          ["All inlinks", n(m.all_inlinks)],
+          ["Unique outlinks", n(m.unique_outlinks)],
+          ["External outlinks", n(m.external_outlinks)],
+          ["Pages linking", `${m.pct_linking.toFixed(1)}%`],
+        ]}
+      />
+    </Section>
   );
 }
 
@@ -304,6 +334,8 @@ export function Inspector({
       <Section title="Response">
         <Facts rows={facts} />
       </Section>
+
+      {d.link_metrics && <LinkScoreSection m={d.link_metrics} />}
 
       {aiChecks && d.internal && (
         <AiPageSection

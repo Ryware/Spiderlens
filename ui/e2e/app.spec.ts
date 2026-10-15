@@ -164,6 +164,21 @@ test("results_scroll_to_the_last_of_5000_rows", async ({ page }) => {
   );
 });
 
+test("links_tab_sorts_by_link_score", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Links" }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("5,000 URLs");
+  const grid = page.getByRole("grid");
+  const header = grid.getByRole("columnheader", { name: /Link Score/ });
+  await header.click();
+  await header.click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(header).toHaveAttribute("aria-sort", "descending");
+  await expect(grid.getByRole("row").nth(1)).toContainText("https://example.com/");
+  await expect(grid.getByRole("row").nth(1)).toContainText("100");
+});
+
 test("wheel_scrolling_loads_rows_further_down", async ({ page }) => {
   const grid = await openInternal(page);
   await grid.hover();
@@ -348,7 +363,8 @@ test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) =
   await expect.poll(() => page.evaluate(() => document.activeElement?.contains(document.querySelector('aside[aria-label="Details"]')))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(grid).toBeFocused();
-  await page.keyboard.press("Control+3");
+  // Internal, Links (Link Score), External, Response codes.
+  await page.keyboard.press("Control+4");
   await expect(page.getByRole("region", { name: "Response codes" })).toBeVisible();
   await page.keyboard.press("Control+1");
   await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
