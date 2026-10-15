@@ -1052,6 +1052,13 @@ impl CrawlStore {
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
+        if let Some(f) = &d.facts {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO page_facts (url_id, kind, version, data) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, f.kind, f.version, f.data])?;
+        }
         Ok(())
     }
 
@@ -1450,6 +1457,38 @@ impl CrawlStore {
             .query_row([id], |r| r.get(0))?)
     }
 
+    /// Hosts that have internal URLs, in order.
+    pub fn internal_hosts(&self) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT DISTINCT host_key FROM urls WHERE internal = 1 ORDER BY host_key")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// One per-host site file (spec 015).
+    pub fn record_site_file(&self, f: &super::site_files::SiteFileRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO site_files
+                     (host_key, path, status, final_url, content_type, size, body, outcome, error, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                f.host_key,
+                f.path,
+                f.status,
+                f.final_url,
+                f.content_type,
+                f.size,
+                f.body,
+                f.outcome,
+                f.error,
+                f.fetched_at
+            ])?;
+        Ok(())
+    }
+
     pub fn upsert_host(&self, h: &HostRow) -> Result<()> {
         self.conn
             .prepare_cached(
@@ -1799,6 +1838,28 @@ impl CrawlStore {
             [table, column],
             |r| r.get(0),
         )?)
+    }
+
+    /// URLs crawled per host, for the per-site breakdown (spec 008 FR-029).
+    /// Read once when a run starts.
+    pub fn crawled_by_host(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT host_key, COUNT(*) FROM urls WHERE state = 'crawled' GROUP BY host_key")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Each run's speed events per site (spec 008 FR-021), oldest first.
+    pub fn speed_summaries(&self) -> Result<Vec<(String, String)>> {
+        if !self.has_table("crawl_log")? {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT host_key, message FROM crawl_log WHERE kind = 'speed_summary' AND host_key IS NOT NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// Log entries of one kind.

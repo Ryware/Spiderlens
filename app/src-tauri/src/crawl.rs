@@ -461,8 +461,10 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                 .expect("crawl lock")
                 .take()
                 .map_or(file, |a| a.path);
+            // Spec 015 FR-002: the AI checks run once a crawl completes.
+            let ai_checks = matches!(&result, Ok((s, true)) if s.status == "completed");
             let (report, error, local) = match result {
-                Ok(summary) => (Some(Report::new(file.clone(), summary)), None, None),
+                Ok((summary, _)) => (Some(Report::new(file.clone(), summary)), None, None),
                 Err(CrawlError::Local(l)) => (
                     CrawlSummary::read(&file)
                         .ok()
@@ -478,12 +480,16 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                 "crawl-finished",
                 FinishedEvent {
                     id,
-                    path: file,
+                    path: file.clone(),
                     report,
                     error,
                     local,
                 },
             );
+            if ai_checks && !state.quitting.load(Ordering::SeqCst) {
+                let aeo = app.state::<crate::aeo::State>();
+                let _ = crate::aeo::start(app.clone(), &aeo, file);
+            }
             if state.quitting.load(Ordering::SeqCst) {
                 app.exit(0);
             }
@@ -499,7 +505,7 @@ fn run(
     open: Open,
     control: watch::Receiver<Control>,
     commands: mpsc::UnboundedReceiver<RunCommand>,
-) -> Result<CrawlSummary, CrawlError> {
+) -> Result<(CrawlSummary, bool), CrawlError> {
     let crawler = match open {
         Open::Create(new) => {
             let (config, input) = *new;
@@ -511,7 +517,12 @@ fn run(
         Open::RetryFailed => Crawler::retry_failed(path)?.0,
     };
     let reserve = app.state::<crate::files::State>().disk_reserve();
-    let crawler = crawler.with_disk_reserve(Some(reserve));
+    let mut crawler = crawler.with_disk_reserve(Some(reserve));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
+    let ai_checks = crawler.config().ai_checks.auto;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -575,6 +586,7 @@ fn run(
         });
         crawler.run_with(control, Some(event_tx), Some(forward_rx)).await
     })
+    .map(|s| (s, ai_checks))
 }
 
 #[cfg(test)]

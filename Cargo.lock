@@ -4382,6 +4382,28 @@ dependencies = [
  "jiff",
  "jsonschema",
  "predicates",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "spiderlens-aeo",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "spiderlens-results",
+ "spiderlens-test-fixtures",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "spiderlens-aeo"
+version = "0.1.0"
+dependencies = [
+ "ego-tree",
+ "jiff",
+ "proptest",
+ "regex",
+ "rusqlite",
+ "scraper",
  "serde",
  "serde_json",
  "spiderlens-config",
@@ -4389,7 +4411,10 @@ dependencies = [
  "spiderlens-results",
  "spiderlens-test-fixtures",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
+ "ts-rs",
+ "url",
 ]
 
 [[package]]
@@ -4418,8 +4443,10 @@ name = "spiderlens-desktop"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "rusqlite",
  "serde",
  "serde_json",
+ "spiderlens-aeo",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",
