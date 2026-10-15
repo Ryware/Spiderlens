@@ -106,11 +106,12 @@ pub(super) fn walk(
     a11y: bool,
     hook: Option<(&super::PageHook, usize)>,
 ) -> PageData {
-    walk_doc(text, page, token, budget, a11y, hook, false).1
+    walk_doc(text, page, token, budget, a11y, hook, false, None).1
 }
 
 /// [`walk`], also returning the document and, when `track` is set, the
-/// element of each reference (same index as `PageData::refs`).
+/// element of each reference (same index as `PageData::refs`), then the
+/// crawl's custom rules on the same parse (spec 013 plan D1).
 pub(super) fn walk_doc(
     text: &str,
     page: &Url,
@@ -119,6 +120,7 @@ pub(super) fn walk_doc(
     a11y: bool,
     hook: Option<(&super::PageHook, usize)>,
     track: bool,
+    rules: Option<&crate::custom::CompiledRules>,
 ) -> (Html, PageData, Vec<NodeId>) {
     let (doc, cut) = parse(text, budget);
     // Spec 026: only created when asked for, so "Off" costs this test.
@@ -169,6 +171,17 @@ pub(super) fn walk_doc(
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
+    if let Some(rules) = rules {
+        w.data.custom = Some(crate::custom::apply(
+            rules,
+            &crate::custom::DocView {
+                doc: &doc,
+                source: text,
+                visible: &visible,
+                structured: &w.data.structured,
+            },
+        ));
+    }
     w.data.a11y = checks.map(|c| c.finish(&doc));
     if let Some((hook, body_len)) = hook {
         let input = super::HookInput {
@@ -181,6 +194,58 @@ pub(super) fn walk_doc(
             .flatten();
     }
     (doc, w.data, w.nodes)
+}
+
+/// The visible text under `node`, as the walk collects it for the page:
+/// script, style, template, noscript and comments skipped, a space at the
+/// edges of block elements. Not collapsed.
+pub(crate) fn visible_text_into(node: NodeRef<'_, Node>, buf: &mut String) {
+    enum Step<'a> {
+        Enter(NodeRef<'a, Node>),
+        Space,
+    }
+    let mut stack = vec![Step::Enter(node)];
+    while let Some(step) = stack.pop() {
+        let n = match step {
+            Step::Space => {
+                if !buf.ends_with(' ') {
+                    buf.push(' ');
+                }
+                continue;
+            }
+            Step::Enter(n) => n,
+        };
+        match n.value() {
+            Node::Text(t) => {
+                buf.push_str(t);
+                continue;
+            }
+            Node::Element(e) => {
+                if e.name.ns == ns!(html) {
+                    if matches!(
+                        e.name.local,
+                        local_name!("script")
+                            | local_name!("style")
+                            | local_name!("template")
+                            | local_name!("noscript")
+                    ) {
+                        continue;
+                    }
+                    if !is_inline(&e.name.local) {
+                        if !buf.ends_with(' ') {
+                            buf.push(' ');
+                        }
+                        stack.push(Step::Space);
+                    }
+                }
+            }
+            Node::Document | Node::Fragment => {}
+            _ => continue,
+        }
+        let first = stack.len();
+        stack.extend(n.children().map(Step::Enter));
+        stack[first..].reverse();
+    }
 }
 
 /// Elements that do not break words apart (`a<b>b</b>` is one word).

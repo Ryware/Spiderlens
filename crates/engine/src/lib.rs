@@ -7,6 +7,7 @@ mod build_info;
 mod check;
 mod config;
 pub mod crawl;
+pub mod custom;
 mod error;
 pub mod extract;
 mod fetch;

@@ -30,11 +30,19 @@ use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Root};
 use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
+use super::store::custom::{EncodedCustom, Slots, encode_custom};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
     Response, SitemapEntryRecord, SitemapFileRecord, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
+use crate::custom::CompiledRules;
+
+/// A crawl's compiled rules and the stored slot of each.
+struct CustomRun {
+    rules: CompiledRules,
+    slots: Slots,
+}
 use crate::extract::directives::page_flags;
 use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
 use crate::fetch::{Once, fetch_once};
@@ -618,6 +626,8 @@ struct PageOutcome {
 /// What the extraction step produced for an HTML body.
 struct Extracted {
     data: Result<PageData, String>,
+    /// Rule results, encoded for the store.
+    custom: Option<EncodedCustom>,
     /// Compressed body and its size, when raw HTML is kept.
     html: Option<(Vec<u8>, usize)>,
 }
@@ -630,6 +640,7 @@ async fn finish_page(
     url: Url,
     token: String,
     store_html: bool,
+    custom: Option<Arc<CustomRun>>,
     hook: Option<PageHook>,
     budget: &Semaphore,
 ) -> PageOutcome {
@@ -645,25 +656,34 @@ async fn finish_page(
                 .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let data = extract::extract_page_caught(&PageInput {
-                    url: &url,
-                    charset: charset.as_deref(),
-                    body: &bytes,
-                    truncated,
-                    robots_token: &token,
-                    // Spec 026: stored once the crawl file has the tables.
-                    a11y: false,
-                    hook: hook.as_ref(),
-                });
+                let mut data = extract::extract_page_caught(
+                    &PageInput {
+                        url: &url,
+                        charset: charset.as_deref(),
+                        body: &bytes,
+                        truncated,
+                        robots_token: &token,
+                        // Spec 026: stored once the crawl file has the tables.
+                        a11y: false,
+                        hook: hook.as_ref(),
+                    },
+                    custom.as_deref().map(|c| &c.rules),
+                );
+                // Encoded here, so the single writer only inserts.
+                let custom = match (data.as_mut().ok().and_then(|d| d.custom.take()), &custom) {
+                    (Some(out), Some(c)) => encode_custom(&c.slots, &out).ok(),
+                    _ => None,
+                };
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
                     None
                 };
-                Extracted { data, html }
+                Extracted { data, custom, html }
             });
             Some(job.await.unwrap_or_else(|e| Extracted {
                 data: Err(format!("Page extraction failed: {e}")),
+                custom: None,
                 html: None,
             }))
         }
@@ -1104,6 +1124,8 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Custom rules and where their results go (spec 013).
+    custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     last_catch_up: Instant,
@@ -1204,6 +1226,29 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        let custom = if c.config.custom.is_empty() && !c.store.has_custom_rules()? {
+            None
+        } else {
+            if !c.config.custom.is_empty() {
+                c.store.sync_custom_rules(&c.config.custom)?;
+            }
+            let (set, slots) = c.store.stored_rule_set()?;
+            match crate::custom::compile(&set) {
+                Ok(None) => None,
+                Ok(Some(rules)) => {
+                    c.store.mark_new_custom_rules_running()?;
+                    Some(Arc::new(CustomRun { rules, slots }))
+                }
+                Err(errors) => {
+                    let joined = errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(CrawlError::Config(format!("custom rules: {joined}")));
+                }
+            }
+        };
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
@@ -1234,6 +1279,7 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            custom,
             active_before_ms,
             last_catch_up: Instant::now(),
             commands,
@@ -1961,6 +2007,8 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // Rules run on the pages spec 005 extracts for the results: internal ones.
+        let rules = self.custom.as_ref().filter(|_| internal).map(Arc::clone);
         // The hook's facts stand in for stored HTML, so it runs only when the
         // HTML is kept (a crawl without it has no content checks either).
         let hook = self.c.page_hook.clone().filter(|_| store_html);
@@ -1970,7 +2018,7 @@ impl Run {
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -2854,6 +2902,9 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
+                    if let Some(c) = &p.custom {
+                        store.record_custom(entry.id, c)?;
+                    }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }
                 None => 0,

@@ -2,14 +2,20 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import type { CustomResult } from "../generated/CustomResult";
+import type { CustomRules } from "../generated/CustomRules";
+import type { RuleTestOutcome } from "../transport";
 import type { LinkMetrics } from "../generated/LinkMetrics";
+
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, Select, type Tone } from "../components/ui";
+import { RuleFound } from "../settings/CustomRules";
 import { AiPageSection } from "./AiPageSection";
 import { CookieFlags, expiresText } from "./CookiesView";
+
 import { cellTone, formatBytes, toneText } from "./format";
 import { HtmlViewer } from "./HtmlViewer";
 
@@ -254,19 +260,102 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
   );
 }
 
+/** What each custom rule found on this page (spec 013 FR-024); nothing when the crawl has no rules. */
+function CustomSection({
+  transport,
+  path,
+  id,
+  epoch,
+  rules,
+  htmlStored,
+}: {
+  transport: Transport;
+  path: string;
+  id: number;
+  epoch: number;
+  rules?: CustomRules;
+  htmlStored: boolean;
+}) {
+  const [results, setResults] = useState<CustomResult[]>([]);
+  const [tried, setTried] = useState<RuleTestOutcome | string | null>(null);
+  useEffect(() => setTried(null), [path, id]);
+  const canTry = htmlStored && rules !== undefined && rules.extractors.length + rules.searches.length > 0;
+  // The settings' rules on this page's stored HTML, before running them on every page (US4).
+  const tryRules = () =>
+    rules &&
+    transport.customTestPage(rules, path, id).then(
+      (o) => setTried(o),
+      (e) => setTried(String(e)),
+    );
+  useEffect(() => {
+    let off = false;
+    transport.urlCustom(path, id).then(
+      (r) => !off && setResults(r),
+      () => !off && setResults([]),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id, epoch]);
+  if (results.length === 0 && !canTry) return null;
+  const shown: CustomResult[] = tried && typeof tried !== "string" ? tried.results.map((r) => ({ ...r, run_state: null })) : results;
+  return (
+    <Section
+      title={tried && typeof tried !== "string" ? "Custom rules (settings, not saved)" : "Custom rules"}
+      aside={
+        canTry &&
+        (tried ? (
+          <Button size="sm" variant="quiet" onClick={() => setTried(null)}>
+            Show stored
+          </Button>
+        ) : (
+          <Button size="sm" variant="quiet" onClick={() => void tryRules()}>
+            Test settings rules
+          </Button>
+        ))
+      }
+    >
+      {typeof tried === "string" && <Notice kind="bad">{tried}</Notice>}
+      <dl className="m-0 flex flex-col gap-2 text-sm">
+        {shown.map((r, i) => (
+          <div key={`${r.kind}-${i}`} className="flex flex-col gap-0.5">
+            <dt className="flex items-baseline gap-2 text-fg-2">
+              <span className="min-w-0 truncate font-medium">{r.name}</span>
+              <span className="ml-auto shrink-0 text-xs text-fg-3 tabular">
+                {r.count === null ? "Not run" : `${r.count.toLocaleString()} ${r.kind === "search" ? (r.count === 1 ? "match" : "matches") : r.count === 1 ? "value" : "values"}`}
+              </span>
+            </dt>
+            <dd className="m-0 min-w-0">
+              {r.count !== null && <RuleFound kind={r.kind} flags={r.flags} values={r.values} error={r.error} />}
+              {r.run_state === "stale" && <p className="m-0 text-xs text-warn">The rule changed after it ran. Run the rules again to update.</p>}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Section>
+  );
+}
+
 export function Inspector({
   transport,
   path,
   id,
+  epoch = 0,
+  rules,
   onAnchorCloud,
+
   onShowInTable,
   aiChecks = false,
 }: {
   transport: Transport;
   path: string | null;
   id: number | null;
+  epoch?: number;
+  /** The custom rules in the settings, to try on this page (spec 013 US4). */
+  rules?: CustomRules;
   /** Opens the anchor text cloud of this URL's inlinks (spec 022 US4). */
   onAnchorCloud?: () => void;
+
   /** Selects the URL in a results tab; false when no tab lists it. */
   onShowInTable?: (id: number) => Promise<boolean>;
   aiChecks?: boolean;
@@ -440,6 +529,8 @@ export function Inspector({
           </Button>
         )}
       </Section>
+
+      <CustomSection transport={transport} path={path} id={d.id} epoch={epoch} rules={rules} htmlStored={d.html_stored} />
 
       {d.headers.length > 0 && (
         <Section title={`Response headers (${d.headers.length})`}>

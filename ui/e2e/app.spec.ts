@@ -444,6 +444,66 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
   }
 });
 
+test("custom_rule_is_tested_run_on_the_crawl_and_gets_its_tab", async ({ page }) => {
+  // Spec 013: add a rule, try it on a page, run it on the open crawl from
+  // stored HTML, then read its column in the new Custom extraction tab.
+  await crawl(page);
+  await page.keyboard.press("Control+Comma");
+  const nav = page.getByRole("navigation", { name: "Settings categories" });
+  await nav.getByRole("tab", { name: /^Custom rules/ }).click();
+  const panel = page.getByRole("tabpanel", { name: "Custom rules" });
+  await panel.getByRole("button", { name: "Add extractor" }).click();
+  await panel.getByLabel("Extractor 1 name").fill("Price");
+  await panel.getByLabel("Extractor 1 expression").fill(".price");
+  await panel.getByLabel("Page to test").fill("https://example.com/product");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByRole("table", { name: "Test results" }).getByRole("row").nth(1)).toContainText("$10");
+
+  const run = panel.getByRole("button", { name: /Run on the open crawl/ });
+  await run.scrollIntoViewIfNeeded();
+  await run.click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.custom.runs.length)).toBe(1);
+  await page.evaluate(() => window.spiderlens.custom.progress({ done: 2500, total: 5000, per_sec: 4000 }));
+  await expect(panel.getByText("2,500 of 5,000 pages")).toBeVisible();
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.customTabs = [
+      {
+        id: "custom_extraction",
+        title: "Custom extraction",
+        columns: [
+          { id: "address", label: "Address", kind: "url", width: 420, default_visible: true, need: "base" },
+          { id: "x0", label: "Price", kind: "text", width: 200, default_visible: true, need: "base" },
+        ],
+        filters: [
+          { id: "all", label: "All", need: "base" },
+          { id: "x0_has", label: "Price: has a value", need: "base" },
+          { id: "x0_none", label: "Price: no value", need: "base" },
+        ],
+        search_column: "x0",
+        scoped: false,
+      },
+    ];
+    for (let id = 1; id <= 5000; id++) s.results.customCells.set(id, { x0: id % 4 ? `$${id}` : null });
+    s.custom.done({ state: "complete", pages: 5000 });
+  });
+  await expect(panel.getByText(/Rules ran on 5,000 pages/)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(nav).toBeHidden();
+
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Custom extraction" }).click();
+  await expect(page.getByRole("grid")).toBeVisible();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("5,000 URLs");
+  const grid = page.getByRole("grid");
+  await expect(grid.getByRole("columnheader", { name: /Price/ })).toBeVisible();
+  await expect(grid.getByRole("row").nth(1)).toContainText("$1");
+  await page.getByRole("button", { name: /^Price: no value/ }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.results.opened.at(-1)?.filter)).toBe("x0_none");
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1,250 URLs");
+});
+
 test("integrations_fetch_search_console_for_the_open_crawl", async ({ page }) => {
   await crawl(page);
   await page.getByRole("button", { name: "Integrations" }).click();
@@ -512,6 +572,7 @@ test("sitemap_files_tree_opens_from_the_sidebar_and_works_by_keyboard", async ({
   await page.keyboard.press("ArrowDown");
   await expect(tree.getByRole("treeitem").nth(2)).toBeFocused();
   await expect(page.getByRole("region", { name: "Selected sitemap file" })).toContainText("unexpected end (line 3)");
+
 });
 
 test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {

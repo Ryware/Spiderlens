@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::custom::CustomRules;
 use crate::links::LinkAnalysisSettings;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
@@ -25,6 +26,8 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// Custom extraction and search rules (spec 013).
+    pub custom: CustomRules,
     /// Spec 023: Link Score and link positions.
     pub links: LinkAnalysisSettings,
     pub access: AccessSettings,

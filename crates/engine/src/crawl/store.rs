@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+#[path = "custom_store.rs"]
+pub mod custom;
+
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use crate::extract::{Directive, PageData, Ref, RefSource, body, text};
 

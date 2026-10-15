@@ -7,7 +7,9 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use clap::{Args, ValueEnum};
-use spiderlens_results::{Error, ExportError, Sort, UrlScope, ViewQuery, export_file, tabs, write_csv};
+use spiderlens_results::{
+    Error, ExportError, Reader, Sort, TabDef, UrlScope, ViewQuery, export_file, tabs, write_csv,
+};
 
 use crate::exit;
 
@@ -46,6 +48,10 @@ pub struct ExportArgs {
     /// Column ids, comma separated (default: the tab's default columns).
     #[arg(long, value_delimiter = ',')]
     columns: Vec<String>,
+    /// Custom extraction: every stored value of each extractor, joined by
+    /// SEP, instead of the first (spec 013 FR-025).
+    #[arg(long, value_name = "SEP")]
+    all_values: Option<String>,
     /// Write to this file instead of standard output.
     #[arg(long, short)]
     out: Option<PathBuf>,
@@ -59,13 +65,22 @@ pub struct ExportArgs {
 
 pub fn run_export(a: ExportArgs) -> ExitCode {
     if a.list_tabs {
+        // With a crawl file, its custom tabs too (spec 013).
+        let all: Vec<TabDef> = match a.file.as_deref().map(Reader::open) {
+            Some(Ok(mut r)) => r.tabs().unwrap_or_else(|_| tabs().to_vec()),
+            Some(Err(e)) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(UNREADABLE);
+            }
+            None => tabs().to_vec(),
+        };
         if a.json {
-            crate::print_json(&tabs());
+            crate::print_json(&all);
         } else {
-            for t in tabs() {
+            for t in &all {
                 println!("{}  ({})", t.id, t.title);
-                let filters: Vec<_> = t.filters.iter().map(|f| f.id).collect();
-                let columns: Vec<_> = t.columns.iter().map(|c| c.id).collect();
+                let filters: Vec<_> = t.filters.iter().map(|f| f.id.as_ref()).collect();
+                let columns: Vec<_> = t.columns.iter().map(|c| c.id.as_ref()).collect();
                 println!("  filters: {}", filters.join(", "));
                 println!("  columns: {}", columns.join(", "));
             }
@@ -96,12 +111,22 @@ pub fn run_export(a: ExportArgs) -> ExitCode {
     };
     let never = AtomicBool::new(false);
     let result = match &a.out {
-        Some(out) => export_file(&file, &q, &a.columns, None, out, &never, &mut |_, _| {}),
+        Some(out) => export_file(
+            &file,
+            &q,
+            &a.columns,
+            None,
+            a.all_values.as_deref(),
+            out,
+            &never,
+            &mut |_, _| {},
+        ),
         None => write_csv(
             &file,
             &q,
             &a.columns,
             None,
+            a.all_values.as_deref(),
             std::io::stdout().lock(),
             &never,
             &mut |_, _| {},

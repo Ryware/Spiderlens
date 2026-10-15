@@ -24,6 +24,7 @@ import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
+import { isCustomTab, useCustomRun } from "../results/useCustomRun";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
 import { CrawlFileDialogs } from "../files/CrawlFileDialogs";
@@ -120,6 +121,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
+  // Kept here so its progress and outcome outlive the tab's reload when it finishes.
+  const customRun = useCustomRun(transport, crawl.path);
+
   const onFocusId = results.setFocusId;
   // Opening the anchor text cloud from the details starts a fresh view for the selected page.
   const [anchorOpens, setAnchorOpens] = useState(0);
@@ -374,7 +378,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
-          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} />
+          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
@@ -395,7 +399,8 @@ export function AppShell({ transport }: { transport: Transport }) {
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
               // tab's selection into the new tab's first render.
-              key={`${crawl.path}\n${resultTab.id}\n${results.features?.available.join(",") ?? ""}`}
+              key={`${crawl.path}\n${resultTab.id}\n${results.epoch}\n${results.features?.available.join(",") ?? ""}`}
+
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -404,6 +409,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              customRun={isCustomTab(resultTab.id) ? customRun : undefined}
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
@@ -443,11 +449,14 @@ export function AppShell({ transport }: { transport: Transport }) {
                   id={results.focusId}
                   onShowInTable={showInTable}
                   onAnchorCloud={openAnchorCloud}
+                  epoch={results.epoch}
+                  rules={setup.config?.custom}
                   aiChecks={results.features?.available.includes("ai_checks") ?? false}
                 />
               ) : (
                 <DetailPanel />
               )}
+
             </div>
           </>
         )}
@@ -468,6 +477,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         systemDark={systemDark}
         onAppearance={updateUi}
         crawlPath={crawl.path}
+        crawlRunning={crawl.running}
         onSchedule={scheduleThisCrawl}
       />
       <ScheduleEditor
@@ -479,6 +489,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           setScheduleVersion((v) => v + 1);
           void schedules.reload();
         }}
+
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       {crawl.path && setup.config && (

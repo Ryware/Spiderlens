@@ -12,7 +12,9 @@ import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
+
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -93,10 +95,12 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    custom: { extractors: [], searches: [] },
     sitemap_generate: defaultGenerateOptions(),
     links: { auto_analyse: true, position_rules: [], weighting: null },
     access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
+
   };
 }
 
@@ -253,9 +257,10 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; integrations: FakeIntegrations } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; integrations: FakeIntegrations; custom: FakeCustom } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
+
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -310,11 +315,13 @@ export function fakeTransport(
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
+    ...fakeCustomTransport(),
     ...integrationsApi,
     integrations,
     ...aeoApi,
     ...schedulesApi,
     schedules,
+
     saved,
     crawls,
     picks,
@@ -381,6 +388,15 @@ export function fakeTransport(
       if (!(r.host_pause_after >= 1 && r.host_pause_after <= 100)) {
         issues.push({ path: "retry.host_pause_after", severity: "error", code: "out_of_range", message: "Failures before a site is paused must be between 1 and 100." });
       }
+      // Custom rules (spec 013): a few of the engine's checks, enough for the UI paths.
+      config.custom.extractors.forEach((e, i) => {
+        if (!e.expr.trim()) issues.push({ path: `custom.extractors[${i}].expr`, severity: "error", code: "custom_expr_empty", message: "Enter what to extract." });
+        if (config.custom.extractors.findIndex((x) => x.name === e.name) !== i)
+          issues.push({ path: `custom.extractors[${i}].name`, severity: "error", code: "custom_name_taken", message: `Another extractor is already called "${e.name}".` });
+      });
+      config.custom.searches.forEach((x, i) => {
+        if (!x.term) issues.push({ path: `custom.searches[${i}].term`, severity: "error", code: "custom_term_empty", message: "Enter what to search for." });
+      });
       const s = config.speed;
       if (s.max_concurrent > 8 || s.max_per_host > 4 || s.max_urls_per_sec === null || s.max_urls_per_sec > 5) {
         issues.push({ path: "speed", severity: "warning", code: "faster_than_polite", message: "Faster settings are intended for sites you control." });

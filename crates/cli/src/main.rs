@@ -11,6 +11,7 @@ mod integrations_cmd;
 mod files_cmd;
 mod links_cmd;
 mod options;
+mod rules_cmd;
 mod schedule_cmd;
 mod sitemap_cmd;
 mod viz_cmd;
@@ -97,6 +98,9 @@ enum Command {
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Validate, test and run custom extraction and search rules.
+    #[command(subcommand)]
+    Rules(rules_cmd::RulesCommand),
     /// Generate XML sitemaps from a crawl file.
     #[command(subcommand)]
     Sitemap(sitemap_cmd::SitemapCommand),
@@ -203,6 +207,7 @@ fn main() -> ExitCode {
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Rules(cmd) => rules_cmd::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),

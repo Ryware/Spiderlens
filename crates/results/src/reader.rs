@@ -3,6 +3,7 @@
 //! The crawl keeps writing through its own connection; in WAL mode readers
 //! never block it and always see a consistent committed state.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +11,7 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::features::Features;
-use crate::tabs::Derived;
+use crate::tabs::{Derived, TabDef};
 use crate::view::View;
 use crate::{Error, Result, sql};
 
@@ -22,6 +23,8 @@ pub struct Reader {
     pub(crate) next_view: u32,
     /// Data version each derived table was built from.
     pub(crate) derived: HashMap<Derived, u64>,
+    /// The file's custom tabs and the data version they were built at.
+    custom_tabs: Option<(u64, Vec<TabDef>)>,
     /// The sidebar counts of the last data version asked for.
     pub(crate) tab_counts: Option<crate::counts::TabCounts>,
     version: u64,
@@ -78,6 +81,7 @@ impl Reader {
             views: HashMap::new(),
             next_view: 1,
             derived: HashMap::new(),
+            custom_tabs: None,
             tab_counts: None,
             version: 1,
             data_version,
@@ -107,6 +111,29 @@ impl Reader {
             self.version += 1;
         }
         Ok(self.version)
+    }
+
+    /// This file's custom tabs (spec 013), rebuilt when the data changed:
+    /// a rerun can add or rename rules.
+    pub(crate) fn custom_tabs(&mut self) -> Result<&[TabDef]> {
+        let v = self.version()?;
+        if self.custom_tabs.as_ref().is_none_or(|(at, _)| *at != v) {
+            self.custom_tabs = Some((v, crate::custom::tabs(&self.conn)?));
+        }
+        Ok(&self.custom_tabs.as_ref().expect("just built").1)
+    }
+
+    /// Every tab this file shows: the fixed ones, then its custom tabs.
+    pub fn tabs(&mut self) -> Result<Vec<TabDef>> {
+        let mut all = crate::tabs::tabs().to_vec();
+        all.extend(self.custom_tabs()?.iter().cloned());
+        Ok(all)
+    }
+
+    /// A tab of this file by id.
+    pub fn find_tab(&mut self, id: &str) -> Result<Cow<'static, TabDef>> {
+        let custom = self.custom_tabs()?;
+        crate::tabs::find(id, custom).ok_or_else(|| Error::invalid(format!("unknown tab {id:?}")))
     }
 
     /// Makes sure each derived table is current for this data version,
