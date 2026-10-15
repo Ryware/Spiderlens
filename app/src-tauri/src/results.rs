@@ -197,7 +197,7 @@ pub async fn results_open(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<
     state
         .with(&path, |r| {
             Ok(Opened {
-                features: r.features().clone(),
+                features: r.refresh_features().map_err(err)?.clone(),
             })
         })
         .await

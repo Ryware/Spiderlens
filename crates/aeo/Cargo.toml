@@ -1,0 +1,33 @@
+[package]
+name = "spiderlens-aeo"
+description = "SpiderLens AI search checks (AEO and GEO): AI crawler access, llms.txt, answer readiness, trust, structured data and scores, computed from a crawl file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spiderlens-engine.workspace = true
+spiderlens-config.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+ts-rs.workspace = true
+url.workspace = true
+scraper.workspace = true
+ego-tree.workspace = true
+regex.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+spiderlens-test-fixtures.workspace = true
+tokio.workspace = true
+spiderlens-results.workspace = true
+
+[lints]
+workspace = true

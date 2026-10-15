@@ -5,7 +5,8 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { BuildInfo, Transport } from "../transport";
 import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, Tooltip, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
-import { PausedSites } from "./PausedSites";
+import { PausedSites, siteName } from "./PausedSites";
+import { CrawlSpeed } from "./CrawlSpeed";
 import { classLabel } from "../crawl/errorClasses";
 import { LocalErrorNotice } from "../files/LocalErrorNotice";
 import { RecentCrawls, StorageWarning, UnsavedCrawls } from "../files/RecentCrawls";
@@ -83,6 +84,7 @@ export function StatusBar({ setup, run }: { setup: CrawlSetup; run: CrawlRun }) 
         </span>
       ))}
       <PausedSites run={run} />
+      <CrawlSpeed run={run} />
       <span className="ml-auto">
         {setup.loaded ? `${setup.loaded.name} · ` : ""}
         {speed}
@@ -229,6 +231,18 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs }: { run: CrawlR
               <tr key={label}>
                 <td className="px-3 py-1.5">{label}</td>
                 <td className="px-3 py-1.5 text-right tabular">{count(n)}</td>
+              </tr>
+            ))}
+          </Table>
+        )}
+        {s?.speed_events && s.speed_events.length > 0 && (
+          <Table title="Slowdowns" head={["Site", "What slowed it down"]}>
+            {s.speed_events.map((e, i) => (
+              <tr key={`${e.host}-${i}`} data-speed-host={e.host}>
+                <td className="px-3 py-1.5 font-code" title={e.host}>
+                  {siteName(e.host)}
+                </td>
+                <td className="px-3 py-1.5 text-right">{e.summary.replace(`${e.host}: `, "")}</td>
               </tr>
             ))}
           </Table>

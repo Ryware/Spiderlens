@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod compare;
+mod aeo;
 mod crawl;
 mod files;
 mod manage;
@@ -39,6 +40,7 @@ fn main() {
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
             app.manage(compare::State::default());
+            app.manage(aeo::State::default());
             // Windows and Linux pass a double-clicked crawl file as an
             // argument (spec 006 FR-017).
             for arg in std::env::args_os().skip(1) {
@@ -78,6 +80,13 @@ fn main() {
             crawl::retry_preview,
             crawl::retry_start,
             crawl::crawl_log,
+            aeo::aeo_run,
+            aeo::aeo_cancel,
+            aeo::aeo_summary,
+            aeo::aeo_page,
+            aeo::aeo_llms_txt_draft,
+            aeo::ai_bots_list,
+            aeo::aeo_rules,
             files::crawl_open,
             files::crawl_info,
             files::crawl_save_as,

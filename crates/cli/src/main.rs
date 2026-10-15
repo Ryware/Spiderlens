@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod compare_cmd;
+mod aeo_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;
@@ -37,6 +38,9 @@ pub(crate) mod exit {
     /// `spiderlens compare` found a regression it was told to fail on
     /// (spec 012). The number is the next free code at merge time.
     pub const COMPARE_FAILED: u8 = 8;
+    /// A quality gate failed (`aeo run --fail-under`); shared with spec 009's
+    /// `issues --fail-on`, which assigns the number at merge.
+    pub const QUALITY_GATE: u8 = 7;
 }
 
 const BUILD: BuildInfo = BuildInfo::current();
@@ -77,6 +81,9 @@ enum Command {
     Export(Box<export_cmd::ExportArgs>),
     /// What changed between two crawl files of a site.
     Compare(Box<compare_cmd::CompareArgs>),
+    /// AI search checks (AEO and GEO) on a crawl file.
+    #[command(subcommand)]
+    Aeo(aeo_cmd::AeoCommand),
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
@@ -173,6 +180,7 @@ fn main() -> ExitCode {
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
         Command::Compare(args) => compare_cmd::run_compare(*args),
+        Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
     }
 }

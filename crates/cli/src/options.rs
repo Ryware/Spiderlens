@@ -158,6 +158,13 @@ pub struct CrawlArgs {
     /// Do not keep each page's raw HTML in the crawl file.
     #[arg(long, help_heading = "Extraction")]
     pub no_store_html: bool,
+
+    /// Do not run the AI search checks when the crawl finishes.
+    #[arg(long, help_heading = "AI search")]
+    pub no_ai_checks: bool,
+    /// Do not fetch llms.txt, llms-full.txt and tdmrep.json per site.
+    #[arg(long, help_heading = "AI search")]
+    pub no_site_files: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -463,6 +470,12 @@ impl CrawlArgs {
         }
         if let Some(v) = self.host_give_up_after {
             c.retry.host_give_up_after = v;
+        }
+        if self.no_ai_checks {
+            c.ai_checks.auto = false;
+        }
+        if self.no_site_files {
+            c.ai_checks.site_files = false;
         }
         if self.no_store_html {
             c.extraction.store_html = false;
