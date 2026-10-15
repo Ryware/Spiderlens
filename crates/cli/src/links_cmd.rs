@@ -69,8 +69,27 @@ fn analyse(a: AnalyseArgs) -> ExitCode {
         Ok(r) => r,
         Err(code) => return code,
     };
-    let run = match r.analyse() {
-        Ok(run) => run,
+    // Progress on stderr in steps of 10% (contracts/cli.md).
+    let mut shown: Option<(&str, u64)> = None;
+    let mut on = |p: spiderlens_results::AnalysisProgress| {
+        if a.quiet || a.json || p.total == 0 {
+            return;
+        }
+        let pct = p.done * 100 / p.total / 10 * 10;
+        if shown == Some((p.phase, pct)) {
+            return;
+        }
+        shown = Some((p.phase, pct));
+        let (phase, unit) = match p.phase {
+            "positions" => ("Link positions", "pages"),
+            _ => ("Link Score", "URLs"),
+        };
+        eprintln!("Analysing: {phase} {pct}% ({} of {} {unit})", p.done, p.total);
+    };
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let run = match r.analyse_with(&mut on, &never) {
+        Ok(Some(run)) => run,
+        Ok(None) => return ExitCode::FAILURE,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;

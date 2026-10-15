@@ -19,6 +19,8 @@ use spiderlens_engine::extract::{PageInput, Ref, RefSource, body, parse_page};
 use ts_rs::TS;
 use url::Url;
 
+use super::Watch;
+
 /// Pages read from the file per round.
 const BATCH: usize = 512;
 
@@ -188,8 +190,14 @@ impl Page {
 }
 
 /// Builds `temp.link_positions` (data model) for every internal HTML page.
-pub fn build(conn: &Connection, rules: &[PositionRule]) -> rusqlite::Result<Stats> {
+pub fn build(conn: &Connection, rules: &[PositionRule], watch: &mut Watch<'_>) -> rusqlite::Result<Stats> {
     let rules = Rules::compile(rules);
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM urls u WHERE {}", crate::tabs::HTML_OK),
+        [],
+        |r| r.get(0),
+    )?;
+    watch.tick("positions", 0, total as u64)?;
     conn.execute_batch(
         "DROP TABLE IF EXISTS temp.link_positions;
          CREATE TEMP TABLE link_positions (
@@ -224,6 +232,7 @@ pub fn build(conn: &Connection, rules: &[PositionRule]) -> rusqlite::Result<Stat
                 .collect();
             if let Some((pages, results)) = done.take() {
                 write(conn, &pages, &results, &mut stats)?;
+                watch.tick("positions", stats.pages, total as u64)?;
             }
             Ok(handles
                 .into_iter()
@@ -244,10 +253,10 @@ fn write(
     results: &[Vec<Classified>],
     stats: &mut Stats,
 ) -> rusqlite::Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    {
+    // A savepoint, not a transaction, so it nests inside a whole run's.
+    Watch::savepoint(conn, "positions", || {
         let mut ins =
-            tx.prepare_cached("INSERT OR IGNORE INTO temp.link_positions VALUES (?1, ?2, ?3, ?4)")?;
+            conn.prepare_cached("INSERT OR IGNORE INTO temp.link_positions VALUES (?1, ?2, ?3, ?4)")?;
         for (page, links) in pages.iter().zip(results) {
             stats.pages += 1;
             if page.body.is_none() {
@@ -258,8 +267,8 @@ fn write(
                 ins.execute(params![page.id, c.pos, c.position.code(), c.rule])?;
             }
         }
-    }
-    tx.commit()
+        Ok(())
+    })
 }
 
 fn page_positions(p: &Page, rules: &Rules) -> Vec<Classified> {

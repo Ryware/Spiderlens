@@ -21,8 +21,8 @@ pub mod synth;
 mod tabs;
 mod view;
 
-pub use analysis::AnalysisRun;
 pub use analysis::link_positions::TestedLink;
+pub use analysis::{AnalysisProgress, AnalysisRun};
 pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage};
 pub use counts::{FilterCounts, TabCounts};
 pub use detail::{

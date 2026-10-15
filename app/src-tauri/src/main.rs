@@ -137,6 +137,8 @@ fn main() {
             results::export_start,
             results::export_cancel,
             results::analysis_run,
+            results::analysis_start,
+            results::analysis_cancel,
             results::analysis_settings,
             results::positions_test,
             schedules::schedules_list,

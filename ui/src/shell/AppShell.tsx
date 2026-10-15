@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
+import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
@@ -110,6 +111,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const inspectPending = useRef(false);
   const [inspectAsked, setInspectAsked] = useState(0);
   const results = useResults(transport, crawl.path, crawl.running);
+  const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
@@ -260,6 +262,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
       { id: "manage-crawls", title: "Manage crawls…", group: "Crawl", keywords: ["disk", "space", "delete", "cleanup", "storage", "files", "trash"], run: () => setManageOpen(true) },
+      {
+        id: "analyse",
+        title: "Work out Link Score",
+        group: "Crawl",
+        keywords: ["analysis", "link positions", "pagerank"],
+        enabled: crawl.path !== null && !crawl.running && analysis.status !== "running",
+        run: analysis.start,
+      },
       { id: "schedule-crawl", title: "Schedule this crawl…", group: "Crawl", keywords: ["schedule", "recurring", "repeat", "every", "cron", "new schedule"], enabled: setup.config !== null, run: scheduleThisCrawl },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
@@ -294,7 +304,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, saveAs, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -414,7 +424,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         )}
         </div>
       </div>
-      <StatusBar setup={setup} run={crawl} />
+      <StatusBar setup={setup} run={crawl} analysis={analysis} />
 
       <SettingsSheet
         open={settingsOpen}
