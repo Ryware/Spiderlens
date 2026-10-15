@@ -8,6 +8,7 @@ import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
 import { Badge, Button, cn, ContextMenu, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
 import { AiPageSection } from "./AiPageSection";
+import { CookieFlags, expiresText } from "./CookiesView";
 import { cellTone, formatBytes, toneText } from "./format";
 import { HtmlViewer } from "./HtmlViewer";
 
@@ -29,6 +30,7 @@ const fieldLabels: Record<string, string> = {
   response_time: "Response time",
   attempts: "Retry attempts",
   raw_html: "Page HTML",
+  cookies: "Cookies",
 };
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
@@ -383,6 +385,25 @@ export function Inspector({
         </p>
         <HtmlViewer transport={transport} path={path} id={d.id} url={d.url} open={htmlOpen} onOpenChange={setHtmlOpen} />
       </Section>
+      {d.cookies.length > 0 && (
+        <Section title={`Cookies set (${d.cookies.length})`}>
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="Cookies set" data-selectable>
+            {d.cookies.map((c) => (
+              <li key={`${c.name}\n${c.domain}\n${c.path}`} className="flex flex-col gap-0.5">
+                <div className="flex min-w-0 items-baseline gap-2 text-sm">
+                  <span className="min-w-0 truncate font-mono text-fg">{c.name}</span>
+                  <span className="min-w-0 truncate text-fg-3">
+                    {c.domain}
+                    {c.path !== "/" && c.path}
+                  </span>
+                  <span className="ml-auto shrink-0 text-xs text-fg-3">{expiresText(c)}</span>
+                </div>
+                <CookieFlags c={c} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       {missing.size > 0 && (
         <Section title="Not collected">

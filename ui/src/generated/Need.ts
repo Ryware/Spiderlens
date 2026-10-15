@@ -3,4 +3,4 @@
 /**
  * Data a column or filter needs from the crawl file.
  */
-export type Need = "base" | "extraction" | "attempts" | "timing" | "raw_html" | "ai_checks";
+export type Need = "base" | "extraction" | "attempts" | "timing" | "raw_html" | "cookies" | "ai_checks";

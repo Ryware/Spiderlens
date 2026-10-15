@@ -30,6 +30,8 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// The cookie audit (spec 025).
+    Cookies,
     /// AI search check results (spec 015).
     AiChecks,
 }
@@ -46,6 +48,7 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
         }
     }
@@ -58,6 +61,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Cookies => "cookies",
             Self::AiChecks => "ai_checks",
         }
     }

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use spiderlens_config::{
-    CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, QueryMode, RobotsMode, SpeedSettings,
-    SubdomainMode, UaPreset, import_profile,
+    CookiePolicy, CrawlConfig, CustomHeader, HeaderTarget, HeaderValue, Mode, QueryMode, RobotsMode,
+    SpeedSettings, SubdomainMode, SuppliedCookie, UaPreset, import_profile,
 };
 
 #[derive(Args, Debug, Default)]
@@ -33,6 +33,112 @@ pub struct IdentityArgs {
     /// Send custom headers to every host, not only internal ones.
     #[arg(long, help_heading = "Identity")]
     pub header_all_hosts: bool,
+}
+
+/// Cookies sent to the crawl's internal hosts (spec 025). Secret values
+/// come from the environment, never from the command line, where other
+/// programs could read them.
+#[derive(Args, Debug, Default)]
+pub struct AccessArgs {
+    /// A cookie whose value is secret, read from SPIDERLENS_COOKIE_<NAME>.
+    /// Repeatable.
+    #[arg(long = "cookie", value_name = "NAME@DOMAIN[/PATH]", help_heading = "Cookies")]
+    pub cookies: Vec<String>,
+    /// A cookie with a non-secret value (a consent flag, a test variant).
+    /// Repeatable.
+    #[arg(
+        long = "cookie-plain",
+        value_name = "NAME=VALUE@DOMAIN[/PATH]",
+        help_heading = "Cookies"
+    )]
+    pub plain_cookies: Vec<String>,
+    /// What to do with cookies the site sets [default: ignore].
+    #[arg(long, value_enum, help_heading = "Cookies")]
+    pub cookie_policy: Option<CookiePolicyArg>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CookiePolicyArg {
+    /// Do not send them back, as search engines do.
+    Ignore,
+    /// Keep them in memory for the rest of the crawl.
+    Keep,
+}
+
+/// `SPIDERLENS_COOKIE_SID` for a cookie named `sid`: upper case, and any
+/// character other than a letter or digit becomes `_`.
+pub fn cookie_env(name: &str) -> String {
+    let tail: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("SPIDERLENS_COOKIE_{tail}")
+}
+
+/// `NAME@DOMAIN[/PATH]` into name, domain and path.
+fn cookie_target(raw: &str) -> Result<(String, String, String), String> {
+    let (name, rest) = raw
+        .rsplit_once('@')
+        .ok_or_else(|| format!("--cookie takes NAME@DOMAIN[/PATH], got '{raw}'"))?;
+    let (domain, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    if name.trim().is_empty() || domain.trim().is_empty() {
+        return Err(format!("--cookie takes NAME@DOMAIN[/PATH], got '{raw}'"));
+    }
+    Ok((
+        name.trim().to_string(),
+        domain.trim().to_string(),
+        path.to_string(),
+    ))
+}
+
+impl AccessArgs {
+    pub fn apply(&self, c: &mut CrawlConfig) -> Result<(), String> {
+        for raw in &self.cookies {
+            let (name, domain, path) = cookie_target(raw)?;
+            let var = cookie_env(&name);
+            let value =
+                std::env::var(&var).map_err(|_| format!("set {var} to the value of cookie {name}"))?;
+            c.access.cookies.push(SuppliedCookie {
+                name,
+                value: HeaderValue::secret(value),
+                domain,
+                path,
+                secure_only: false,
+            });
+        }
+        for raw in &self.plain_cookies {
+            let (pair, target) = raw
+                .rsplit_once('@')
+                .ok_or_else(|| format!("--cookie-plain takes NAME=VALUE@DOMAIN[/PATH], got '{raw}'"))?;
+            let (name, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("--cookie-plain takes NAME=VALUE@DOMAIN[/PATH], got '{raw}'"))?;
+            let (name, domain, path) = cookie_target(&format!("{name}@{target}"))?;
+            c.access.cookies.push(SuppliedCookie {
+                name,
+                value: HeaderValue::Plain(value.to_string()),
+                domain,
+                path,
+                secure_only: false,
+            });
+        }
+        if let Some(p) = self.cookie_policy {
+            c.access.cookie_policy = match p {
+                CookiePolicyArg::Ignore => CookiePolicy::Ignore,
+                CookiePolicyArg::Keep => CookiePolicy::Keep,
+            };
+        }
+        Ok(())
+    }
 }
 
 #[derive(Args, Debug, Default)]
@@ -106,6 +212,9 @@ pub struct CrawlArgs {
 
     #[command(flatten)]
     pub identity: IdentityArgs,
+
+    #[command(flatten)]
+    pub access: AccessArgs,
 
     #[arg(long, value_enum, help_heading = "Speed")]
     pub speed: Option<SpeedArg>,
@@ -411,6 +520,7 @@ impl CrawlArgs {
         }
 
         self.identity.apply(&mut c)?;
+        self.access.apply(&mut c)?;
 
         if let Some(s) = self.speed {
             c.speed = match s {

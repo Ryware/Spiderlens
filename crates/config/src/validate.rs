@@ -285,6 +285,71 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         }
     }
 
+    // Cookies (spec 025 data-model.md)
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+    };
+    let mut per_domain: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, ck) in c.access.cookies.iter().enumerate() {
+        let path = format!("access.cookies[{index}]");
+        if !token(ck.name.trim()) {
+            i.error(
+                format!("{path}.name"),
+                "cookie_name",
+                "A cookie name is letters, digits and simple symbols, without spaces, = or ;.",
+            );
+        }
+        match ck.value.expose() {
+            None => i.error(
+                format!("{path}.value"),
+                "cookie_secret_missing",
+                "This secret value is not saved in files. Enter it again to start the crawl.",
+            ),
+            Some(v)
+                if v.bytes()
+                    .any(|b| b.is_ascii_control() || b == b';' || b == b',' || b == b' ') =>
+            {
+                i.error(
+                    format!("{path}.value"),
+                    "cookie_value",
+                    "A cookie value cannot contain spaces, commas, semicolons or line breaks.",
+                )
+            }
+            Some(v) if ck.name.len() + v.len() > 4096 => i.error(
+                format!("{path}.value"),
+                "cookie_too_large",
+                "Browsers refuse cookies over 4 KB, so sites never receive them.",
+            ),
+            Some(_) => {}
+        }
+        let domain = ck.domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        if domain.is_empty() || domain.contains('/') || domain.contains(' ') {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_domain",
+                "Enter the site the cookie belongs to, for example example.com.",
+            );
+        }
+        if !ck.path.starts_with('/') {
+            i.error(
+                format!("{path}.path"),
+                "cookie_path",
+                "A cookie path starts with /.",
+            );
+        }
+        let n = per_domain.entry(domain).or_default();
+        *n += 1;
+        if *n == 181 {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_count",
+                "Browsers keep at most 180 cookies per site.",
+            );
+        }
+    }
+
     // Speed
     let s = &c.speed;
     if !(1..=512).contains(&s.max_concurrent) {
@@ -644,6 +709,45 @@ mod tests {
         assert!(got.contains(&"speed.max_per_host".to_string()));
         assert!(got.contains(&"retry.attempts".to_string()));
         assert!(got.contains(&"network.read_timeout_secs".to_string()));
+    }
+
+    #[test]
+    fn cookies() {
+        use crate::{HeaderValue, SuppliedCookie};
+        let ck = |name: &str, value: HeaderValue, domain: &str, path: &str| SuppliedCookie {
+            name: name.into(),
+            value,
+            domain: domain.into(),
+            path: path.into(),
+            secure_only: false,
+        };
+        let mut c = CrawlConfig::default();
+        c.access.cookies = vec![
+            ck("ok", HeaderValue::Plain("yes".into()), "example.com", "/"),
+            ck("bad name", HeaderValue::Plain("x".into()), "example.com", "/"),
+            ck("v", HeaderValue::Plain("a;b".into()), "example.com", "/"),
+            ck("s", HeaderValue::Secret(None), "", "shop"),
+        ];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("access.cookies[1].name".to_string(), "cookie_name".to_string()),
+                ("access.cookies[2].value".to_string(), "cookie_value".to_string()),
+                (
+                    "access.cookies[3].value".to_string(),
+                    "cookie_secret_missing".to_string()
+                ),
+                (
+                    "access.cookies[3].domain".to_string(),
+                    "cookie_domain".to_string()
+                ),
+                ("access.cookies[3].path".to_string(), "cookie_path".to_string()),
+            ]
+        );
     }
 
     #[test]

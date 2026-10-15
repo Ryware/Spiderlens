@@ -73,6 +73,8 @@ pub struct UrlDetail {
     pub headings: u64,
     /// The page's HTML is stored in the crawl file.
     pub html_stored: bool,
+    /// Cookies this URL's response set, without values (spec 025 FR-027).
+    pub cookies: Vec<crate::CookieRow>,
     /// Requests made for this URL across the crawl, retries included
     /// (spec 004 FR-020).
     pub attempts: Option<u32>,
@@ -296,6 +298,7 @@ impl Reader {
             ("response_time", Need::Timing),
             ("attempts", Need::Attempts),
             ("raw_html", Need::RawHtml),
+            ("cookies", Need::Cookies),
         ] {
             if !self.features.has(need) {
                 unavailable.insert(field.to_string(), need.unavailable_reason().to_string());
@@ -340,6 +343,7 @@ impl Reader {
             headers,
             headings,
             html_stored,
+            cookies: self.url_cookies(id)?,
             attempts,
             error_reason,
             manual_retry,

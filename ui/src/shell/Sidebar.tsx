@@ -1,4 +1,4 @@
-import { Activity, CalendarClock, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, CalendarClock, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Cookie, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -23,6 +23,9 @@ export const resultTabs: NavItem[] = [
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
 ];
+
+/** Reports with their own view rather than a results table (spec 025). */
+export const reportTabs: NavItem[] = [{ id: "cookies", title: "Cookies", icon: Cookie }];
 
 const later: NavItem[] = [
   { id: "ai-crawlers", title: "AI crawlers", icon: Bot, later: "M4" },
@@ -97,7 +100,7 @@ export function Sidebar({
         {item({ id: "log", title: "Crawl log", icon: ScrollText }, results)}
       </ul>
       {heading("Crawl results")}
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">
