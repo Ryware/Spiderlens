@@ -112,9 +112,65 @@ pub const STEPS: &[Step] = &[
     CREATE INDEX cookies_url ON cookies(url_id);
     CREATE INDEX cookies_key ON cookies(name, domain, path);",
     },
-    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    // Spec 011: every sitemap file and entry the crawl read
+    // (specs/011-sitemaps-orphan-pages/data-model.md).
     Step {
         version: 8,
+        additive: true,
+        sql: "CREATE TABLE sitemap_files (
+        id INTEGER PRIMARY KEY,
+        location TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER NOT NULL,
+        base_url TEXT,
+        kind TEXT,
+        http_status INTEGER,
+        final_url TEXT,
+        redirected INTEGER,
+        compressed INTEGER,
+        bytes INTEGER,
+        entry_count INTEGER NOT NULL DEFAULT 0,
+        over_limit INTEGER,
+        error_class TEXT,
+        error TEXT,
+        error_line INTEGER,
+        read_at INTEGER
+    );
+    CREATE TABLE sitemap_entries (
+        id INTEGER PRIMARY KEY,
+        file_id INTEGER NOT NULL,
+        pos INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        loc TEXT NOT NULL,
+        url_id INTEGER,
+        invalid TEXT,
+        lastmod_raw TEXT,
+        lastmod INTEGER,
+        changefreq TEXT,
+        priority TEXT
+    );
+    CREATE INDEX sitemap_entries_url ON sitemap_entries(url_id);
+    CREATE INDEX sitemap_entries_file ON sitemap_entries(file_id, pos);
+    CREATE TABLE sitemap_refs (
+        entry_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        raw TEXT NOT NULL,
+        url TEXT,
+        url_id INTEGER,
+        lang TEXT
+    );
+    CREATE INDEX sitemap_refs_entry ON sitemap_refs(entry_id);",
+    },
+    Step {
+        // External integrations (spec 024, data-model.md). Tables only.
+        version: 9,
+        additive: true,
+        sql: INTEGRATIONS,
+    },
+    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    Step {
+        version: 10,
         additive: true,
         sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
         ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
@@ -237,6 +293,129 @@ CREATE TABLE aeo_probe (
     PRIMARY KEY (host_key, bot, url_id)
 );
 "#;
+
+const INTEGRATIONS: &str = "
+CREATE TABLE integration_runs (
+  id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL,
+  account_label TEXT,
+  property TEXT,
+  params TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  resume_at INTEGER,
+  cursor TEXT,
+  requested INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  matched INTEGER,
+  unmatched INTEGER,
+  usage INTEGER,
+  usage_cap INTEGER,
+  message TEXT,
+  app_version TEXT NOT NULL
+);
+CREATE TABLE integration_queue (
+  run_id INTEGER NOT NULL,
+  url_id INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  PRIMARY KEY (run_id, url_id)
+);
+CREATE INDEX integration_queue_pending ON integration_queue(run_id, state, pos);
+CREATE TABLE integration_status (
+  url_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  error_class TEXT,
+  attempts INTEGER,
+  detail TEXT,
+  PRIMARY KEY (url_id, provider)
+);
+CREATE TABLE gsc_pages (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  clicks INTEGER NOT NULL,
+  impressions INTEGER NOT NULL,
+  ctr REAL NOT NULL,
+  position REAL NOT NULL
+);
+CREATE TABLE gsc_queries (
+  url_id INTEGER NOT NULL,
+  run_id INTEGER NOT NULL,
+  query TEXT NOT NULL,
+  clicks INTEGER NOT NULL,
+  impressions INTEGER NOT NULL,
+  ctr REAL NOT NULL,
+  position REAL NOT NULL,
+  PRIMARY KEY (url_id, query)
+);
+CREATE TABLE gsc_inspection (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  verdict TEXT,
+  coverage_state TEXT,
+  indexing_state TEXT,
+  robots_state TEXT,
+  page_fetch_state TEXT,
+  google_canonical TEXT,
+  user_canonical TEXT,
+  canonical_mismatch INTEGER,
+  last_crawl INTEGER,
+  crawled_as TEXT,
+  inspected_at INTEGER NOT NULL,
+  raw BLOB
+);
+CREATE TABLE ga4_pages (
+  url_id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL,
+  sessions INTEGER NOT NULL,
+  engaged_sessions INTEGER NOT NULL,
+  engagement_rate REAL,
+  key_events REAL,
+  revenue REAL
+);
+CREATE TABLE cwv_field (
+  url_id INTEGER NOT NULL,
+  form_factor TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  level TEXT NOT NULL,
+  lcp_ms INTEGER, inp_ms INTEGER, cls REAL, fcp_ms INTEGER, ttfb_ms INTEGER,
+  lcp_rating TEXT, inp_rating TEXT, cls_rating TEXT, fcp_rating TEXT, ttfb_rating TEXT,
+  period_start TEXT, period_end TEXT,
+  PRIMARY KEY (url_id, form_factor)
+);
+CREATE TABLE psi_lab (
+  url_id INTEGER NOT NULL,
+  strategy TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  performance INTEGER, accessibility INTEGER, best_practices INTEGER, seo INTEGER,
+  lcp_ms INTEGER, cls REAL, tbt_ms INTEGER, speed_index_ms INTEGER,
+  opportunities TEXT,
+  audits BLOB,
+  tested_at INTEGER NOT NULL,
+  PRIMARY KEY (url_id, strategy)
+);
+CREATE TABLE link_metrics (
+  url_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  metrics TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (url_id, provider)
+);
+CREATE TABLE orphan_candidates (
+  id INTEGER PRIMARY KEY,
+  url TEXT NOT NULL,
+  source TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  clicks INTEGER, impressions INTEGER, sessions INTEGER,
+  UNIQUE (url, source)
+);
+";
 
 /// The format this build writes.
 pub const LATEST: i64 = latest();

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
-use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule};
+use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule, SitemapGenerateOptions};
 use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
@@ -20,6 +20,7 @@ use spiderlens_results::{
     FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, TestedLink,
     UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
 };
+use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -678,6 +679,35 @@ pub async fn issues_summary(
         .await
 }
 
+/// The Sitemap files view (spec 011 US3).
+#[tauri::command]
+pub async fn sitemap_files(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<SitemapFiles> {
+    state.with(&path, |r| r.sitemap_files().map_err(err)).await
+}
+
+/// Counts for the Generate sitemap sheet's live preview (spec 011 FR-018);
+/// `existing` lists the files in `folder` that writing would replace.
+#[tauri::command]
+pub async fn sitemap_preview(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    options: SitemapGenerateOptions,
+    folder: Option<PathBuf>,
+) -> Cmd<GenerateReport> {
+    state
+        .with(&path, move |r| {
+            generate_sitemaps(
+                r,
+                &options,
+                SitemapOutput::DryRun {
+                    dir: folder.as_deref(),
+                },
+            )
+            .map_err(err)
+        })
+        .await
+}
+
 /// The `issues-partial` event.
 #[derive(Clone, Serialize)]
 struct IssuesPartial {
@@ -707,4 +737,36 @@ pub async fn passes_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
 #[tauri::command]
 pub async fn url_issues(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<UrlIssue>> {
     state.with(&path, move |r| r.url_issues(id).map_err(err)).await
+}
+
+/// Writes the sitemaps into `folder` (spec 011 FR-017 to FR-019). Refused
+/// while a crawl runs, so the files describe a finished crawl.
+#[tauri::command]
+pub async fn sitemap_generate(
+    state: tauri::State<'_, State>,
+    crawl: tauri::State<'_, crate::crawl::State>,
+    path: PathBuf,
+    options: SitemapGenerateOptions,
+    folder: PathBuf,
+    replace: bool,
+) -> Cmd<GenerateReport> {
+    if crawl.is_running() {
+        return Err("Sitemaps can be generated once the crawl has finished.".into());
+    }
+    state
+        .with(&path, move |r| {
+            generate_sitemaps(
+                r,
+                &options,
+                SitemapOutput::Folder {
+                    dir: &folder,
+                    replace,
+                },
+            )
+            .map_err(|e| match e {
+                GenerateError::Exists(names) => format!("These files already exist: {}", names.join(", ")),
+                e => e.to_string(),
+            })
+        })
+        .await
 }

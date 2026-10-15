@@ -5,6 +5,7 @@
 //! issues. This crate has no dependency on the desktop shell.
 
 pub mod ai_bots;
+pub mod dirs;
 mod links;
 mod list_input;
 mod model;
@@ -23,10 +24,11 @@ mod validate;
 pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    AccessSettings, AiChecks, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings, HeaderTarget,
-    Identity, IssueSettings, Limits, Mode, ModeInput, NetworkSettings, Priority, QueryMode, QueryParams,
-    RetrySettings, RobotsMode, RobotsSettings, RuleOverride, Scope, SpeedSettings, SubdomainMode,
-    SuppliedCookie, UserAgent,
+    AccessSettings, AiChecks, Changefreq, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
+    HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
+    ModeInput, NetworkSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
+    RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
+    SubdomainMode, SuppliedCookie, UserAgent,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};

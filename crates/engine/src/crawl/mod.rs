@@ -18,12 +18,14 @@ pub mod retry;
 mod runner;
 pub mod scope;
 pub mod site_files;
-mod sitemap;
+pub mod sitemap;
 mod speed;
 pub mod store;
 mod window;
 
-pub use file::{Access, CrawlInfo, LocalError, LocalErrorKind, LockNote, WriterLock};
+pub use file::{
+    Access, CrawlInfo, LocalError, LocalErrorKind, LockNote, Update, UpdateError, WriterLock, open_for_update,
+};
 pub use reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 pub use runner::{
     Control, CrawlError, CrawlEvent, CrawlSummary, Crawler, HostSummary, Notice, Opened, PausedHost,

@@ -65,9 +65,12 @@ export function useResults(transport: Transport, path: string | null, live: bool
   const session = useCallback((tab: string) => sessions[tab] ?? newSession(), [sessions]);
   const update = useCallback((tab: string, patch: Partial<TabSession>) => setSessions((s) => ({ ...s, [tab]: { ...(s[tab] ?? newSession()), ...patch } })), []);
 
+  /** Reads which data the file has again, after external data changed it. */
+  const reload = useCallback(() => setRetry((n) => n + 1), []);
+
   const counts = useTabCounts(transport, features ? path : null, live);
 
-  return { tabs, features, session, update, focusId, setFocusId, counts };
+  return { tabs, features, session, update, focusId, setFocusId, counts, reload };
 }
 
 /**

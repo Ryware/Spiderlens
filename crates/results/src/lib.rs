@@ -16,6 +16,7 @@ mod export;
 mod features;
 pub mod issues;
 mod reader;
+mod sitemaps;
 mod sql;
 #[doc(hidden)]
 pub mod synth;
@@ -36,6 +37,10 @@ pub use export::{
 pub use features::Features;
 pub use reader::Reader;
 pub use rusqlite::InterruptHandle;
+pub use sitemaps::{
+    GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput, SitemapFileRow, SitemapFiles,
+    check_structure as check_sitemap_structure, generate as generate_sitemaps,
+};
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
 pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, issue_tabs, tab, tabs};
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};

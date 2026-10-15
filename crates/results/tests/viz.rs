@@ -50,7 +50,7 @@ async fn crawl() -> Crawled {
         speed: SpeedSettings::FAST,
         ..CrawlConfig::default()
     };
-    c.scope.use_sitemaps = true;
+    c.scope.sitemaps = spiderlens_config::SitemapSettings::all(true);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("viz.spiderlens");
     let input = ModeInput::Spider {

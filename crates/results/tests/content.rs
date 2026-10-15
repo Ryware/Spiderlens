@@ -400,6 +400,11 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     for tab in tabs() {
         let counts = r.counts(tab.id, UrlScope::All).unwrap();
         for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks) {
+            // Integration data is fetched after a crawl (spec 024), not by it.
+            if f.need == Need::SearchConsole {
+                assert!(counts.counts[f.id].is_none());
+                continue;
+            }
             let n = counts.counts[f.id].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
             assert_eq!(
                 n,

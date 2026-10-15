@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Entry point for checking generated page and image sitemaps with
+     xmllint with the schema option and this file. -->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <xsd:import namespace="http://www.sitemaps.org/schemas/sitemap/0.9" schemaLocation="sitemap.xsd"/>
+  <xsd:import namespace="http://www.google.com/schemas/sitemap-image/1.1" schemaLocation="sitemap-image.xsd"/>
+  <xsd:import namespace="http://www.w3.org/1999/xhtml" schemaLocation="xhtml-link.xsd"/>
+</xsd:schema>

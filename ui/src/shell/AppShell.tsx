@@ -6,6 +6,7 @@ import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
+import { IntegrationsView } from "../integrations/IntegrationsView";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
@@ -19,6 +20,8 @@ import { useAppearance, useUiState } from "./useUiState";
 import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
+import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
+import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
 import { issueOfTab, issueTab, useIssues } from "../issues/useIssues";
@@ -98,6 +101,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [sitemapOpen, setSitemapOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -272,6 +276,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
+      {
+        id: "generate-sitemap",
+        title: "Generate XML sitemap…",
+        group: "Crawl",
+        keywords: ["sitemap", "xml", "export"],
+        enabled: crawl.path !== null && setup.config !== null,
+        run: () => setSitemapOpen(true),
+      },
       { id: "manage-crawls", title: "Manage crawls…", group: "Crawl", keywords: ["disk", "space", "delete", "cleanup", "storage", "files", "trash"], run: () => setManageOpen(true) },
       {
         id: "analyse",
@@ -297,6 +309,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
+      { id: "go-integrations", title: "Integrations", group: "Go to", keywords: ["search console", "google", "external data"], run: () => setSection("integrations") },
       { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
@@ -342,7 +355,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -351,7 +364,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -408,6 +421,10 @@ export function AppShell({ transport }: { transport: Transport }) {
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
+          ) : section === "integrations" ? (
+            <IntegrationsView transport={transport} path={crawl.path} crawlRunning={crawl.running} onDataChanged={results.reload} />
+          ) : section === "sitemap-files" && crawl.path ? (
+            <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
           ) : vizView && crawl.path ? (
             <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : cookiesOpen && crawl.path ? (
@@ -485,6 +502,17 @@ export function AppShell({ transport }: { transport: Transport }) {
         }}
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
+      {crawl.path && setup.config && (
+        <GenerateSitemapSheet
+          open={sitemapOpen}
+          onOpenChange={setSitemapOpen}
+          transport={transport}
+          path={crawl.path}
+          running={crawl.active}
+          options={setup.config.sitemap_generate}
+          onOptions={(o) => setup.set((c) => ({ ...c, sitemap_generate: o }))}
+        />
+      )}
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
       <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
       <CrawlInfoSheet

@@ -24,6 +24,16 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { CacheInfo } from "./generated/CacheInfo";
+import type { Connection } from "./generated/Connection";
+import type { OrphanPage } from "./generated/OrphanPage";
+import type { PageRequest } from "./generated/PageRequest";
+import type { Property } from "./generated/Property";
+import type { ProviderSettings } from "./generated/ProviderSettings";
+import type { ProviderStatus } from "./generated/ProviderStatus";
+import type { QueryRow } from "./generated/QueryRow";
+import type { RunProgress } from "./generated/RunProgress";
+import type { Status as IntegrationStatus } from "./generated/Status";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
 import type { ExportDone } from "./generated/ExportDone";
@@ -42,6 +52,9 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { GenerateReport } from "./generated/GenerateReport";
+import type { SitemapFiles } from "./generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
 import type { AnalysisProgress } from "./generated/AnalysisProgress";
 import type { AnalysisRun } from "./generated/AnalysisRun";
 import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
@@ -541,6 +554,7 @@ export interface Transport {
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
+  pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
@@ -641,6 +655,10 @@ export interface Transport {
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  // Sitemap generation (spec 011, contracts/desktop-commands.md).
+  sitemapFiles(path: string): Promise<SitemapFiles>;
+  sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
+  sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
   /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
   vizScene(path: string, view: ViewState): Promise<Scene>;
   /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
@@ -670,6 +688,31 @@ export interface Transport {
   /** Counts so far while a long issuesSummary evaluation runs (FR-008). */
   onIssuesPartial(cb: (p: { path: string; summary: IssuesSummary }) => void): Promise<() => void>;
   urlIssues(path: string, id: number): Promise<UrlIssue[]>;
+  // External data (spec 024, contracts/desktop-commands.md).
+  integrationsStatus(): Promise<IntegrationStatus>;
+  integrationsSettingsSave(provider: string, settings: ProviderSettings): Promise<ProviderStatus>;
+  /** Saves the user's own Google client; an empty id goes back to the built-in one. */
+  integrationsGoogleClient(clientId: string, clientSecret: string | null): Promise<void>;
+  /** Opens Google's consent page in the system browser and resolves when the user answers. */
+  integrationsConnectGoogle(features: string[]): Promise<Connection>;
+  integrationsConnectCancel(): Promise<void>;
+  integrationsSaveKey(provider: string, label: string, key: string): Promise<Connection>;
+  /** True when Google confirmed the revoke. */
+  integrationsForget(kind: string, label: string): Promise<boolean>;
+  integrationsProperties(account: string | null, path: string | null): Promise<Property[]>;
+  integrationsDefaultRequest(property: string): Promise<PageRequest>;
+  integrationsRunSearchConsole(path: string, account: string | null, request: PageRequest): Promise<RunProgress>;
+  integrationsRunResume(path: string, runId: number | null): Promise<RunProgress>;
+  integrationsRunPause(): Promise<void>;
+  integrationsRunCancel(): Promise<void>;
+  integrationsRuns(path: string): Promise<RunProgress[]>;
+  integrationsQueries(path: string, urlId: number): Promise<QueryRow[]>;
+  integrationsOrphans(path: string, source: string | null, offset: number, limit: number): Promise<OrphanPage>;
+  integrationsRemove(path: string, provider: string | null): Promise<void>;
+  integrationsCacheInfo(): Promise<CacheInfo>;
+  integrationsCacheClear(provider: string | null): Promise<number>;
+  integrationsOpenTerms(provider: string): Promise<void>;
+  onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
   aeoRun(path: string): Promise<{ run_id: number }>;
@@ -721,10 +764,13 @@ export const tauriTransport: Transport = {
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
+  pickSitemapFile: async () =>
+    asPath(await open({ filters: [{ name: "XML sitemaps", extensions: ["xml", "gz"] }] })),
   pickProfileFile: async () =>
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>
     save({ defaultPath: `${name}.spiderlens-profile.json`, filters: [{ name: "SpiderLens profile", extensions: ["json"] }] }),
+  pickFolder: async () => asPath(await open({ directory: true })),
   profiles: () => invoke("profiles_list"),
   loadProfile: (name) => invoke("profile_load", { name }),
   saveProfile: (name, config, startUrl, overwrite) => invoke("profile_save", { name, config, startUrl, overwrite }),
@@ -803,6 +849,9 @@ export const tauriTransport: Transport = {
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  sitemapFiles: (path) => invoke("sitemap_files", { path }),
+  sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
+  sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),
   vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
   vizExport: (path, view, options, file) => invoke("viz_export", { path, view, options, file }),
@@ -825,6 +874,27 @@ export const tauriTransport: Transport = {
   issuesSummary: (path, running) => invoke("issues_summary", { path, running }),
   onIssuesPartial: (cb) => listen<{ path: string; summary: IssuesSummary }>("issues-partial", (e) => cb(e.payload)),
   urlIssues: (path, id) => invoke("url_issues", { path, id }),
+  integrationsStatus: () => invoke("integrations_status"),
+  integrationsSettingsSave: (provider, settings) => invoke("integrations_settings_save", { provider, settings }),
+  integrationsGoogleClient: (clientId, clientSecret) => invoke("integrations_google_client", { clientId, clientSecret }),
+  integrationsConnectGoogle: (features) => invoke("integrations_connect_google", { features }),
+  integrationsConnectCancel: () => invoke("integrations_connect_cancel"),
+  integrationsSaveKey: (provider, label, key) => invoke("integrations_save_key", { provider, label, key }),
+  integrationsForget: (kind, label) => invoke("integrations_forget", { kind, label }),
+  integrationsProperties: (account, path) => invoke("integrations_properties", { account, path }),
+  integrationsDefaultRequest: (property) => invoke("integrations_default_request", { property }),
+  integrationsRunSearchConsole: (path, account, request) => invoke("integrations_run_search_console", { path, account, request }),
+  integrationsRunResume: (path, runId) => invoke("integrations_run_resume", { path, runId }),
+  integrationsRunPause: () => invoke("integrations_run_pause"),
+  integrationsRunCancel: () => invoke("integrations_run_cancel"),
+  integrationsRuns: (path) => invoke("integrations_runs", { path }),
+  integrationsQueries: (path, urlId) => invoke("integrations_queries", { path, urlId }),
+  integrationsOrphans: (path, source, offset, limit) => invoke("integrations_orphans", { path, source, offset, limit }),
+  integrationsRemove: (path, provider) => invoke("integrations_remove", { path, provider }),
+  integrationsCacheInfo: () => invoke("integrations_cache_info"),
+  integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
+  integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
   aeoSummary: (path) => invoke("aeo_summary", { path }),
@@ -849,5 +919,4 @@ export const tauriTransport: Transport = {
   schedulesRepair: () => invoke("schedules_repair"),
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
-  pickFolder: async () => asPath(await open({ directory: true })),
 };

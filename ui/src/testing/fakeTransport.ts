@@ -4,8 +4,13 @@
 import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
+import type { GenerateReport } from "../generated/GenerateReport";
+import type { SitemapFileRow } from "../generated/SitemapFileRow";
+import type { SitemapFiles } from "../generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type { FakeIssues } from "./fakeIssues";
@@ -38,6 +43,26 @@ import type {
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
 const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per_sec: null, adaptive: true };
 
+/** The engine's defaults for sitemap generation (spec 011 Assumptions). */
+export function defaultGenerateOptions(): SitemapGenerateOptions {
+  return {
+    include_noindex: false,
+    include_canonicalised: false,
+    include: [],
+    exclude: [],
+    lastmod: { kind: "last_modified_header" },
+    changefreq: null,
+    priority: { kind: "off" },
+    images: "off",
+    image_hosts: [],
+    hreflang: false,
+    max_urls_per_file: 50000,
+    gzip: false,
+    base_url: "",
+    file_prefix: "sitemap",
+  };
+}
+
 export function defaultConfig(): CrawlConfig {
   return {
     mode: "spider",
@@ -52,7 +77,7 @@ export function defaultConfig(): CrawlConfig {
       follow_external_nofollow: false,
       query_params: { mode: "keep", names: [], sort: false },
       max_url_length: 2000,
-      use_sitemaps: false,
+      sitemaps: { read: true, crawl_sitemap_only: true, urls: [], files: [] },
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
@@ -71,6 +96,7 @@ export function defaultConfig(): CrawlConfig {
     },
     extraction: { store_html: true },
     issues: { rules: {} },
+    sitemap_generate: defaultGenerateOptions(),
     links: { auto_analyse: true, position_rules: [], weighting: null },
     access: { cookies: [], cookie_policy: "ignore" },
     ai_checks: { auto: true, site_files: true },
@@ -150,9 +176,92 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
+/** What the fake file pickers return; tests set these before clicking. */
+export interface FakePicks {
+  sitemapFile: string | null;
+  folder: string | null;
+}
+
+/** A sitemap file row with defaults, for tests. */
+export function fakeSitemapFile(id: number, location: string, patch: Partial<SitemapFileRow> = {}): SitemapFileRow {
+  return {
+    id,
+    location,
+    source: "robots",
+    parent_id: null,
+    level: 0,
+    kind: "urlset",
+    http_status: 200,
+    final_url: location,
+    redirected: false,
+    compressed: false,
+    bytes: 1200,
+    entries: 10,
+    over_limit: false,
+    error_class: null,
+    error: null,
+    error_line: null,
+    invalid_entries: 0,
+    children: 0,
+    base_url: null,
+    ...patch,
+  };
+}
+
+/** Sitemap generation and files as the tests see them. */
+export interface FakeSitemaps {
+  /** What the Sitemap files view reads. */
+  files: SitemapFiles;
+  /** File names already in each folder. */
+  existing: Map<string, string[]>;
+  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
+  previews: number;
+  /** When set, the next generate fails with this message. */
+  fail: string | null;
+}
+
+/** A stand-in for the engine's report: internal 200 pages, split by the URL limit. */
+function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: string[]): GenerateReport {
+  const re = (p: string) => {
+    try {
+      return new RegExp(p);
+    } catch {
+      return null;
+    }
+  };
+  const kept = urls.filter((u) => u.internal && u.status === 200);
+  const pages = kept.filter(
+    (u) => (o.include.length === 0 || o.include.some((p) => re(p)?.test(u.url))) && !o.exclude.some((p) => re(p)?.test(u.url)),
+  );
+  const ext = o.gzip ? ".xml.gz" : ".xml";
+  const n = Math.ceil(pages.length / Math.max(1, o.max_urls_per_file));
+  const files =
+    pages.length === 0
+      ? []
+      : n === 1
+        ? [{ name: `${o.file_prefix}${ext}`, kind: "pages" as const, urls: pages.length, images: 0, bytes: pages.length * 80 }]
+        : [
+            { name: `${o.file_prefix}_index${ext}`, kind: "index" as const, urls: n, images: 0, bytes: n * 90 },
+            ...Array.from({ length: n }, (_, i) => {
+              const c = Math.min(o.max_urls_per_file, pages.length - i * o.max_urls_per_file);
+              return { name: `${o.file_prefix}-${i + 1}${ext}`, kind: "pages" as const, urls: c, images: 0, bytes: c * 80 };
+            }),
+          ];
+  return {
+    files,
+    pages: pages.length,
+    images: 0,
+    skipped_by_pattern: kept.length - pages.length,
+    existing: files.map((f) => f.name).filter((name) => existingIn.includes(name)),
+    base_url: o.base_url || "https://example.com/",
+  };
+}
+
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations } {
+  const picks: FakePicks = { sitemapFile: null, folder: null };
+  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -204,16 +313,38 @@ export function fakeTransport(
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
+    ...integrationsApi,
+    integrations,
     ...aeoApi,
     ...schedulesApi,
     schedules,
     saved,
     crawls,
+    picks,
+    sitemaps,
+    pickFolder: async () => picks.folder,
+    sitemapFiles: async () => structuredClone(sitemaps.files),
+    sitemapPreview: async (_path, options, folder) => {
+      sitemaps.previews += 1;
+      const r = fakeReport_(resultsApi.results.urls, options, folder ? (sitemaps.existing.get(folder) ?? []) : []);
+      if (r.pages === 0) throw "No page matches these options.";
+      return r;
+    },
+    sitemapGenerate: async (_path, options, folder, replace) => {
+      if (sitemaps.fail) throw sitemaps.fail;
+      const r = fakeReport_(resultsApi.results.urls, options, sitemaps.existing.get(folder) ?? []);
+      if (r.pages === 0) throw "No page matches these options.";
+      if (r.existing.length > 0 && !replace) throw `These files already exist: ${r.existing.join(", ")}`;
+      sitemaps.generated.push({ folder, options, replace });
+      sitemaps.existing.set(folder, [...new Set([...(sitemaps.existing.get(folder) ?? []), ...r.files.map((f) => f.name)])]);
+      return { ...r, existing: [] };
+    },
     pickCsvPath: async (name) => `/exports/${name}.csv`,
     pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
@@ -306,6 +437,7 @@ export function fakeTransport(
     },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
+    pickSitemapFile: async () => picks.sitemapFile,
     pickProfileFile: async () => null,
     pickExportPath: async () => null,
     profiles: async () => [...saved.keys()].map((name) => ({ name, is_default: false, error: null })),

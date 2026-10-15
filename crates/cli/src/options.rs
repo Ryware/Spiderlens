@@ -206,9 +206,23 @@ pub struct CrawlArgs {
     /// Sort query parameters by name.
     #[arg(long, help_heading = "Scope")]
     pub sort_params: bool,
-    /// Also crawl URLs from the sitemaps listed in robots.txt.
-    #[arg(long, help_heading = "Scope")]
+    /// Read sitemaps and crawl the URLs only they list (the default; kept
+    /// from spec 003).
+    #[arg(long, help_heading = "Sitemaps")]
     pub use_sitemaps: bool,
+    /// Do not read sitemaps.
+    #[arg(long, conflicts_with = "use_sitemaps", help_heading = "Sitemaps")]
+    pub no_sitemaps: bool,
+    /// Read sitemaps but record URLs that only a sitemap lists as "Found only
+    /// in sitemap" instead of crawling them.
+    #[arg(long, conflicts_with = "no_sitemaps", help_heading = "Sitemaps")]
+    pub no_crawl_sitemap_only: bool,
+    /// Also read this sitemap. Repeatable.
+    #[arg(long = "sitemap-url", value_name = "URL", help_heading = "Sitemaps")]
+    pub sitemap_urls: Vec<String>,
+    /// Also read this sitemap file, published at BASE-URL. Repeatable.
+    #[arg(long = "sitemap-file", value_name = "PATH=BASE-URL", value_parser = parse_local_sitemap, help_heading = "Sitemaps")]
+    pub sitemap_files: Vec<spiderlens_config::LocalSitemap>,
 
     #[command(flatten)]
     pub identity: IdentityArgs,
@@ -515,9 +529,21 @@ impl CrawlArgs {
         if self.sort_params {
             c.scope.query_params.sort = true;
         }
+        let sm = &mut c.scope.sitemaps;
         if self.use_sitemaps {
-            c.scope.use_sitemaps = true;
+            sm.read = true;
+            sm.crawl_sitemap_only = true;
         }
+        if self.no_sitemaps {
+            sm.read = false;
+            sm.crawl_sitemap_only = false;
+        }
+        if self.no_crawl_sitemap_only {
+            sm.read = true;
+            sm.crawl_sitemap_only = false;
+        }
+        sm.urls.extend(self.sitemap_urls.iter().cloned());
+        sm.files.extend(self.sitemap_files.iter().cloned());
 
         self.identity.apply(&mut c)?;
         self.access.apply(&mut c)?;
@@ -592,4 +618,20 @@ impl CrawlArgs {
         }
         Ok(Resolved { config: c, notices })
     }
+}
+
+/// `PATH=BASE-URL` for `--sitemap-file`. The split is at the last `=` that
+/// is followed by `http`, so paths may contain `=`.
+fn parse_local_sitemap(s: &str) -> Result<spiderlens_config::LocalSitemap, String> {
+    let at = s
+        .rmatch_indices('=')
+        .map(|(i, _)| i)
+        .find(|&i| s[i + 1..].starts_with("http"))
+        .ok_or_else(|| {
+            "expected PATH=BASE-URL, for example sitemap.xml=https://example.com/sitemap.xml".to_string()
+        })?;
+    Ok(spiderlens_config::LocalSitemap {
+        path: s[..at].to_string(),
+        base_url: s[at + 1..].to_string(),
+    })
 }
