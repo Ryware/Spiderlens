@@ -6,6 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { CookieFilter } from "./generated/CookieFilter";
+import type { CookiePage } from "./generated/CookiePage";
+import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
@@ -605,6 +608,11 @@ export interface Transport {
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   /** `position` keeps only links at that position (spec 023 FR-024). */
   urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  // Cookie audit (spec 025, contracts/desktop-commands.md).
+  /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
+  cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
+  /** The URLs that set one cookie, in crawl order. */
+  cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
   /** The page's stored HTML, or why there is none. */
   urlHtml(path: string, id: number): Promise<PageHtml>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
@@ -741,6 +749,8 @@ export const tauriTransport: Transport = {
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
+  cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   urlHtml: (path, id) => invoke("url_html", { path, id }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
