@@ -11,6 +11,7 @@ mod files_cmd;
 mod links_cmd;
 mod options;
 mod schedule_cmd;
+mod sitemap_cmd;
 mod viz_cmd;
 
 use std::io::Write;
@@ -92,6 +93,11 @@ enum Command {
     /// Explain crawl scope decisions.
     #[command(subcommand)]
     Scope(ScopeCommand),
+    /// Generate XML sitemaps from a crawl file.
+    #[command(subcommand)]
+    Sitemap(sitemap_cmd::SitemapCommand),
+    /// List the sitemap files a crawl read, as a tree.
+    Sitemaps(sitemap_cmd::SitemapsArgs),
     /// Recurring crawls that run without the app (spec 021).
     #[command(subcommand)]
     Schedule(Box<schedule_cmd::ScheduleCommand>),
@@ -192,6 +198,8 @@ fn main() -> ExitCode {
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
+        Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
+        Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Schedule(cmd) => schedule_cmd::run(*cmd, &matches),
     }
 }

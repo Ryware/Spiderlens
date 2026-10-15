@@ -18,7 +18,7 @@ pub mod retry;
 mod runner;
 pub mod scope;
 pub mod site_files;
-mod sitemap;
+pub mod sitemap;
 mod speed;
 pub mod store;
 mod window;

@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -23,6 +23,7 @@ export const resultTabs: NavItem[] = [
   { id: "images", title: "Images", icon: Image },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
+  { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];
 
 /** Spec 022: pictures of the crawl, built from the same crawl file. */

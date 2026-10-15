@@ -35,6 +35,9 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { GenerateReport } from "./generated/GenerateReport";
+import type { SitemapFiles } from "./generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
 import type { AnalysisProgress } from "./generated/AnalysisProgress";
 import type { AnalysisRun } from "./generated/AnalysisRun";
 import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
@@ -534,6 +537,7 @@ export interface Transport {
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
+  pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
@@ -630,6 +634,10 @@ export interface Transport {
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  // Sitemap generation (spec 011, contracts/desktop-commands.md).
+  sitemapFiles(path: string): Promise<SitemapFiles>;
+  sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
+  sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
   /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
   vizScene(path: string, view: ViewState): Promise<Scene>;
   /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
@@ -702,10 +710,13 @@ export const tauriTransport: Transport = {
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
+  pickSitemapFile: async () =>
+    asPath(await open({ filters: [{ name: "XML sitemaps", extensions: ["xml", "gz"] }] })),
   pickProfileFile: async () =>
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>
     save({ defaultPath: `${name}.spiderlens-profile.json`, filters: [{ name: "SpiderLens profile", extensions: ["json"] }] }),
+  pickFolder: async () => asPath(await open({ directory: true })),
   profiles: () => invoke("profiles_list"),
   loadProfile: (name) => invoke("profile_load", { name }),
   saveProfile: (name, config, startUrl, overwrite) => invoke("profile_save", { name, config, startUrl, overwrite }),
@@ -782,6 +793,9 @@ export const tauriTransport: Transport = {
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  sitemapFiles: (path) => invoke("sitemap_files", { path }),
+  sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
+  sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),
   vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
   vizExport: (path, view, options, file) => invoke("viz_export", { path, view, options, file }),
@@ -823,5 +837,4 @@ export const tauriTransport: Transport = {
   schedulesRepair: () => invoke("schedules_repair"),
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
-  pickFolder: async () => asPath(await open({ directory: true })),
 };

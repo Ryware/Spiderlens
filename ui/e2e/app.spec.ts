@@ -444,6 +444,53 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
   }
 });
 
+test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
+  await crawl(page);
+  await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "sitemap", "Generate XML sitemap…");
+  const dialog = page.getByRole("dialog", { name: "Generate XML sitemap" });
+  await expect(dialog).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  await expect(dialog.getByText(/4,500 pages in 1 file/)).toBeVisible();
+  await dialog.getByLabel("URLs per file").fill("1000");
+  await expect(dialog.getByText(/4,500 pages in 6 files/)).toBeVisible();
+  await dialog.getByRole("button", { name: /Choose folder/ }).click();
+  await dialog.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(dialog.getByText(/Wrote 6 files with 4,500 pages to \/site\/public/)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+test("sitemap_files_tree_opens_from_the_sidebar_and_works_by_keyboard", async ({ page }) => {
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.sitemaps.files = {
+      available: true,
+      files: [
+        s.fakeSitemapFile(1, "https://example.com/index.xml", { kind: "index", entries: 2, children: 2 }),
+        s.fakeSitemapFile(2, "https://example.com/a.xml", { parent_id: 1, level: 1 }),
+        s.fakeSitemapFile(3, "https://example.com/b.xml", { parent_id: 1, level: 1, kind: null, error_class: "invalid_xml", error: "unexpected end", error_line: 3 }),
+      ],
+    };
+  });
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Sitemap files" }).click();
+  const tree = page.getByRole("tree", { name: "Sitemap files" });
+  await expect(tree.getByRole("treeitem")).toHaveCount(3);
+  await tree.getByRole("treeitem").first().click();
+  await page.keyboard.press("ArrowLeft");
+  await expect(tree.getByRole("treeitem")).toHaveCount(1);
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowDown");
+  await expect(tree.getByRole("treeitem").nth(2)).toBeFocused();
+  await expect(page.getByRole("region", { name: "Selected sitemap file" })).toContainText("unexpected end (line 3)");
+});
+
 test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {
   // Spec 008 FR-028, FR-029: the reason in the status bar, every site's pace on click.
   await page.keyboard.type("example.com");

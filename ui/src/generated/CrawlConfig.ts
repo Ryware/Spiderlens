@@ -10,10 +10,15 @@ import type { NetworkSettings } from "./NetworkSettings";
 import type { RetrySettings } from "./RetrySettings";
 import type { RobotsSettings } from "./RobotsSettings";
 import type { Scope } from "./Scope";
+import type { SitemapGenerateOptions } from "./SitemapGenerateOptions";
 import type { SpeedSettings } from "./SpeedSettings";
 
 export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, 
 /**
  * Spec 023: Link Score and link positions.
  */
-links: LinkAnalysisSettings, access: AccessSettings, ai_checks: AiChecks, };
+links: LinkAnalysisSettings, access: AccessSettings, ai_checks: AiChecks, 
+/**
+ * The last options used to generate XML sitemaps (spec 011 FR-025).
+ */
+sitemap_generate: SitemapGenerateOptions, };

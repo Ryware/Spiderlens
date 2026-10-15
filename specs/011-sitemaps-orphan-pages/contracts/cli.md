@@ -8,7 +8,7 @@
 | `--no-crawl-sitemap-only` | read sitemaps, record sitemap-only URLs as `sitemap_only` | crawled |
 | `--sitemap-url <url>` | add a sitemap (repeatable) | |
 | `--sitemap-file <path>=<base-url>` | add a local sitemap file (repeatable) | |
-| `--use-sitemaps` | accepted, no effect (old flag) | |
+| `--use-sitemaps` | old flag, turns both reading and crawling sitemap-only URLs on | |
 | `--list-sitemap <url-or-path>[=<base-url>]` | List mode with a sitemap as the list | |
 
 ## `spiderlens sitemaps <file> [--json]`
@@ -34,11 +34,11 @@ Rows: address, class, sources, status, indexability, sitemap files. Prints the c
 | `--max-urls <n>` | |
 | `--gzip` | |
 | `--prefix <name>` | |
-| `--force` | replace existing files (otherwise exit 3 listing them) |
+| `--force` | replace existing files (otherwise exit 2 listing them) |
 | `--dry-run` | print counts only |
 | `--json` | print `GenerateReport` |
 
-Output is byte-identical to the desktop app for the same crawl and options (FR-019, SC-006). Exit 4 when no page matches.
+Output is byte-identical to the desktop app for the same crawl and options (FR-019, SC-006). Exit 2 on bad options or files that already exist, 3 when the crawl file cannot be read, 4 when no page matches.
 
 ## `spiderlens issues`
 

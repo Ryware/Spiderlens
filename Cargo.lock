@@ -4688,6 +4688,7 @@ dependencies = [
  "fs4",
  "html5ever 0.35.0",
  "jiff",
+ "proptest",
  "quick-xml 0.42.0",
  "reqwest 0.12.28",
  "rusqlite",
@@ -4709,7 +4710,10 @@ name = "spiderlens-results"
 version = "0.1.0"
 dependencies = [
  "ego-tree",
+ "flate2",
+ "jiff",
  "proptest",
+ "quick-xml 0.42.0",
  "resvg",
  "rusqlite",
  "scraper",

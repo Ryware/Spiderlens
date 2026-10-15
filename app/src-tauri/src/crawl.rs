@@ -58,6 +58,11 @@ impl State {
         }
     }
 
+    /// A crawl is running or paused.
+    pub fn is_running(&self) -> bool {
+        self.active.lock().expect("crawl lock").is_some()
+    }
+
     pub fn active_path(&self) -> Option<PathBuf> {
         self.active
             .lock()
