@@ -46,6 +46,8 @@ export function formatCell(kind: ValueKind, v: JsonValue): string {
       return typeof v === "number" ? `${v.toLocaleString()} ms` : String(v);
     case "bool":
       return v ? "Yes" : "No";
+    case "issues":
+      return typeof v === "number" ? issuesText(v) : String(v);
     case "score":
       // Whole numbers in the table; the detail pane and exports keep one decimal (spec 023 FR-004).
       return typeof v === "number" ? String(Math.round(v)) : String(v);
@@ -56,6 +58,18 @@ export function formatCell(kind: ValueKind, v: JsonValue): string {
     default:
       return String(v);
   }
+}
+
+const PRIORITY_LABELS = ["High", "Medium", "Low", "Opportunity"] as const;
+
+/** An Issues cell: `(4 - highest priority) * 1,000,000 + count` (spec 009 FR-018). */
+export function decodeIssues(v: number): { priority: number; count: number } {
+  return { priority: Math.min(3, Math.max(0, 4 - Math.floor(v / 1_000_000))), count: v % 1_000_000 };
+}
+
+function issuesText(v: number): string {
+  const { priority, count } = decodeIssues(v);
+  return `${PRIORITY_LABELS[priority]} · ${count.toLocaleString()}`;
 }
 
 export type CellTone = "ok" | "info" | "warn" | "bad" | null;
@@ -73,6 +87,7 @@ export function cellTone(kind: ValueKind, v: JsonValue): CellTone {
     if (v.startsWith("Blocked")) return "warn";
   }
   if (kind === "text" && typeof v === "string" && v.startsWith("Non-indexable")) return "warn";
+  if (kind === "issues" && typeof v === "number") return (["bad", "warn", "info", "ok"] as const)[decodeIssues(v).priority];
   return null;
 }
 
@@ -87,6 +102,7 @@ export const needReason: Record<Need, string> = {
   attempts: "Not collected yet: retry attempts are recorded from spec 004.",
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
+  readability: "Not collected: this crawl file was made before SpiderLens counted sentences and syllables.",
   search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
   sitemap_entries: "Not recorded: this crawl file was made before SpiderLens kept sitemap entries.",
   analysis: "Calculated when the crawl ends.",

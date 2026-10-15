@@ -7,8 +7,9 @@ mod aeo_cmd;
 mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
-mod integrations_cmd;
 mod files_cmd;
+mod integrations_cmd;
+mod issues_cmd;
 mod links_cmd;
 mod options;
 mod rules_cmd;
@@ -41,8 +42,11 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
-    /// A quality gate failed (`aeo run --fail-under`); shared with spec 009's
-    /// `issues --fail-on`, which assigns the number at merge.
+    /// `issues --fail-on`: an issue at or above that priority has URLs
+    /// (spec 009 FR-027).
+    pub const ISSUES_FOUND: u8 = 7;
+    /// A quality gate failed (`aeo run --fail-under`); the same number as
+    /// `ISSUES_FOUND`, both being "the checks found what you asked to fail on".
     pub const QUALITY_GATE: u8 = 7;
 }
 
@@ -84,6 +88,12 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// List the issue rules: what each checks, why it matters, how to fix.
+    Rules(issues_cmd::RulesArgs),
+    /// List the issues found in a crawl file, or export them as CSV.
+    Issues(Box<issues_cmd::IssuesArgs>),
+    /// Run the crawl analysis passes that have not run on a crawl file yet.
+    Analyse(issues_cmd::AnalyseArgs),
     /// External data: Search Console and other providers (spec 024).
     #[command(subcommand)]
     Integrations(Box<integrations_cmd::IntegrationsCommand>),
@@ -202,6 +212,9 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Rules(args) => issues_cmd::run_rules(args),
+        Command::Issues(args) => issues_cmd::run_issues(*args),
+        Command::Analyse(args) => issues_cmd::run_analyse(args),
         Command::Integrations(cmd) => integrations_cmd::run(*cmd),
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),

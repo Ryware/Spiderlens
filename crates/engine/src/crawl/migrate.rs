@@ -177,6 +177,13 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: CUSTOM_SCHEMA,
     },
+    // Reading ease counts (spec 009 FR-031); NULL for other languages.
+    Step {
+        version: 11,
+        additive: true,
+        sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
+        ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
+    },
 ];
 
 const AEO_TABLES: &str = r#"

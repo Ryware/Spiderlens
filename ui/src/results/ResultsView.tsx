@@ -7,6 +7,7 @@ import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
+import type { RuleInfo } from "../generated/RuleInfo";
 import type { UrlScope } from "../generated/UrlScope";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
@@ -15,6 +16,7 @@ import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
 import { FilterStrip } from "./FilterStrip";
+import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
@@ -70,6 +72,8 @@ export function ResultsView({
   session,
   onSession,
   onFocusId,
+  issue = null,
+  onIssueSettings,
   customRun,
   onInspect,
   reveal,
@@ -82,6 +86,9 @@ export function ResultsView({
   session: TabSession;
   onSession: (s: Partial<TabSession>) => void;
   onFocusId: (id: number | null) => void;
+  /** Set when this tab lists one issue's URLs (spec 009 D10). */
+  issue?: RuleInfo | null;
+  onIssueSettings?: () => void;
   /** On a custom extraction or search tab: running the crawl's rules again (spec 013 US3). */
   customRun?: CustomRun;
   /** Enter on a row: bring the inspector up and move focus into it. */
@@ -100,15 +107,25 @@ export function ResultsView({
   useEffect(() => {
     setPrefs(loadPrefs(tab));
     setSearchText(session.search);
+    sent.current = session.search;
     setSelection(emptySelection);
     // Only when the tab changes; the session is the tab's own.
   }, [tab]);
-  // Typing updates the session; a search cleared from outside (show in
-  // table) is not put back.
+  // The search this view last sent; any other value came from outside (an
+  // issue target opened from the inspector) and replaces the typed text.
+  const sent = useRef(session.search);
   useEffect(() => {
-    if (search !== session.search) onSession({ search });
-    // Only when the typed search settles.
-  }, [search]);
+    if (session.search !== sent.current) {
+      sent.current = session.search;
+      setSearchText(session.search);
+    }
+  }, [session.search]);
+  useEffect(() => {
+    if (search !== session.search && search !== sent.current) {
+      sent.current = search;
+      onSession({ search });
+    }
+  }, [search, session.search, onSession]);
 
   const updatePrefs = (p: ColumnPrefs) => {
     setPrefs(p);
@@ -309,7 +326,11 @@ export function ResultsView({
           </div>
         </div>
         {tab.id === "ai-search" && <AiOverview transport={transport} path={path} live={live} />}
-        <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        {issue ? (
+          <IssueHeader rule={issue} onSettings={onIssueSettings} />
+        ) : (
+          <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
+        )}
       </header>
 
       <div className="min-h-0 flex-1">

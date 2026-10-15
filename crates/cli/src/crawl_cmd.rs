@@ -311,6 +311,16 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         if print_issues(&validate(&resolved.config, &input)) {
             return ExitCode::from(exit::USAGE);
         }
+        // The profile's issue settings get the app's validation before the
+        // crawl starts (spec 009 FR-028).
+        let (_, notices) = spiderlens_results::issues::resolve(&resolved.config.issues);
+        for n in &notices {
+            let level = if n.error { "error" } else { "notice" };
+            eprintln!("{level}: issues: {}: {}", n.rule, n.message);
+        }
+        if notices.iter().any(|n| n.error) {
+            return ExitCode::from(exit::USAGE);
+        }
         let out = cmd.out.clone().unwrap_or_else(|| default_out(&input));
         match Crawler::create(&out, resolved.config, &input) {
             Ok(c) => {
@@ -423,6 +433,15 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         }
     };
     print_summary(&summary, json, &file);
+    record_issue_settings(&file);
+    // The Crawl Analysis phase, while this process still owns the file
+    // (spec 009 plan D12).
+    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
+        eprintln!(
+            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+            file.display()
+        );
+    }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
     }
@@ -464,6 +483,17 @@ fn duration(secs: u64) -> String {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
         s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Records the rule set version and issue settings in the file at run end
+/// (spec 009 FR-013). The issues themselves are evaluated when read.
+fn record_issue_settings(file: &Path) {
+    let stored = spiderlens_results::Reader::open(file).and_then(|r| r.stored_issue_settings());
+    if let Ok(Some(s)) = stored
+        && let Err(e) = spiderlens_results::issues::record_issue_settings(file, &s)
+    {
+        eprintln!("warning: could not record the issue settings: {e}");
     }
 }
 

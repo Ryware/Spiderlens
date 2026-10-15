@@ -15,6 +15,7 @@ import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { AnalysisRun } from "../generated/AnalysisRun";
 import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, Range, Transport, ViewReady } from "../transport";
+import { fakeIssueTabs, fakeIssuesTransport, hits, type FakeIssues } from "./fakeIssues";
 
 export interface FakeUrl {
   id: number;
@@ -174,7 +175,12 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "positionsTest"
   | "onViewReady"
   | "onExportProgress"
-> & { results: FakeResults } {
+  | "ruleCatalogue"
+  | "issuesApply"
+  | "issuesSummary"
+  | "onIssuesPartial"
+  | "urlIssues"
+> & { results: FakeResults; issues: FakeIssues } {
   let version = 1;
   let next = 0;
   const views = new Map<number, { tab: TabDef; ids: number[]; version: number }>();
@@ -214,13 +220,15 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     customTabs: [],
     customCells: new Map(),
   };
+  const issuesApi = fakeIssuesTransport(() => results.urls);
   const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
-  const tabOf = (id: string) => fakeTabs.find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
+  const tabOf = (id: string) => [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
   const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
     const tab = tabOf(q.tab);
-    let us = results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
+    const rule = q.tab.startsWith("issue:") ? issuesApi.issues.rules().find((r) => `issue:${r.id}` === q.tab) : undefined;
+    let us = rule ? hits(rule, results.urls) : results.urls.filter((u) => (q.scope === "all" ? true : (q.scope === "internal") === u.internal));
     if (isCustom(q.tab)) {
       us = us.filter((u) => results.customCells.has(u.id));
       // `<column>_has`: a value; `<column>_none`: none.
@@ -259,7 +267,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   return {
     results,
-    resultsTabs: async (path) => (path ? [...fakeTabs, ...results.customTabs] : fakeTabs),
+    ...issuesApi,
+    resultsTabs: async (path) => (path ? [...fakeTabs, ...fakeIssueTabs, ...results.customTabs] : [...fakeTabs, ...fakeIssueTabs]),
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -290,7 +299,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           unavailable[f.id] = "Not collected yet: arrives with page extraction.";
         } else counts[f.id] = select({ tab, filter: f.id, scope, search: "", sort: null }).ids.length;
       }
-      return { tab, counts, unavailable, version };
+      return { tab, counts, unavailable, labels: {}, version };
     },
     tabCounts: async () => {
       results.tabCountCalls++;

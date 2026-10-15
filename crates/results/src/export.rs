@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::types::Value;
 
 use crate::Error;
+use crate::issues::ResolvedSettings;
 use crate::reader::connect;
 use crate::tabs::{ColumnDef, TabDef};
 use crate::view::{ViewQuery, compile};
@@ -64,10 +65,16 @@ fn cell_text(c: &ColumnDef, v: &Value) -> String {
     match v {
         Value::Null | Value::Blob(_) => String::new(),
         Value::Integer(i) if c.kind == crate::ValueKind::Bool => (if *i != 0 { "Yes" } else { "No" }).into(),
+        Value::Integer(i) if c.kind == crate::ValueKind::Issues => issues_text(*i),
         Value::Integer(i) => i.to_string(),
         Value::Real(f) => f.to_string(),
         Value::Text(s) => s.clone(),
     }
+}
+
+fn issues_text(v: i64) -> String {
+    let (p, n) = crate::tabs::decode_issues(v);
+    format!("{} · {n}", p.label())
 }
 
 fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
@@ -75,6 +82,9 @@ fn json_text(c: &ColumnDef, v: &serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         serde_json::Value::Number(n) if c.kind == crate::ValueKind::Bool => {
             (if n.as_i64() != Some(0) { "Yes" } else { "No" }).into()
+        }
+        serde_json::Value::Number(n) if c.kind == crate::ValueKind::Issues => {
+            n.as_i64().map(issues_text).unwrap_or_default()
         }
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
@@ -145,17 +155,33 @@ pub fn write_csv(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
-    let (conn, features) = connect(crawl)?;
+    let settings = ResolvedSettings::default();
+    write_csv_with(crawl, q, columns, ranges, all_values, &settings, out, cancel, progress)
+}
+
+/// [`write_csv`] with the issue settings in force (spec 009 FR-025: an
+/// issue's export lists the same URLs the app shows).
+#[allow(clippy::too_many_arguments)]
+pub fn write_csv_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
+    out: impl Write,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
+    let (conn, features, _) = connect(crawl, settings)?;
     let custom = crate::custom::tabs(&conn)?;
     let c = compile(q, &features, &custom)?;
     let cols = pick_columns(&c.tab, columns)?;
     let links = &features.link_settings;
-    for d in &c.derived {
-        if *d == crate::tabs::Derived::LinkMetrics && links.weighting.is_some() {
-            crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
-        }
-        crate::tabs::build_derived(&conn, *d, &features)?;
+    if c.derived.contains(&crate::tabs::Derived::LinkMetrics) && links.weighting.is_some() {
+        crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
     }
+    crate::issues::build_derived_with(&conn, &features, settings, &c.derived)?;
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;
     for (n, (_, col)) in cols.iter().enumerate() {
@@ -246,10 +272,27 @@ pub fn export_file(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
+    let settings = ResolvedSettings::default();
+    export_file_with(crawl, q, columns, ranges, all_values, &settings, dest, cancel, progress)
+}
+
+/// [`export_file`] with the issue settings in force.
+#[allow(clippy::too_many_arguments)]
+pub fn export_file_with(
+    crawl: &Path,
+    q: &ViewQuery,
+    columns: &[String],
+    ranges: Option<&[(u32, u32)]>,
+    all_values: Option<&str>,
+    settings: &ResolvedSettings,
+    dest: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<u64, ExportError> {
     let part = part_path(dest);
     let result = (|| {
         let file = std::fs::File::create(&part)?;
-        let n = write_csv(crawl, q, columns, ranges, all_values, &file, cancel, progress)?;
+        let n = write_csv_with(crawl, q, columns, ranges, all_values, settings, &file, cancel, progress)?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&part, dest)?;

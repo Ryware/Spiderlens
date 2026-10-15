@@ -24,6 +24,7 @@ import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
+import { issueOfTab, issueTab, useIssues } from "../issues/useIssues";
 import { isCustomTab, useCustomRun } from "../results/useCustomRun";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
@@ -117,8 +118,10 @@ export function AppShell({ transport }: { transport: Transport }) {
   const inspectPending = useRef(false);
   const [inspectAsked, setInspectAsked] = useState(0);
   const results = useResults(transport, crawl.path, crawl.running);
+  const issues = useIssues(transport, crawl.path, crawl.running, setup.config?.issues);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const issueId = resultTab ? issueOfTab(resultTab.id) : null;
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
   // Kept here so its progress and outcome outlive the tab's reload when it finishes.
@@ -315,6 +318,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...issues.rules.map((r) => ({
+        id: `go-issue-${r.id}`,
+        title: `Issue: ${r.name}`,
+        group: "Go to" as const,
+        keywords: ["issue", r.category_label],
+        enabled: crawl.path !== null,
+        run: () => setSection(issueTab(r.id)),
+      })),
       ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...reportTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
@@ -330,7 +341,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules],
   );
 
   const run = useCallback(
@@ -378,7 +389,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
-          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
+          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} issues={issues.summary} counting={issues.counting} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
@@ -399,8 +410,8 @@ export function AppShell({ transport }: { transport: Transport }) {
             <ResultsView
               // One instance per tab: a tab switch must not carry the old
               // tab's selection into the new tab's first render.
-              key={`${crawl.path}\n${resultTab.id}\n${results.epoch}\n${results.features?.available.join(",") ?? ""}`}
-
+              // Settings changes reload it: thresholds change the rows (spec 009).
+              key={`${crawl.path}\n${resultTab.id}\n${issues.changed}\n${results.epoch}\n${results.features?.available.join(",") ?? ""}`}
               transport={transport}
               path={crawl.path}
               tab={resultTab}
@@ -409,6 +420,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
+              issue={issueId ? (issues.byId.get(issueId) ?? null) : null}
+              onIssueSettings={() => openSettings("issues")}
               customRun={isCustomTab(resultTab.id) ? customRun : undefined}
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
@@ -447,11 +460,18 @@ export function AppShell({ transport }: { transport: Transport }) {
                   transport={transport}
                   path={crawl.path}
                   id={results.focusId}
+                  issuesVersion={issues.changed}
+                  rulesVersion={issues.summary?.rules_version}
                   onShowInTable={showInTable}
                   onAnchorCloud={openAnchorCloud}
                   epoch={results.epoch}
                   rules={setup.config?.custom}
                   aiChecks={results.features?.available.includes("ai_checks") ?? false}
+                  onIssue={(id) => setSection(issueTab(id))}
+                  onOpenUrl={(url) => {
+                    results.update("internal", { search: url, filter: "all" });
+                    setSection("internal");
+                  }}
                 />
               ) : (
                 <DetailPanel />

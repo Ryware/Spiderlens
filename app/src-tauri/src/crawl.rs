@@ -459,6 +459,28 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
         .spawn(move || {
             let result = run(&app, id, &file, open, control_rx, command_rx);
             let state = app.state::<State>();
+            // The Crawl Analysis phase runs while this crawl still holds the
+            // file, so no other crawl starts on it (spec 009 plan D12).
+            // Quitting cancels it; finished passes stay.
+            if result.is_ok() {
+                let at = state
+                    .active
+                    .lock()
+                    .expect("crawl lock")
+                    .as_ref()
+                    .map_or(file.clone(), |a| a.path.clone());
+                let issues = app
+                    .state::<crate::results::State>()
+                    .issues
+                    .lock()
+                    .expect("issues lock")
+                    .clone();
+                crate::results::record_issues(&at, &issues);
+                if let Err(e) = crate::results::analyse(&app, &at, &state.quitting) {
+                    let message = format!("Crawl analysis did not finish: {e}");
+                    let _ = app.emit("crawl-warning", WarningEvent { id, message });
+                }
+            }
             // Save As may have moved the crawl while it ran.
             let file = state
                 .active

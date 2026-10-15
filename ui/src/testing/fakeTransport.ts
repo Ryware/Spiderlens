@@ -1,6 +1,7 @@
 // In-memory Transport for UI tests. Validation here is a small stand-in; the
 // real rules are tested in Rust (spiderlens-config).
 
+import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { GenerateReport } from "../generated/GenerateReport";
@@ -12,6 +13,7 @@ import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import type { FakeIssues } from "./fakeIssues";
 import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 
@@ -95,6 +97,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    issues: { rules: {} },
     custom: { extractors: [], searches: [] },
     sitemap_generate: defaultGenerateOptions(),
     links: { auto_analyse: true, position_rules: [], weighting: null },
@@ -170,6 +173,9 @@ export interface FakeCrawls {
   preview: RetryPreview;
   progress(p: Partial<CrawlProgress>): void;
   warn(message: string): void;
+  analyse(p: Partial<PassProgress>): void;
+  /** Files `passesRun` was called for. */
+  analysed: string[];
   notice(n: Partial<CrawlNotice> & { message: string }): void;
   finish(f: Partial<CrawlFinished>): void;
 }
@@ -257,7 +263,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; integrations: FakeIntegrations; custom: FakeCustom } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -267,6 +273,7 @@ export function fakeTransport(
   const onProgress: Listeners<CrawlProgress> = new Set();
   const onWarning: Listeners<{ id: number; message: string }> = new Set();
   const onFinished: Listeners<CrawlFinished> = new Set();
+  const onAnalysis: Listeners<PassProgress> = new Set();
   const onNotice: Listeners<CrawlNotice> = new Set();
   const subscribe = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
@@ -304,6 +311,8 @@ export function fakeTransport(
         }),
       ),
     warn: (message) => onWarning.forEach((cb) => cb({ id: nextId - 1, message })),
+    analyse: (p) => onAnalysis.forEach((cb) => cb({ pass: "link_score", label: "Link Score", done: 0, total: 100, ...p })),
+    analysed: [],
     notice: (n) => onNotice.forEach((cb) => cb({ id: nextId - 1, kind: "host_paused", host: null, ...n })),
     finish: (f) =>
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
@@ -472,6 +481,11 @@ export function fakeTransport(
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),
     onCrawlProgress: (cb) => subscribe(onProgress, cb),
     onCrawlWarning: (cb) => subscribe(onWarning, cb),
+    onPassProgress: (cb) => subscribe(onAnalysis, cb),
+    passesRun: async (path) => {
+      crawls.analysed.push(path);
+      return { ran: [], skipped: [], saved: true };
+    },
     onCrawlFinished: (cb) => subscribe(onFinished, cb),
     onCrawlNotice: (cb) => subscribe(onNotice, cb),
     crawlResumeHost: async (id, host) => void crawls.resumedHosts.push(`${id} ${host}`),

@@ -12,11 +12,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use serde::Serialize;
-use spiderlens_config::{LinkAnalysisSettings, PositionRule, SitemapGenerateOptions};
+use spiderlens_config::{IssueSettings, LinkAnalysisSettings, PositionRule, SitemapGenerateOptions};
+use spiderlens_results::analysis::{AnalysisReport, PassProgress};
+use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError, Features,
     FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, TestedLink,
-    UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    UrlDetail, UrlScope, ViewQuery, export_file_with, issue_tabs, tabs,
 };
 use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter, Manager};
@@ -38,6 +40,9 @@ pub struct State {
     actor: Mutex<Option<Actor>>,
     exports: Mutex<HashMap<u32, Arc<AtomicBool>>>,
     next_export: AtomicU32,
+    /// Issue settings of the profile in use (spec 009 plan D9), applied to
+    /// every reader and export.
+    pub issues: Mutex<IssueSettings>,
     /// Cancel flag of the running Crawl Analysis, if any.
     analysis: Mutex<Option<Arc<AtomicBool>>>,
 }
@@ -58,8 +63,10 @@ struct ExportProgress {
     path: PathBuf,
 }
 
-fn start_actor(path: &Path) -> Cmd<Actor> {
+fn start_actor(path: &Path, issues: &IssueSettings) -> Cmd<Actor> {
     let mut reader = Reader::open(path).map_err(|e| e.to_string())?;
+    // Already checked by issues_apply; a rejected change keeps the defaults.
+    reader.set_issue_settings(issues);
     let interrupt = reader.interrupt_handle();
     let (tx, rx) = mpsc::channel::<Job>();
     std::thread::Builder::new()
@@ -83,7 +90,8 @@ impl State {
     fn send(&self, path: &Path, f: impl FnOnce(&mut Reader, &Arc<AtomicBool>) + Send + 'static) -> Cmd<()> {
         let mut actor = self.actor.lock().expect("results lock");
         if actor.as_ref().is_none_or(|a| a.path != path) {
-            *actor = Some(start_actor(path)?);
+            let issues = self.issues.lock().expect("issues lock").clone();
+            *actor = Some(start_actor(path, &issues)?);
         }
         let a = actor.as_ref().expect("just set");
         let building = a.building.clone();
@@ -142,7 +150,8 @@ fn err(e: impl std::fmt::Display) -> String {
 #[tauri::command]
 pub async fn results_tabs(state: tauri::State<'_, State>, path: Option<PathBuf>) -> Cmd<Vec<TabDef>> {
     match path {
-        None => Ok(tabs().to_vec()),
+        // One tab per issue rule too (spec 009 D10): `issue:<rule id>`.
+        None => Ok(tabs().iter().chain(issue_tabs()).cloned().collect()),
         Some(p) => state.with(&p, |r| r.tabs().map_err(err)).await,
     }
 }
@@ -555,6 +564,8 @@ pub fn export_start(
 ) -> Cmd<u32> {
     let job = state.next_export.fetch_add(1, Ordering::Relaxed) + 1;
     let cancel = Arc::new(AtomicBool::new(false));
+    let issues = state.issues.lock().expect("issues lock").clone();
+    let settings = spiderlens_results::issues::resolve(&issues).0;
     state
         .exports
         .lock()
@@ -577,12 +588,13 @@ pub fn export_start(
                 );
             };
             let mut last = std::time::Instant::now();
-            let result = export_file(
+            let result = export_file_with(
                 &path,
                 &query,
                 &columns,
                 ranges.as_deref(),
                 all_values.as_deref(),
+                &settings,
                 &dest,
                 &cancel,
                 &mut |n, total| {
@@ -609,6 +621,77 @@ pub fn export_cancel(state: tauri::State<'_, State>, job: u32) {
     if let Some(c) = state.exports.lock().expect("exports lock").get(&job) {
         c.store(true, Ordering::Relaxed);
     }
+}
+
+/// The rule catalogue with `settings` applied, and what is wrong with them
+/// (spec 009, Settings › Issues).
+#[tauri::command]
+pub fn rule_catalogue(settings: IssueSettings) -> RuleCatalogue {
+    spiderlens_results::issues::rule_catalogue(&settings)
+}
+
+/// Makes `settings` the issue settings in force for the open crawl, later
+/// files and exports (FR-023). Out-of-range values reject the whole change
+/// (FR-024); the notices say why.
+#[tauri::command]
+pub async fn issues_apply(
+    state: tauri::State<'_, State>,
+    path: Option<PathBuf>,
+    settings: IssueSettings,
+) -> Cmd<Vec<SettingsNotice>> {
+    let (_, notices) = spiderlens_results::issues::resolve(&settings);
+    if notices.iter().any(|n| n.error) {
+        return Ok(notices);
+    }
+    *state.issues.lock().expect("issues lock") = settings.clone();
+    match path {
+        Some(path) => {
+            let recorded = settings.clone();
+            let notices = state
+                .with(&path, move |r| Ok(r.set_issue_settings(&settings)))
+                .await?;
+            // FR-013: a writable file records the settings its issues now
+            // use; a read-only or newer file is left alone.
+            std::thread::spawn(move || record_issues(&path, &recorded));
+            Ok(notices)
+        }
+        None => Ok(notices),
+    }
+}
+
+/// Records the rule set version and issue settings in `path` (FR-013),
+/// when the file can be written.
+pub fn record_issues(path: &Path, settings: &IssueSettings) {
+    let _ = spiderlens_results::issues::record_issue_settings(path, settings);
+}
+
+/// Every rule with its count for the open crawl (FR-014); site-wide counts
+/// are provisional while `running` (FR-019).
+#[tauri::command]
+pub async fn issues_summary(
+    app: AppHandle,
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    running: bool,
+) -> Cmd<IssuesSummary> {
+    let key = path.clone();
+    state
+        .with(&path, move |r| {
+            // Counts so far, about once a second, while a long evaluation runs (FR-008).
+            r.set_partial_sink(Some(Box::new(move |summary| {
+                let _ = app.emit(
+                    "issues-partial",
+                    IssuesPartial {
+                        path: key.clone(),
+                        summary,
+                    },
+                );
+            })));
+            let out = r.issues_summary(running).map_err(err);
+            r.set_partial_sink(None);
+            out
+        })
+        .await
 }
 
 /// The Sitemap files view (spec 011 US3).
@@ -638,6 +721,37 @@ pub async fn sitemap_preview(
             .map_err(err)
         })
         .await
+}
+
+/// The `issues-partial` event.
+#[derive(Clone, Serialize)]
+struct IssuesPartial {
+    path: PathBuf,
+    summary: IssuesSummary,
+}
+
+/// Runs the Crawl Analysis passes that have not run on `path` (spec 009
+/// plan D12), sending `passes-progress` events. `cancel` stops it between
+/// batches; finished passes stay.
+pub fn analyse(app: &AppHandle, path: &Path, cancel: &AtomicBool) -> Result<AnalysisReport, String> {
+    let mut progress = |p: PassProgress| {
+        let _ = app.emit("passes-progress", p);
+    };
+    spiderlens_results::analysis::analyse_file(path, &mut progress, cancel).map_err(|e| e.to_string())
+}
+
+/// Analyses an opened file whose passes are missing or stale.
+#[tauri::command]
+pub async fn passes_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
+    tauri::async_runtime::spawn_blocking(move || analyse(&app, &path, &AtomicBool::new(false)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The issues of one URL with evidence (FR-016).
+#[tauri::command]
+pub async fn url_issues(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<UrlIssue>> {
+    state.with(&path, move |r| r.url_issues(id).map_err(err)).await
 }
 
 /// Writes the sitemaps into `folder` (spec 011 FR-017 to FR-019). Refused

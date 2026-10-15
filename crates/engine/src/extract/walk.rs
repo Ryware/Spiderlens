@@ -17,7 +17,7 @@ use url::Url;
 use super::a11y::A11yCollector;
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
-use super::text::{collapse, hash, word_count};
+use super::text::{collapse, hash, readability_counts, word_count};
 use super::{
     Heading, MetaRefresh, PageData, Ref, RefSource, StructuredBlock, StructuredKind, TextItem, microdata,
 };
@@ -170,6 +170,16 @@ pub(super) fn walk_doc(
 
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
+    // English or undeclared: "en", "en-GB", "EN_us" (spec 009 FR-031).
+    let english = w.data.lang.as_deref().is_none_or(|l| {
+        let l = l.to_ascii_lowercase();
+        l.is_empty() || l == "en" || l.starts_with("en-") || l.starts_with("en_")
+    });
+    if english {
+        let (sentences, syllables) = readability_counts(&visible);
+        w.data.sentence_count = Some(sentences);
+        w.data.syllable_count = Some(syllables);
+    }
     w.data.text_hash = hash(&visible);
     if let Some(rules) = rules {
         w.data.custom = Some(crate::custom::apply(

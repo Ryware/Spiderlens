@@ -194,12 +194,15 @@ test("link_positions_show_once_worked_out", async () => {
   });
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
-  const rows = await within(details()).findAllByRole("listitem");
+  const rows = (await within(details()).findAllByRole("listitem")).filter((li) => li.textContent?.includes("/linked-"));
   expect(rows[0].textContent).toContain("Footer");
   expect(rows[1].textContent).toContain("Position unknown");
   // Not worked out yet: nothing is shown rather than a guess.
   expect(rows[2].textContent).not.toMatch(/Content|Position/);
 });
+
+// The issues list shares the pane, so count the link rows only.
+const linkItems = () => within(details()).queryAllByRole("listitem").filter((li) => li.textContent?.includes("/linked-"));
 
 test("link_lists_filter_by_position", async () => {
   const t = withDetail({ inlinks: 3 });
@@ -214,13 +217,13 @@ test("link_lists_filter_by_position", async () => {
   await loaded();
   const filter = await within(details()).findByRole("combobox", { name: "Link position" });
   fireEvent.change(filter, { target: { value: "footer" } });
-  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(2));
+  await waitFor(() => expect(linkItems()).toHaveLength(2));
   expect(within(details()).queryByText("https://example.com/linked-1")).toBeNull();
   fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "sidebar" } });
   expect(await within(details()).findByText("No links at this position.")).toBeTruthy();
   // The filter stays, so the choice can be undone.
   fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "" } });
-  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(3));
+  await waitFor(() => expect(linkItems()).toHaveLength(3));
   expect(asked).toEqual([null, "footer", "sidebar", null]);
 });
 

@@ -64,6 +64,7 @@ impl Features {
             Need::Attempts,
             Need::Timing,
             Need::RawHtml,
+            Need::Readability,
             Need::SitemapEntries,
         ] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {

@@ -2,6 +2,8 @@
 // uses Tauri commands; a future web version replaces this file with HTTP calls
 // and leaves every component untouched (constitution principle III).
 
+import type { PassProgress } from "./generated/PassProgress";
+import type { AnalysisReport } from "./generated/AnalysisReport";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -41,6 +43,11 @@ import type { ExportFormat } from "./generated/ExportFormat";
 import type { ExportOptions } from "./generated/ExportOptions";
 import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
+import type { IssueSettings } from "./generated/IssueSettings";
+import type { IssuesSummary } from "./generated/IssuesSummary";
+import type { RuleCatalogue } from "./generated/RuleCatalogue";
+import type { SettingsNotice } from "./generated/SettingsNotice";
+import type { UrlIssue } from "./generated/UrlIssue";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
 import type { ProfileEntry } from "./generated/ProfileEntry";
@@ -615,6 +622,10 @@ export interface Transport {
   crawlSummary(path: string): Promise<CrawlReport>;
   onCrawlProgress(cb: (p: CrawlProgress) => void): Promise<() => void>;
   onCrawlWarning(cb: (w: { id: number; message: string }) => void): Promise<() => void>;
+  /** The Crawl Analysis phase at crawl end or on open (spec 009 plan D12). */
+  onPassProgress(cb: (p: PassProgress) => void): Promise<() => void>;
+  /** Runs the analysis passes missing or stale on an opened file. */
+  passesRun(path: string): Promise<AnalysisReport>;
   onCrawlFinished(cb: (f: CrawlFinished) => void): Promise<() => void>;
   onCrawlNotice(cb: (n: CrawlNotice) => void): Promise<() => void>;
   // Fetch errors and retries (spec 004, contracts/desktop-commands.md).
@@ -719,6 +730,14 @@ export interface Transport {
   positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // Issues (spec 009, contracts/desktop-commands.md).
+  ruleCatalogue(settings: IssueSettings): Promise<RuleCatalogue>;
+  /** Makes these settings the ones in force; errors reject the whole change. */
+  issuesApply(path: string | null, settings: IssueSettings): Promise<SettingsNotice[]>;
+  issuesSummary(path: string, running: boolean): Promise<IssuesSummary>;
+  /** Counts so far while a long issuesSummary evaluation runs (FR-008). */
+  onIssuesPartial(cb: (p: { path: string; summary: IssuesSummary }) => void): Promise<() => void>;
+  urlIssues(path: string, id: number): Promise<UrlIssue[]>;
   // Custom extraction and search (spec 013).
   /** Every rule's result on one page, for the detail pane. */
   urlCustom(path: string, id: number): Promise<CustomResult[]>;
@@ -834,6 +853,8 @@ export const tauriTransport: Transport = {
   crawlSummary: (path) => invoke("crawl_summary", { path }),
   onCrawlProgress: (cb) => listen<CrawlProgress>("crawl-progress", (e) => cb(e.payload)),
   onCrawlWarning: (cb) => listen<{ id: number; message: string }>("crawl-warning", (e) => cb(e.payload)),
+  onPassProgress: (cb) => listen<PassProgress>("passes-progress", (e) => cb(e.payload)),
+  passesRun: (path) => invoke("passes_run", { path }),
   onCrawlFinished: (cb) => listen<CrawlFinished>("crawl-finished", (e) => cb(e.payload)),
   onCrawlNotice: (cb) => listen<CrawlNotice>("crawl-notice", (e) => cb(e.payload)),
   crawlResumeHost: (id, host) => invoke("crawl_resume_host", { id, host }),
@@ -914,6 +935,11 @@ export const tauriTransport: Transport = {
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  ruleCatalogue: (settings) => invoke("rule_catalogue", { settings }),
+  issuesApply: (path, settings) => invoke("issues_apply", { path, settings }),
+  issuesSummary: (path, running) => invoke("issues_summary", { path, running }),
+  onIssuesPartial: (cb) => listen<{ path: string; summary: IssuesSummary }>("issues-partial", (e) => cb(e.payload)),
+  urlIssues: (path, id) => invoke("url_issues", { path, id }),
   urlCustom: (path, id) => invoke("url_custom", { path, id }),
   customTestUrl: (rules, url, config) => invoke("custom_test_url", { rules, url, config }),
   customTestPage: (rules, crawlPath, urlId) => invoke("custom_test_page", { rules, crawlPath, urlId }),

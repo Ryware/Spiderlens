@@ -47,6 +47,13 @@ test("numeric_kinds_align_right", () => {
   expect(numeric("url")).toBe(false);
 });
 
+test("issues_cells_read_as_highest_priority_and_count", () => {
+  expect(formatCell("issues", 4_000_003)).toBe("High · 3");
+  expect(formatCell("issues", 1_000_012)).toBe("Opportunity · 12");
+  expect(cellTone("issues", 3_000_001)).toBe("warn");
+  expect(formatCell("issues", null)).toBe("");
+});
+
 test("format_compact_keeps_counts_short", () => {
   expect(formatCompact(0)).toBe("0");
   expect(formatCompact(950)).toBe("950");

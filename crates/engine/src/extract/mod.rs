@@ -156,6 +156,10 @@ pub struct PageData {
     pub headings: Vec<Heading>,
     pub lang: Option<String>,
     pub word_count: u32,
+    /// Sentences and syllables for reading ease, on English or undeclared
+    /// pages only (spec 009 FR-031).
+    pub sentence_count: Option<u32>,
+    pub syllable_count: Option<u32>,
     pub text_hash: i64,
     /// Meta tag directives (header ones are in [`HeaderFacts`]).
     pub directives: Vec<Directive>,
@@ -235,6 +239,8 @@ impl PageData {
             headings: Vec::new(),
             lang: None,
             word_count: 0,
+            sentence_count: None,
+            syllable_count: None,
             text_hash: text::hash(""),
             directives: Vec::new(),
             refs: Vec::new(),

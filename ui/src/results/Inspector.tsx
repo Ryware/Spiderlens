@@ -10,6 +10,8 @@ import type { LinkMetrics } from "../generated/LinkMetrics";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
+import type { UrlIssue } from "../generated/UrlIssue";
+import { PriorityBadge } from "../issues/priority";
 import type { Transport } from "../transport";
 import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, Select, type Tone } from "../components/ui";
 import { RuleFound } from "../settings/CustomRules";
@@ -260,6 +262,55 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
   );
 }
 
+/**
+ * The URL's issues, highest priority first; a click opens that issue (spec
+ * 009 FR-017). Link issues list their targets, each openable in the table.
+ */
+function IssueList({
+  issues,
+  rulesVersion,
+  onIssue,
+  onOpenUrl,
+}: {
+  issues: UrlIssue[] | null;
+  rulesVersion?: number;
+  onIssue?: (id: string) => void;
+  onOpenUrl?: (url: string) => void;
+}) {
+  if (!issues) return <div className="text-sm text-fg-3">Loading…</div>;
+  if (issues.length === 0) return <div className="text-sm text-fg-3">No issues found{rulesVersion ? ` (rule set v${rulesVersion})` : ""}.</div>;
+  return (
+    <ul className="m-0 flex list-none flex-col p-0">
+      {issues.map((i) => (
+        <li key={i.id} className="border-b border-line py-1 last:border-b-0">
+          <button type="button" onClick={() => onIssue?.(i.id)} className="flex w-full items-baseline gap-2 text-left text-sm hover:text-accent-text">
+            <PriorityBadge priority={i.priority} className="shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="text-fg">{i.name}</span>
+              {i.evidence && <span className="block break-words text-fg-3" data-selectable>{i.evidence}</span>}
+            </span>
+          </button>
+          {i.targets.length > 0 && (
+            <ul aria-label={`${i.name}: targets`} className="m-0 mt-1 flex max-h-40 list-none flex-col overflow-y-auto p-0 pl-6">
+              {i.targets.map((t) => (
+                <li key={t.id} className="flex items-baseline gap-2 text-sm">
+                  <span className={cn("w-8 shrink-0 tabular", toneText[cellTone("status", t.status) as keyof typeof toneText] ?? "text-fg-3")}>{t.status ?? "–"}</span>
+                  <button type="button" onClick={() => onOpenUrl?.(t.url)} className="min-w-0 flex-1 truncate text-left text-fg-2 hover:text-accent-text" title={`Show ${t.url} in the table`}>
+                    {t.url}
+                  </button>
+                </li>
+              ))}
+              {i.targets_total > i.targets.length && (
+                <li className="text-xs text-fg-3">and {(i.targets_total - i.targets.length).toLocaleString()} more</li>
+              )}
+            </ul>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** What each custom rule found on this page (spec 013 FR-024); nothing when the crawl has no rules. */
 function CustomSection({
   transport,
@@ -340,6 +391,10 @@ export function Inspector({
   transport,
   path,
   id,
+  issuesVersion = 0,
+  rulesVersion,
+  onIssue,
+  onOpenUrl,
   epoch = 0,
   rules,
   onAnchorCloud,
@@ -350,6 +405,13 @@ export function Inspector({
   transport: Transport;
   path: string | null;
   id: number | null;
+  /** Changes when issue settings change, so the list is fetched again. */
+  issuesVersion?: number;
+  onIssue?: (ruleId: string) => void;
+  /** The issue rule set version, named when a URL has no issues (FR-013). */
+  rulesVersion?: number;
+  /** Shows a URL in the Internal table (an issue's link target). */
+  onOpenUrl?: (url: string) => void;
   epoch?: number;
   /** The custom rules in the settings, to try on this page (spec 013 US4). */
   rules?: CustomRules;
@@ -362,6 +424,20 @@ export function Inspector({
 }) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<UrlIssue[] | null>(null);
+
+  useEffect(() => {
+    if (!path || id === null) return;
+    let off = false;
+    setIssues(null);
+    transport.urlIssues(path, id).then(
+      (r) => !off && setIssues(r),
+      () => !off && setIssues([]),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id, issuesVersion]);
   const [list, setList] = useState<ListKind>("inlinks");
   const [htmlOpen, setHtmlOpen] = useState(false);
   const [status, setStatus] = useState<{ kind: "info" | "warn" | "bad"; text: string } | null>(null);
@@ -470,6 +546,10 @@ export function Inspector({
           </Notice>
         </Section>
       )}
+
+      <Section title={issues && issues.length > 0 ? `Issues (${issues.length})` : "Issues"}>
+        <IssueList issues={issues} rulesVersion={rulesVersion} onIssue={onIssue} onOpenUrl={onOpenUrl} />
+      </Section>
 
       <Section title="Response">
         <Facts rows={facts} />

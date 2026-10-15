@@ -1,6 +1,8 @@
 import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
 
 import { cn, Tooltip } from "../components/ui";
+import type { IssuesSummary } from "../generated/IssuesSummary";
+import { IssuesNav } from "../issues/IssuesNav";
 import { formatCompact } from "../results/format";
 
 export interface NavItem {
@@ -52,6 +54,8 @@ export function Sidebar({
   collapsed,
   onAbout,
   results,
+  issues = null,
+  counting = false,
   custom = [],
   counts,
 }: {
@@ -60,6 +64,10 @@ export function Sidebar({
   collapsed: boolean;
   onAbout: () => void;
   results: boolean;
+  /** The open crawl's issues (spec 009); the group shows once a crawl exists. */
+  issues?: IssuesSummary | null;
+  /** The counts are partial: the issues are still being evaluated. */
+  counting?: boolean;
   /** The open crawl's custom extraction and search tabs (spec 013), when it ran rules. */
   custom?: { id: string; title: string }[];
   /** URLs per result tab; absent while unknown (T014). */
@@ -115,6 +123,12 @@ export function Sidebar({
         {item({ id: "schedules", title: "Schedules", icon: CalendarClock }, true)}
         {item({ id: "log", title: "Crawl log", icon: ScrollText }, results)}
       </ul>
+      {results && (
+        <>
+          {heading("Issues")}
+          <IssuesNav summary={issues} counting={counting} active={active} collapsed={collapsed} onSelect={onSelect} />
+        </>
+      )}
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
       {results && custom.length > 0 && (

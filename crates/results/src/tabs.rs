@@ -32,6 +32,9 @@ pub enum Need {
     Timing,
     /// The received HTML (spec 005 FR-030).
     RawHtml,
+    /// Sentence and syllable counts for the readability score (spec 009
+    /// FR-031).
+    Readability,
     /// Search Console page data fetched after the crawl (spec 024).
     SearchConsole,
     /// Every sitemap file and entry the crawl read (spec 011).
@@ -57,6 +60,9 @@ impl Need {
                 "Response time and size were not collected in this crawl file; it was made before SpiderLens recorded them."
             }
             Self::RawHtml => "This crawl does not store page HTML.",
+            Self::Readability => {
+                "Readability was not measured in this crawl file; it was made before SpiderLens scored readability."
+            }
             Self::SearchConsole => {
                 "No Search Console data in this crawl yet. Fetch it from Integrations after connecting your Google account."
             }
@@ -77,6 +83,7 @@ impl Need {
             Self::Attempts => "attempts",
             Self::Timing => "timing",
             Self::RawHtml => "raw_html",
+            Self::Readability => "readability",
             Self::SearchConsole => "search_console",
             Self::SitemapEntries => "sitemap_entries",
             Self::Analysis => "analysis",
@@ -105,6 +112,16 @@ pub enum ValueKind {
     Percent,
     /// A number with one decimal (average position).
     Decimal,
+    /// A URL's issues: `(4 - highest priority) * 1,000,000 + count`, so
+    /// sorting descending puts the most urgent first (spec 009 FR-018).
+    /// Shown as "High · 3".
+    Issues,
+}
+
+/// Reads an [`ValueKind::Issues`] value: the highest priority and the count.
+pub fn decode_issues(v: i64) -> (spiderlens_config::Priority, i64) {
+    let p = spiderlens_config::Priority::ALL[(4 - (v / 1_000_000)).clamp(0, 3) as usize];
+    (p, v % 1_000_000)
 }
 
 impl ValueKind {
@@ -135,6 +152,16 @@ pub enum Derived {
     OccH1,
     /// `temp.occ_h2(v, n)`: each first H2 and how many pages use it.
     OccH2,
+    /// `temp.occ_text(v, n)`: each visible text fingerprint and how many
+    /// pages share it (spec 009).
+    OccText,
+    /// `temp.page_flags(url_id, flags)`: per linking page, which kinds of
+    /// links it has ([`page_flag`] bits), from one pass over `links`
+    /// (spec 009).
+    PageFlags,
+    /// `temp.issue_hits(rule, url_id)` for the issue settings in force
+    /// (spec 009 plan D4).
+    IssueHits,
     /// `link_metrics`: Link Score and link counts (spec 023), built in
     /// `temp` when the file holds no current copy.
     LinkMetrics,
@@ -155,6 +182,9 @@ impl Derived {
             Self::OccMeta => "occ_md",
             Self::OccH1 => "occ_h1",
             Self::OccH2 => "occ_h2",
+            Self::OccText => "occ_text",
+            Self::PageFlags => "page_flags",
+            Self::IssueHits => "issue_hits",
             Self::LinkMetrics => "link_metrics",
             Self::LinkPositions => "link_positions",
             Self::VizCrawlTree => "viz_crawl_tree",
@@ -171,6 +201,9 @@ impl Derived {
             | Self::OccMeta
             | Self::OccH1
             | Self::OccH2
+            | Self::OccText
+            | Self::PageFlags
+            | Self::IssueHits
             | Self::LinkMetrics
             | Self::LinkPositions
             | Self::VizCrawlTree
@@ -221,6 +254,11 @@ pub struct FilterDef {
     #[serde(skip)]
     #[ts(skip)]
     pub derived: Option<Derived>,
+    /// The issue rule whose threshold this filter uses, and its label with
+    /// `{n}` for the value (spec 009 FR-005, US4 scenario 1).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub threshold: Option<(&'static str, &'static str)>,
     /// Shown only while it matches something (or is the active filter), so
     /// a long list of rarely used filters does not crowd the strip.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,13 +346,16 @@ const PERMANENT: &str = "u.fetched_at IS NOT NULL AND (\
 pub(crate) const HTML_OK: &str = "u.internal = 1 AND u.state = 'crawled' AND u.error_class IS NULL \
      AND u.status BETWEEN 200 AND 299 AND content_kind(u.content_type) = 'html'";
 
-const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
+pub(crate) const INTERNAL: &str = "u.internal = 1 AND u.state = 'crawled'";
 const EXTERNAL: &str = "u.internal = 0 AND u.state IN ('crawled', 'not_crawled')";
 /// URLs with a response, plus URLs blocked by robots.txt or by the crawl's
 /// rules (Assumptions: blocked URLs are listed here, not counted as errors).
-const RESPONSES: &str = "u.state = 'crawled' \
+pub(crate) const RESPONSES: &str = "u.state = 'crawled' \
      OR (u.check_only = 1 AND u.state = 'not_crawled' AND (u.fetched_at IS NOT NULL OR u.reason_detail IS NOT NULL)) \
      OR u.reason IN ('blocked_by_robots', 'robots_unavailable', 'excluded', 'not_included', 'outside_start_folder')";
+
+/// Image URLs: found in img elements first, or answering with an image type.
+pub(crate) const IMAGES: &str = "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')";
 
 const NORM_TITLE: &str = "norm_ws(u.title)";
 
@@ -389,6 +430,7 @@ const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> Fi
         cond: Cow::Borrowed(cond),
         need: Need::Base,
         derived: None,
+        threshold: None,
         hide_when_empty: None,
     }
 }
@@ -401,6 +443,20 @@ const fn link_filter(id: &'static str, label: &'static str, cond: &'static str) 
 }
 
 impl FilterDef {
+    /// The label with the threshold in force.
+    pub fn label_with(&self, values: &crate::sql::Thresholds) -> String {
+        match self.threshold {
+            Some((rule, template)) => values.get(rule).map_or_else(
+                || self.label.to_string(),
+                |v| template.replace("{n}", &crate::issues::fmt_num(*v)),
+            ),
+            None => self.label.to_string(),
+        }
+    }
+    const fn thr(mut self, rule: &'static str, template: &'static str) -> Self {
+        self.threshold = Some((rule, template));
+        self
+    }
     const fn when_present(mut self) -> Self {
         self.hide_when_empty = Some(true);
         self
@@ -429,6 +485,16 @@ mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
+    pub const ISSUES: ColumnDef = col(
+        "issues",
+        "Issues",
+        "(SELECT (4 - MIN(r.prio)) * 1000000 + COUNT(*) FROM temp.issue_hits h \
+         JOIN temp.issue_rules r ON r.idx = h.rule WHERE h.url_id = u.id)",
+        ValueKind::Issues,
+        110,
+    )
+    .hidden()
+    .reads(Derived::IssueHits);
     pub const GSC_CLICKS: ColumnDef = col(
         "gsc_clicks",
         "Clicks (Search Console)",
@@ -505,6 +571,20 @@ mod c {
         100,
     )
     .needs(Need::Extraction);
+    /// Flesch reading ease, 0 to 100 (spec 009 FR-031).
+    pub const READABILITY: ColumnDef = col(
+        "readability",
+        "Readability",
+        concat!(
+            "CAST(round(",
+            crate::issues::rules::content::readability!(),
+            ") AS INTEGER)"
+        ),
+        ValueKind::Int,
+        100,
+    )
+    .hidden()
+    .needs(Need::Readability);
     pub const SIZE: ColumnDef = col("size", "Size", "u.size_bytes", ValueKind::Bytes, 90).needs(Need::Timing);
     pub const RESPONSE_TIME: ColumnDef = col(
         "response_time",
@@ -704,7 +784,7 @@ macro_rules! image_use {
 
 /// Columns and filters of the H1 and H2 tabs, which differ only in level.
 macro_rules! heading_tab {
-    ($id:literal, $label:literal, $occ:expr) => {
+    ($id:literal, $label:literal, $occ:expr, $rule:literal, $missing:expr, $duplicate:expr, $over:expr, $multiple:expr) => {
         content_tab(
             $id,
             $label,
@@ -751,51 +831,23 @@ macro_rules! heading_tab {
                 .reads($occ),
             ],
             vec![
-                filter(
-                    "missing",
-                    "Missing",
-                    concat!(
-                        "COALESCE((SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id), '') = ''"
-                    ),
-                ),
-                filter(
-                    "duplicate",
-                    "Duplicate",
-                    concat!(
-                        "(SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_",
-                        $id,
-                        " o WHERE o.n > 1)"
-                    ),
-                )
-                .reads($occ),
-                filter(
-                    "over_70",
-                    "Over 70 characters",
-                    concat!(
-                        "length((SELECT p.",
-                        $id,
-                        "_1 FROM pages p WHERE p.url_id = u.id)) > 70"
-                    ),
-                ),
-                filter(
-                    "multiple",
-                    "Multiple",
-                    concat!(
-                        "(SELECT p.",
-                        $id,
-                        "_count FROM pages p WHERE p.url_id = u.id) > 1"
-                    ),
-                ),
+                filter("missing", "Missing", $missing),
+                filter("duplicate", "Duplicate", $duplicate).reads($occ),
+                filter("over_70", "Over 70 characters", $over).thr($rule, "Over {n} characters"),
+                filter("multiple", "Multiple", $multiple),
             ],
             $id,
         )
     };
 }
 
+/// URLs with at least one issue under the settings in force.
+const WITH_ISSUES: FilterDef = filter(
+    "with_issues",
+    "With issues",
+    "EXISTS (SELECT 1 FROM temp.issue_hits h WHERE h.url_id = u.id)",
+)
+.reads(Derived::IssueHits);
 /// An `aeo_pages` value of the row's URL (spec 015).
 macro_rules! ai {
     ($field:literal) => {
@@ -895,12 +947,112 @@ fn ai_search_tab() -> TabDef {
 
 /// Every tab in display order (FR-007, FR-009).
 pub fn tabs() -> &'static [TabDef] {
-    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(build);
+    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(|| {
+        let mut tabs = build();
+        // Every tab can show each URL's issues and keep the URLs that have
+        // some (spec 009 FR-018).
+        for t in &mut tabs {
+            t.columns.push(c::ISSUES);
+            t.filters.push(WITH_ISSUES);
+        }
+        tabs
+    });
     &TABS
 }
 
 pub fn tab(id: &str) -> Option<&'static TabDef> {
-    tabs().iter().find(|t| t.id == id)
+    tabs().iter().chain(issue_tabs()).find(|t| t.id == id)
+}
+
+/// One tab per issue rule, `issue:<rule id>` (spec 009 FR-015): the URLs
+/// the rule flags, with its evidence. Views, counts, copy and export work on
+/// them as on any tab, so the CLI exports an issue with the same rows.
+pub fn issue_tabs() -> &'static [TabDef] {
+    static TABS: std::sync::LazyLock<Vec<TabDef>> = std::sync::LazyLock::new(build_issue_tabs);
+    &TABS
+}
+
+/// The 007 tab that shows what a category's rules test.
+fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
+    use crate::issues::Category::*;
+    Some(match c {
+        ResponseCodes => "response-codes",
+        PageTitles => "page-titles",
+        MetaDescription => "meta-description",
+        H1 => "h1",
+        H2 => "h2",
+        Images => "images",
+        Canonicals => "canonicals",
+        Directives => "directives",
+        Url => "url",
+        _ => return None,
+    })
+}
+
+fn build_issue_tabs() -> Vec<TabDef> {
+    crate::issues::catalogue()
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut evidence = col("evidence", "Evidence", r.evidence, ValueKind::Text, 320).needs(r.need);
+            evidence.derived = r.derived.first().copied();
+            let mut all = filter("all", "All", "1").needs(r.need);
+            all.derived = Some(Derived::IssueHits);
+            let mut columns = vec![c::ADDRESS, evidence];
+            // The columns of the rule's own 007 tab, such as the title and
+            // its length for title rules (FR-015), then the common ones.
+            if let Some(home) = home_tab(r.category).and_then(|id| tabs().iter().find(|t| t.id == id)) {
+                // Issue tabs list `urls u` only, so a column that reads the
+                // home tab's row table `x` looks its row up instead.
+                columns.extend(
+                    home.columns
+                        .iter()
+                        .filter(|c| c.id != "address" && c.id != "issues")
+                        .map(|c| match home.rows {
+                            Some(d) => ColumnDef {
+                                expr: if c.expr.contains("x.") {
+                                    Cow::Owned(format!(
+                                        "(SELECT {} FROM temp.{} x WHERE x.id = u.id)",
+                                        c.expr,
+                                        d.table()
+                                    ))
+                                } else {
+                                    c.expr.clone()
+                                },
+                                derived: if c.expr.contains("x.") { Some(d) } else { c.derived },
+                                key: None,
+                                ..c.clone()
+                            },
+                            None => c.clone(),
+                        }),
+                );
+            }
+            let mut common = vec![c::STATUS_CODE];
+            if r.scope == crate::issues::Scope::Pages {
+                common.extend([c::TITLE, c::INDEXABILITY]);
+            } else {
+                common.extend([c::CONTENT_TYPE, c::FINAL_STATE]);
+            }
+            common.extend([c::INLINKS, c::DEPTH.hidden(), c::FOUND_ON]);
+            for col in common {
+                if !columns.iter().any(|c| c.id == col.id) {
+                    columns.push(col);
+                }
+            }
+            TabDef {
+                id: Cow::Owned(format!("issue:{}", r.id)),
+                title: Cow::Borrowed(r.name),
+                eligible: Cow::Owned(format!(
+                    "u.id IN (SELECT h.url_id FROM temp.issue_hits h WHERE h.rule = {i})"
+                )),
+                columns,
+                filters: vec![all],
+                search_column: Some(Cow::Borrowed("evidence")),
+                scoped: false,
+                rows: None,
+            }
+        })
+        .collect()
 }
 
 /// A fixed tab, or one of a file's custom tabs (spec 013).
@@ -912,6 +1064,9 @@ pub(crate) fn find(id: &str, custom: &[TabDef]) -> Option<Cow<'static, TabDef>> 
 
 fn build() -> Vec<TabDef> {
     use ValueKind::*;
+    // Filters that test what an issue rule tests share its condition
+    // (spec 009 FR-005).
+    use crate::issues::rules::{canonicals as ca, headings as hd, images as im, meta as me, url as ur};
     vec![
         TabDef {
             id: Cow::Borrowed("internal"),
@@ -928,6 +1083,7 @@ fn build() -> Vec<TabDef> {
                 c::META_DESCRIPTION,
                 c::H1,
                 c::WORD_COUNT,
+                c::READABILITY,
                 c::SIZE,
                 c::RESPONSE_TIME,
                 c::DEPTH,
@@ -1128,13 +1284,13 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("non_ascii", "Non-ASCII characters", "url_check(u.url, 'non_ascii')"),
-                filter("underscores", "Underscores", "url_check(u.url, 'underscore')"),
-                filter("uppercase", "Uppercase", "url_check(u.url, 'uppercase')"),
-                filter("parameters", "Contains query parameters", "instr(u.url, '?') > 0"),
-                filter("multiple_slashes", "Multiple slashes", "url_check(u.url, 'multiple_slashes')"),
-                filter("spaces", "Contains spaces", "url_check(u.url, 'spaces')"),
-                filter("over_115", "Over 115 characters", "length(u.url) > 115"),
+                filter("non_ascii", "Non-ASCII characters", ur::NON_ASCII),
+                filter("underscores", "Underscores", ur::UNDERSCORES),
+                filter("uppercase", "Uppercase", ur::UPPERCASE),
+                filter("parameters", "Contains query parameters", ur::PARAMETERS),
+                filter("multiple_slashes", "Multiple slashes", ur::MULTIPLE_SLASHES),
+                filter("spaces", "Contains spaces", ur::SPACES),
+                filter("over_115", "Over 115 characters", ur::OVER).thr("url.over", "Over {n} characters"),
             ],
             search_column: None,
             scoped: false,
@@ -1165,8 +1321,9 @@ fn build() -> Vec<TabDef> {
                 filter("all", "All", "1"),
                 filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
                 filter("duplicate", "Duplicate", "x.n > 1"),
-                filter("over_60", "Over 60 characters", "x.len > 60"),
-                filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < 30"),
+                filter("over_60", "Over 60 characters", "x.len > thr('title.over')").thr("title.over", "Over {n} characters"),
+                filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < thr('title.below')")
+                    .thr("title.below", "Below {n} characters"),
                 filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
                 filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
@@ -1191,38 +1348,20 @@ fn build() -> Vec<TabDef> {
                 .reads(Derived::OccMeta),
             ],
             vec![
-                filter("missing", "Missing", "COALESCE((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id), '') = ''"),
-                filter(
-                    "duplicate",
-                    "Duplicate",
-                    "(SELECT p.meta_description FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_md o WHERE o.n > 1)",
-                )
-                .reads(Derived::OccMeta),
-                filter(
-                    "over_155",
-                    "Over 155 characters",
-                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) > 155",
-                ),
-                filter(
-                    "below_70",
-                    "Below 70 characters",
-                    "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id)) BETWEEN 1 AND 69",
-                ),
-                filter(
-                    "multiple",
-                    "Multiple",
-                    "(SELECT p.meta_description_count FROM pages p WHERE p.url_id = u.id) > 1",
-                ),
+                filter("missing", "Missing", me::MISSING),
+                filter("duplicate", "Duplicate", me::DUPLICATE).reads(Derived::OccMeta),
+                filter("over_155", "Over 155 characters", me::OVER).thr("meta.over", "Over {n} characters"),
+                filter("below_70", "Below 70 characters", me::BELOW).thr("meta.below", "Below {n} characters"),
+                filter("multiple", "Multiple", me::MULTIPLE),
             ],
             "meta_description",
         ),
-        heading_tab!("h1", "H1", Derived::OccH1),
-        heading_tab!("h2", "H2", Derived::OccH2),
+        heading_tab!("h1", "H1", Derived::OccH1, "h1.over", hd::H1_MISSING, hd::H1_DUPLICATE, hd::H1_OVER, hd::H1_MULTIPLE),
+        heading_tab!("h2", "H2", Derived::OccH2, "h2.over", hd::H2_MISSING, hd::H2_DUPLICATE, hd::H2_OVER, hd::H2_MULTIPLE),
         TabDef {
             id: Cow::Borrowed("images"),
             title: Cow::Borrowed("Images"),
-            // Image URLs: found in img elements first, or answering with an image type.
-            eligible: Cow::Borrowed("(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')"),
+            eligible: Cow::Borrowed(IMAGES),
             columns: vec![
                 c::ADDRESS,
                 ext("alt", "Alt text", IMG_ALT, Text, 280),
@@ -1246,11 +1385,12 @@ fn build() -> Vec<TabDef> {
             ],
             filters: vec![
                 filter("all", "All", "1"),
-                filter("missing_alt", "Missing alt attribute", image_use!("l.alt IS NULL")).needs(Need::Extraction),
+                filter("missing_alt", "Missing alt attribute", im::MISSING_ALT).needs(Need::Extraction),
                 filter("empty_alt", "Empty alt text", image_use!("l.alt = ''")).needs(Need::Extraction),
-                filter("alt_over_100", "Alt text over 100 characters", image_use!("length(l.alt) > 100"))
-                    .needs(Need::Extraction),
-                filter("over_100kb", "Over 100 KB", "u.size_bytes > 102400").needs(Need::Timing),
+                filter("alt_over_100", "Alt text over 100 characters", im::ALT_OVER)
+                    .needs(Need::Extraction)
+                    .thr("image.alt_over", "Alt text over {n} characters"),
+                filter("over_100kb", "Over 100 KB", im::LARGE).needs(Need::Timing).thr("image.large", "Over {n} bytes"),
             ],
             search_column: Some(Cow::Borrowed("alt")),
             scoped: false,
@@ -1268,9 +1408,9 @@ fn build() -> Vec<TabDef> {
             vec![
                 filter("contains", "Contains canonical", "u.canonical IS NOT NULL"),
                 filter("self", "Self-referencing", "u.canonical = u.url"),
-                filter("canonicalised", "Canonicalised", "u.canonical <> u.url"),
-                filter("missing", "Missing", "u.canonical IS NULL"),
-                filter("conflicting", "Multiple or conflicting", "u.canonical_count > 1"),
+                filter("canonicalised", "Canonicalised", ca::CANONICALISED),
+                filter("missing", "Missing", ca::MISSING),
+                filter("conflicting", "Multiple or conflicting", ca::CONFLICTING),
             ],
             "canonical_html",
         ),
@@ -1301,9 +1441,9 @@ fn build() -> Vec<TabDef> {
             "meta_robots",
         ),
         TabDef {
-            id: "search-console",
-            title: "Search Console",
-            eligible: HTML_OK,
+            id: Cow::Borrowed("search-console"),
+            title: Cow::Borrowed("Search Console"),
+            eligible: Cow::Borrowed(HTML_OK),
             columns: vec![
                 c::ADDRESS,
                 c::GSC_CLICKS,
@@ -1326,8 +1466,9 @@ fn build() -> Vec<TabDef> {
             .into_iter()
             .map(|f| f.needs(Need::SearchConsole))
             .collect(),
-            search_column: Some("title"),
+            search_column: Some(Cow::Borrowed("title")),
             scoped: false,
+            rows: None,
         },
         ai_search_tab(),
     ]
@@ -1375,6 +1516,15 @@ pub(crate) fn build_derived(
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
+        Derived::OccText => conn.execute_batch(&format!(
+            "DROP TABLE IF EXISTS temp.occ_text;
+             CREATE TEMP TABLE occ_text(v INTEGER PRIMARY KEY, n INTEGER NOT NULL);
+             INSERT INTO temp.occ_text SELECT p.text_hash, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
+               WHERE {HTML_OK} AND p.text_hash IS NOT NULL AND p.word_count > 0 GROUP BY 1;"
+        )),
+        Derived::PageFlags => page_flags(conn),
+        // Built by the reader or export, which know the issue settings.
+        Derived::IssueHits => Ok(()),
         Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
             crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
         }),
@@ -1384,6 +1534,283 @@ pub(crate) fn build_derived(
         Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
         Derived::VizDirs => crate::viz::dirs::build(conn),
     }
+}
+
+/// Bits of `temp.page_flags.flags`.
+pub(crate) mod page_flag {
+    /// An anchor to an internal URL that failed or returned 4xx/5xx.
+    pub const BROKEN_INTERNAL: u32 = 1;
+    /// An anchor to an external URL that failed or returned 4xx/5xx.
+    pub const BROKEN_EXTERNAL: u32 = 2;
+    /// An anchor to an internal 3xx.
+    pub const TO_REDIRECT: u32 = 4;
+    /// A nofollow anchor to an internal URL.
+    pub const NOFOLLOW_INTERNAL: u32 = 8;
+    /// Any anchor to an internal URL.
+    pub const INTERNAL_OUT: u32 = 16;
+    /// An image whose address is http:.
+    pub const HTTP_IMAGE: u32 = 32;
+    /// An anchor whose text says nothing ("click here").
+    pub const WEAK_ANCHOR: u32 = 64;
+    /// A canonical link outside the head.
+    pub const CANONICAL_IN_BODY: u32 = 128;
+    /// Any hreflang link.
+    pub const HREFLANG: u32 = 256;
+    /// An hreflang link to the page itself.
+    pub const HREFLANG_SELF: u32 = 512;
+    /// An hreflang link for x-default.
+    pub const HREFLANG_X_DEFAULT: u32 = 1024;
+    /// An hreflang link with a missing or invalid language code.
+    pub const HREFLANG_BAD_CODE: u32 = 2048;
+    /// A canonical, hreflang or pagination link to another URL that was
+    /// fetched and failed, did not return 2xx, is noindex or canonicalised
+    /// elsewhere (`issues::rules::target_not_ok!`).
+    pub const CANONICAL_BAD_TARGET: u32 = 4096;
+    pub const HREFLANG_BAD_TARGET: u32 = 8192;
+    pub const PAGINATION_BAD_TARGET: u32 = 16384;
+    /// A <title> in the body (from `page_text`).
+    pub const TITLE_IN_BODY: u32 = 32768;
+    /// A heading more than one level below the one before it.
+    pub const HEADING_SKIP: u32 = 65536;
+}
+
+/// Link target classes, by URL id (see [`page_flags`]).
+mod target_class {
+    pub const INTERNAL: u8 = 1;
+    pub const BROKEN: u8 = 2;
+    pub const REDIRECT: u8 = 4;
+    pub const HTTP: u8 = 8;
+    pub const NOT_OK: u8 = 16;
+}
+
+/// Flags from the links with rowid in `[lo, hi)` (see [`page_flags`]).
+fn scan_links(
+    conn: &rusqlite::Connection,
+    class: &[u8],
+    extra: &str,
+    (lo, hi): (i64, i64),
+    flags: &mut [u32],
+) -> rusqlite::Result<()> {
+    use page_flag::*;
+    use target_class::*;
+    let len = class.len();
+    let mut stmt = conn.prepare(&format!(
+        "SELECT from_id, to_id, kind, nofollow, target LIKE 'http:%', {extra} FROM links \
+         WHERE rowid >= ?1 AND rowid < ?2 AND kind IN ('anchor', 'image', 'canonical', 'hreflang', 'next', 'prev')"
+    ))?;
+    let mut rows = stmt.query((lo, hi))?;
+    while let Some(r) = rows.next()? {
+        let Some(from) = usize::try_from(r.get::<_, i64>(0)?).ok().filter(|&i| i < len) else {
+            continue;
+        };
+        let to = r.get::<_, Option<i64>>(1)?.and_then(|t| usize::try_from(t).ok());
+        let c = to.and_then(|t| class.get(t).copied());
+        let other = to.is_some_and(|t| t != from);
+        let not_ok = other && c.is_some_and(|c| c & NOT_OK != 0);
+        let kind = r.get_ref(2)?.as_str().unwrap_or("");
+        let mut f = 0u32;
+        match kind {
+            "anchor" => {
+                if let Some(c) = c {
+                    let internal = c & INTERNAL != 0;
+                    if c & BROKEN != 0 {
+                        f |= if internal {
+                            BROKEN_INTERNAL
+                        } else {
+                            BROKEN_EXTERNAL
+                        };
+                    }
+                    if internal {
+                        f |= INTERNAL_OUT;
+                        if c & REDIRECT != 0 {
+                            f |= TO_REDIRECT;
+                        }
+                        if r.get::<_, i64>(3)? == 1 {
+                            f |= NOFOLLOW_INTERNAL;
+                        }
+                    }
+                }
+                if r.get_ref(5)?
+                    .as_str_or_null()?
+                    .is_some_and(crate::sql::weak_anchor)
+                {
+                    f |= WEAK_ANCHOR;
+                }
+            }
+            "image" => {
+                let http = match c {
+                    Some(c) => c & HTTP != 0,
+                    None => to.is_none() && r.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                };
+                if http {
+                    f |= HTTP_IMAGE;
+                }
+            }
+            "canonical" => {
+                if r.get::<_, Option<i64>>(6)? == Some(0) {
+                    f |= CANONICAL_IN_BODY;
+                }
+                if not_ok {
+                    f |= CANONICAL_BAD_TARGET;
+                }
+            }
+            "hreflang" => {
+                f |= HREFLANG;
+                if to == Some(from) {
+                    f |= HREFLANG_SELF;
+                }
+                let lang = r.get_ref(7)?.as_str_or_null()?;
+                if lang.is_some_and(|l| l.eq_ignore_ascii_case("x-default")) {
+                    f |= HREFLANG_X_DEFAULT;
+                }
+                if !lang.is_some_and(crate::sql::lang_code_ok) {
+                    f |= HREFLANG_BAD_CODE;
+                }
+                if not_ok {
+                    f |= HREFLANG_BAD_TARGET;
+                }
+            }
+            _ => {
+                if not_ok {
+                    f |= PAGINATION_BAD_TARGET;
+                }
+            }
+        }
+        flags[from] |= f;
+    }
+    Ok(())
+}
+
+/// Builds `temp.page_flags` in Rust: one sequential scan of `links` (and
+/// one of `page_text`) with
+/// each target's class looked up in an array by URL id. A SQL join probes
+/// the urls b-tree once per link, and a rule per page reads that page's
+/// links again; on 10 million links either takes tens of seconds, this a
+/// few (spec 009 SC-003).
+fn page_flags(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    page_flags_with(conn, 200_000)
+}
+
+/// [`page_flags`], splitting the links scan from `min_parallel` links.
+fn page_flags_with(conn: &rusqlite::Connection, min_parallel: i64) -> rusqlite::Result<()> {
+    use page_flag::*;
+    let max_id: i64 = conn.query_row("SELECT COALESCE(MAX(id), 0) FROM urls", [], |r| r.get(0))?;
+    let len = usize::try_from(max_id).unwrap_or(0) + 1;
+    let mut class = vec![0u8; len];
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, (internal = 1)
+               | (COALESCE(error_class IS NOT NULL OR status >= 400, 0) << 1)
+               | (COALESCE(error_class IS NULL AND status BETWEEN 300 AND 399, 0) << 2)
+               | ((url LIKE 'http:%') << 3)
+               | (COALESCE(fetched_at IS NOT NULL AND (error_class IS NOT NULL OR status IS NULL
+                   OR status NOT BETWEEN 200 AND 299 OR noindex = 1 OR (canonical IS NOT NULL AND canonical <> url)), 0) << 4)
+             FROM urls",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            if let Some(c) = usize::try_from(id).ok().and_then(|i| class.get_mut(i)) {
+                *c = r.get(1)?;
+            }
+        }
+    }
+    // Files from before page extraction have no link text, head or language.
+    let extracted = conn
+        .prepare("SELECT 1 FROM pragma_table_info('links') WHERE name = 'in_head'")?
+        .exists([])?;
+    let extra = if extracted {
+        "text, in_head, lang"
+    } else {
+        "NULL, NULL, NULL"
+    };
+    let mut flags = vec![0u32; len];
+    let max_link: i64 = conn.query_row("SELECT COALESCE(MAX(rowid), 0) FROM links", [], |r| r.get(0))?;
+    // Large files: split the scan by rowid over a few read-only connections.
+    // During a live crawl each sees its own snapshot; counts then are
+    // provisional anyway (FR-019).
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(4) as i64;
+    let path = conn
+        .path()
+        .filter(|p| !p.is_empty())
+        .map(std::path::PathBuf::from);
+    match path {
+        Some(path) if threads > 1 && max_link >= min_parallel => {
+            let step = max_link / threads + 1;
+            let parts = std::thread::scope(|sc| {
+                let handles: Vec<_> = (0..threads)
+                    .map(|t| {
+                        let (class, path, extra) = (&class, &path, extra);
+                        sc.spawn(move || -> rusqlite::Result<Vec<u32>> {
+                            let c = spiderlens_engine::crawl::store::connect_read_only(path)
+                                .map_err(|e| rusqlite::Error::UserFunctionError(e.to_string().into()))?;
+                            let mut f = vec![0u32; class.len()];
+                            scan_links(&c, class, extra, (t * step, (t + 1) * step), &mut f)?;
+                            Ok(f)
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("link scan thread"))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })?;
+            for part in parts {
+                for (f, p) in flags.iter_mut().zip(part) {
+                    *f |= p;
+                }
+            }
+        }
+        _ => scan_links(conn, &class, extra, (0, max_link + 1), &mut flags)?,
+    }
+    // Titles and headings, in page order (the page_text_url index).
+    let has_text = conn
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'page_text'")?
+        .exists([])?;
+    if has_text {
+        let mut stmt = conn.prepare(
+            "SELECT url_id, kind = 'title', level, in_head FROM page_text \
+             WHERE kind IN ('heading', 'title') ORDER BY url_id, kind, pos",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut page = -1i64;
+        let mut prev: Option<i64> = None;
+        while let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let Some(f) = usize::try_from(id).ok().and_then(|i| flags.get_mut(i)) else {
+                continue;
+            };
+            if r.get::<_, bool>(1)? {
+                if r.get::<_, Option<i64>>(3)? == Some(0) {
+                    *f |= TITLE_IN_BODY;
+                }
+                continue;
+            }
+            if id != page {
+                page = id;
+                prev = None;
+            }
+            let level: Option<i64> = r.get(2)?;
+            if let (Some(p), Some(l)) = (prev, level)
+                && l > p + 1
+            {
+                *f |= HEADING_SKIP;
+            }
+            prev = level;
+        }
+    }
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS temp.page_flags;
+         CREATE TEMP TABLE page_flags(url_id INTEGER PRIMARY KEY, flags INTEGER NOT NULL);
+         SAVEPOINT page_flags;",
+    )?;
+    {
+        let mut ins = conn.prepare("INSERT INTO temp.page_flags VALUES (?1, ?2)")?;
+        for (id, f) in flags.iter().enumerate().filter(|(_, f)| **f != 0) {
+            ins.execute((id as i64, *f))?;
+        }
+    }
+    conn.execute_batch("RELEASE page_flags;")
 }
 
 /// Brings a derived table built from older data up to date without
@@ -1468,6 +1895,63 @@ mod tests {
             }
         }
         assert_eq!(tab_ids.len(), 14);
+    }
+
+    #[test]
+    fn split_link_scan_gives_the_same_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.sqlite");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE urls(id INTEGER PRIMARY KEY, url TEXT, internal INTEGER, status INTEGER, error_class TEXT,
+               fetched_at INTEGER, noindex INTEGER, canonical TEXT);
+             CREATE TABLE links(from_id INTEGER, to_id INTEGER, kind TEXT, nofollow INTEGER, target TEXT,
+               text TEXT, in_head INTEGER, lang TEXT);
+             BEGIN;",
+        )
+        .unwrap();
+        for id in 1..=200i64 {
+            let status = [200, 404, 301, 500][id as usize % 4];
+            conn.execute(
+                "INSERT INTO urls VALUES (?1, 'https://a.test/' || ?1, ?1 % 3 <> 0, ?2, NULL, 1, 0, NULL)",
+                (id, status),
+            )
+            .unwrap();
+        }
+        for i in 0..5_000i64 {
+            let kind = ["anchor", "image", "canonical", "hreflang", "next"][i as usize % 5];
+            conn.execute(
+                "INSERT INTO links VALUES (?1, ?2, ?3, ?4 % 2, 'http://x', 'click here', ?4 % 3 = 0, 'en')",
+                (i % 200 + 1, (i * 7) % 200 + 1, kind, i),
+            )
+            .unwrap();
+        }
+        conn.execute_batch("COMMIT").unwrap();
+        let read = |min: i64| {
+            page_flags_with(&conn, min).unwrap();
+            let mut st = conn
+                .prepare("SELECT url_id, flags FROM temp.page_flags ORDER BY 1")
+                .unwrap();
+            st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let one = read(i64::MAX);
+        assert!(one.len() > 100);
+        assert_eq!(read(0), one);
+    }
+
+    #[test]
+    fn issue_tabs_show_their_categorys_columns() {
+        // FR-015: a title rule shows the title and its length.
+        let t = tab("issue:title.over").unwrap();
+        let ids: Vec<_> = t.columns.iter().map(|c| c.id.as_ref()).collect();
+        assert_eq!(&ids[..4], ["address", "evidence", "title", "title_length"]);
+        for t in issue_tabs() {
+            let unique: HashSet<_> = t.columns.iter().map(|c| &c.id).collect();
+            assert_eq!(unique.len(), t.columns.len(), "duplicate column in {}", t.id);
+        }
     }
 
     #[test]

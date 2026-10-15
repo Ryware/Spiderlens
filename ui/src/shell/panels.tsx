@@ -74,9 +74,15 @@ export function StatusBar({ setup, run, analysis }: { setup: CrawlSetup; run: Cr
       <span className="flex min-w-0 items-center gap-1.5 text-fg-2" role="status" data-phase={run.phase}>
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dots[info.tone], run.running && "motion-safe:animate-pulse")} />
         <span className="truncate">
-          {info.label}
-          {run.phase !== "idle" && run.target ? ` ${run.target}` : ""}
-          {wait && (wait.probing || wait.secondsLeft === null ? " · Testing…" : ` · ${formatElapsed(wait.secondsLeft * 1000)}`)}
+          {run.analysis ? (
+            `Analysing: ${run.analysis.label} ${run.analysis.total > 0 ? Math.floor((run.analysis.done * 100) / run.analysis.total) : 0}%`
+          ) : (
+            <>
+              {info.label}
+              {run.phase !== "idle" && run.target ? ` ${run.target}` : ""}
+              {wait && (wait.probing || wait.secondsLeft === null ? " · Testing…" : ` · ${formatElapsed(wait.secondsLeft * 1000)}`)}
+            </>
+          )}
         </span>
       </span>
       {figures.map(([n, label, key]) => (
