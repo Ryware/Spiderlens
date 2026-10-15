@@ -28,6 +28,11 @@ impl State {
         })
     }
 
+    /// A stored profile by name, for schedules (spec 021).
+    pub fn load_profile(&self, name: &str) -> Option<spiderlens_config::ImportedProfile> {
+        self.store.load(name).ok()
+    }
+
     /// The list most recently parsed in this window, for List mode crawls.
     pub fn list(&self) -> Option<ListInput> {
         self.list.lock().expect("list lock").clone()
