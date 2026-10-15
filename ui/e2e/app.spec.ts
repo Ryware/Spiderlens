@@ -410,3 +410,33 @@ test("inspector_rows_copy_and_show_in_table", async ({ page }) => {
   await expect(grid).toBeFocused();
   await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/");
 });
+
+test("create_a_schedule_see_its_next_run_open_history_and_turn_it_off", async ({ page }) => {
+  await page.keyboard.type("example.com");
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Schedule this crawl");
+  const sheet = page.getByRole("dialog", { name: "New schedule" });
+  await expect(sheet.getByLabel("Name")).toBeFocused();
+  // The sheet fits the window, footer included.
+  const box = (await sheet.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(860);
+  await sheet.getByRole("radio", { name: "Daily" }).click();
+  await sheet.getByLabel("At", { exact: true }).fill("07:30");
+  await expect(sheet.getByText("Every day at 07:30")).toBeVisible();
+  await expect(sheet.getByRole("list", { name: "Next runs" }).getByRole("listitem")).toHaveCount(5);
+  await sheet.getByRole("button", { name: "Create schedule" }).click();
+  await expect(sheet).toBeHidden();
+
+  const list = page.getByRole("list", { name: "Schedules" });
+  await expect(list.getByText("example.com weekly")).toBeVisible();
+  await expect(list.getByText("Every day at 07:30")).toBeVisible();
+  await expect(list.getByText(/^Next: /)).toBeVisible();
+
+  const detail = page.getByRole("region", { name: "example.com weekly" });
+  await expect(detail.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(detail.getByText("No runs yet.")).toBeVisible();
+
+  await detail.getByRole("switch", { name: "Enabled" }).click();
+  await expect(list.getByText("Off")).toBeVisible();
+  await expect(list.getByText("No upcoming runs")).toBeVisible();
+});
