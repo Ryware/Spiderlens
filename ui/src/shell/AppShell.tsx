@@ -24,6 +24,10 @@ import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
+import { useComparison } from "../compare/useComparison";
+import { CompareSetup } from "../compare/CompareSetup";
+import { CompareView, type Pair } from "../compare/CompareView";
+import { PairInspector } from "../compare/PairInspector";
 import { issueOfTab, issueTab, useIssues } from "../issues/useIssues";
 import { isCustomTab, useCustomRun } from "../results/useCustomRun";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
@@ -102,6 +106,10 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [pair, setPair] = useState<Pair | null>(null);
+  const comparison = useComparison(transport);
+  const comparing = comparison.state.phase !== "idle";
   const [sitemapOpen, setSitemapOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
@@ -244,6 +252,20 @@ export function AppShell({ transport }: { transport: Transport }) {
   const saveAs = useCallback(() => void saveFileAs(), [saveFileAs]);
   const recentOpen = useMemo(() => library.recent.filter((e) => e.available).slice(0, 5), [library.recent]);
 
+  const startComparison = useCallback(
+    (previous: string, current: string, settings: Parameters<typeof comparison.start>[2]) => {
+      setPair(null);
+      setSection("comparison");
+      void comparison.start(previous, current, settings);
+    },
+    [comparison],
+  );
+
+  // Closing the comparison goes back to where the crawl was.
+  useEffect(() => {
+    if (!comparing) setSection((s) => (s === "comparison" ? "overview" : s));
+  }, [comparing]);
+
   const schedules = useSchedules(transport);
   const editSchedule = useCallback((s: Schedule) => {
     setEditorDraft(structuredClone(s));
@@ -280,6 +302,8 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
       { id: "save-as", title: "Save crawl as…", group: "Crawl", shortcut: "Mod+Shift+S", keywords: ["file", "export", "move"], enabled: crawl.path !== null, run: saveAs },
       { id: "crawl-info", title: "Crawl information", group: "Crawl", keywords: ["configuration", "version", "history", "file"], enabled: crawl.path !== null, run: () => setInfoOpen(true) },
+      { id: "compare", title: "Compare crawls…", group: "Crawl", keywords: ["diff", "changes", "previous", "migration"], run: () => setCompareOpen(true) },
+      { id: "close-compare", title: "Close comparison", group: "Crawl", enabled: comparing, run: () => void comparison.close() },
       {
         id: "generate-sitemap",
         title: "Generate XML sitemap…",
@@ -341,7 +365,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules],
+    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules, comparing, comparison],
   );
 
   const run = useCallback(
@@ -359,7 +383,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || compareOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -368,7 +392,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, compareOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -389,13 +413,15 @@ export function AppShell({ transport }: { transport: Transport }) {
       />
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
-          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} issues={issues.summary} counting={issues.counting} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
+          <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} issues={issues.summary} comparison={comparing} counting={issues.counting} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
         </div>
         {!sidebarIcons && <Splitter label="Resize sidebar" value={ui.sidebarWidth} min={SIDEBAR.min} max={SIDEBAR.max} onChange={(v) => updateUi({ sidebarWidth: v })} />}
         {/* In Island this is the light panel inset in the dark frame (spec 018 FR-004). */}
         <div className="island-content flex min-w-0 flex-1">
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
-          {section === "schedules" ? (
+          {section === "comparison" && comparing ? (
+            <CompareView transport={transport} comparison={comparison} selected={pair} onSelect={setPair} onNew={() => setCompareOpen(true)} />
+          ) : section === "schedules" ? (
             <SchedulesView
               transport={transport}
               schedules={schedules}
@@ -435,7 +461,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onManageCrawls={() => setManageOpen(true)} />
+            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
             <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} />
           )}
@@ -455,7 +481,9 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab || vizView || cookiesOpen ? (
+              {section === "comparison" && comparing ? (
+                <PairInspector transport={transport} comparison={comparison.state.phase === "ready" ? comparison.state.id : null} pair={pair} />
+              ) : resultTab || vizView || cookiesOpen ? (
                 <Inspector
                   transport={transport}
                   path={crawl.path}
@@ -512,6 +540,7 @@ export function AppShell({ transport }: { transport: Transport }) {
 
       />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
+      <CompareSetup open={compareOpen} onOpenChange={setCompareOpen} transport={transport} initialCurrent={crawl.path} onStart={startComparison} />
       {crawl.path && setup.config && (
         <GenerateSitemapSheet
           open={sitemapOpen}

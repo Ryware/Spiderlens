@@ -41,7 +41,9 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-pub(crate) fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+/// One CSV field: formula-like values neutralised, quoted when needed
+/// (FR-029). Shared with the comparison exports (spec 012).
+pub fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))
@@ -156,7 +158,9 @@ pub fn write_csv(
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
     let settings = ResolvedSettings::default();
-    write_csv_with(crawl, q, columns, ranges, all_values, &settings, out, cancel, progress)
+    write_csv_with(
+        crawl, q, columns, ranges, all_values, &settings, out, cancel, progress,
+    )
 }
 
 /// [`write_csv`] with the issue settings in force (spec 009 FR-025: an
@@ -273,7 +277,9 @@ pub fn export_file(
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<u64, ExportError> {
     let settings = ResolvedSettings::default();
-    export_file_with(crawl, q, columns, ranges, all_values, &settings, dest, cancel, progress)
+    export_file_with(
+        crawl, q, columns, ranges, all_values, &settings, dest, cancel, progress,
+    )
 }
 
 /// [`export_file`] with the issue settings in force.
@@ -292,7 +298,9 @@ pub fn export_file_with(
     let part = part_path(dest);
     let result = (|| {
         let file = std::fs::File::create(&part)?;
-        let n = write_csv_with(crawl, q, columns, ranges, all_values, settings, &file, cancel, progress)?;
+        let n = write_csv_with(
+            crawl, q, columns, ranges, all_values, settings, &file, cancel, progress,
+        )?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&part, dest)?;

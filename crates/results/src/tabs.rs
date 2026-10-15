@@ -175,7 +175,7 @@ pub enum Derived {
 }
 
 impl Derived {
-    pub(crate) fn table(self) -> &'static str {
+    pub fn table(self) -> &'static str {
         match self {
             Self::Titles => "titles",
             Self::Redirects => "redirects",
@@ -311,7 +311,7 @@ impl TabDef {
 
     /// The `urls u` condition for the tab's rows without its row source,
     /// for one-pass counts over `urls` (T014).
-    pub(crate) fn eligible_on_urls(&self) -> &str {
+    pub fn eligible_on_urls(&self) -> &str {
         match self.rows {
             Some(d) => d.rows_eligible(),
             None => &self.eligible,
@@ -481,7 +481,7 @@ const GSC_DATA: &str = "(CASE WHEN EXISTS (SELECT 1 FROM integration_status s WH
      WHEN EXISTS (SELECT 1 FROM gsc_pages g WHERE g.url_id = u.id) THEN 'Has data' ELSE 'Not fetched' END)";
 
 /// Columns many tabs share.
-mod c {
+pub mod c {
     use super::*;
 
     pub const ADDRESS: ColumnDef = col("address", "Address", "u.url", ValueKind::Url, 420);
@@ -1483,7 +1483,7 @@ const GSC_NO_DATA: &str = "EXISTS (SELECT 1 FROM integration_status s WHERE s.ur
      AND s.provider = 'search_console' AND s.reason = 'no_data')";
 
 /// Builds a derived table on `conn` (dropping an older copy).
-pub(crate) fn build_derived(
+pub fn build_derived(
     conn: &rusqlite::Connection,
     d: Derived,
     features: &crate::Features,

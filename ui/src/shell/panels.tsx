@@ -344,6 +344,7 @@ export function StartState({
   onOpenSettings,
   library,
   onOpenRecent,
+  onCompare,
   onManageCrawls,
 }: {
   setup: CrawlSetup;
@@ -353,6 +354,8 @@ export function StartState({
   /** Recent and unsaved crawls (spec 006 US4). */
   library?: CrawlLibrary;
   onOpenRecent?: (path: string) => void;
+  /** Opens the comparison setup (spec 012). */
+  onCompare?: () => void;
   /** Opens Manage crawls (spec 019 US1, FR-023). */
   onManageCrawls?: () => void;
 }) {
@@ -402,6 +405,11 @@ export function StartState({
           <span>
             Commands <Kbd keys="Mod+K" />
           </span>
+          {onCompare && (
+            <button type="button" className="rounded-sm hover:text-fg-2" onClick={onCompare}>
+              Compare crawls…
+            </button>
+          )}
         </div>
 
         {library && onOpenRecent && <RecentCrawls library={library} onOpen={onOpenRecent} />}

@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod aeo_cmd;
+mod compare_cmd;
 mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
@@ -42,6 +43,9 @@ pub(crate) mod exit {
     pub const PAUSED: u8 = 5;
     /// A disk or write problem paused the crawl; it can be resumed (spec 006 FR-040).
     pub const LOCAL: u8 = 6;
+    /// `spiderlens compare` found a regression it was told to fail on
+    /// (spec 012).
+    pub const COMPARE_FAILED: u8 = 8;
     /// `issues --fail-on`: an issue at or above that priority has URLs
     /// (spec 009 FR-027).
     pub const ISSUES_FOUND: u8 = 7;
@@ -88,6 +92,8 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// What changed between two crawl files of a site.
+    Compare(Box<compare_cmd::CompareArgs>),
     /// List the issue rules: what each checks, why it matters, how to fix.
     Rules(issues_cmd::RulesArgs),
     /// List the issues found in a crawl file, or export them as CSV.
@@ -212,6 +218,7 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Compare(args) => compare_cmd::run_compare(*args),
         Command::Rules(args) => issues_cmd::run_rules(args),
         Command::Issues(args) => issues_cmd::run_issues(*args),
         Command::Analyse(args) => issues_cmd::run_analyse(args),

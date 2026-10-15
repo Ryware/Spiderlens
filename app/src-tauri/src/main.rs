@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod aeo;
+mod compare;
 mod crawl;
 mod custom;
 mod files;
@@ -47,6 +48,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(compare::State::default());
             app.manage(custom::State::default());
             app.manage(integrations::State::open()?);
             app.manage(aeo::State::default());
@@ -143,6 +145,23 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            compare::compare_suggest,
+            compare::compare_setup,
+            compare::compare_test_mapping,
+            compare::compare_start,
+            compare::compare_cancel,
+            compare::compare_summary,
+            compare::compare_settings,
+            compare::compare_set_elements,
+            compare::compare_open_group,
+            compare::compare_rows,
+            compare::compare_close_group,
+            compare::compare_detail,
+            compare::compare_report,
+            compare::compare_export,
+            compare::compare_close,
+            compare::compare_settings_load,
+            compare::compare_settings_save,
             results::rule_catalogue,
             results::issues_apply,
             results::passes_run,

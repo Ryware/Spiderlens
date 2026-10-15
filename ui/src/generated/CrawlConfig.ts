@@ -14,7 +14,6 @@ import type { ExtractionSettings } from "./ExtractionSettings";
 import type { Limits } from "./Limits";
 import type { Scope } from "./Scope";
 import type { Identity } from "./Identity";
-import type { SpeedSettings } from "./SpeedSettings";
 
 export type CrawlConfig = { mode: Mode, limits: Limits, scope: Scope, identity: Identity, speed: SpeedSettings, robots: RobotsSettings, network: NetworkSettings, retry: RetrySettings, extraction: ExtractionSettings, 
 /**

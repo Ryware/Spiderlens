@@ -50,6 +50,7 @@ fn filter(id: String, label: String, cond: String) -> FilterDef {
         cond: Cow::Owned(cond),
         need: Need::Base,
         derived: None,
+        threshold: None,
         hide_when_empty: None,
     }
 }

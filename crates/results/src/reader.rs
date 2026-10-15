@@ -52,6 +52,54 @@ pub(crate) fn connect(
     // FR-021); a damaged file is reported as such (FR-038).
     let conn = spiderlens_engine::crawl::store::connect_read_only(path)
         .map_err(|e| Error::invalid(e.to_string()))?;
+    setup(conn, path, settings)
+}
+
+/// Opens a crawl file read-only as `main` on a connection that can still
+/// write to databases it attaches (spec 012 plan D1): the crawl is opened
+/// through a `mode=ro` URI, so SQLite refuses any write to it, while a
+/// scratch file attached later stays writable.
+pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
+    if !path.exists() {
+        return Err(Error::invalid(format!("{} does not exist", path.display())));
+    }
+    let conn = Connection::open_with_flags(
+        read_only_uri(path),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // The comparison reads filters with the default issue thresholds.
+    let (conn, features, _) = setup(conn, path, &ResolvedSettings::default())?;
+    Ok((conn, features))
+}
+
+/// `file:<path>?mode=ro`, percent-encoding what SQLite's URI parser would
+/// otherwise read as syntax, and every non-ASCII byte.
+fn read_only_uri(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file:");
+    if raw.as_bytes().get(1) == Some(&b':') {
+        // A Windows drive letter: file:/C:/...
+        out.push('/');
+    }
+    for b in raw.bytes() {
+        if b.is_ascii() && !matches!(b, b'%' | b'?' | b'#') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out.push_str("?mode=ro");
+    out
+}
+
+fn setup(
+    conn: Connection,
+    path: &Path,
+    settings: &ResolvedSettings,
+) -> Result<(Connection, Features, Arc<RwLock<Thresholds>>)> {
     let format: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'format'", [], |r| r.get(0))
         .optional()

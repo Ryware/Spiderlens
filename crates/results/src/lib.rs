@@ -34,17 +34,21 @@ pub use detail::{
     HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml, RedirectHop, UrlDetail,
 };
 pub use export::{
-    COPY_LIMIT, ExportError, export_file, export_file_with, write_csv, write_csv_with, write_tsv_row,
+    COPY_LIMIT, ExportError, csv_field, export_file, export_file_with, write_csv, write_csv_with,
+    write_tsv_row,
 };
 pub use features::Features;
-pub use reader::Reader;
+pub use reader::{Reader, connect_attachable};
 pub use rusqlite::InterruptHandle;
 pub use sitemaps::{
     GenerateError, GenerateReport, GeneratedFile, Output as SitemapOutput, SitemapFileRow, SitemapFiles,
     check_structure as check_sitemap_structure, generate as generate_sitemaps,
 };
 pub use sql::{ci_contains, error_class_label, natural_cmp, norm_ws};
-pub use tabs::{ColumnDef, FilterDef, Need, TabDef, ValueKind, issue_tabs, tab, tabs};
+pub use tabs::{
+    ColumnDef, Derived, FilterDef, Need, TabDef, ValueKind, build_derived, c as columns, issue_tabs, tab,
+    tabs,
+};
 pub use view::{Refresh, RowPage, Sort, UrlScope, ViewQuery};
 
 #[derive(Debug, thiserror::Error)]

@@ -54,6 +54,18 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { CompareSettings } from "./generated/CompareSettings";
+import type { ComparisonReport } from "./generated/ComparisonReport";
+import type { ElementDelta } from "./generated/ElementDelta";
+import type { ElementSetting } from "./generated/ElementSetting";
+import type { Group } from "./generated/Group";
+import type { GroupPage } from "./generated/GroupPage";
+import type { GroupSort } from "./generated/GroupSort";
+import type { MapRule } from "./generated/MapRule";
+import type { MappingTest } from "./generated/MappingTest";
+import type { PairDetail } from "./generated/PairDetail";
+import type { Setup } from "./generated/Setup";
+import type { Summary } from "./generated/Summary";
 import type { GenerateReport } from "./generated/GenerateReport";
 import type { SitemapFiles } from "./generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
@@ -517,6 +529,15 @@ export interface ExportProgress {
   path: string;
 }
 
+/** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
+export interface CompareProgress {
+  comparison: number;
+  phase: "open" | "previous" | "current" | "match" | "counts" | "done" | "failed" | "cancelled";
+  done: number;
+  total: number;
+  error: string | null;
+}
+
 // Custom extraction and search (spec 013, contracts/desktop-commands.md).
 
 /** What one rule found on a tested page (FR-018). */
@@ -730,6 +751,23 @@ export interface Transport {
   positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // Crawl comparison (spec 012, contracts/desktop-commands.md).
+  compareSuggest(current: string): Promise<string | null>;
+  compareSetup(previous: string, current: string): Promise<Setup>;
+  compareTestMapping(previous: string, current: string, rules: MapRule[], samples: string[], fromPrevious: number): Promise<MappingTest[]>;
+  compareStart(previous: string, current: string, settings: CompareSettings): Promise<number>;
+  compareCancel(comparison: number): Promise<void>;
+  compareSummary(comparison: number): Promise<Summary>;
+  compareSetElements(comparison: number, elements: ElementSetting[]): Promise<ElementDelta[]>;
+  compareOpenGroup(comparison: number, group: Group, search: string, sort: GroupSort | null, count: number): Promise<GroupPage>;
+  compareRows(comparison: number, view: number, from: number, count: number): Promise<GroupPage>;
+  compareCloseGroup(comparison: number, view: number): Promise<void>;
+  compareDetail(comparison: number, prevId: number | null, curId: number | null): Promise<PairDetail>;
+  compareReport(comparison: number): Promise<ComparisonReport>;
+  /** CSV of an open group list; progress arrives as export-progress events. */
+  compareExport(comparison: number, view: number, dest: string): Promise<number>;
+  compareClose(comparison: number): Promise<void>;
+  onCompareProgress(cb: (p: CompareProgress) => void): Promise<() => void>;
   // Issues (spec 009, contracts/desktop-commands.md).
   ruleCatalogue(settings: IssueSettings): Promise<RuleCatalogue>;
   /** Makes these settings the ones in force; errors reject the whole change. */
@@ -935,6 +973,22 @@ export const tauriTransport: Transport = {
   positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  compareSuggest: (current) => invoke("compare_suggest", { current }),
+  compareSetup: (previous, current) => invoke("compare_setup", { previous, current }),
+  compareTestMapping: (previous, current, rules, samples, fromPrevious) =>
+    invoke("compare_test_mapping", { previous, current, rules, samples, fromPrevious }),
+  compareStart: (previous, current, settings) => invoke("compare_start", { previous, current, settings }),
+  compareCancel: (comparison) => invoke("compare_cancel", { comparison }),
+  compareSummary: (comparison) => invoke("compare_summary", { comparison }),
+  compareSetElements: (comparison, elements) => invoke("compare_set_elements", { comparison, elements }),
+  compareOpenGroup: (comparison, group, search, sort, count) => invoke("compare_open_group", { comparison, group, search, sort, count }),
+  compareRows: (comparison, view, from, count) => invoke("compare_rows", { comparison, view, from, count }),
+  compareCloseGroup: (comparison, view) => invoke("compare_close_group", { comparison, view }),
+  compareDetail: (comparison, prevId, curId) => invoke("compare_detail", { comparison, prevId, curId }),
+  compareReport: (comparison) => invoke("compare_report", { comparison }),
+  compareExport: (comparison, view, dest) => invoke("compare_export", { comparison, view, dest }),
+  compareClose: (comparison) => invoke("compare_close", { comparison }),
+  onCompareProgress: (cb) => listen<CompareProgress>("compare-progress", (e) => cb(e.payload)),
   ruleCatalogue: (settings) => invoke("rule_catalogue", { settings }),
   issuesApply: (path, settings) => invoke("issues_apply", { path, settings }),
   issuesSummary: (path, running) => invoke("issues_summary", { path, running }),

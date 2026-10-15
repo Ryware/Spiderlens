@@ -34,6 +34,9 @@ test.afterEach(() => {
 
 async function openManager(page: Page) {
   await page.keyboard.press("Control+k");
+  // Keys typed before the search box has focus are lost (seen on macOS),
+  // and "crawls" alone also matches Compare crawls….
+  await expect(page.getByPlaceholder("Type a command or a tab name")).toBeFocused();
   await page.keyboard.type("Manage crawls");
   await expect(page.locator("[cmdk-item][data-selected=true]")).toContainText("Manage crawls");
   await page.keyboard.press("Enter");

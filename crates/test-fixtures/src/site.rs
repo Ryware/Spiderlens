@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, TcpListener as StdListener};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::thread;
 use std::time::Instant;
 
@@ -222,18 +222,15 @@ impl SiteBuilder {
         listener.set_nonblocking(true).expect("nonblocking");
         let addr = listener.local_addr().expect("local addr");
         let log = Arc::new(Mutex::new(Vec::new()));
-        let replies: HashMap<_, _> = self
-            .replies
-            .into_iter()
-            .map(|(k, v)| (k, substitute(v, addr.port())))
-            .collect();
+        let replies = substitute_all(self.replies, addr.port());
         let down = Arc::new(Mutex::new(std::collections::HashSet::new()));
         let state = Arc::new(Shared {
-            replies,
+            replies: RwLock::new(replies),
             log: log.clone(),
             served: Mutex::new(HashMap::new()),
             down: down.clone(),
         });
+        let shared = state.clone();
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -254,8 +251,16 @@ impl SiteBuilder {
             hosts: self.hosts,
             log,
             down,
+            shared,
         }
     }
+}
+
+fn substitute_all(replies: HashMap<(String, String), Reply>, port: u16) -> HashMap<(String, String), Reply> {
+    replies
+        .into_iter()
+        .map(|(k, v)| (k, substitute(v, port)))
+        .collect()
 }
 
 fn substitute(reply: Reply, port: u16) -> Reply {
@@ -310,7 +315,7 @@ fn substitute(reply: Reply, port: u16) -> Reply {
 }
 
 struct Shared {
-    replies: HashMap<(String, String), Reply>,
+    replies: RwLock<HashMap<(String, String), Reply>>,
     log: Arc<Mutex<Vec<Hit>>>,
     /// Requests served per (host, path), for sequences.
     served: Mutex<HashMap<(String, String), usize>>,
@@ -369,15 +374,16 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
             .expect("response");
     }
     let key = (host, path);
-    let mut reply = state.replies.get(&key);
-    if let Some(Reply::Sequence(steps)) = reply {
+    let mut reply = state.replies.read().expect("replies lock").get(&key).cloned();
+    if let Some(Reply::Sequence(steps)) = &reply {
         let mut served = state.served.lock().expect("served lock");
         let n = served.entry(key.clone()).or_insert(0);
-        reply = steps.get(*n).or(steps.last());
+        let step = steps.get(*n).or(steps.last()).cloned();
         *n += 1;
+        reply = step;
     }
     let mut builder = Response::builder();
-    match reply {
+    match reply.as_ref() {
         Some(Reply::Hang) => {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             builder
@@ -441,6 +447,7 @@ pub struct Site {
     hosts: Vec<String>,
     log: Arc<Mutex<Vec<Hit>>>,
     down: Arc<Mutex<std::collections::HashSet<String>>>,
+    shared: Arc<Shared>,
 }
 
 impl Site {
@@ -451,6 +458,20 @@ impl Site {
     /// `http://HOST:PORT/PATH`
     pub fn url(&self, host: &str, path: &str) -> String {
         format!("http://{host}:{}{path}", self.addr.port())
+    }
+
+    /// Serves a new version of the site on the same port and host names, so
+    /// two crawls of "the same site" have identical URLs (spec 012 fixtures).
+    /// Hosts the new version adds are registered too.
+    pub fn replace(&mut self, next: SiteBuilder) {
+        for h in &next.hosts {
+            if !self.hosts.contains(h) {
+                self.hosts.push(h.clone());
+            }
+        }
+        *self.shared.replies.write().expect("replies lock") = substitute_all(next.replies, self.addr.port());
+        self.shared.served.lock().expect("served lock").clear();
+        self.log.lock().expect("log lock").clear();
     }
 
     /// DNS overrides pointing every registered host at this server.

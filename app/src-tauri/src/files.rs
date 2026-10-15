@@ -63,6 +63,11 @@ impl State {
         self.touch(to, None);
     }
 
+    /// Paths of the recent crawls (spec 012 suggests a previous crawl from them).
+    pub fn recent_paths(&self) -> Vec<PathBuf> {
+        self.recent.list().into_iter().map(|e| e.path).collect()
+    }
+
     /// Free space kept on the crawl file's drive (006 FR-027, set in
     /// Settings › Storage, spec 019 FR-025).
     pub fn disk_reserve(&self) -> u64 {

@@ -5170,6 +5170,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spiderlens-aeo",
+ "spiderlens-compare",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-integrations",
@@ -5201,6 +5202,26 @@ dependencies = [
  "tokio",
  "ts-rs",
  "url",
+]
+
+[[package]]
+name = "spiderlens-compare"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "spiderlens-config",
+ "spiderlens-engine",
+ "spiderlens-results",
+ "spiderlens-test-fixtures",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "ts-rs",
+ "url",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -5236,6 +5257,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spiderlens-aeo",
+ "spiderlens-compare",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-integrations",

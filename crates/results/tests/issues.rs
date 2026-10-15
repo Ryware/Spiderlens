@@ -231,7 +231,6 @@ async fn us2_filters_list_exactly_the_seeded_urls_and_counts_agree() {
         }
         let listed = paths(&mut r, &c, &q(&tab.id, "all")).len() as u64;
         assert_eq!(sidebar.counts[tab.id.as_ref()], listed, "{}", tab.id);
-
     }
 
     // Every available filter's count equals the rows it lists (FR-009, SC-002).

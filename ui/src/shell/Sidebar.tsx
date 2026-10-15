@@ -1,5 +1,4 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
-
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import type { IssuesSummary } from "../generated/IssuesSummary";
 import { IssuesNav } from "../issues/IssuesNav";
@@ -58,6 +57,7 @@ export function Sidebar({
   counting = false,
   custom = [],
   counts,
+  comparison = false,
 }: {
   active: string;
   onSelect: (id: string) => void;
@@ -72,6 +72,7 @@ export function Sidebar({
   custom?: { id: string; title: string }[];
   /** URLs per result tab; absent while unknown (T014). */
   counts?: Record<string, number> | null;
+  comparison?: boolean;
 }) {
   const item = (it: NavItem, available: boolean, run = () => onSelect(it.id)) => {
     const on = it.id === active;
@@ -120,6 +121,8 @@ export function Sidebar({
     <nav aria-label="Sections" data-material-region className="flex h-full flex-col overflow-y-auto bg-sidebar px-2 py-2">
       <ul className="m-0 flex list-none flex-col gap-px p-0">
         {item({ id: "overview", title: "Overview", icon: Activity }, true)}
+        {/* Spec 012: the open comparison, alongside the crawl. */}
+        {comparison && item({ id: "comparison", title: "Comparison", icon: GitCompareArrows }, true)}
         {item({ id: "schedules", title: "Schedules", icon: CalendarClock }, true)}
         {item({ id: "log", title: "Crawl log", icon: ScrollText }, results)}
       </ul>
