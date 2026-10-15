@@ -624,8 +624,6 @@ export interface Transport {
   aiBotsList(): Promise<AiBotList>;
   onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
   onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
-}
-
   // Scheduled crawls (spec 021, contracts/desktop-commands.md).
   schedulesList(): Promise<ScheduleRow[]>;
   scheduleGet(id: string): Promise<ScheduleDetail>;
