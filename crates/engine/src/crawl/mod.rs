@@ -16,6 +16,7 @@ pub mod redact;
 pub mod retry;
 mod runner;
 pub mod scope;
+pub mod site_files;
 mod sitemap;
 mod speed;
 pub mod store;

@@ -27,6 +27,11 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { RetrySettings } from "./generated/RetrySettings";
+import type { AeoRule } from "./generated/AeoRule";
+import type { AiBot } from "./generated/AiBot";
+import type { AiPageResult } from "./generated/AiPageResult";
+import type { AiProgress } from "./generated/AiProgress";
+import type { AiSummary } from "./generated/AiSummary";
 
 export interface BuildInfo {
   product: string;
@@ -469,6 +474,24 @@ export interface ExportProgress {
   path: string;
 }
 
+// AI checks (spec 015, contracts/desktop-commands.md).
+
+export type AeoProgress = AiProgress & { run_id: number; path: string };
+
+export interface AeoFinished {
+  run_id: number;
+  path: string;
+  /** Null when the run was cancelled or failed; earlier results stay. */
+  summary: AiSummary | null;
+  error: string | null;
+}
+
+export interface AiBotList {
+  version: number;
+  date: string;
+  bots: AiBot[];
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -575,6 +598,18 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
+  // AI checks (spec 015).
+  /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
+  aeoRun(path: string): Promise<{ run_id: number }>;
+  aeoCancel(runId: number): Promise<void>;
+  /** Null when the checks have not run on this file. */
+  aeoSummary(path: string): Promise<AiSummary | null>;
+  aeoPage(path: string, urlId: number): Promise<AiPageResult | null>;
+  aeoLlmsTxtDraft(path: string, maxLinks: number): Promise<{ text: string }>;
+  aeoRules(): Promise<AeoRule[]>;
+  aiBotsList(): Promise<AiBotList>;
+  onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
+  onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
 }
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
@@ -671,4 +706,13 @@ export const tauriTransport: Transport = {
   exportCancel: (job) => invoke("export_cancel", { job }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
+  aeoRun: (path) => invoke("aeo_run", { path }),
+  aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
+  aeoSummary: (path) => invoke("aeo_summary", { path }),
+  aeoPage: (path, urlId) => invoke("aeo_page", { path, urlId }),
+  aeoLlmsTxtDraft: (path, maxLinks) => invoke("aeo_llms_txt_draft", { path, maxLinks }),
+  aeoRules: () => invoke("aeo_rules"),
+  aiBotsList: () => invoke("ai_bots_list"),
+  onAeoProgress: (cb) => listen<AeoProgress>("aeo-progress", (e) => cb(e.payload)),
+  onAeoFinished: (cb) => listen<AeoFinished>("aeo-finished", (e) => cb(e.payload)),
 };

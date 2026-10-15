@@ -27,6 +27,7 @@ use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, Sp
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
+use super::site_files::{self, SiteFileRow};
 use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
 use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
 use super::store::{
@@ -35,7 +36,7 @@ use super::store::{
 };
 use super::window::QueueWindow;
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageInput, Ref, body};
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
 use crate::fetch::{Once, build_client_with, fetch_once};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
@@ -457,6 +458,16 @@ enum Msg {
     },
     SitemapDone(SitemapRow),
     SitemapsFinished,
+    SiteFile(SiteFileRow),
+    SiteFilesFinished,
+}
+
+/// The per-host AI site files (spec 015 FR-010), fetched after the last page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteFiles {
+    NotStarted,
+    Pending,
+    Done,
 }
 
 struct PageOutcome {
@@ -484,7 +495,14 @@ struct Extracted {
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
-async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget: &Semaphore) -> PageOutcome {
+async fn finish_page(
+    o: Once,
+    url: Url,
+    token: String,
+    store_html: bool,
+    hook: Option<PageHook>,
+    budget: &Semaphore,
+) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
@@ -505,6 +523,7 @@ async fn finish_page(o: Once, url: Url, token: String, store_html: bool, budget:
                     robots_token: &token,
                     // Spec 026: stored once the crawl file has the tables.
                     a11y: false,
+                    hook: hook.as_ref(),
                 });
                 let html = if store_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
@@ -562,9 +581,16 @@ pub struct Crawler {
     start: Option<Url>,
     resolve: Vec<(String, SocketAddr)>,
     retry_base: Duration,
+    page_hook: Option<PageHook>,
 }
 
 impl Crawler {
+    /// Reads more from every parsed page during this crawl (see
+    /// [`PageHook`]); its facts are stored in `page_facts`.
+    pub fn set_page_hook(&mut self, hook: PageHook) {
+        self.page_hook = Some(hook);
+    }
+
     /// Creates the crawl file and records the seeds. The configuration must
     /// already be validated (spec 002); invalid patterns are refused here too.
     pub fn create(path: &Path, config: CrawlConfig, input: &ModeInput) -> Result<Self, CrawlError> {
@@ -657,6 +683,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -776,6 +803,7 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            page_hook: None,
         })
     }
 
@@ -929,6 +957,7 @@ struct Run {
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
     errors: u64,
@@ -1059,6 +1088,7 @@ impl Run {
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
             errors,
@@ -1512,14 +1542,20 @@ impl Run {
                             && !self.sitemaps_pending
                             && self.retries.is_empty()
                         {
-                            self.c.store.set_meta("status", "completed")?;
-                            self.c
-                                .store
-                                .conn()
-                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
-                                .map_err(StoreError::from)?;
-                            self.c.store.record_event("completed", None)?;
-                            break;
+                            match self.site_files {
+                                SiteFiles::NotStarted => self.start_site_files()?,
+                                SiteFiles::Pending => {}
+                                SiteFiles::Done => {
+                                    self.c.store.set_meta("status", "completed")?;
+                                    self.c
+                                        .store
+                                        .conn()
+                                        .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                        .map_err(StoreError::from)?;
+                                    self.c.store.record_event("completed", None)?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1790,13 +1826,16 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        // The hook's facts stand in for stored HTML, so it runs only when the
+        // HTML is kept (a crawl without it has no content checks either).
+        let hook = self.c.page_hook.clone().filter(|_| store_html);
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, &budget).await),
+                Ok(o) => Ok(finish_page(o, url, token, store_html, hook, &budget).await),
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1887,6 +1926,67 @@ impl Run {
             };
             let _ = tx.send(Msg::Robots { host_key: key, fetch });
         });
+    }
+
+    /// Fetches each internal host's AI site files, one at a time per host
+    /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    fn start_site_files(&mut self) -> Result<(), CrawlError> {
+        if !self.c.config.ai_checks.site_files {
+            self.site_files = SiteFiles::Done;
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        for key in self.c.store.internal_hosts()? {
+            let host = self.hosts.get(&key);
+            let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
+            let policy = match host.map(|h| &h.robots) {
+                Some(RobotsState::Known(p, _)) => Some(p.clone()),
+                _ => None,
+            };
+            // A host the crawl gave up on gets no more requests (spec 004).
+            let given_up = host.is_some_and(|h| h.health.is_given_up());
+            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+                .iter()
+                .map(|path| {
+                    if given_up {
+                        return (
+                            (*path).to_string(),
+                            Some("host unavailable: the crawl gave up on it".to_string()),
+                        );
+                    }
+                    let blocked = policy.as_ref().and_then(|p| {
+                        let url = Url::parse(&format!("{key}{path}")).ok()?;
+                        match p.check(&url) {
+                            RobotsVerdict::Disallowed(rule) => Some(format!("blocked by robots.txt: {rule}")),
+                            _ => None,
+                        }
+                    });
+                    ((*path).to_string(), blocked)
+                })
+                .collect();
+            jobs.push((key, delay, paths));
+        }
+        self.site_files = SiteFiles::Pending;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (key, delay, paths) in jobs {
+                for (i, (path, blocked)) in paths.into_iter().enumerate() {
+                    let row = match blocked {
+                        Some(why) => SiteFileRow::skipped(&key, &path, &why),
+                        None => {
+                            if i > 0 && !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            site_files::fetch(&client, &key, &path).await
+                        }
+                    };
+                    let _ = tx.send(Msg::SiteFile(row));
+                }
+            }
+            let _ = tx.send(Msg::SiteFilesFinished);
+        });
+        Ok(())
     }
 
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
@@ -1993,6 +2093,11 @@ impl Run {
             }
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
+                Ok(())
+            }
+            Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SiteFilesFinished => {
+                self.site_files = SiteFiles::Done;
                 Ok(())
             }
         }

@@ -9,6 +9,8 @@ thread_local! {
     // Creating a compression context costs more than compressing a small
     // page, so each extraction thread keeps one.
     static COMPRESSOR: RefCell<Option<zstd::bulk::Compressor<'static>>> = const { RefCell::new(None) };
+    // The same holds for reading bodies back (the AI checks read every page).
+    static DECOMPRESSOR: RefCell<Option<zstd::bulk::Decompressor<'static>>> = const { RefCell::new(None) };
 }
 
 /// Compresses a received body. The bytes are stored as received (after
@@ -24,7 +26,13 @@ pub fn compress(body: &[u8]) -> std::io::Result<Vec<u8>> {
 }
 
 pub fn decompress(stored: &[u8], size: usize) -> std::io::Result<Vec<u8>> {
-    zstd::bulk::decompress(stored, size)
+    DECOMPRESSOR.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(zstd::bulk::Decompressor::new()?);
+        }
+        slot.as_mut().expect("set above").decompress(stored, size)
+    })
 }
 
 /// Reads back one `bodies` row (codec, size, stored bytes). The one decoder

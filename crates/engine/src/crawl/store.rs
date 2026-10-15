@@ -1052,6 +1052,13 @@ impl CrawlStore {
                 )?
                 .execute(params![id, body::CODEC, size as i64, packed])?;
         }
+        if let Some(f) = &d.facts {
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO page_facts (url_id, kind, version, data) VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![id, f.kind, f.version, f.data])?;
+        }
         Ok(())
     }
 
@@ -1448,6 +1455,38 @@ impl CrawlStore {
             .conn
             .prepare_cached("SELECT url FROM urls WHERE id = ?1")?
             .query_row([id], |r| r.get(0))?)
+    }
+
+    /// Hosts that have internal URLs, in order.
+    pub fn internal_hosts(&self) -> Result<Vec<String>> {
+        let mut st = self
+            .conn
+            .prepare_cached("SELECT DISTINCT host_key FROM urls WHERE internal = 1 ORDER BY host_key")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// One per-host site file (spec 015).
+    pub fn record_site_file(&self, f: &super::site_files::SiteFileRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO site_files
+                     (host_key, path, status, final_url, content_type, size, body, outcome, error, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                f.host_key,
+                f.path,
+                f.status,
+                f.final_url,
+                f.content_type,
+                f.size,
+                f.body,
+                f.outcome,
+                f.error,
+                f.fetched_at
+            ])?;
+        Ok(())
     }
 
     pub fn upsert_host(&self, h: &HostRow) -> Result<()> {

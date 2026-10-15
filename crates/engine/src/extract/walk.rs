@@ -92,7 +92,14 @@ struct Walker<'p> {
     heading: Option<Open>,
 }
 
-pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: bool) -> PageData {
+pub(super) fn walk(
+    text: &str,
+    page: &Url,
+    token: &str,
+    budget: Duration,
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
+) -> PageData {
     let (doc, cut) = parse(text, budget);
     // Spec 026: only created when asked for, so "Off" costs this test.
     let mut checks = a11y.then(|| A11yCollector::new(&doc));
@@ -140,6 +147,16 @@ pub(super) fn walk(text: &str, page: &Url, token: &str, budget: Duration, a11y: 
     w.data.word_count = word_count(&visible);
     w.data.text_hash = hash(&visible);
     w.data.a11y = checks.map(|c| c.finish(&doc));
+    if let Some((hook, body_len)) = hook {
+        let input = super::HookInput {
+            url: page,
+            body_len,
+            lang: w.data.lang.as_deref(),
+        };
+        w.data.facts = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.0)(&doc, &input)))
+            .ok()
+            .flatten();
+    }
     w.data
 }
 

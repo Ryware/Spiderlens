@@ -5,6 +5,7 @@ import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import type {
   CrawlFinished,
@@ -66,6 +67,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    ai_checks: { auto: true, site_files: true },
   };
 }
 
@@ -141,7 +143,7 @@ export interface FakeCrawls {
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; aeo: FakeAeo } {
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -190,9 +192,11 @@ export function fakeTransport(
       onFinished.forEach((cb) => cb({ id: nextId - 1, path: "/crawls/example.com.spiderlens", report: null, error: null, ...f })),
   };
   const resultsApi = fakeResultsTransport(urls);
+  const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   return {
     ...resultsApi,
+    ...aeoApi,
     saved,
     crawls,
     pickCsvPath: async (name) => `/exports/${name}.csv`,
