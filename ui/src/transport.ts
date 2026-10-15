@@ -39,6 +39,13 @@ import type { AiBot } from "./generated/AiBot";
 import type { AiPageResult } from "./generated/AiPageResult";
 import type { AiProgress } from "./generated/AiProgress";
 import type { AiSummary } from "./generated/AiSummary";
+import type { Frequency } from "./generated/Frequency";
+import type { Preview } from "./generated/Preview";
+import type { RepairReport } from "./generated/RepairReport";
+import type { Run } from "./generated/Run";
+import type { Schedule } from "./generated/Schedule";
+import type { ScheduleDetail } from "./generated/ScheduleDetail";
+import type { ScheduleRow } from "./generated/ScheduleRow";
 
 export interface BuildInfo {
   product: string;
@@ -499,6 +506,13 @@ export interface AiBotList {
   bots: AiBot[];
 }
 
+/** A saved schedule (spec 021): its detail, warnings, and why the OS refused the registration. */
+export interface ScheduleSaved {
+  detail: ScheduleDetail;
+  warnings: Issue[];
+  refused: string | null;
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -632,6 +646,24 @@ export interface Transport {
   aiBotsList(): Promise<AiBotList>;
   onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
   onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
+  // Scheduled crawls (spec 021, contracts/desktop-commands.md).
+  schedulesList(): Promise<ScheduleRow[]>;
+  scheduleGet(id: string): Promise<ScheduleDetail>;
+  schedulePreview(frequency: Frequency): Promise<Preview>;
+  scheduleValidate(draft: Schedule): Promise<Issue[]>;
+  /** Rejects with the errors' messages when the draft is invalid. */
+  scheduleSave(draft: Schedule): Promise<ScheduleSaved>;
+  scheduleSetEnabled(id: string, enabled: boolean): Promise<ScheduleSaved>;
+  scheduleDuplicate(id: string, name: string): Promise<Schedule>;
+  scheduleDelete(id: string): Promise<void>;
+  scheduleRunNow(id: string): Promise<void>;
+  scheduleStop(id: string): Promise<void>;
+  scheduleHistory(id: string, limit: number): Promise<Run[]>;
+  scheduleUpdateFromProfile(id: string): Promise<ScheduleSaved>;
+  schedulesRepair(): Promise<RepairReport>;
+  schedulesRemoveAll(): Promise<number>;
+  scheduleDefaultOutput(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
 }
 
 /** `analysis-progress` (spec 023 FR-013). */
@@ -750,4 +782,20 @@ export const tauriTransport: Transport = {
   aiBotsList: () => invoke("ai_bots_list"),
   onAeoProgress: (cb) => listen<AeoProgress>("aeo-progress", (e) => cb(e.payload)),
   onAeoFinished: (cb) => listen<AeoFinished>("aeo-finished", (e) => cb(e.payload)),
+  schedulesList: () => invoke("schedules_list"),
+  scheduleGet: (id) => invoke("schedule_get", { id }),
+  schedulePreview: (frequency) => invoke("schedule_preview", { frequency }),
+  scheduleValidate: (draft) => invoke("schedule_validate", { draft }),
+  scheduleSave: (draft) => invoke("schedule_save", { draft }),
+  scheduleSetEnabled: (id, enabled) => invoke("schedule_set_enabled", { id, enabled }),
+  scheduleDuplicate: (id, name) => invoke("schedule_duplicate", { id, name }),
+  scheduleDelete: (id) => invoke("schedule_delete", { id }),
+  scheduleRunNow: (id) => invoke("schedule_run_now", { id }),
+  scheduleStop: (id) => invoke("schedule_stop", { id }),
+  scheduleHistory: (id, limit) => invoke("schedule_history", { id, limit }),
+  scheduleUpdateFromProfile: (id) => invoke("schedule_update_from_profile", { id }),
+  schedulesRepair: () => invoke("schedules_repair"),
+  schedulesRemoveAll: () => invoke("schedules_remove_all"),
+  scheduleDefaultOutput: () => invoke("schedule_default_output"),
+  pickFolder: async () => asPath(await open({ directory: true })),
 };
