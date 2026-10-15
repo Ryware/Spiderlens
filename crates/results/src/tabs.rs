@@ -54,6 +54,11 @@ pub enum Need {
     SearchConsole,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
+    /// The `sitemap_audit` pass's problems (spec 011 part b), written once
+    /// the crawl has ended.
+    SitemapAudit,
+    /// The `orphans` pass's classes (spec 011 part b).
+    Orphans,
     /// Crawl Analysis results such as Link Score (spec 023), calculated
     /// once fetching has ended.
     Analysis,
@@ -98,6 +103,8 @@ impl Need {
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
+            Self::SitemapAudit => "Checked when the crawl ends.",
+            Self::Orphans => "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps.",
             Self::Analysis => "Calculated when the crawl ends.",
             Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
@@ -125,6 +132,8 @@ impl Need {
             Self::Readability => "readability",
             Self::SearchConsole => "search_console",
             Self::SitemapEntries => "sitemap_entries",
+            Self::SitemapAudit => "sitemap_audit",
+            Self::Orphans => "orphans",
             Self::Analysis => "analysis",
             Self::Cookies => "cookies",
             Self::AiChecks => "ai_checks",
@@ -1323,6 +1332,7 @@ fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
         Canonicals => "canonicals",
         Directives => "directives",
         Url => "url",
+        Sitemaps => "sitemaps",
         _ => return None,
     })
 }
@@ -2006,6 +2016,7 @@ fn build_tabs() -> Vec<TabDef> {
             "meta_robots",
         ),
         crate::agents::tab(),
+        crate::sitemaps::tab(),
         TabDef {
             id: Cow::Borrowed("search-console"),
             title: Cow::Borrowed("Search Console"),

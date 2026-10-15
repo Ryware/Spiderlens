@@ -28,6 +28,7 @@ import { CookieFlags, expiresText } from "./CookiesView";
 import { cellTone, formatBytes, toneText } from "./format";
 import { HtmlViewer } from "./HtmlViewer";
 import { SearchPreview } from "./SearchPreview";
+import { SitemapEntryList, useSitemapEntries } from "../sitemaps/InspectorSitemaps";
 
 const LIST_PAGE = 100;
 
@@ -705,6 +706,7 @@ export function Inspector({
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<UrlIssue[] | null>(null);
+  const sitemapEntries = useSitemapEntries(transport, path ?? "", path ? id : null);
 
   useEffect(() => {
     if (!path || id === null) return;
@@ -862,6 +864,12 @@ export function Inspector({
               );
             })}
           </ol>
+        </Section>
+      )}
+
+      {d.in_sitemap && (
+        <Section title={`Sitemaps (${sitemapEntries.length})`}>
+          <SitemapEntryList entries={sitemapEntries} />
         </Section>
       )}
 

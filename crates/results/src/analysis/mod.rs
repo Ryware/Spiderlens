@@ -199,7 +199,10 @@ impl Reader {
 
 /// Every pass, in tie-break order. A feature adds its pass file and one
 /// line here.
-pub static PASSES: &[&dyn Pass] = &[];
+pub static PASSES: &[&dyn Pass] = &[
+    &crate::sitemaps::SitemapAudit,
+    &crate::sitemaps::Orphans,
+];
 
 /// One global computation over the crawl.
 pub trait Pass: Sync {
@@ -476,6 +479,11 @@ impl crate::Reader {
     ) -> Result<AnalysisReport> {
         let report = run(&self.conn, "temp", PASSES, progress, cancel)?;
         if !report.ran.is_empty() {
+            for n in crate::features::pass_needs(&self.conn)? {
+                if !self.features.available.contains(&n) {
+                    self.features.available.push(n);
+                }
+            }
             self.derived.remove(&crate::tabs::Derived::IssueHits);
             self.bump_version();
         }

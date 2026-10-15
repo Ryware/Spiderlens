@@ -305,7 +305,37 @@ pub const STEPS: &[Step] = &[
         );
         ",
     },
+    // Spec 011 part b (data-model.md): the outputs of the `sitemap_audit`
+    // and `orphans` Crawl Analysis passes, and an index for looking up the
+    // images sitemaps list. `IF NOT EXISTS` because a pass creates its table
+    // itself when it runs on a file from before this step.
+    Step {
+        version: 18,
+        additive: true,
+        sql: SITEMAP_PASSES,
+    },
 ];
+
+/// Step 18's tables. The passes in `spiderlens-results`
+/// (`sitemaps::audit`, `sitemaps::orphans`) create the same two tables in
+/// `temp` for a file they cannot write.
+const SITEMAP_PASSES: &str = "
+CREATE TABLE IF NOT EXISTS sitemap_problems (
+    rule TEXT NOT NULL,
+    file_id INTEGER,
+    entry_id INTEGER,
+    url_id INTEGER,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS sitemap_problems_rule ON sitemap_problems(rule, url_id);
+CREATE INDEX IF NOT EXISTS sitemap_problems_url ON sitemap_problems(url_id);
+CREATE TABLE IF NOT EXISTS orphans (
+    url_id INTEGER PRIMARY KEY,
+    class TEXT NOT NULL,
+    sources TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sitemap_refs_url ON sitemap_refs(url_id);
+";
 
 const AEO_TABLES: &str = r#"
 -- Facts a page hook read while the crawl had the page parsed (spec 015

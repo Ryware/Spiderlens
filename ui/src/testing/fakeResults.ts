@@ -167,6 +167,17 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: false,
   },
+  {
+    id: "sitemaps",
+    title: "Sitemaps",
+    columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "int", 90)],
+    filters: [
+      { id: "all", label: "All sitemap URLs", need: "base" },
+      { id: "orphans", label: "Orphan pages", need: "base" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
 /** Fake clusters by URL id: `[ids, similarity to the first]`. Ids 2-5 and 12-13. */
@@ -446,6 +457,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "errors") us = us.filter((u) => (u.spellErrors ?? 0) > 0);
     if (q.tab === "amp") us = us.filter((u) => u.ampFailures !== undefined);
+    if (q.tab === "sitemaps") us = us.filter((u) => u.internal);
+    if (q.tab === "sitemaps" && q.filter === "orphans") us = us.filter((u) => u.id % 50 === 7);
     if (q.tab === "amp" && q.filter === "failing") us = us.filter((u) => (u.ampFailures ?? 0) > 0);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);

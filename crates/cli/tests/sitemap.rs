@@ -165,3 +165,40 @@ fn sitemaps_lists_files_as_a_tree() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn orphans_lists_what_the_analysis_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = crawl_file(&dir);
+    let p = path.to_str().unwrap();
+    // Before the pass has run, the list is empty and a note says why.
+    let out = cli().args(["orphans", p]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("spiderlens analyse"));
+    let url: String = {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "UPDATE meta SET value = 'sitemap_entries' WHERE key = 'data_features';
+             CREATE TABLE IF NOT EXISTS orphans (url_id INTEGER PRIMARY KEY, class TEXT NOT NULL, sources TEXT NOT NULL);
+             DELETE FROM orphans;
+             INSERT INTO orphans VALUES (2, 'orphan', 'sitemap'), (3, 'nofollow_only', 'sitemap');
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('analysis', '{\"orphans\":{\"version\":1}}');",
+        )
+        .unwrap();
+        conn.query_row("SELECT url FROM urls WHERE id = 2", [], |r| r.get(0)).unwrap()
+    };
+    let out = cli().args(["orphans", p]).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.starts_with(&format!("{url}  ")), "{text}");
+    let out = cli().args(["orphans", p, "--csv", "--nofollow-only"]).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.starts_with("url,class,sources,status,state,sitemap\n"), "{text}");
+    assert!(text.contains(",nofollow_only,sitemap,"), "{text}");
+    let out = cli().args(["orphans", p, "--json"]).output().unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["summary"]["orphans"], 1);
+    assert_eq!(v["summary"]["nofollow_only"], 1);
+    assert_eq!(v["orphans"][0]["url_id"], 2);
+}
