@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::links::LinkAnalysisSettings;
 use crate::list_input::ListInput;
 use crate::presets::{SpeedPreset, UaPreset};
 use crate::secret::HeaderValue;
@@ -24,6 +25,8 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    /// Spec 023: Link Score and link positions.
+    pub links: LinkAnalysisSettings,
     pub access: AccessSettings,
     pub ai_checks: AiChecks,
     /// The last options used to generate XML sitemaps (spec 011 FR-025).
@@ -851,6 +854,7 @@ mod tests {
             "network",
             "retry",
             "extraction",
+            "links",
             "access",
         ] {
             assert!(v.get(group).is_some(), "missing {group}");

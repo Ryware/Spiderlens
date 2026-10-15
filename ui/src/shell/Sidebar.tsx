@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, CalendarClock, Cookie, FolderTree, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, CalendarClock, Cookie, ListTree, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -23,9 +23,15 @@ export const resultTabs: NavItem[] = [
   { id: "images", title: "Images", icon: Image },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
-  { id: "sitemap-files", title: "Sitemap files", icon: FolderTree },
+  { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];
 
+/** Spec 022: pictures of the crawl, built from the same crawl file. */
+export const vizTabs: NavItem[] = [
+  { id: "crawl-tree", title: "Crawl tree", icon: GitFork },
+  { id: "directory-tree", title: "Directory tree", icon: FolderTree },
+  { id: "link-graph", title: "Link graph", icon: Waypoints },
+];
 /** Reports with their own view rather than a results table (spec 025). */
 export const reportTabs: NavItem[] = [{ id: "cookies", title: "Cookies", icon: Cookie }];
 
@@ -103,6 +109,8 @@ export function Sidebar({
       </ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{[...resultTabs, ...reportTabs].map((t) => item(t, results))}</ul>
+      {heading("Visualisations")}
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{vizTabs.map((t) => item(t, results))}</ul>
       {heading("AI visibility")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{later.map((t) => item(t, false))}</ul>
       <div className="mt-auto pt-2">

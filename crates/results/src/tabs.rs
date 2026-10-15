@@ -128,6 +128,13 @@ pub enum Derived {
     /// `link_metrics`: Link Score and link counts (spec 023), built in
     /// `temp` when the file holds no current copy.
     LinkMetrics,
+    /// `temp.viz_crawl_tree`: each URL's crawl tree parent (spec 022).
+    VizCrawlTree,
+    /// `temp.viz_dirs` and `temp.viz_dir_urls`: the directory tree.
+    VizDirs,
+    /// `link_positions`: where on its page each body link sits (spec 023
+    /// US4), from the stored HTML.
+    LinkPositions,
 }
 
 impl Derived {
@@ -139,6 +146,9 @@ impl Derived {
             Self::OccH1 => "occ_h1",
             Self::OccH2 => "occ_h2",
             Self::LinkMetrics => "link_metrics",
+            Self::LinkPositions => "link_positions",
+            Self::VizCrawlTree => "viz_crawl_tree",
+            Self::VizDirs => "viz_dirs",
         }
     }
 
@@ -147,7 +157,14 @@ impl Derived {
     pub(crate) fn rows_eligible(self) -> &'static str {
         match self {
             Self::Titles => HTML_OK,
-            Self::Redirects | Self::OccMeta | Self::OccH1 | Self::OccH2 | Self::LinkMetrics => "1",
+            Self::Redirects
+            | Self::OccMeta
+            | Self::OccH1
+            | Self::OccH2
+            | Self::LinkMetrics
+            | Self::LinkPositions
+            | Self::VizCrawlTree
+            | Self::VizDirs => "1",
         }
     }
 }
@@ -895,6 +912,17 @@ fn build() -> Vec<TabDef> {
                     "EXISTS (SELECT 1 FROM links l JOIN urls t ON t.id = l.to_id WHERE l.from_id = u.id \
                      AND l.kind = 'anchor' AND t.internal = 1 AND (l.nofollow = 1 OR l.page_nofollow = 1))",
                 ),
+                // Positions 1, 2 and 5: navigation, header, footer (US4).
+                filter(
+                    "boilerplate_only",
+                    "Linked only from navigation, header or footer",
+                    "EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'anchor' AND l.from_id <> u.id) \
+                     AND NOT EXISTS (SELECT 1 FROM links l LEFT JOIN link_positions p \
+                     ON p.from_id = l.from_id AND p.pos = l.pos WHERE l.to_id = u.id AND l.kind = 'anchor' \
+                     AND l.from_id <> u.id AND COALESCE(p.position, 0) NOT IN (1, 2, 5))",
+                )
+                .needs(Need::Analysis)
+                .reads(Derived::LinkPositions),
             ],
             search_column: None,
             scoped: false,
@@ -1196,6 +1224,7 @@ pub(crate) fn build_derived(
     d: Derived,
     features: &crate::Features,
 ) -> rusqlite::Result<()> {
+    let links = &features.link_settings;
     match d {
         Derived::Titles => {
             conn.execute_batch(
@@ -1223,7 +1252,14 @@ pub(crate) fn build_derived(
         Derived::OccMeta => occ(conn, "occ_md", "meta_description"),
         Derived::OccH1 => occ(conn, "occ_h1", "h1_1"),
         Derived::OccH2 => occ(conn, "occ_h2", "h2_1"),
-        Derived::LinkMetrics => crate::analysis::link_metrics::build(conn).map(|_| ()),
+        Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+        }),
+        Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
+            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+        }),
+        Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
+        Derived::VizDirs => crate::viz::dirs::build(conn),
     }
 }
 

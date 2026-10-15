@@ -22,6 +22,8 @@ import type { TabDef } from "./generated/TabDef";
 import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
+import type { Scene } from "./generated/Scene";
+import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
@@ -32,6 +34,11 @@ import type { UaPreset } from "./generated/UaPreset";
 import type { GenerateReport } from "./generated/GenerateReport";
 import type { SitemapFiles } from "./generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
+import type { AnalysisRun } from "./generated/AnalysisRun";
+import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
+import type { PositionRule } from "./generated/PositionRule";
+import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
 import type { AeoRule } from "./generated/AeoRule";
 import type { AiBot } from "./generated/AiBot";
@@ -606,7 +613,8 @@ export interface Transport {
   tabCounts(path: string): Promise<TabCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
   // Cookie audit (spec 025, contracts/desktop-commands.md).
   /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
   cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
@@ -626,6 +634,20 @@ export interface Transport {
   sitemapFiles(path: string): Promise<SitemapFiles>;
   sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
   sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
+  /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
+  vizScene(path: string, view: ViewState): Promise<Scene>;
+  /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
+  analysisRun(path: string): Promise<AnalysisRun>;
+  /** Starts Crawl Analysis in the background: progress and done arrive as events. */
+  analysisStart(path: string): Promise<void>;
+  /** Cancels the running Crawl Analysis; earlier results stay. */
+  analysisCancel(): Promise<void>;
+  onAnalysisProgress(cb: (p: AnalysisProgressEvent) => void): Promise<() => void>;
+  onAnalysisDone(cb: (d: AnalysisDone) => void): Promise<() => void>;
+  /** Uses these link analysis settings for the open file from now on. */
+  analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
+  /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
+  positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
@@ -659,6 +681,11 @@ export interface Transport {
   scheduleDefaultOutput(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
 }
+
+/** `analysis-progress` (spec 023 FR-013). */
+export type AnalysisProgressEvent = AnalysisProgress & { path: string };
+/** `analysis-done`: `run` is null when cancelled or failed. */
+export type AnalysisDone = { path: string; run: AnalysisRun | null; cancelled: boolean; error: string | null };
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
 
@@ -748,7 +775,7 @@ export const tauriTransport: Transport = {
   tabCounts: (path) => invoke("tab_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   urlHtml: (path, id) => invoke("url_html", { path, id }),
@@ -760,6 +787,14 @@ export const tauriTransport: Transport = {
   sitemapFiles: (path) => invoke("sitemap_files", { path }),
   sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
   sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
+  vizScene: (path, view) => invoke("viz_scene", { path, view }),
+  analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisStart: (path) => invoke("analysis_start", { path }),
+  analysisCancel: () => invoke("analysis_cancel"),
+  onAnalysisProgress: (cb) => listen<AnalysisProgressEvent>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisDone: (cb) => listen<AnalysisDone>("analysis-done", (e) => cb(e.payload)),
+  analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
+  positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),

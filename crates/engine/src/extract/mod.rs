@@ -261,24 +261,52 @@ pub struct PageInput<'a> {
 /// Extracts everything spec 005 lists from one HTML body. Never fails: a
 /// page that cannot be read comes back flagged (FR-008, FR-033).
 pub fn extract_page(input: &PageInput<'_>) -> PageData {
+    extract(input, false).1
+}
+
+/// A stored page parsed again after the crawl, with the element each
+/// reference came from (spec 023 link positions). The same decoding and
+/// walk as [`extract_page`], so `refs[i]` is the link stored with `pos = i`.
+pub struct ParsedPage {
+    pub doc: scraper::Html,
+    pub refs: Vec<Ref>,
+    /// The element of `refs[i]`, in `doc`.
+    pub nodes: Vec<ego_tree::NodeId>,
+}
+
+/// Parses a stored body for [`ParsedPage`]. None when the body is not a
+/// document.
+pub fn parse_page(input: &PageInput<'_>) -> Option<ParsedPage> {
+    let (doc, data, nodes) = extract(input, true);
+    let doc = doc?;
+    Some(ParsedPage {
+        doc,
+        refs: data.refs,
+        nodes,
+    })
+}
+
+fn extract(input: &PageInput<'_>, track: bool) -> (Option<scraper::Html>, PageData, Vec<ego_tree::NodeId>) {
     let encoding = page_encoding(input.charset, input.body, input.truncated);
     if looks_binary(input.body) {
-        return PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        let data = PageData::empty(input.url.clone(), encoding.name(), input.truncated);
+        return (None, data, Vec::new());
     }
     let (text, used, had_errors) = encoding.decode(input.body);
     let hook = input.hook.map(|h| (h, input.body.len()));
-    let mut data = walk::walk(
+    let (doc, mut data, nodes) = walk::walk_doc(
         &text,
         input.url,
         input.robots_token,
         walk::PARSE_BUDGET,
         input.a11y,
         hook,
+        track,
     );
     data.encoding = used.name();
     data.encoding_errors = had_errors;
     data.partial |= input.truncated;
-    data
+    (Some(doc), data, nodes)
 }
 
 /// The encoding extraction decodes a body with.

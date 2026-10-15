@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
+import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
@@ -8,7 +9,8 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { reportTabs, resultTabs, Sidebar } from "./Sidebar";
+import { reportTabs, resultTabs, Sidebar, vizTabs } from "./Sidebar";
+import { VizView, vizViews } from "../viz/VizView";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -113,7 +115,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const inspectPending = useRef(false);
   const [inspectAsked, setInspectAsked] = useState(0);
   const results = useResults(transport, crawl.path, crawl.running);
+  const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
   const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
@@ -142,6 +146,18 @@ export function AppShell({ transport }: { transport: Transport }) {
   useEffect(() => {
     document.documentElement.dataset.platform = platform;
   }, []);
+
+  // Edited link analysis settings apply to the open crawl file too, which
+  // then works out positions and Link Score again (spec 023 FR-023). The
+  // file's own settings stand until the user changes them.
+  const links = setup.config?.links;
+  const linksKey = links ? JSON.stringify(links) : null;
+  const lastLinks = useRef<string | null>(null);
+  useEffect(() => {
+    const before = lastLinks.current;
+    lastLinks.current = linksKey;
+    if (links && crawl.path && before !== null && before !== linksKey) void transport.analysisSettings(crawl.path, links).catch(() => {});
+  }, [linksKey, crawl.path, transport]);
 
   // Focus the start URL once the window is ready (US1-2).
   const configReady = setup.config !== null;
@@ -259,6 +275,14 @@ export function AppShell({ transport }: { transport: Transport }) {
         run: () => setSitemapOpen(true),
       },
       { id: "manage-crawls", title: "Manage crawls…", group: "Crawl", keywords: ["disk", "space", "delete", "cleanup", "storage", "files", "trash"], run: () => setManageOpen(true) },
+      {
+        id: "analyse",
+        title: "Work out Link Score",
+        group: "Crawl",
+        keywords: ["analysis", "link positions", "pagerank"],
+        enabled: crawl.path !== null && !crawl.running && analysis.status !== "running",
+        run: analysis.start,
+      },
       { id: "schedule-crawl", title: "Schedule this crawl…", group: "Crawl", keywords: ["schedule", "recurring", "repeat", "every", "cron", "new schedule"], enabled: setup.config !== null, run: scheduleThisCrawl },
       { id: "settings", title: "Crawl settings", group: "Crawl", shortcut: "Mod+,", keywords: ["configure", "preferences"], run: () => openSettings() },
       { id: "focus-url", title: "Edit start URL", group: "Crawl", shortcut: "Mod+L", run: () => urlRef.current?.focus() },
@@ -279,6 +303,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...vizTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, keywords: ["visualisation", "visualization", "graph"], enabled: crawl.path !== null, run: () => setSection(t.id) })),
       ...reportTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
@@ -293,7 +318,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, saveAs, openSettings, ui, updateUi, systemDark],
+    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark],
   );
 
   const run = useCallback(
@@ -376,6 +401,8 @@ export function AppShell({ transport }: { transport: Transport }) {
             />
           ) : section === "sitemap-files" && crawl.path ? (
             <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
+          ) : vizView && crawl.path ? (
+            <VizView key={`${crawl.path}\n${vizView.id}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
@@ -399,7 +426,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab || cookiesOpen ? (
+              {resultTab || vizView || cookiesOpen ? (
                 <Inspector
                   transport={transport}
                   path={crawl.path}
@@ -415,7 +442,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         )}
         </div>
       </div>
-      <StatusBar setup={setup} run={crawl} />
+      <StatusBar setup={setup} run={crawl} analysis={analysis} />
 
       <SettingsSheet
         open={settingsOpen}
@@ -429,6 +456,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         level={level}
         systemDark={systemDark}
         onAppearance={updateUi}
+        crawlPath={crawl.path}
         onSchedule={scheduleThisCrawl}
       />
       <ScheduleEditor

@@ -32,6 +32,7 @@ const link = (i: number, kind = "a"): LinkRow => ({
   text: null,
   sponsored: false,
   ugc: false,
+  position: null,
 });
 
 test("nothing_selected_shows_an_empty_state", () => {
@@ -168,6 +169,56 @@ test("nofollow_links_are_marked", async () => {
   await loaded();
   expect(await within(details()).findByText("nofollow")).toBeTruthy();
   expect(within(details()).getByText("not followed")).toBeTruthy();
+});
+
+test("link_positions_show_once_worked_out", async () => {
+  const t = withDetail({ inlinks: 3 });
+  t.urlList = async (_p, _id, _kind, from) => ({
+    total: 3,
+    from,
+    rows: [{ ...link(0), position: "footer" }, { ...link(1), position: "unknown" }, link(2)],
+    headings: [],
+    unavailable: null,
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const rows = await within(details()).findAllByRole("listitem");
+  expect(rows[0].textContent).toContain("Footer");
+  expect(rows[1].textContent).toContain("Position unknown");
+  // Not worked out yet: nothing is shown rather than a guess.
+  expect(rows[2].textContent).not.toMatch(/Content|Position/);
+});
+
+test("link_lists_filter_by_position", async () => {
+  const t = withDetail({ inlinks: 3 });
+  const asked: (string | null | undefined)[] = [];
+  const all = [{ ...link(0), position: "footer" }, { ...link(1), position: "content" }, { ...link(2), position: "footer" }];
+  t.urlList = async (_p, _id, _kind, from, _count, position) => {
+    asked.push(position);
+    const rows = all.filter((r) => !position || r.position === position);
+    return { total: rows.length, from, rows, headings: [], unavailable: null };
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const filter = await within(details()).findByRole("combobox", { name: "Link position" });
+  fireEvent.change(filter, { target: { value: "footer" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(2));
+  expect(within(details()).queryByText("https://example.com/linked-1")).toBeNull();
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "sidebar" } });
+  expect(await within(details()).findByText("No links at this position.")).toBeTruthy();
+  // The filter stays, so the choice can be undone.
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(3));
+  expect(asked).toEqual([null, "footer", "sidebar", null]);
+});
+
+test("no_position_filter_before_positions_are_worked_out", async () => {
+  const t = withDetail({ inlinks: 2 });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [link(0), link(1)], headings: [], unavailable: null });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  await within(details()).findAllByRole("listitem");
+  expect(within(details()).queryByRole("combobox", { name: "Link position" })).toBeNull();
 });
 
 test("show_more_pages_in_the_rest_of_the_list", async () => {

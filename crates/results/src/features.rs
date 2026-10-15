@@ -26,6 +26,11 @@ pub struct Features {
     #[serde(skip)]
     #[ts(skip)]
     pub robots_token: String,
+    /// Link analysis settings the crawl was made with (spec 023); the app
+    /// can replace them with `Reader::set_link_settings`.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub link_settings: spiderlens_config::LinkAnalysisSettings,
 }
 
 impl Features {
@@ -84,6 +89,10 @@ impl Features {
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))
             .map_or(10, |n| n as u32);
+        let link_settings = stored
+            .as_ref()
+            .map(|s| s.config.links.clone())
+            .unwrap_or_default();
         let robots_token = stored
             .and_then(|s| s.config.identity.user_agent.token())
             .unwrap_or_else(|| "SpiderLens".into())
@@ -92,6 +101,7 @@ impl Features {
             available,
             redirect_limit,
             robots_token,
+            link_settings,
         })
     }
 }
