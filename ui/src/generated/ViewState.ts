@@ -19,6 +19,15 @@ expanded: Array<string> | null,
  */
 pages: { [key in string]: number }, 
 /**
- * Most nodes to show; None for [`TREE_BUDGET`].
+ * Most nodes to show; None for [`TREE_BUDGET`] or [`GRAPH_BUDGET`].
  */
-budget: number | null, };
+budget: number | null, 
+/**
+ * Link graph: the page to centre on (`u:<id>`), with its neighbours
+ * up to `distance` links away (1 or 2). None: the whole site.
+ */
+focus: string | null, distance: number, 
+/**
+ * Link graph: nodes the user dragged, by key, and where to.
+ */
+pinned: Record<string, [number, number]>, };

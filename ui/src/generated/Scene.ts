@@ -3,6 +3,7 @@ import type { Bounds } from "./Bounds";
 import type { Layout } from "./Layout";
 import type { LegendEntry } from "./LegendEntry";
 import type { Omitted } from "./Omitted";
+import type { SceneEdge } from "./SceneEdge";
 import type { SceneNode } from "./SceneNode";
 import type { ViewKind } from "./ViewKind";
 
@@ -10,7 +11,20 @@ export type Scene = { view: ViewKind, layout: Layout,
 /**
  * Drawn in this order; a node's parent always comes first.
  */
-nodes: Array<SceneNode>, legend: Array<LegendEntry>, 
+nodes: Array<SceneNode>, 
+/**
+ * Link graph: followed links among the shown pages. Trees draw
+ * parent lines instead.
+ */
+edges: Array<SceneEdge>, 
+/**
+ * Edges have a direction worth drawing (focus mode).
+ */
+directed: boolean, 
+/**
+ * The force layout converged (always true for trees).
+ */
+settled: boolean, legend: Array<LegendEntry>, 
 /**
  * What the size of a node means, when it means something.
  */

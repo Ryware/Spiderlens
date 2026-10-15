@@ -82,9 +82,13 @@ interface Props {
   onHover?: (node: SceneNode | null, at: { x: number; y: number } | null) => void;
   /** The token values, read by the parent once per theme (tests pass fixed ones). */
   colours: Record<string, string>;
+  /** Link graph: a node was dragged to world (x, y); with where it is on screen. */
+  onPin?: (key: string, x: number, y: number, at: { sx: number; sy: number }) => void;
 }
 
-export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({ scene, colour, selected, onSelect, onActivate, anchor, onHover, colours }, ref) {
+const viewName: Record<Scene["view"], string> = { crawl_tree: "Crawl tree", directory_tree: "Directory tree", link_graph: "Link graph" };
+
+export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({ scene, colour, selected, onSelect, onActivate, anchor, onHover, colours, onPin }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -93,7 +97,10 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
   const grid = useMemo(() => new HitGrid(scene.nodes), [scene]);
   const index = useMemo(() => new Map(scene.nodes.map((n, i) => [n.key, i])), [scene]);
   const sel = selected === null ? null : (index.get(selected) ?? null);
-  const drag = useRef<{ sx: number; sy: number; cam: Camera; moved: boolean } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; cam: Camera; moved: boolean; node: number | null } | null>(null);
+  // A node being dragged (link graph): drawn here until the next scene pins it.
+  const [held, setHeld] = useState<{ i: number; x: number; y: number } | null>(null);
+  useEffect(() => setHeld(null), [scene]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -146,7 +153,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
     ctx.save();
     ctx.translate(cam.x, cam.y);
     ctx.scale(cam.k, cam.k);
-    const nodes = scene.nodes;
+    const nodes = held ? scene.nodes.map((n, i) => (i === held.i ? { ...n, x: held.x, y: held.y } : n)) : scene.nodes;
     const radial = scene.layout === "radial";
     // Lines, one path.
     const lines = new Path2D();
@@ -160,9 +167,33 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
         lines.bezierCurveTo(mx, p.y, mx, n.y, n.x, n.y);
       }
     }
+    // Link graph: straight lines, with arrowheads when the direction matters.
+    const heads = new Path2D();
+    for (const e of scene.edges) {
+      const a = nodes[e.a];
+      const b = nodes[e.b];
+      lines.moveTo(a.x, a.y);
+      lines.lineTo(b.x, b.y);
+      if (!scene.directed) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < b.r + 2) continue;
+      const ux = dx / len;
+      const uy = dy / len;
+      const tx = b.x - ux * (b.r + 1.5);
+      const ty = b.y - uy * (b.r + 1.5);
+      const s = 5 / Math.max(cam.k, 0.5);
+      heads.moveTo(tx, ty);
+      heads.lineTo(tx - ux * s - uy * s * 0.5, ty - uy * s + ux * s * 0.5);
+      heads.lineTo(tx - ux * s + uy * s * 0.5, ty - uy * s - ux * s * 0.5);
+      heads.closePath();
+    }
     ctx.strokeStyle = colours["--viz-line"];
     ctx.lineWidth = 1 / cam.k;
     ctx.stroke(lines);
+    ctx.fillStyle = colours["--viz-line"];
+    ctx.fill(heads);
     // Nodes, one path per shape and colour.
     const batches = new Map<string, { shape: Shape; fill: string; path: Path2D }>();
     for (const n of nodes) {
@@ -223,7 +254,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
       ctx.strokeText(text, s.x + r + 6, s.y, 260);
       ctx.fillText(text, s.x + r + 6, s.y, 260);
     }
-  }, [scene, cam, size, sized, hover, sel, colour, colours]);
+  }, [scene, cam, size, sized, hover, sel, colour, colours, held]);
 
   const local = (e: { clientX: number; clientY: number }) => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -258,7 +289,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
       <canvas
         ref={canvasRef}
         role="application"
-        aria-label={`${scene.view === "crawl_tree" ? "Crawl tree" : "Directory tree"}: ${scene.nodes.length.toLocaleString()} nodes. Arrow keys move, Enter opens or closes a branch, plus and minus zoom, 0 fits.`}
+        aria-label={`${viewName[scene.view]}: ${scene.nodes.length.toLocaleString()} nodes${scene.view === "link_graph" ? `, ${scene.edges.length.toLocaleString()} links` : ""}. Arrow keys move, Enter ${scene.view === "link_graph" ? "centres on a page" : "opens or closes a branch"}, plus and minus zoom, 0 fits.`}
         aria-activedescendant={undefined}
         tabIndex={0}
         className="block h-full w-full cursor-grab touch-none outline-none focus-visible:ring-2 focus-visible:ring-accent active:cursor-grabbing"
@@ -268,7 +299,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
         onPointerDown={(e) => {
           (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           const p = local(e);
-          drag.current = { sx: p.x, sy: p.y, cam, moved: false };
+          drag.current = { sx: p.x, sy: p.y, cam, moved: false, node: onPin ? hit(p.x, p.y) : null };
         }}
         onPointerMove={(e) => {
           const p = local(e);
@@ -277,7 +308,11 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
             const dx = p.x - d.sx;
             const dy = p.y - d.sy;
             if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
-            if (d.moved) setCam({ ...d.cam, x: d.cam.x + dx, y: d.cam.y + dy });
+            if (!d.moved) return;
+            if (d.node !== null) {
+              const w = toWorld(cam, p.x, p.y);
+              setHeld({ i: d.node, x: w.x, y: w.y });
+            } else setCam({ ...d.cam, x: d.cam.x + dx, y: d.cam.y + dy });
             return;
           }
           const i = hit(p.x, p.y);
@@ -287,10 +322,13 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
         onPointerUp={(e) => {
           const d = drag.current;
           drag.current = null;
+          const p = local(e);
           if (d && !d.moved) {
-            const p = local(e);
             const i = hit(p.x, p.y);
             onSelect(i === null ? null : scene.nodes[i].key);
+          } else if (d && d.node !== null && onPin) {
+            const w = toWorld(cam, p.x, p.y);
+            onPin(scene.nodes[d.node].key, w.x, w.y, { sx: p.x, sy: p.y });
           }
         }}
         onPointerLeave={() => {
@@ -300,7 +338,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
         onDoubleClick={(e) => {
           const p = local(e);
           const i = hit(p.x, p.y);
-          if (i !== null && scene.nodes[i].expandable) activate(i);
+          if (i !== null && (scene.nodes[i].expandable || scene.view === "link_graph")) activate(i);
         }}
         onWheel={(e) => {
           const p = local(e);
@@ -313,7 +351,7 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
             move(arrows[e.key]);
           } else if (e.key === "Enter" && sel !== null) {
             e.preventDefault();
-            if (scene.nodes[sel].expandable) activate(sel);
+            if (scene.nodes[sel].expandable || scene.view === "link_graph") activate(sel);
           } else if (e.key === "+" || e.key === "=") setCam((c) => zoomAt(c, size.w / 2, size.h / 2, 1.25));
           else if (e.key === "-") setCam((c) => zoomAt(c, size.w / 2, size.h / 2, 0.8));
           else if (e.key === "0") setCam(fit(scene.bounds, size.w, size.h));
