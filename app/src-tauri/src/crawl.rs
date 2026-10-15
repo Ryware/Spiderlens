@@ -59,6 +59,15 @@ impl State {
         }
     }
 
+    /// Whether a crawl is writing `path` now.
+    pub fn is_writing(&self, path: &Path) -> bool {
+        self.active
+            .lock()
+            .expect("crawl lock")
+            .as_ref()
+            .is_some_and(|a| a.path == path)
+    }
+
     /// A crawl is running or paused.
     pub fn is_running(&self) -> bool {
         self.active.lock().expect("crawl lock").is_some()
@@ -492,9 +501,9 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     *active = Some(Active {
         id,
+        path: path.clone(),
         control: control_tx,
         commands: command_tx,
-        path: path.clone(),
     });
     drop(active);
 

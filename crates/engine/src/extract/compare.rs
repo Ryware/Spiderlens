@@ -438,6 +438,7 @@ mod tests {
             body: html.as_bytes(),
             truncated: false,
             robots_token: "SpiderLens",
+            content: None,
             keep_text: true,
         })
     }

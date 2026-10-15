@@ -26,6 +26,7 @@ pub struct CrawlConfig {
     pub network: NetworkSettings,
     pub retry: RetrySettings,
     pub extraction: ExtractionSettings,
+    pub content: ContentSettings,
     /// JavaScript rendering (spec 014). Off (`raw`) by default.
     pub rendering: RenderSettings,
     /// Issue rule overrides (spec 009 FR-021, FR-022). Only what differs from
@@ -1012,6 +1013,38 @@ impl Default for RenderBlock {
             fonts: true,
             stylesheets: false,
             third_party: false,
+        }
+    }
+}
+
+/// Near duplicate content analysis (spec 020, data-model.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ContentSettings {
+    /// Pages at least this similar (percent) are near duplicates (FR-010).
+    pub threshold: u8,
+    /// Closest matches at least this similar are recorded (FR-011).
+    pub report_floor: u8,
+    /// Pages with fewer main content words are not compared (FR-004).
+    pub min_words: u32,
+    /// Leave noindex and canonicalised pages out (FR-001).
+    pub indexable_only: bool,
+    /// CSS selector of the element holding the main content (FR-003).
+    pub content_selector: Option<String>,
+    /// CSS selectors of elements left out of the main content (FR-003).
+    pub exclude_selectors: Vec<String>,
+}
+
+impl Default for ContentSettings {
+    fn default() -> Self {
+        Self {
+            threshold: 90,
+            report_floor: 80,
+            min_words: 50,
+            indexable_only: true,
+            content_selector: None,
+            exclude_selectors: Vec::new(),
         }
     }
 }

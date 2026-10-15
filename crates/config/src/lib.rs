@@ -34,7 +34,7 @@ pub use custom::{
 pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
 pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
 pub use model::{
-    AccessSettings, AiChecks, Changefreq, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
+    AccessSettings, AiChecks, Changefreq, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
     HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
     ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow, RetrySettings, RobotsMode,
     RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,

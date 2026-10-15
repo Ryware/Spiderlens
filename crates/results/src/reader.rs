@@ -196,6 +196,13 @@ impl Reader {
         &self.path
     }
 
+    /// The reader's connection, for queries that live outside the views
+    /// (near duplicates). Its `temp` schema holds analysis results of files
+    /// that cannot be written.
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
     pub fn features(&self) -> &Features {
         &self.features
     }

@@ -11,13 +11,14 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
 use html5ever::{local_name, ns};
 use scraper::node::Element;
-use scraper::{Html, HtmlTreeSink, Node};
+use scraper::{ElementRef, Html, HtmlTreeSink, Node};
 use url::Url;
 
 use super::agents::{AgentCtx, Collector};
 use super::a11y::A11yCollector;
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
+use super::main_content::{ARTICLE, BOILER, ContentRules, EXCLUDED, MAIN, MainText, SELECTED, Spans};
 use super::text::{collapse, hash, readability_counts, word_count};
 use super::{
     Heading, MetaRefresh, PageData, Ref, RefSource, StructuredBlock, StructuredKind, TextItem, microdata,
@@ -67,6 +68,11 @@ struct Ctx {
     in_body: bool,
     noscript: bool,
     in_item: bool,
+    /// Main content flags for text here (`main_content::MAIN`, ...).
+    main: u8,
+    /// Inside `main`, `article` or `section`, where `header` and `footer`
+    /// are not site-wide landmarks.
+    sectioning: bool,
     agent: AgentCtx,
 }
 
@@ -87,9 +93,11 @@ enum Frame<'a> {
 struct Walker<'p> {
     page: &'p Url,
     token: &'p str,
+    content: Option<&'p ContentRules>,
     data: PageData,
     base_seen: bool,
     visible: String,
+    body: Spans,
     anchor: Option<Open>,
     heading: Option<Open>,
     agents: Collector,
@@ -109,12 +117,21 @@ pub(super) fn walk(
     a11y: bool,
     hook: Option<(&super::PageHook, usize)>,
 ) -> PageData {
-    walk_doc(text, page, token, budget, a11y, hook, false, None, false).1
+    walk_doc(text, page, token, budget, a11y, hook, false, None, false, None).1
+}
+
+/// The page's body text by paragraph with its main content marked, for the
+/// comparison view (spec 020, plan D8).
+pub(super) fn main_text(text: &str, page: &Url, content: Option<&ContentRules>) -> MainText {
+    let (_, _, _, body) = walk_doc(text, page, "", PARSE_BUDGET, false, None, false, None, false, content);
+    body.paragraphs(content)
 }
 
 /// [`walk`], also returning the document and, when `track` is set, the
 /// element of each reference (same index as `PageData::refs`), then the
-/// crawl's custom rules on the same parse (spec 013 plan D1).
+/// crawl's custom rules on the same parse (spec 013 plan D1) and the body
+/// text spans for the main content (spec 020).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn walk_doc(
     text: &str,
     page: &Url,
@@ -125,16 +142,20 @@ pub(super) fn walk_doc(
     track: bool,
     rules: Option<&crate::custom::CompiledRules>,
     keep_text: bool,
-) -> (Html, PageData, Vec<NodeId>) {
+    content: Option<&ContentRules>,
+) -> (Html, PageData, Vec<NodeId>, Spans) {
+    let content = content.filter(|r| !r.is_default());
     let (doc, cut) = parse(text, budget);
     // Spec 026: only created when asked for, so "Off" costs this test.
     let mut checks = a11y.then(|| A11yCollector::new(&doc));
     let mut w = Walker {
         page,
         token,
+        content,
         data: PageData::empty(page.clone(), "", false),
         base_seen: false,
         visible: String::new(),
+        body: Spans::default(),
         anchor: None,
         heading: None,
         agents: Collector::default(),
@@ -187,6 +208,7 @@ pub(super) fn walk_doc(
         w.data.syllable_count = Some(syllables);
     }
     w.data.text_hash = hash(&visible);
+    w.data.main = w.body.summary(content);
     if let Some(rules) = rules {
         w.data.custom = Some(crate::custom::apply(
             rules,
@@ -213,7 +235,7 @@ pub(super) fn walk_doc(
     if keep_text {
         w.data.visible_text = Some(visible);
     }
-    (doc, w.data, w.nodes)
+    (doc, w.data, w.nodes, w.body)
 }
 
 /// The visible text under `node`, as the walk collects it for the page:
@@ -268,6 +290,13 @@ pub(crate) fn visible_text_into(node: NodeRef<'_, Node>, buf: &mut String) {
     }
 }
 
+/// The first token of a `role` attribute, lowercase.
+fn role(e: &Element) -> Option<String> {
+    e.attr("role")
+        .and_then(|r| r.split_ascii_whitespace().next())
+        .map(str::to_ascii_lowercase)
+}
+
 /// Elements that do not break words apart (`a<b>b</b>` is one word).
 fn is_inline(name: &str) -> bool {
     matches!(
@@ -319,6 +348,7 @@ fn dimension(e: &Element, name: &str) -> Option<u32> {
 
 impl Walker<'_> {
     fn separate(&mut self) {
+        self.body.separate();
         for buf in [
             Some(&mut self.visible),
             self.anchor.as_mut().map(|o| &mut o.buf),
@@ -336,6 +366,7 @@ impl Walker<'_> {
     fn text(&mut self, t: &str, ctx: Ctx) {
         if ctx.in_body && !ctx.noscript {
             self.visible.push_str(t);
+            self.body.push(t, ctx.main);
         }
         if let Some(o) = self.anchor.as_mut() {
             o.buf.push_str(t);
@@ -378,6 +409,9 @@ impl Walker<'_> {
             self.at = Some(node.id());
         }
         let name = e.name.local.clone();
+        if ctx.in_body {
+            self.main_flags(node, e, &name, &mut ctx);
+        }
         if name != local_name!("template") {
             ctx.agent = self.agents.enter(node, e, ctx.agent);
         }
@@ -485,6 +519,42 @@ impl Walker<'_> {
             self.data.structured.push(microdata::item_block(node));
         }
         push_children(node, ctx, stack);
+    }
+
+    /// Main content flags for an element and everything inside it
+    /// (spec 020 research R5, FR-003).
+    fn main_flags(&mut self, node: NodeRef<'_, Node>, e: &Element, name: &str, ctx: &mut Ctx) {
+        let role = role(e);
+        let role = role.as_deref();
+        match name {
+            "main" if !self.body.main_seen => {
+                self.body.main_seen = true;
+                ctx.main |= MAIN;
+            }
+            "article" => ctx.main |= ARTICLE,
+            _ => {}
+        }
+        let landmark = matches!(name, "nav" | "aside")
+            || matches!(role, Some("navigation" | "complementary" | "search"))
+            || (!ctx.sectioning
+                && (matches!(name, "header" | "footer") || matches!(role, Some("banner" | "contentinfo"))));
+        if landmark {
+            ctx.main |= BOILER;
+        }
+        if matches!(name, "main" | "article" | "section") {
+            ctx.sectioning = true;
+        }
+        if let Some(rules) = self.content
+            && let Some(el) = ElementRef::wrap(node)
+        {
+            if rules.is_excluded(el) {
+                ctx.main |= EXCLUDED;
+            }
+            if !self.body.selected_seen && rules.is_content(el) {
+                self.body.selected_seen = true;
+                ctx.main |= SELECTED;
+            }
+        }
     }
 
     fn meta(&mut self, e: &Element, ctx: Ctx) {

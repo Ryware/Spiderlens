@@ -111,7 +111,7 @@ test("url_list_category_appears_only_in_list_mode", async () => {
   await setup();
   const n = await openSettings();
   expect(within(n).queryByRole("tab", { name: /^URL list/ })).toBeNull();
-  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Sign-in and cookies", "Page data", "Segments", "Link analysis", "Issues", "Custom rules", "Storage", "Spelling", "JavaScript rendering", "Appearance", "AI assistants"]);
+  expect(within(n).getAllByRole("tab").map((x) => x.textContent)).toEqual(["Limits", "Scope", "Identity", "Speed", "robots.txt", "Network and retries", "Sign-in and cookies", "Page data", "Duplicate content", "Segments", "Link analysis", "Issues", "Custom rules", "Storage", "Spelling", "JavaScript rendering", "Appearance", "AI assistants"]);
   await closeSettings();
   fireEvent.click(screen.getByLabelText("List"));
   fireEvent.click(await screen.findByRole("button", { name: "Add a list of URLs…" }));
@@ -697,4 +697,16 @@ test("list_file_shows_reading_progress", async () => {
   await act(async () => finish!(summary(25000)));
   await waitFor(() => expect(screen.queryByText(/Reading…/)).toBeNull());
   expect((await screen.findByTestId("list-summary")).textContent).toContain("25,000 URLs to crawl");
+});
+
+test("duplicate_content_settings_reach_the_crawl", async () => {
+  const t = await setup();
+  await openSettings("Duplicate content");
+  fireEvent.change(input("Near duplicate threshold"), { target: { value: "85" } });
+  fireEvent.change(input("Minimum words"), { target: { value: "30" } });
+  fireEvent.click(sw("Indexable pages only"));
+  fireEvent.change(input("Content area selector"), { target: { value: "#content" } });
+  fireEvent.change(input("Leave out"), { target: { value: ".related\n.cookie" } });
+  const config = await startCrawl(t);
+  expect(config.content).toEqual({ threshold: 85, report_floor: 80, min_words: 30, indexable_only: false, content_selector: "#content", exclude_selectors: [".related", ".cookie"] });
 });

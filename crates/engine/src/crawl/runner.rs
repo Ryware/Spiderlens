@@ -49,7 +49,7 @@ struct CustomRun {
     slots: Slots,
 }
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body};
+use crate::extract::{self, ContentRules, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body};
 use crate::fetch::{Once, fetch_once};
 use crate::net::NetSession;
 use crate::pdf::{self, PdfFacts};
@@ -708,6 +708,7 @@ struct Extracted {
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
 /// `keep_html`: compress the body, to store it or to render it later.
+#[allow(clippy::too_many_arguments)]
 async fn finish_page(
     o: Once,
     url: Url,
@@ -715,6 +716,7 @@ async fn finish_page(
     keep_html: bool,
     custom: Option<Arc<CustomRun>>,
     hook: Option<PageHook>,
+    content: Arc<ContentRules>,
     budget: &Semaphore,
 ) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
@@ -740,6 +742,7 @@ async fn finish_page(
                         keep_text: false,
                         a11y: false,
                         hook: hook.as_ref(),
+                        content: Some(&content),
                     },
                     custom.as_deref().map(|c| &c.rules),
                 );
@@ -863,9 +866,9 @@ impl Crawler {
         }
         // What readers will find in this file (spec 007 plan D3).
         let mut features = String::from(if config.extraction.store_html {
-            "extraction,timing,attempts,raw_html,readability,sitemap_entries,agents"
+            "extraction,timing,attempts,raw_html,readability,sitemap_entries,agents,near_dup"
         } else {
-            "extraction,timing,attempts,readability,sitemap_entries,agents"
+            "extraction,timing,attempts,readability,sitemap_entries,agents,near_dup"
         });
         if config.extraction.pdf.crawl {
             features.push_str(",pdf");
@@ -1250,6 +1253,8 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Main content settings, parsed once (spec 020 FR-003).
+    content_rules: Arc<ContentRules>,
     /// Reads PDFs when the crawl reads them (spec 027 part C).
     pdf_pool: Option<pdf::pool::Pool>,
     /// PDFs whose response is recorded but whose reading is not.
@@ -1362,6 +1367,11 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // Validation rejected bad selectors before the crawl started.
+        let content = &c.config.content;
+        let content_rules =
+            ContentRules::new(content.content_selector.as_deref(), &content.exclude_selectors)
+                .unwrap_or_default();
         let pdf = &c.config.extraction.pdf;
         let pdf_pool = pdf.crawl.then(|| {
             pdf::pool::Pool::new(
@@ -1427,6 +1437,7 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            content_rules: Arc::new(content_rules),
             pdf_pool,
             pdf_pending: 0,
             pdf_nofollow: Default::default(),
@@ -2624,6 +2635,7 @@ impl Run {
         // Rendering on: an internal page keeps its body for the render input
         // (one `Option` check when it is off, plan D2).
         let keep_html = store_html || (internal && self.render.is_some());
+        let content = self.content_rules.clone();
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body, pdf_max).await;
@@ -2634,7 +2646,8 @@ impl Run {
             let result = match fetched {
                 Ok(mut o) => {
                     pdf_body = o.pdf.take();
-                    let mut outcome = finish_page(o, url, token, keep_html, rules, hook, &budget).await;
+                    let mut outcome =
+                        finish_page(o, url, token, keep_html, rules, hook, content, &budget).await;
                     outcome.pdf = pdf_body.is_some();
                     Ok(outcome)
                 }

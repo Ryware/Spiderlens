@@ -72,6 +72,7 @@ impl Features {
             Need::Pdf,
             Need::Readability,
             Need::SitemapEntries,
+            Need::NearDup,
         ] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);

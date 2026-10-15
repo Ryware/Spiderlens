@@ -263,6 +263,7 @@ fn apply_stored(rules: &CompiledRules, page: &StoredBody, token: &str) -> PageRu
         body: &body,
         truncated: page.partial,
         robots_token: token,
+        content: None,
         a11y: false,
         hook: None,
     };
@@ -293,6 +294,7 @@ pub fn test_stored_page(
             body: &html,
             truncated: partial,
             robots_token: "SpiderLens",
+            content: None,
             a11y: false,
             hook: None,
         },

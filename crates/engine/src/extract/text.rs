@@ -22,8 +22,19 @@ pub fn collapse(raw: &str) -> String {
 pub fn word_count(text: &str) -> u32 {
     let mut count = 0u32;
     let mut in_word = false;
-    for c in text.chars() {
-        let word_char = c.is_alphanumeric() || is_mark(c);
+    // ASCII bytes are classified directly; other characters are decoded.
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let word_char = if b < 0x80 {
+            i += 1;
+            b.is_ascii_alphanumeric()
+        } else {
+            let c = text[i..].chars().next().expect("char boundary");
+            i += c.len_utf8();
+            c.is_alphanumeric() || is_mark(c)
+        };
         if word_char && !in_word {
             count += 1;
         }
@@ -102,7 +113,7 @@ fn english_syllables(w: &[u8]) -> u32 {
 
 /// Combining marks (Hebrew points, Devanagari vowel signs, accents written
 /// as separate code points) belong to the word they sit on.
-fn is_mark(c: char) -> bool {
+pub(crate) fn is_mark(c: char) -> bool {
     matches!(c as u32,
         0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05BD | 0x05BF | 0x05C1..=0x05C2
         | 0x05C4..=0x05C5 | 0x05C7 | 0x0610..=0x061A | 0x064B..=0x065F | 0x0670

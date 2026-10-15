@@ -60,6 +60,7 @@ fn time(pages: &[String], a11y: bool, rounds: usize) -> Duration {
                 body: p.as_bytes(),
                 truncated: false,
                 robots_token: "SpiderLens",
+                content: None,
                 a11y,
                 hook: None,
             }));

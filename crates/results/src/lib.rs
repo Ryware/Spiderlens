@@ -17,6 +17,7 @@ mod custom;
 mod detail;
 mod export;
 mod features;
+pub mod near_dup;
 pub mod issues;
 mod reader;
 mod segments;

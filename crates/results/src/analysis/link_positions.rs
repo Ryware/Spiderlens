@@ -85,6 +85,7 @@ fn links_of<T>(
         body: html,
         truncated: false,
         robots_token: "",
+        content: None,
         // Positions only need the links, not the accessibility checks.
         a11y: false,
         hook: None,
@@ -410,6 +411,7 @@ mod tests {
             body: html.as_bytes(),
             truncated: false,
             robots_token: "",
+            content: None,
             a11y: false,
             hook: None,
         });

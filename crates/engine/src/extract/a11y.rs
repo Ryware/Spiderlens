@@ -657,6 +657,7 @@ mod tests {
             body: html.as_bytes(),
             truncated: false,
             robots_token: "SpiderLens",
+            content: None,
             a11y,
             hook: None,
         })

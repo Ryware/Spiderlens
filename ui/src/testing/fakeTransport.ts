@@ -102,6 +102,7 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true, check_amp: false, pdf: { crawl: false, follow_links: true, max_mb: 20, time_limit_secs: 5 } },
+    content: { threshold: 90, report_floor: 80, min_words: 50, indexable_only: true, content_selector: null, exclude_selectors: [] },
     issues: { rules: {} },
     custom: { extractors: [], searches: [] },
     sitemap_generate: defaultGenerateOptions(),

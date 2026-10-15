@@ -37,6 +37,7 @@ fn run(html: &str, rules: CustomRules) -> PageRules {
             body: html.as_bytes(),
             truncated: false,
             robots_token: "spiderlens",
+            content: None,
             a11y: false,
             hook: None,
         },
@@ -367,6 +368,7 @@ fn cost_by_kind() {
         body: &html,
         truncated: false,
         robots_token: "spiderlens",
+        content: None,
         a11y: false,
         hook: None,
     };

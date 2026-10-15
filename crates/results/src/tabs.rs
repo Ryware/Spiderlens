@@ -63,6 +63,8 @@ pub enum Need {
     AiChecks,
     /// The spelling pass's results (spec 027 part D).
     Spelling,
+    /// Main content signatures for near duplicate analysis (spec 020).
+    NearDup,
 }
 
 impl Need {
@@ -100,6 +102,9 @@ impl Need {
             Self::Cookies => "This crawl was made before SpiderLens recorded the cookies each page sets.",
             Self::AiChecks => "AI checks have not run on this crawl. Run them from the AI search tab.",
             Self::Spelling => "Spelling has not been checked for this crawl. Run Check spelling to check it.",
+            Self::NearDup => {
+                "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
+            }
         }
     }
 
@@ -124,6 +129,7 @@ impl Need {
             Self::Cookies => "cookies",
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
+            Self::NearDup => "near_dup",
         }
     }
 }
@@ -2026,6 +2032,7 @@ fn build_tabs() -> Vec<TabDef> {
             rows: None,
         },
         ai_search_tab(),
+        near_dup_tab(),
     ]
 }
 
@@ -2036,6 +2043,97 @@ const GSC_CLICKS_NOT_INDEXABLE: &str = "indexability(u.state, u.error_class, u.s
      AND COALESCE((SELECT g.clicks FROM gsc_pages g WHERE g.url_id = u.id), 0) > 0";
 const GSC_NO_DATA: &str = "EXISTS (SELECT 1 FROM integration_status s WHERE s.url_id = u.id \
      AND s.provider = 'search_console' AND s.reason = 'no_data')";
+
+/// One value from a page's near duplicate row (spec 020).
+macro_rules! nd {
+    ($field:literal) => {
+        concat!(
+            "(SELECT n.",
+            $field,
+            " FROM near_dup_pages n WHERE n.url_id = u.id)"
+        )
+    };
+}
+
+/// The Content tab: near and exact duplicate content (spec 020 FR-017).
+fn near_dup_tab() -> TabDef {
+    use ValueKind::*;
+    let nd_col = |id, label, expr, kind, width| col(id, label, expr, kind, width).needs(Need::NearDup);
+    TabDef {
+        id: Cow::Borrowed("content"),
+        title: Cow::Borrowed("Content"),
+        eligible: Cow::Borrowed(HTML_OK),
+        columns: vec![
+            c::ADDRESS,
+            nd_col(
+                "main_words",
+                "Main content words",
+                "(SELECT p.main_words FROM pages p WHERE p.url_id = u.id)",
+                Int,
+                130,
+            ),
+            nd_col("closest_sim", "Closest similarity", nd!("closest_sim"), Int, 130),
+            nd_col(
+                "closest_url",
+                "Closest match",
+                "(SELECT c.url FROM near_dup_pages n JOIN urls c ON c.id = n.closest_id WHERE n.url_id = u.id)",
+                Url,
+                320,
+            ),
+            nd_col("near_count", "Near duplicates", nd!("near_count"), Int, 120),
+            nd_col("cluster", "Cluster", nd!("cluster"), Int, 80),
+            nd_col(
+                "exact_content",
+                "Exact duplicate",
+                "EXISTS (SELECT 1 FROM near_dup_pairs q WHERE q.url_id = u.id AND q.exact = 1)",
+                Bool,
+                110,
+            ),
+            nd_col(
+                "compare_status",
+                "Compared",
+                "(SELECT CASE n.status WHEN 'compared' THEN 'Compared' WHEN 'too_short' THEN 'Too little content' \
+                 WHEN 'not_indexable' THEN 'Not indexable' ELSE 'No data' END FROM near_dup_pages n WHERE n.url_id = u.id)",
+                Text,
+                140,
+            )
+            .hidden(),
+            c::WORD_COUNT.hidden(),
+            c::INDEXABILITY.hidden(),
+        ],
+        filters: vec![
+            filter("all", "All", "1"),
+            filter(
+                "near_duplicates",
+                "Near duplicates",
+                "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.near_count > 0)",
+            )
+            .needs(Need::NearDup),
+            filter(
+                "exact_duplicates",
+                "Exact duplicates",
+                "(SELECT p.text_hash FROM pages p WHERE p.url_id = u.id) IN (SELECT o.v FROM temp.occ_text o WHERE o.n > 1)",
+            )
+            .needs(Need::Extraction)
+            .reads(Derived::OccText),
+            filter(
+                "not_compared",
+                "Not compared",
+                "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.status IN ('not_indexable', 'no_signature'))",
+            )
+            .needs(Need::NearDup),
+            filter(
+                "low_content",
+                "Low content",
+                "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.status = 'too_short')",
+            )
+            .needs(Need::NearDup),
+        ],
+        search_column: Some(Cow::Borrowed("closest_url")),
+        scoped: false,
+        rows: None,
+    }
+}
 
 /// Builds a derived table on `conn` (dropping an older copy).
 pub fn build_derived(
@@ -2080,7 +2178,7 @@ pub fn build_derived(
         ),
         Derived::OccText => conn.execute_batch(&format!(
             "DROP TABLE IF EXISTS temp.occ_text;
-             CREATE TEMP TABLE occ_text(v INTEGER PRIMARY KEY, n INTEGER NOT NULL);
+             CREATE TEMP TABLE occ_text(v INTEGER PRIMARY KEY, n INTEGER NOT NULL) WITHOUT ROWID;
              INSERT INTO temp.occ_text SELECT p.text_hash, COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
                WHERE {HTML_OK} AND p.text_hash IS NOT NULL AND p.word_count > 0 GROUP BY 1;"
         )),
@@ -2456,7 +2554,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 18);
+        assert_eq!(tab_ids.len(), 19);
     }
 
     #[test]

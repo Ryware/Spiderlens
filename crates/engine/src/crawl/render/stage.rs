@@ -314,6 +314,7 @@ impl RenderStage {
                         body,
                         truncated: false,
                         robots_token: &token,
+                        content: None,
                         keep_text: true,
                     })
                 };

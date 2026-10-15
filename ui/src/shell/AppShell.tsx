@@ -26,6 +26,10 @@ import { GenerateSitemapSheet } from "../results/GenerateSitemapSheet";
 import { SitemapFilesView } from "../sitemaps/SitemapFiles";
 import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
+import { ContentView } from "../content/ContentView";
+import { CompareSheet } from "../content/CompareSheet";
+import type { CompareRequest } from "../content/compare";
+import { useNearDup } from "../content/useNearDup";
 import { useComparison } from "../compare/useComparison";
 import { CompareSetup } from "../compare/CompareSetup";
 import { CompareView, type Pair } from "../compare/CompareView";
@@ -133,6 +137,9 @@ export function AppShell({ transport }: { transport: Transport }) {
   const results = useResults(transport, crawl.path, crawl.running, setup.config?.segments, segmentsValid);
   const issues = useIssues(transport, crawl.path, crawl.running, setup.config?.issues);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
+  const nearDup = useNearDup(transport, crawl.path, crawl.running);
+  const [compare, setCompare] = useState<CompareRequest | null>(null);
+  const duplicates = useMemo(() => ({ generation: nearDup.generation, onCompare: setCompare }), [nearDup.generation]);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
   const issueId = resultTab ? issueOfTab(resultTab.id) : null;
   const vizView = crawl.path ? vizViews.find((v) => v.id === section) : undefined;
@@ -423,7 +430,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || compareOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || compare || compareOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -432,7 +439,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, compareOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, compare, compareOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -473,39 +480,49 @@ export function AppShell({ transport }: { transport: Transport }) {
           ) : section === "log" && crawl.path ? (
             <CrawlLog transport={transport} path={crawl.path} live={crawl.running} />
           ) : resultTab && crawl.path ? (
-            <ResultsView
-              // One instance per tab: a tab switch must not carry the old
-              // tab's selection into the new tab's first render.
-              // Settings changes reload it: thresholds change the rows (spec 009).
-              key={`${crawl.path}\n${resultTab.id}\n${issues.changed}\n${results.epoch}\n${results.features?.available.join(",") ?? ""}`}
-              transport={transport}
-              path={crawl.path}
-              tab={resultTab}
-              features={results.features}
-              live={crawl.running}
-              session={results.session(resultTab.id)}
-              onSession={onSession}
-              onFocusId={onFocusId}
-              values={results.values}
-              onValues={results.setValues}
-              toolbar={
-                resultTab.id === "spelling" ? (
-                  <SpellingBar spelling={spelling} live={crawl.running} />
-                ) : resultTab.id === "amp" ? (
-                  <p className="m-0 text-sm text-fg-3">These checks are a core subset of AMP's rules, not the official AMP validator.</p>
-                ) : undefined
-              }
-              issue={issueId ? (issues.byId.get(issueId) ?? null) : null}
-              onIssueSettings={() => openSettings("issues")}
-              customRun={isCustomTab(resultTab.id) ? customRun : undefined}
-              onInspect={inspect}
-              reveal={reveal?.tab === resultTab.id ? reveal : null}
-              segment={results.segment}
-              onSegment={results.setSegment}
-              segmentCounts={results.segmentCounts}
-              segmentsRev={results.segmentsRev}
-              onRefreshSegments={results.refreshSegmentCounts}
-            />
+            (() => {
+              const view = (
+                <ResultsView
+                  // One instance per tab: a tab switch must not carry the old
+                  // tab's selection into the new tab's first render.
+                  // Settings changes reload it: thresholds change the rows (spec 009).
+                  // The Content tab reopens when new analysis results land.
+                  key={`${crawl.path}\n${resultTab.id}\n${issues.changed}\n${results.epoch}\n${results.features?.available.join(",") ?? ""}${resultTab.id === "content" ? `\n${nearDup.generation}` : ""}`}
+                  transport={transport}
+                  path={crawl.path}
+                  tab={resultTab}
+                  features={results.features}
+                  live={crawl.running}
+                  session={results.session(resultTab.id)}
+                  onSession={onSession}
+                  onFocusId={onFocusId}
+                  values={results.values}
+                  onValues={results.setValues}
+                  toolbar={
+                    resultTab.id === "spelling" ? (
+                      <SpellingBar spelling={spelling} live={crawl.running} />
+                    ) : resultTab.id === "amp" ? (
+                      <p className="m-0 text-sm text-fg-3">These checks are a core subset of AMP's rules, not the official AMP validator.</p>
+                    ) : undefined
+                  }
+                  issue={issueId ? (issues.byId.get(issueId) ?? null) : null}
+                  onIssueSettings={() => openSettings("issues")}
+                  customRun={isCustomTab(resultTab.id) ? customRun : undefined}
+                  onInspect={inspect}
+                  reveal={reveal?.tab === resultTab.id ? reveal : null}
+                  segment={results.segment}
+                  onSegment={results.setSegment}
+                  segmentCounts={results.segmentCounts}
+                  segmentsRev={results.segmentsRev}
+                  onRefreshSegments={results.refreshSegmentCounts}
+                />
+              );
+              return resultTab.id === "content" ? (
+                <ContentView transport={transport} path={crawl.path} live={crawl.running} nd={nearDup} settings={setup.config?.content ?? null} onCompare={setCompare} pages={view} />
+              ) : (
+                view
+              );
+            })()
           ) : section === "integrations" ? (
             <IntegrationsView transport={transport} path={crawl.path} crawlRunning={crawl.running} onDataChanged={results.reload} />
           ) : section === "sitemap-files" && crawl.path ? (
@@ -561,6 +578,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                   epoch={results.epoch}
                   rules={setup.config?.custom}
                   aiChecks={results.features?.available.includes("ai_checks") ?? false}
+                  duplicates={nearDup.status?.state === "done" || nearDup.status?.state === "stale" ? duplicates : undefined}
                   onIgnoreWord={ignoreWord}
                   ignored={setup.config?.spelling.ignore}
                   onIssue={(id) => setSection(issueTab(id))}
@@ -607,6 +625,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         }}
 
       />
+      {crawl.path && <CompareSheet transport={transport} path={crawl.path} request={compare} onRequest={setCompare} onClose={() => setCompare(null)} />}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <CompareSetup open={compareOpen} onOpenChange={setCompareOpen} transport={transport} initialCurrent={crawl.path} onStart={startComparison} />
       {crawl.path && setup.config && (

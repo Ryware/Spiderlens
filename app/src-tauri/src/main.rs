@@ -10,6 +10,7 @@ mod compare;
 mod crawl;
 mod custom;
 mod files;
+mod near_dup;
 mod integrations;
 mod manage;
 mod report;
@@ -66,6 +67,7 @@ fn main() {
             app.manage(files::State::new(unsaved.clone(), &app.path().app_config_dir()?)?);
             app.manage(crawl::State::new(unsaved));
             app.manage(results::State::default());
+            app.manage(near_dup::State::default());
             app.manage(assistants::State::new(spiderlens_config::AppDirs {
                 config: app.path().app_config_dir()?,
                 data: app.path().app_data_dir()?,
@@ -177,6 +179,14 @@ fn main() {
             results::copy_rows,
             results::export_start,
             results::export_cancel,
+            near_dup::near_dup_status,
+            near_dup::near_dup_clusters,
+            near_dup::near_dup_members,
+            near_dup::near_dup_pairs,
+            near_dup::compare_pages,
+            near_dup::run_near_dup,
+            near_dup::cancel_near_dup,
+            near_dup::export_near_dup,
             spelling::spell_dictionaries,
             spelling::spell_download,
             spelling::spell_add,

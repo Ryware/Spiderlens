@@ -635,6 +635,54 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // Near duplicate content (spec 020)
+    let ct = &c.content;
+    if !(50..=100).contains(&ct.threshold) {
+        i.error(
+            "content.threshold",
+            "out_of_range",
+            "The near duplicate threshold must be between 50% and 100%.",
+        );
+    }
+    if ct.report_floor < 50 || ct.report_floor > ct.threshold.max(50) {
+        i.error(
+            "content.report_floor",
+            "out_of_range",
+            "The closest match floor must be between 50% and the near duplicate threshold.",
+        );
+    }
+    if !(1..=10_000).contains(&ct.min_words) {
+        i.error(
+            "content.min_words",
+            "out_of_range",
+            "The minimum words to compare must be between 1 and 10,000.",
+        );
+    }
+    if let Some(sel) = ct.content_selector.as_deref().filter(|s| !s.trim().is_empty())
+        && scraper::Selector::parse(sel.trim()).is_err()
+    {
+        i.error(
+            "content.content_selector",
+            "selector_syntax",
+            format!("\"{sel}\" is not a valid CSS selector."),
+        );
+    }
+    if ct.exclude_selectors.len() > 50 {
+        i.error(
+            "content.exclude_selectors",
+            "too_many",
+            "List at most 50 elements to leave out.",
+        );
+    }
+    for (index, sel) in ct.exclude_selectors.iter().enumerate() {
+        if !sel.trim().is_empty() && scraper::Selector::parse(sel.trim()).is_err() {
+            i.error(
+                format!("content.exclude_selectors[{index}]"),
+                "selector_syntax",
+                format!("\"{sel}\" is not a valid CSS selector."),
+            );
+        }
+    }
     validate_rendering(c, &mut i);
     // Link analysis (spec 023)
     for (index, rule) in c.links.position_rules.iter().enumerate() {
@@ -986,6 +1034,31 @@ mod tests {
             codes(&validate_config(&c)),
             vec![("speed", "faster_than_polite", Severity::Warning)]
         );
+    }
+
+    #[test]
+    fn content_settings_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.content.threshold = 40;
+        c.content.report_floor = 95;
+        c.content.min_words = 0;
+        c.content.content_selector = Some("div[[".into());
+        c.content.exclude_selectors = vec![".ok".into(), "a >".into()];
+        let got: Vec<_> = validate_config(&c).into_iter().map(|i| i.path).collect();
+        assert_eq!(
+            got,
+            vec![
+                "content.threshold",
+                "content.report_floor",
+                "content.min_words",
+                "content.content_selector",
+                "content.exclude_selectors[1]"
+            ]
+        );
+        let mut ok = CrawlConfig::default();
+        ok.content.report_floor = 90;
+        ok.content.content_selector = Some("#content".into());
+        assert!(validate_config(&ok).is_empty());
     }
 
     #[test]

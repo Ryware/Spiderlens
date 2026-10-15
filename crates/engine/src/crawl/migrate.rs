@@ -267,6 +267,44 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: RENDERING,
     },
+    // Near duplicate content (spec 020, data-model.md): main content
+    // columns, one signature per page, and the analysis pass's output
+    // tables (filled after the crawl by `spiderlens-results`).
+    Step {
+        version: 17,
+        additive: true,
+        sql: "
+        ALTER TABLE pages ADD COLUMN main_words INTEGER;
+        ALTER TABLE pages ADD COLUMN main_hash INTEGER;
+        ALTER TABLE pages ADD COLUMN main_source TEXT;
+        CREATE TABLE content_sig (url_id INTEGER PRIMARY KEY, sig BLOB NOT NULL);
+        CREATE TABLE near_dup_pages (
+            url_id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            closest_id INTEGER,
+            closest_sim INTEGER,
+            near_count INTEGER NOT NULL DEFAULT 0,
+            near_count_is_min INTEGER NOT NULL DEFAULT 0,
+            cluster INTEGER
+        );
+        CREATE INDEX near_dup_pages_cluster ON near_dup_pages(cluster) WHERE cluster IS NOT NULL;
+        CREATE TABLE near_dup_pairs (
+            url_id INTEGER NOT NULL,
+            other_id INTEGER NOT NULL,
+            sim INTEGER NOT NULL,
+            exact INTEGER NOT NULL,
+            PRIMARY KEY (url_id, other_id)
+        ) WITHOUT ROWID;
+        CREATE TABLE near_dup_clusters (
+            id INTEGER PRIMARY KEY,
+            size INTEGER NOT NULL,
+            min_sim INTEGER NOT NULL,
+            max_sim INTEGER NOT NULL,
+            representative_id INTEGER NOT NULL,
+            exact INTEGER NOT NULL
+        );
+        ",
+    },
 ];
 
 const AEO_TABLES: &str = r#"

@@ -16,6 +16,7 @@ fn every_fixture_page_gives_exactly_its_findings() {
             body: page.html.as_bytes(),
             truncated: false,
             robots_token: "SpiderLens",
+            content: None,
             a11y: true,
             hook: None,
         });
@@ -77,6 +78,7 @@ fn malformed_pages_are_safe_and_unchanged() {
             body: &body,
             truncated: false,
             robots_token: "SpiderLens",
+            content: None,
             a11y,
             hook: None,
         };

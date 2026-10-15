@@ -1,7 +1,8 @@
 // The detail pane for the selected URL (US3, FR-019..FR-025).
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import { Columns2, Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import type { OpenCompare } from "../content/compare";
 import type { CustomResult } from "../generated/CustomResult";
 import type { CustomRules } from "../generated/CustomRules";
 import type { RuleTestOutcome } from "../transport";
@@ -9,6 +10,7 @@ import type { LinkMetrics } from "../generated/LinkMetrics";
 
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { PairsPage } from "../generated/PairsPage";
 import type { AgentField } from "../generated/AgentField";
 import type { PageAgentFindings } from "../generated/PageAgentFindings";
 import type { AmpDetail } from "../generated/AmpDetail";
@@ -371,6 +373,61 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
   );
 }
 
+const pairStatus: Record<string, string> = {
+  too_short: "Not compared: too little main content.",
+  not_indexable: "Not compared: the page is not indexable.",
+  no_signature: "Not compared: no content was read from this page.",
+};
+
+/** This page's closest matches (US1, FR-018). */
+function Duplicates({ transport, path, id, address, generation, onCompare }: { transport: Transport; path: string; id: number; address: string; generation: number; onCompare: OpenCompare }) {
+  const [page, setPage] = useState<PairsPage | null>(null);
+  useEffect(() => {
+    let off = false;
+    setPage(null);
+    transport.nearDupPairs(path, id).then(
+      (p) => !off && setPage(p),
+      () => {},
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id, generation]);
+  if (!page || page.status === null) return null;
+  const targets = page.rows.map((r) => ({ id: r.other_id, address: r.address, sim: r.sim }));
+  const near = page.rows.filter((r) => r.sim >= (page.threshold ?? 90)).length;
+  const title =
+    page.near_count === 0
+      ? "Duplicates"
+      : near < page.near_count || page.near_count_is_min
+        ? `Duplicates (${near} of ${page.near_count_is_min ? "at least " : ""}${page.near_count.toLocaleString()})`
+        : `Duplicates (${page.near_count.toLocaleString()})`;
+  return (
+    <Section title={title}>
+      {page.status !== "compared" ? (
+        <div className="text-sm text-fg-3">{pairStatus[page.status] ?? page.status}</div>
+      ) : page.rows.length === 0 ? (
+        <div className="text-sm text-fg-3">No other page is at least {page.threshold ?? 90}% similar.</div>
+      ) : (
+        <ul className="m-0 flex list-none flex-col p-0" data-selectable aria-label="Closest matches">
+          {page.rows.map((r, i) => (
+            <li key={r.other_id} className="flex items-center gap-2 border-b border-line py-1 text-sm last:border-b-0">
+              <span className={cn("w-10 shrink-0 text-right tabular", r.sim >= (page.threshold ?? 90) ? "text-fg" : "text-fg-3")}>{r.sim}%</span>
+              <span className="min-w-0 flex-1 truncate" title={r.address}>
+                {r.address}
+              </span>
+              {r.exact && <Badge tone="warn">Exact</Badge>}
+              <Button size="sm" variant="quiet" icon aria-label={`Compare with ${r.address}`} onClick={() => onCompare({ base: { id, address }, targets, index: i })}>
+                <Columns2 aria-hidden className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 /**
  * The URL's issues, highest priority first; a click opens that issue (spec
  * 009 FR-017). Link issues list their targets, each openable in the table.
@@ -606,6 +663,7 @@ export function Inspector({
   transport,
   path,
   id,
+  duplicates,
   onIgnoreWord,
   ignored = [],
   issuesVersion = 0,
@@ -622,6 +680,8 @@ export function Inspector({
   transport: Transport;
   path: string | null;
   id: number | null;
+  /** Shows the page's near duplicates when the crawl has been analysed (spec 020). */
+  duplicates?: { generation: number; onCompare: OpenCompare };
   /** Adds a word to the crawl settings' ignore list. */
   onIgnoreWord?: (word: string) => void;
   ignored?: string[];
@@ -805,6 +865,7 @@ export function Inspector({
         </Section>
       )}
 
+      {duplicates && d.internal && <Duplicates transport={transport} path={path} id={d.id} address={d.url} generation={duplicates.generation} onCompare={duplicates.onCompare} />}
       {d.pdf && <PdfSection pdf={d.pdf} />}
       {d.snippet && (
         <Section title="Search preview">

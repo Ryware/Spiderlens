@@ -8,6 +8,7 @@ mod aeo_cmd;
 mod compare_cmd;
 mod cookies_cmd;
 mod crawl_cmd;
+mod duplicates_cmd;
 mod export_cmd;
 mod files_cmd;
 mod integrations_cmd;
@@ -101,6 +102,8 @@ enum Command {
     PurgeHtml(files_cmd::PurgeHtmlArgs),
     /// Export a tab and filter of a crawl file as CSV (same rows as the app).
     Export(Box<export_cmd::ExportArgs>),
+    /// Near duplicate content of a crawl file: pages, pairs or clusters.
+    Duplicates(Box<duplicates_cmd::DuplicatesArgs>),
     /// Serve crawl files to AI assistants over MCP (standard input and output).
     Mcp(McpCmd),
     /// What changed between two crawl files of a site.
@@ -251,6 +254,7 @@ fn main() -> ExitCode {
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
+        Command::Duplicates(args) => duplicates_cmd::run_duplicates(*args),
         Command::Mcp(args) => ExitCode::from(spiderlens_mcp::run(spiderlens_mcp::McpArgs {
             allow_read: args.allow_read,
             folders: args.folder,
