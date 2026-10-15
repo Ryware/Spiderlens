@@ -9,7 +9,7 @@ import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
 import { cn } from "../components/ui";
 import { Toolbar } from "./Toolbar";
-import { resultTabs, Sidebar } from "./Sidebar";
+import { reportTabs, resultTabs, Sidebar } from "./Sidebar";
 import { AboutDialog, CrawlOverview, DetailPanel, StartState, StatusBar } from "./panels";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutCommand, type Command } from "./commands";
@@ -18,6 +18,7 @@ import { useAppearance, useUiState } from "./useUiState";
 import { ACCENTS, chooseLevel, LEVELS } from "./appearance";
 import { ResultsView } from "../results/ResultsView";
 import { Inspector } from "../results/Inspector";
+import { CookiesView } from "../results/CookiesView";
 import { useResults } from "../results/useResults";
 import { useCrawlLibrary } from "../files/useCrawlLibrary";
 import { useCrawlFile } from "../files/useCrawlFile";
@@ -112,6 +113,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const results = useResults(transport, crawl.path, crawl.running);
   const analysis = useAnalysis(transport, crawl.path, crawl.phase, crawl.running, setup.config?.links.auto_analyse ?? true);
   const resultTab = crawl.path ? results.tabs.find((t) => t.id === section) : undefined;
+  const cookiesOpen = crawl.path !== null && section === "cookies";
   const onFocusId = results.setFocusId;
   const onSession = useCallback((patch: Parameters<typeof results.update>[1]) => resultTab && results.update(resultTab.id, patch), [results, resultTab]);
 
@@ -288,6 +290,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "go-schedules", title: "Schedules", group: "Go to", keywords: ["scheduled crawls", "history"], run: () => setSection("schedules") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
+      ...reportTabs.map((t) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
       { id: "toggle-detail", title: ui.detailCollapsed ? "Show details" : "Hide details", group: "View", shortcut: "Mod+Alt+I", run: () => updateUi({ detailCollapsed: !ui.detailCollapsed }) },
       { id: "theme-system", title: "Appearance: Follow system", group: "View", keywords: ["theme", "brightness"], run: () => updateUi({ followSystem: true }) },
@@ -382,6 +385,8 @@ export function AppShell({ transport }: { transport: Transport }) {
               onInspect={inspect}
               reveal={reveal?.tab === resultTab.id ? reveal : null}
             />
+          ) : cookiesOpen && crawl.path ? (
+            <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
@@ -403,7 +408,7 @@ export function AppShell({ transport }: { transport: Transport }) {
                 }
               }}
             >
-              {resultTab ? (
+              {resultTab || cookiesOpen ? (
                 <Inspector
                   transport={transport}
                   path={crawl.path}

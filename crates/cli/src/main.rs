@@ -4,6 +4,7 @@
 //! specs/002-crawl-configuration/contracts/cli.md.
 
 mod aeo_cmd;
+mod cookies_cmd;
 mod crawl_cmd;
 mod export_cmd;
 mod files_cmd;
@@ -71,6 +72,8 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// List the cookies the site set during a crawl (no values).
+    Cookies(cookies_cmd::CookiesArgs),
     /// List crawl files in a folder with their size and stored HTML.
     Files(files_cmd::FilesArgs),
     /// Remove the stored page HTML from a crawl file, keeping its results.
@@ -178,6 +181,7 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Cookies(args) => cookies_cmd::run_cookies(args),
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),

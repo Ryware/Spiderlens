@@ -128,6 +128,8 @@ fn main() {
             results::view_close,
             results::url_detail,
             results::url_list,
+            results::cookies_list,
+            results::cookie_urls,
             results::url_html,
             results::url_tabs,
             results::copy_text,
