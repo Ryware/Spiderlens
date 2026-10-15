@@ -72,6 +72,7 @@ pub async fn test_url(
             body: &body,
             truncated: false,
             robots_token: &opts.robots_token,
+            a11y: false,
         },
         Some(rules),
     );

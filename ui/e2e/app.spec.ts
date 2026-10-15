@@ -292,6 +292,36 @@ test("custom_rule_is_tested_run_on_the_crawl_and_gets_its_tab", async ({ page })
   await expect(page.getByTestId("row-count")).toHaveText("1,250 URLs");
 });
 
+test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {
+  // Spec 008 FR-028, FR-029: the reason in the status bar, every site's pace on click.
+  await page.keyboard.type("example.com");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() =>
+    window.spiderlens.crawls.progress({
+      crawled: 1200,
+      queued: 3800,
+      limit: { kind: "site_overload", host: "https://example.com:443", seconds_left: null, message: "https://example.com:443 answered 429 or 503 (overloaded), so it gets 4 at once." },
+      sites: [
+        { host: "https://example.com:443", state: "slowed_down", allowance: 4, max: 32, in_flight: 4, response_ms: 240, crawled: 1100, waiting: 3700, waiting_more: false, reason: "Answered 429 or 503 (overloaded), so cut to 4 at once.", seconds_left: null },
+        { host: "https://cdn.example.com:443", state: "speeding_up", allowance: 6, max: 32, in_flight: 6, response_ms: 35, crawled: 100, waiting: 100, waiting_more: false, reason: "6 of 32 at once, one more each time a round of answers comes back steady.", seconds_left: null },
+      ],
+      sites_total: 2,
+    }),
+  );
+  const trigger = page.getByRole("contentinfo", { name: "Crawl status" }).locator('[data-figure="speed"]');
+  await expect(trigger).toHaveText("Site overloaded · example.com");
+  await trigger.click();
+  const table = page.getByRole("table", { name: "Sites" });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  const box = (await page.getByRole("dialog").boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(1400);
+  await page.keyboard.press("Escape");
+  await expect(table).toBeHidden();
+});
+
 test("columns_reorder_from_the_keyboard_in_the_columns_menu", async ({ page }) => {
   const grid = await openInternal(page);
   const headers = () => grid.getByRole("columnheader").allTextContents();
@@ -366,4 +396,31 @@ test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) =
   expect(copied.split("\n").length).toBe(2009);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+});
+
+test("inspector_rows_copy_and_show_in_table", async ({ page }) => {
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(1).click();
+  await page.keyboard.press("End");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-4999");
+  // The actions show on hover and on keyboard focus.
+  const show = details.getByRole("button", { name: "Show https://example.com/ in table" });
+  const shown = show.locator("..");
+  await expect(shown).toHaveCSS("opacity", "0");
+  await show.locator("xpath=ancestor::li").hover();
+  await expect(shown).toHaveCSS("opacity", "1");
+  const copy = details.getByRole("button", { name: "Copy https://example.com/" });
+  await copy.focus();
+  await page.keyboard.press("Enter");
+  await expect(details.getByRole("status")).toHaveText("Copied.");
+  expect(await page.evaluate(() => window.spiderlens.results.copied)).toEqual(["https://example.com/"]);
+  // Right-click offers the same; Show in table scrolls back to the top row.
+  await copy.locator("xpath=ancestor::li").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Show in table" }).click();
+  const selected = grid.locator('[role="row"][aria-selected="true"]');
+  await expect(selected).toHaveAttribute("data-id", "1");
+  await expect(selected).toBeInViewport();
+  await expect(grid).toBeFocused();
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/");
 });

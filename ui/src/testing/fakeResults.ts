@@ -52,6 +52,8 @@ export const fakeTabs: TabDef[] = [
     filters: [
       { id: "all", label: "All", need: "base" },
       { id: "client_error", label: "Client error (4xx)", need: "base" },
+      { id: "class_timeout", label: "Timed out", need: "base", hide_when_empty: true },
+      { id: "class_http_404", label: "Not found (404)", need: "base", hide_when_empty: true },
     ],
     search_column: null,
     scoped: true,
@@ -94,6 +96,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "urlDetail"
   | "urlList"
   | "urlHtml"
+  | "urlTabs"
+  | "copyText"
   | "copyRows"
   | "exportStart"
   | "exportCancel"
@@ -138,6 +142,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     }
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
+    if (q.filter === "class_timeout") us = [];
+    if (q.filter === "class_http_404") us = us.filter((u) => u.status === 404);
     if (q.filter === "client_error") us = us.filter((u) => u.status !== null && u.status >= 400 && u.status < 500);
     const s = q.search.toLowerCase();
     if (s) us = us.filter((u) => u.url.toLowerCase().includes(s) || (u.title ?? "").toLowerCase().includes(s));
@@ -273,6 +279,15 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       if (u.title === null) return { ...none, missing: "no_body" };
       const html = fakePageHtml(u);
       return { html, missing: null, bytes: new TextEncoder().encode(html).length, encoding: "UTF-8", encoding_errors: false };
+    },
+    // Internal URLs are in both fake tabs, external ones only in Response
+    // codes; ids outside `urls` (the fake list rows) are in no tab.
+    urlTabs: async (_p, id) => {
+      const u = results.urls.find((x) => x.id === id);
+      return !u ? [] : u.internal ? ["internal", "response-codes"] : ["response-codes"];
+    },
+    copyText: async (text) => {
+      results.copied.push(text);
     },
     copyRows: async (_p, view, ranges, columns) => {
       const v = views.get(view)!;

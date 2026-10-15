@@ -39,6 +39,7 @@ fn column(id: String, label: String, expr: String, kind: ValueKind, width: u16) 
         need: Need::Base,
         derived: None,
         sort_key: None,
+        key: None,
     }
 }
 
@@ -49,6 +50,7 @@ fn filter(id: String, label: String, cond: String) -> FilterDef {
         cond: Cow::Owned(cond),
         need: Need::Base,
         derived: None,
+        hide_when_empty: None,
     }
 }
 
@@ -120,6 +122,7 @@ pub(crate) fn tabs(conn: &Connection) -> Result<Vec<TabDef>> {
             id: Cow::Borrowed(EXTRACTION),
             title: Cow::Borrowed("Custom extraction"),
             eligible: Cow::Borrowed(ELIGIBLE),
+            rows: None,
             columns,
             filters,
             search_column: None,
@@ -155,6 +158,7 @@ pub(crate) fn tabs(conn: &Connection) -> Result<Vec<TabDef>> {
             id: Cow::Borrowed(SEARCH),
             title: Cow::Borrowed("Custom search"),
             eligible: Cow::Borrowed(ELIGIBLE),
+            rows: None,
             columns,
             filters,
             search_column: None,

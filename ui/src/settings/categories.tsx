@@ -12,8 +12,9 @@ import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { CustomRulesPanel } from "./CustomRules";
+import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "custom" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "custom" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -22,7 +23,7 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
-  /** An app preference, not part of the crawl profile (spec 018 FR-012). */
+  /** An app preference, not part of the crawl profile (spec 018 FR-012, spec 019 FR-025). */
   app?: boolean;
 }
 
@@ -36,6 +37,13 @@ export const categories: Category[] = [
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
   { id: "custom", title: "Custom rules", description: "Extract values and search every page. Rules run on each page's HTML as it arrives.", prefixes: ["custom"] },
+  {
+    id: "storage",
+    title: "Storage",
+    description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -72,6 +80,7 @@ export function CategoryBody({
   crawlPath?: string | null;
   crawlRunning?: boolean;
 }): ReactNode {
+  if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
