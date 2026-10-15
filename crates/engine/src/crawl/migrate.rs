@@ -184,6 +184,33 @@ pub const STEPS: &[Step] = &[
         sql: "ALTER TABLE pages ADD COLUMN sentence_count INTEGER;
         ALTER TABLE pages ADD COLUMN syllable_count INTEGER;",
     },
+    // Spec 027 part C: what was read from each PDF.
+    Step {
+        version: 12,
+        additive: true,
+        sql: "CREATE TABLE pdfs (
+        url_id INTEGER PRIMARY KEY,
+        status TEXT NOT NULL,
+        status_reason TEXT,
+        title TEXT,
+        author TEXT,
+        subject TEXT,
+        keywords TEXT,
+        creator TEXT,
+        producer TEXT,
+        created_at TEXT,
+        modified_at TEXT,
+        page_count INTEGER,
+        pages_read INTEGER,
+        word_count INTEGER,
+        lang TEXT,
+        encrypted INTEGER,
+        no_text INTEGER,
+        tagged INTEGER,
+        link_count INTEGER,
+        text_stored INTEGER
+    );",
+    },
 ];
 
 const AEO_TABLES: &str = r#"

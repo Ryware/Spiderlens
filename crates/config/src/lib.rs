@@ -34,7 +34,7 @@ pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse
 pub use model::{
     AccessSettings, AiChecks, Changefreq, CookiePolicy, CrawlConfig, CustomHeader, ExtractionSettings,
     HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, Mode,
-    ModeInput, NetworkSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
+    ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, QueryMode, QueryParams, RetrySettings, RobotsMode,
     RobotsSettings, RuleOverride, Scope, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
     SubdomainMode, SuppliedCookie, UserAgent,
 };

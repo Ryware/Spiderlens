@@ -1,4 +1,4 @@
-import { Activity, Gauge, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
+import { Activity, Gauge, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, FileStack, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import type { IssuesSummary } from "../generated/IssuesSummary";
 import { IssuesNav } from "../issues/IssuesNav";
@@ -23,6 +23,7 @@ export const resultTabs: NavItem[] = [
   { id: "h1", title: "H1", icon: Heading1 },
   { id: "h2", title: "H2", icon: Heading2 },
   { id: "images", title: "Images", icon: Image },
+  { id: "pdfs", title: "PDFs", icon: FileStack },
   { id: "canonicals", title: "Canonicals", icon: Code },
   { id: "directives", title: "Directives", icon: Ban },
   { id: "search-console", title: "Search Console", icon: Search },

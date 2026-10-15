@@ -44,9 +44,10 @@ struct CustomRun {
     slots: Slots,
 }
 use crate::extract::directives::page_flags;
-use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, body};
+use crate::extract::{self, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body};
 use crate::fetch::{Once, fetch_once};
 use crate::net::NetSession;
+use crate::pdf::{self, PdfFacts};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, FinalClass, RequestHeader};
@@ -465,6 +466,14 @@ enum Msg {
     /// One sitemap file read, with every entry up to the limit (spec 011).
     SitemapFile(Box<SitemapRead>),
     SitemapsFinished,
+    /// A PDF read after its response was reported (spec 027 part C).
+    Pdf {
+        id: i64,
+        url: String,
+        depth: u32,
+        internal: bool,
+        read: pdf::pool::Read,
+    },
     SiteFile(SiteFileRow),
     SiteFilesFinished,
 }
@@ -621,6 +630,8 @@ struct PageOutcome {
     body_problem: Option<CheckError>,
     header_facts: HeaderFacts,
     page: Option<Extracted>,
+    /// A PDF body was handed to the reader pool; a `Msg::Pdf` follows.
+    pdf: bool,
 }
 
 /// What the extraction step produced for an HTML body.
@@ -700,6 +711,7 @@ async fn finish_page(
         body_problem: o.body_problem,
         header_facts,
         page,
+        pdf: false,
     }
 }
 
@@ -783,14 +795,15 @@ impl Crawler {
             store.set_meta("start_url", s.as_str())?;
         }
         // What readers will find in this file (spec 007 plan D3).
-        store.set_meta(
-            "data_features",
-            if config.extraction.store_html {
-                "extraction,timing,attempts,raw_html,readability,sitemap_entries"
-            } else {
-                "extraction,timing,attempts,readability,sitemap_entries"
-            },
-        )?;
+        let mut features = String::from(if config.extraction.store_html {
+            "extraction,timing,attempts,raw_html,readability,sitemap_entries"
+        } else {
+            "extraction,timing,attempts,readability,sitemap_entries"
+        });
+        if config.extraction.pdf.crawl {
+            features.push_str(",pdf");
+        }
+        store.set_meta("data_features", &features)?;
 
         store.begin()?;
         let source = match config.mode {
@@ -1124,6 +1137,12 @@ struct Run {
     /// (time, finished) samples over the last `RATE_WINDOW`, oldest first.
     rate_samples: VecDeque<(Instant, u64)>,
     extract_budget: Arc<Semaphore>,
+    /// Reads PDFs when the crawl reads them (spec 027 part C).
+    pdf_pool: Option<pdf::pool::Pool>,
+    /// PDFs whose response is recorded but whose reading is not.
+    pdf_pending: u32,
+    /// PDFs whose X-Robots-Tag says nofollow.
+    pdf_nofollow: std::collections::HashSet<i64>,
     /// Custom rules and where their results go (spec 013).
     custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
@@ -1226,6 +1245,14 @@ impl Run {
             .meta("active_ms")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        let pdf = &c.config.extraction.pdf;
+        let pdf_pool = pdf.crawl.then(|| {
+            pdf::pool::Pool::new(
+                pdf::pool::default_readers(),
+                Duration::from_secs(u64::from(pdf.time_limit_secs)),
+                c.config.extraction.store_html,
+            )
+        });
         let custom = if c.config.custom.is_empty() && !c.store.has_custom_rules()? {
             None
         } else {
@@ -1279,6 +1306,9 @@ impl Run {
             started_at: Instant::now(),
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
+            pdf_pool,
+            pdf_pending: 0,
+            pdf_nofollow: Default::default(),
             custom,
             active_before_ms,
             last_catch_up: Instant::now(),
@@ -1694,7 +1724,7 @@ impl Run {
                 wake = Some(wake.map_or(*due, |w| w.min(*due)));
             }
             self.progress(false);
-            if self.in_flight == 0 {
+            if self.in_flight == 0 && self.pdf_pending == 0 {
                 match self.state() {
                     Control::Pause => {
                         let reason = self.local.as_ref().map_or("user", |l| l.kind.as_str());
@@ -2007,6 +2037,10 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
+        let pool = self.pdf_pool.clone().filter(|_| !check_only);
+        let pdf_max = pool
+            .as_ref()
+            .map(|_| u64::from(self.c.config.extraction.pdf.max_mb) * 1024 * 1024);
         // Rules run on the pages spec 005 extracts for the results: internal ones.
         let rules = self.custom.as_ref().filter(|_| internal).map(Arc::clone);
         // The hook's facts stand in for stored HTML, so it runs only when the
@@ -2014,11 +2048,18 @@ impl Run {
         let hook = self.c.page_hook.clone().filter(|_| store_html);
         tokio::spawn(async move {
             let sent = Instant::now();
-            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
+            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body, pdf_max).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
+            let (id, depth, page_url) = (e.id, e.depth, url.to_string());
+            let mut pdf_body = None;
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, hook, &budget).await),
+                Ok(mut o) => {
+                    pdf_body = o.pdf.take();
+                    let mut outcome = finish_page(o, url, token, store_html, rules, hook, &budget).await;
+                    outcome.pdf = pdf_body.is_some();
+                    Ok(outcome)
+                }
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -2028,6 +2069,24 @@ impl Run {
                 took,
                 result,
             });
+            // The site slot is free now; reading may take a while.
+            if let (Some(body), Some(pool)) = (pdf_body, pool) {
+                let read = if body.over_limit {
+                    pdf::pool::Read {
+                        facts: PdfFacts::over_size_limit(pdf_max.unwrap_or_default()),
+                        text: None,
+                    }
+                } else {
+                    pool.read(pool.hold(body.bytes)).await
+                };
+                let _ = tx.send(Msg::Pdf {
+                    id,
+                    url: page_url,
+                    depth,
+                    internal,
+                    read,
+                });
+            }
         });
 
         if !check_only {
@@ -2351,7 +2410,20 @@ impl Run {
             } => {
                 self.in_flight -= 1;
                 self.finished += 1;
+                if matches!(&result, Ok(o) if o.pdf) {
+                    self.pdf_pending += 1;
+                }
                 self.on_result(entry, internal, robots_rule, took, result)
+            }
+            Msg::Pdf {
+                id,
+                url,
+                depth,
+                internal,
+                read,
+            } => {
+                self.pdf_pending -= 1;
+                self.on_pdf(id, &url, depth, internal, read)
             }
             Msg::SitemapFile(read) => self.on_sitemap(*read),
             Msg::SitemapsFinished => {
@@ -2796,7 +2868,13 @@ impl Run {
                     )?;
                     self.redirect_over_limit = false;
                 } else {
-                    response.resource_type = Some(if o.page.is_some() { "html" } else { "other" });
+                    response.resource_type = Some(if o.page.is_some() {
+                        "html"
+                    } else if o.pdf {
+                        "pdf"
+                    } else {
+                        "other"
+                    });
                 }
 
                 let data = o.page.as_ref().and_then(|p| p.data.as_ref().ok());
@@ -2809,6 +2887,9 @@ impl Run {
                 let (noindex, page_nofollow) = page_flags(&all_dirs, &self.opts.robots_token);
                 response.noindex = Some(noindex);
                 response.nofollow = Some(page_nofollow);
+                if o.pdf && page_nofollow {
+                    self.pdf_nofollow.insert(entry.id);
+                }
                 if let Some(t) = data.and_then(PageData::title).filter(|t| !t.is_empty()) {
                     response.title = Some(t.to_string());
                 }
@@ -2910,6 +2991,62 @@ impl Run {
                 None => 0,
             };
             store.record_directives(entry.id, &o.header_facts.directives, meta_count)?;
+        }
+        Ok(())
+    }
+
+    /// Records what was read from a PDF and its link annotations (FR-C03).
+    /// Links are followed only from internal PDFs, and only when the crawl
+    /// follows PDF links; otherwise they are stored as not followed.
+    fn on_pdf(
+        &mut self,
+        id: i64,
+        url: &str,
+        depth: u32,
+        internal: bool,
+        read: pdf::pool::Read,
+    ) -> Result<(), CrawlError> {
+        let facts = read.facts;
+        self.c
+            .store
+            .record_pdf(id, &facts, read.text.as_ref().map(|(b, n)| (b.as_slice(), *n)))?;
+        let page_nofollow = self.pdf_nofollow.remove(&id);
+        if !internal {
+            return Ok(());
+        }
+        let base = Url::parse(url).expect("stored URLs parse");
+        let follow = self.c.config.extraction.pdf.follow_links;
+        for link in &facts.links {
+            let r = Ref::new(LinkKind::Anchor, &link.uri, RefSource::Pdf);
+            let parsed = self.c.rules.normalize(&base, &link.uri);
+            if follow {
+                self.discover(
+                    Some(id),
+                    &link.uri,
+                    LinkKind::Anchor,
+                    parsed,
+                    depth + 1,
+                    page_nofollow.then_some(Nofollow::Page),
+                    false,
+                    false,
+                    Some((link.page, &r)),
+                )?;
+            } else {
+                let target = parsed.as_ref().ok().map(Url::to_string);
+                self.c.store.add_link(&NewLink {
+                    from: id,
+                    to: None,
+                    raw: &link.uri,
+                    kind: LinkKind::Anchor,
+                    nofollow: false,
+                    page_nofollow,
+                    followed: false,
+                    pos: Some(link.page),
+                    target: target.as_deref().or(Some(&link.uri)),
+                    skip_reason: Some("pdf_links_not_followed"),
+                    context: Some(&r),
+                })?;
+            }
         }
         Ok(())
     }

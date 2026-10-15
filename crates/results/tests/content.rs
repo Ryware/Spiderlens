@@ -397,10 +397,11 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     assert!(cell(&mut r, &c, "internal", "/", "response_time").is_i64());
 
     // Every filter is available, and its count equals the rows it lists.
-    // The AI checks (spec 015) run after the crawl and have their own tests.
+    // The AI checks (spec 015) run after the crawl and have their own tests;
+    // this crawl does not read PDFs (spec 027 part C has its own test).
     for tab in tabs() {
         let counts = r.counts(&tab.id, UrlScope::All).unwrap();
-        for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks) {
+        for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks && f.need != Need::Pdf) {
             // Integration data is fetched after a crawl (spec 024), not by it.
             if f.need == Need::SearchConsole {
                 assert!(counts.counts[f.id.as_ref()].is_none());

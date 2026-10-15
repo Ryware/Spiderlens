@@ -233,5 +233,25 @@ test("store_html_setting_reaches_the_crawl", async () => {
   await waitFor(() => expect(start().disabled).toBe(false));
   fireEvent.click(start());
   await waitFor(() => expect(t.crawls.started).toHaveLength(1));
-  expect(t.crawls.started[0].config.extraction).toEqual({ store_html: false });
+  expect(t.crawls.started[0].config.extraction.store_html).toBe(false);
+});
+
+// Spec 027 part C: the PDF settings.
+test("pdf_settings_reach_the_crawl", async () => {
+  const t = await setup();
+  await openSettings("Page data");
+  const crawl = screen.getByRole("switch", { name: "Crawl PDFs" });
+  expect(crawl.getAttribute("aria-checked")).toBe("false");
+  // The rest waits for PDFs to be crawled.
+  expect((screen.getByLabelText("PDF size limit (MB)") as HTMLInputElement).disabled).toBe(true);
+  fireEvent.click(crawl);
+  fireEvent.click(screen.getByRole("switch", { name: "Follow links in PDFs" }));
+  fireEvent.change(screen.getByLabelText("PDF size limit (MB)"), { target: { value: "50" } });
+  fireEvent.change(screen.getByLabelText("Time to read one PDF (seconds)"), { target: { value: "10" } });
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.extraction.pdf).toEqual({ crawl: true, follow_links: false, max_mb: 50, time_limit_secs: 10 });
 });

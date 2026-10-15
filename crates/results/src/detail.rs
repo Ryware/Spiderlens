@@ -102,12 +102,53 @@ pub struct UrlDetail {
     pub error_reason: Option<String>,
     /// The result came from "Retry failed URLs" (US5.3).
     pub manual_retry: bool,
+    /// What was read from the document, for a PDF the crawl read.
+    pub pdf: Option<PdfDetail>,
     /// Title and meta description as served, for the search preview (spec
     /// 027 part A). `None` for anything that is not an HTML page.
     pub snippet: Option<Snippet>,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
+}
+
+/// The PDF section of the detail pane (spec 027 FR-C02).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct PdfDetail {
+    /// read, partly_read, encrypted, over_size_limit or failed.
+    pub status: String,
+    pub status_label: String,
+    /// Why something could not be read.
+    pub status_reason: Option<String>,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub subject: Option<String>,
+    pub keywords: Option<String>,
+    pub creator: Option<String>,
+    pub producer: Option<String>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+    pub lang: Option<String>,
+    pub pages: Option<u32>,
+    pub pages_read: Option<u32>,
+    pub words: Option<u32>,
+    pub encrypted: bool,
+    pub tagged: bool,
+    /// Pages read but no text on them: a scan.
+    pub no_text: bool,
+    pub links: u32,
+    pub text_stored: bool,
+}
+
+pub(crate) fn pdf_status_label(status: &str) -> &'static str {
+    match status {
+        "read" => "Read",
+        "partly_read" => "Partly read",
+        "encrypted" => "Password protected",
+        "over_size_limit" => "Over size limit",
+        _ => "Unreadable",
+    }
 }
 
 /// What a search result is built from.
@@ -320,7 +361,46 @@ impl Reader {
         } else {
             (None, None, false)
         };
-        let html_stored = self.features.has(Need::RawHtml)
+        let pdf = if self.features.has(Need::Pdf) {
+            self.conn
+                .query_row(
+                    "SELECT status, status_reason, title, author, subject, keywords, creator, producer, created_at,
+                     modified_at, lang, page_count, pages_read, word_count, encrypted, tagged, no_text, link_count,
+                     text_stored FROM pdfs WHERE url_id = ?1",
+                    [id],
+                    |r| {
+                        let status: String = r.get(0)?;
+                        Ok(PdfDetail {
+                            status_label: pdf_status_label(&status).to_string(),
+                            status,
+                            status_reason: r.get(1)?,
+                            title: r.get(2)?,
+                            author: r.get(3)?,
+                            subject: r.get(4)?,
+                            keywords: r.get(5)?,
+                            creator: r.get(6)?,
+                            producer: r.get(7)?,
+                            created: r.get(8)?,
+                            modified: r.get(9)?,
+                            lang: r.get(10)?,
+                            pages: r.get(11)?,
+                            pages_read: r.get(12)?,
+                            words: r.get(13)?,
+                            encrypted: r.get::<_, Option<bool>>(14)?.unwrap_or(false),
+                            tagged: r.get::<_, Option<bool>>(15)?.unwrap_or(false),
+                            no_text: r.get::<_, Option<bool>>(16)?.unwrap_or(false),
+                            links: r.get::<_, Option<u32>>(17)?.unwrap_or(0),
+                            text_stored: r.get::<_, Option<bool>>(18)?.unwrap_or(false),
+                        })
+                    },
+                )
+                .optional()?
+        } else {
+            None
+        };
+        // A PDF's stored text is not page HTML.
+        let html_stored = pdf.is_none()
+            && self.features.has(Need::RawHtml)
             && self.conn.query_row(
                 "SELECT EXISTS (SELECT 1 FROM bodies WHERE url_id = ?1)",
                 [id],
@@ -390,6 +470,9 @@ impl Reader {
                 unavailable.insert(field.to_string(), need.unavailable_reason().to_string());
             }
         }
+        if !self.features.has(Need::Pdf) && sql::content_kind(content_type.as_deref()) == "pdf" {
+            unavailable.insert("pdf".into(), Need::Pdf.unavailable_reason().to_string());
+        }
         let reason_label = reason.as_deref().and_then(|r| {
             spiderlens_engine::crawl::NotCrawledReason::parse(r).map(|r| r.label().to_string())
         });
@@ -434,6 +517,7 @@ impl Reader {
             attempts,
             error_reason,
             manual_retry,
+            pdf,
             snippet,
             unavailable,
         })

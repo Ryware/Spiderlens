@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { LinkRow } from "../generated/LinkRow";
 import type { ListKind } from "../generated/ListKind";
 import type { UrlDetail } from "../generated/UrlDetail";
+import { fakePdf } from "../testing/fakeResults";
 import { fakeTransport } from "../testing/fakeTransport";
 import { Inspector } from "./Inspector";
 
@@ -347,6 +348,50 @@ test("changing_the_selected_url_loads_its_details", async () => {
   expect((await loaded()).textContent).toBe("https://example.com/page-1");
   rerender(<Inspector transport={t} path={PATH} id={5} />);
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-4"));
+});
+
+// Spec 027 part C: what was read from a PDF.
+test("a_pdf_shows_what_was_read", async () => {
+  const t = withDetail({ content_type: "application/pdf", pdf: fakePdf() });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const section = within(details()).getByRole("heading", { name: "PDF" }).closest("section")!;
+  const s = within(section as HTMLElement);
+  expect(s.getByText("Annual report")).toBeTruthy();
+  expect(s.getByText("Read")).toBeTruthy();
+  expect(s.getByText("12")).toBeTruthy();
+  expect(s.getByText("3,400")).toBeTruthy();
+  expect(s.getByText("Ada")).toBeTruthy();
+});
+
+test("a_partly_read_pdf_says_why_and_how_far", async () => {
+  const t = withDetail({
+    content_type: "application/pdf",
+    pdf: fakePdf({ status: "partly_read", status_label: "Partly read", status_reason: "Time limit reached", title: null, pages_read: 4 }),
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const s = within(within(details()).getByRole("heading", { name: "PDF" }).closest("section") as HTMLElement);
+  expect(s.getByText("Time limit reached")).toBeTruthy();
+  expect(s.getByText("Partly read")).toBeTruthy();
+  expect(s.getByText("Missing")).toBeTruthy();
+  expect(s.getByText("4 of 12 read")).toBeTruthy();
+});
+
+test("a_scanned_pdf_says_it_has_no_text", async () => {
+  const t = withDetail({ content_type: "application/pdf", pdf: fakePdf({ words: 0, no_text: true }) });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).getByText("No text (scanned)")).toBeTruthy();
+});
+
+test("a_pdf_in_a_crawl_that_did_not_read_pdfs_says_so", async () => {
+  const t = withDetail({ content_type: "application/pdf", pdf: null, unavailable: { pdf: "This crawl did not read PDFs. Turn on Crawl PDFs in the crawl settings to read them." } });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).queryByRole("heading", { name: "PDF" })).toBeNull();
+  expect(within(details()).getByText("PDF properties.")).toBeTruthy();
+  expect(within(details()).getByText(/did not read PDFs/)).toBeTruthy();
 });
 
 // --- Link Score (spec 023 FR-008) -------------------------------------------

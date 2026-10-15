@@ -549,6 +549,22 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         );
     }
 
+    // PDFs (spec 027 part C)
+    if !(1..=500).contains(&c.extraction.pdf.max_mb) {
+        i.error(
+            "extraction.pdf.max_mb",
+            "out_of_range",
+            "The PDF size limit must be between 1 and 500 MB.",
+        );
+    }
+    if !(1..=120).contains(&c.extraction.pdf.time_limit_secs) {
+        i.error(
+            "extraction.pdf.time_limit_secs",
+            "out_of_range",
+            "The PDF time limit must be between 1 and 120 seconds.",
+        );
+    }
+
     // Retry
     if !(1..=10).contains(&c.retry.attempts) {
         i.error(

@@ -6,6 +6,7 @@ import type { ColumnDef } from "../generated/ColumnDef";
 import type { CookieFilter } from "../generated/CookieFilter";
 import type { CookieRow } from "../generated/CookieRow";
 import type { Need } from "../generated/Need";
+import type { PdfDetail } from "../generated/PdfDetail";
 import type { Segment } from "../generated/Segment";
 import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
@@ -32,9 +33,36 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** What was read, for a PDF (spec 027 part C). */
+  pdf?: PdfDetail;
   /** Meta description, for the search preview. */
   description?: string | null;
 }
+
+/** A PDF's detail with sensible defaults. */
+export const fakePdf = (p: Partial<PdfDetail> = {}): PdfDetail => ({
+  status: "read",
+  status_label: "Read",
+  status_reason: null,
+  title: "Annual report",
+  author: "Ada",
+  subject: null,
+  keywords: null,
+  creator: null,
+  producer: null,
+  created: "2024-03-01T10:00:00",
+  modified: null,
+  lang: "en",
+  pages: 12,
+  pages_read: 12,
+  words: 3400,
+  encrypted: false,
+  tagged: true,
+  no_text: false,
+  links: 3,
+  text_stored: true,
+  ...p,
+});
 
 const col = (id: string, label: string, kind: ColumnDef["kind"], width: number, need: ColumnDef["need"] = "base", default_visible = true): ColumnDef => ({
   id,
@@ -82,6 +110,17 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: false,
   },
+  {
+    id: "pdfs",
+    title: "PDFs",
+    columns: [col("address", "Address", "url", 420), col("pdf_title", "PDF title", "text", 280, "pdf"), col("pdf_pages", "Pages", "int", 80, "pdf"), col("pdf_status", "Read", "text", 140, "pdf")],
+    filters: [
+      { id: "all", label: "All", need: "base" },
+      { id: "missing_title", label: "Missing title", need: "pdf" },
+    ],
+    search_column: "pdf_title",
+    scoped: false,
+  },
 ];
 
 /**
@@ -125,7 +164,7 @@ export function fakeSegmentOf(segments: Segment[], u: FakeUrl): Segment | null {
 /** A made-up Link Score: the start URL is the strongest page. */
 const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
 const cell = (u: FakeUrl, c: string, segments: Segment[] = []) =>
-  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null })[c] ?? null;
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null })[c] ?? null;
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
 export interface FakeCookie extends Omit<CookieRow, "urls"> {
@@ -285,6 +324,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       if (col) us = us.filter((u) => (valueOf(u, col) !== null && valueOf(u, col) !== "") === (kind === "has"));
     }
     if (q.segment !== undefined && q.segment !== null) us = us.filter((u) => (fakeSegmentOf(results.segments, u)?.id ?? 0) === q.segment);
+    if (q.tab === "pdfs") us = us.filter((u) => u.pdf);
+    if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
@@ -402,7 +443,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         final_state: "Crawled",
         status: u.status,
         status_text: u.status === 200 ? "OK" : null,
-        content_type: "text/html",
+        content_type: u.pdf ? "application/pdf" : "text/html",
         depth: u.depth,
         error_class: null,
         error_label: null,
@@ -428,7 +469,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
           ["x-robots-tag", "noarchive"],
         ],
         headings: 2,
-        html_stored: results.features.includes("raw_html") && u.title !== null,
+        html_stored: !u.pdf && results.features.includes("raw_html") && u.title !== null,
+        pdf: u.pdf && results.features.includes("pdf") ? u.pdf : null,
         snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
         link_metrics: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,

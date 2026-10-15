@@ -444,6 +444,31 @@ test("reopening_the_palette_starts_with_an_empty_search", async ({ page }) => {
   }
 });
 
+// Spec 027 part C: PDFs have their own tab, and the details say what was read.
+test("pdfs_tab_lists_pdfs_and_details_show_what_was_read", async ({ page }) => {
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features.push("pdf");
+    s.results.add([
+      { id: 9001, url: "https://example.com/annual-report.pdf", status: 200, title: null, depth: 1, internal: true, pdf: s.fakePdf() },
+      { id: 9002, url: "https://example.com/scan.pdf", status: 200, title: null, depth: 1, internal: true, pdf: s.fakePdf({ title: null, words: 0, no_text: true }) },
+    ]);
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "PDFs" }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("2 URLs");
+  const grid = page.getByRole("grid");
+  await expect(grid.getByRole("row").nth(1)).toContainText("Annual report");
+  await grid.getByRole("row").nth(2).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { name: "PDF", exact: true })).toBeVisible();
+  await expect(details.getByText("No text (scanned)")).toBeVisible();
+  await page.getByRole("button", { name: /Missing title/ }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1 URL");
+});
+
 test("compare_two_crawls_and_open_a_changed_url", async ({ page }) => {
   // Spec 012: setup sheet, progress, overview, a group list and the
   // side-by-side detail, in a real browser.

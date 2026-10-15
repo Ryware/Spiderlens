@@ -12,6 +12,7 @@ mod error;
 pub mod extract;
 mod fetch;
 pub mod net;
+pub mod pdf;
 mod result;
 pub mod robots;
 mod title;

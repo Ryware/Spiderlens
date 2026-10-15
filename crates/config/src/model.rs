@@ -637,13 +637,45 @@ impl Default for RetrySettings {
 #[ts(export)]
 pub struct ExtractionSettings {
     /// Keep each page's raw HTML, compressed, in the crawl file (FR-030,
-    /// FR-031).
+    /// FR-031). PDF text follows the same setting (spec 027 FR-C05).
     pub store_html: bool,
+    /// PDF documents (spec 027 part C).
+    pub pdf: PdfSettings,
 }
 
 impl Default for ExtractionSettings {
     fn default() -> Self {
-        Self { store_html: true }
+        Self {
+            store_html: true,
+            pdf: PdfSettings::default(),
+        }
+    }
+}
+
+/// Reading PDFs (spec 027 FR-C01, FR-C03, FR-C04). Off by default, so the
+/// crawl does exactly what it did before unless asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct PdfSettings {
+    /// Download PDF bodies up to `max_mb` and read them.
+    pub crawl: bool,
+    /// Hand links found in PDFs to discovery (they are stored either way).
+    pub follow_links: bool,
+    /// PDF size limit, separate from the page size limit.
+    pub max_mb: u32,
+    /// Time limit for reading one PDF.
+    pub time_limit_secs: u32,
+}
+
+impl Default for PdfSettings {
+    fn default() -> Self {
+        Self {
+            crawl: false,
+            follow_links: true,
+            max_mb: 20,
+            time_limit_secs: 5,
+        }
     }
 }
 
