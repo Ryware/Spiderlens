@@ -80,19 +80,23 @@ fn dump(path: &Path) -> Value {
     tables.sort();
     let mut out = Map::new();
     for table in tables {
-        // Tables without a rowid are ordered by every column instead.
-        let n = conn
-            .prepare(&format!("SELECT * FROM \"{table}\""))
-            .unwrap()
-            .column_count();
-        let has_rowid = conn.prepare(&format!("SELECT rowid FROM \"{table}\"")).is_ok();
-        let order = if has_rowid {
-            "rowid".to_string()
-        } else {
-            (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
-        };
+        // A WITHOUT ROWID table is ordered by its primary key instead.
         let mut stmt = conn
-            .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY {order}"))
+            .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY rowid"))
+            .or_else(|_| {
+                let key: Vec<String> = conn
+                    .prepare(&format!(
+                        "SELECT name FROM pragma_table_info('{table}') WHERE pk > 0 ORDER BY pk"
+                    ))?
+                    .query_map([], |r| r.get(0))?
+                    .collect::<Result<_, _>>()?;
+                let key = key
+                    .iter()
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conn.prepare(&format!("SELECT * FROM \"{table}\" ORDER BY {key}"))
+            })
             .unwrap();
         let columns = stmt.column_count();
         let rows: Vec<Value> = stmt

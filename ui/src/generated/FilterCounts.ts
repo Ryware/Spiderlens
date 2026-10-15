@@ -8,4 +8,9 @@ counts: Record<string, number | null>,
 /**
  * Why each unavailable filter is unavailable.
  */
-unavailable: Record<string, string>, version: number, };
+unavailable: Record<string, string>, 
+/**
+ * Labels of filters whose threshold is an issue setting, with the value
+ * in force ("Over 70 characters"; spec 009 US4 scenario 1).
+ */
+labels: Record<string, string>, version: number, };

@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 spiderlens-config.workspace = true
+spiderlens-render.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 url.workspace = true
@@ -27,9 +28,19 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+sxd-document.workspace = true
+sxd-xpath.workspace = true
+serde_json_path.workspace = true
+cookie_store.workspace = true
+cookie.workspace = true
 fastrand.workspace = true
+lopdf.workspace = true
+pdf-extract.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 spiderlens-test-fixtures.workspace = true
 

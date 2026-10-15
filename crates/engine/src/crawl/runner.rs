@@ -15,27 +15,44 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, SpeedSettings,
-    StoredCrawlConfig, normalize_url,
+    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
+    normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
 use super::file::{self, LocalError, LockError, WriterLock};
 use super::health::{HostHealth, Transition};
+use super::hosts::{Host, RobotsState};
+use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, SpeedLimit};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
+use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
+use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
-use super::sitemap::{self, MAX_INDEX_DEPTH, Sitemap};
-use super::speed::{Signal, SiteSpeed, parse_retry_after};
+use super::site_files::{self, SiteFileRow};
+use super::sitemap::{self, MAX_INDEX_DEPTH, Root};
+use super::speed::{Cut, Signal, SiteSpeed, parse_retry_after};
+use super::store::custom::{EncodedCustom, Slots, encode_custom};
 use super::store::{
     Counts, CrawlStore, Discovery, HostRow, NewLink, PageRecord, Placement, QueueEntry, QueueKey, Recorded,
-    Response, SitemapRow, StateCounts, StoreError,
+    ConsoleRow, RenderRecord, RenderStatus, RenderedPageRecord, ResourceRow, Response, SitemapEntryRecord, SitemapFileRecord, SitemapRow, StateCounts, StoreError,
 };
 use super::window::QueueWindow;
+use crate::custom::CompiledRules;
+use crate::extract::compare::Origin;
+
+/// A crawl's compiled rules and the stored slot of each.
+struct CustomRun {
+    rules: CompiledRules,
+    slots: Slots,
+}
 use crate::extract::directives::page_flags;
-use crate::extract::{self, ContentRules, Directive, HeaderFacts, PageData, PageInput, Ref, body};
-use crate::fetch::{Once, build_client_with, fetch_once};
+use crate::extract::{self, ContentRules, Directive, HeaderFacts, PageData, PageHook, PageInput, Ref, RefSource, body};
+use crate::fetch::{Once, fetch_once};
+use crate::net::NetSession;
+use crate::pdf::{self, PdfFacts};
 use crate::robots::{self, RobotsFetch, RobotsPolicy, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, ErrorClass, ErrorReason, FinalClass, RequestHeader};
@@ -50,7 +67,7 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
 /// How often the crawl lets the write-ahead log start over.
-const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
+const CATCH_UP_EVERY: Duration = Duration::from_millis(250);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
@@ -60,6 +77,8 @@ const MAX_WINDOW: usize = 64 * 1024;
 /// Network failures in a row, across at least two hosts and with no answer
 /// in between, that mean the local network is down (spec 004 plan D7).
 const NETWORK_DOWN_FAILURES: u32 = 10;
+/// Sites listed in the per-site breakdown (spec 008 FR-029).
+const SITES_SHOWN: usize = 50;
 /// How often free space on the crawl file's drive is checked (spec 006 FR-027).
 const DISK_CHECK_EVERY: Duration = Duration::from_secs(2);
 
@@ -80,7 +99,7 @@ pub enum CrawlError {
     )]
     NeedsUpgrade { from: i64 },
     /// Header values that are never stored must be entered again (FR-034).
-    #[error("enter the secret value of these headers to resume: {}", .0.join(", "))]
+    #[error("enter these secret values to resume: {}", .0.join(", "))]
     NeedsSecrets(Vec<String>),
     /// Read-only file or media: save a copy elsewhere to resume (FR-021).
     #[error("{} cannot be changed here (read-only); save a copy to another folder to resume it", .0.display())]
@@ -88,6 +107,9 @@ pub enum CrawlError {
     /// A disk or write problem paused the crawl; it can be resumed (FR-028).
     #[error("paused: {0}")]
     Local(LocalError),
+    /// Rendering is on and no browser could be started (spec 014 FR-045).
+    #[error("no usable browser for JavaScript rendering: {0}")]
+    Browser(String),
 }
 
 /// What to do with an older crawl file on resume (FR-036).
@@ -104,7 +126,8 @@ pub struct ResumeOptions {
     pub upgrade: Option<Upgrade>,
     /// Speed and URL-limit changes, recorded in the configuration history.
     pub changes: Vec<Change>,
-    /// Header name and value for secrets that were not stored.
+    /// Values for secrets that were not stored, keyed as in
+    /// `CrawlConfig::missing_secrets` (a header name, or `cookie:domain/name`).
     pub secrets: Vec<(String, String)>,
 }
 
@@ -193,6 +216,14 @@ pub struct Progress {
     /// Nothing can be requested because every remaining URL's host is
     /// paused (US4.4).
     pub waiting_for_host: bool,
+    /// What keeps the crawl from going faster, if anything (spec 008
+    /// FR-028).
+    pub limit: Option<SpeedLimit>,
+    /// The sites with work in progress, busiest first, at most
+    /// `SITES_SHOWN` of them (FR-029).
+    pub sites: Vec<SitePace>,
+    /// How many sites have work in progress in all.
+    pub sites_total: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +284,45 @@ pub struct CrawlSummary {
     pub manual_retries: u64,
     /// Why the crawl paused itself (`network`), if it did.
     pub pause_reason: Option<String>,
+    /// Sites that slowed down, asked to wait or paused, one entry per run
+    /// (spec 008 FR-021).
+    pub speed_events: Vec<SpeedNote>,
+    /// Rendering completeness (spec 014 FR-041); absent for raw crawls, so
+    /// their summary is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderSummary>,
+}
+
+/// The browser that rendered a crawl (`meta.renderer`, FR-003).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct RendererInfo {
+    pub name: String,
+    pub version: String,
+    /// `downloaded`, `installed` or `user_path`.
+    pub source: String,
+}
+
+/// The summary's Rendering block (spec 014 data-model.md). The final
+/// states (`rendered`, `timed_out`, `failed`, `not_rendered`) add up to
+/// the pages eligible for rendering.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderSummary {
+    pub by_state: BTreeMap<String, u64>,
+    /// Final reasons of failed and not rendered pages.
+    pub by_reason: BTreeMap<String, u64>,
+    pub avg_render_ms: Option<u64>,
+    pub max_render_ms: Option<u64>,
+    pub js_errors: u64,
+    pub failed_resources: u64,
+    pub blocked_resources: u64,
+    pub renderer: Option<RendererInfo>,
+}
+
+/// What slowed one site down during a run (spec 008 FR-021).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpeedNote {
+    pub host: String,
+    pub summary: String,
 }
 
 impl CrawlSummary {
@@ -333,6 +403,30 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
         pause_reason: store.meta("pause_reason")?.filter(|r| !r.is_empty()),
+        render: match store.render_totals()? {
+            Some(t) => Some(RenderSummary {
+                by_state: t
+                    .by_state
+                    .into_iter()
+                    .map(|(s, n)| (s.as_str().to_string(), n))
+                    .collect(),
+                by_reason: t.by_reason.into_iter().collect(),
+                avg_render_ms: t.avg_render_ms,
+                max_render_ms: t.max_render_ms,
+                js_errors: t.js_errors,
+                failed_resources: t.failed_resources,
+                blocked_resources: t.blocked_resources,
+                renderer: store
+                    .meta("renderer")?
+                    .and_then(|r| serde_json::from_str(&r).ok()),
+            }),
+            None => None,
+        },
+        speed_events: store
+            .speed_summaries()?
+            .into_iter()
+            .map(|(host, summary)| SpeedNote { host, summary })
+            .collect(),
     })
 }
 
@@ -377,6 +471,8 @@ struct Host {
     speed: SiteSpeed,
     /// Circuit breaker (spec 004 plan D6).
     health: HostHealth,
+    /// When it last answered, for "every site is slow at once" (FR-019).
+    last_answer: Instant,
 }
 
 impl Host {
@@ -388,6 +484,7 @@ impl Host {
             delay: None,
             speed: SiteSpeed::new(speed.max_per_host, speed.adaptive),
             health: HostHealth::default(),
+            last_answer: Instant::now(),
         }
     }
 
@@ -401,6 +498,10 @@ impl Host {
         self.health.limit().map_or(usual, |l| l.min(usual))
     }
 }
+
+/// A cut, a requested wait, the allowance after them, and the site's typical
+/// and usual response times.
+type SpeedEvent = (Option<Cut>, Option<Duration>, u32, (Option<f64>, Option<f64>));
 
 /// What a fetch task reports.
 // Page is nearly every message, so boxing it would only add an allocation.
@@ -418,12 +519,162 @@ enum Msg {
         host_key: String,
         fetch: RobotsFetch,
     },
-    SitemapUrls {
-        sitemap: Url,
-        urls: Vec<String>,
-    },
-    SitemapDone(SitemapRow),
+    /// One sitemap file read, with every entry up to the limit (spec 011).
+    SitemapFile(Box<SitemapRead>),
     SitemapsFinished,
+    /// A rendered page's request for a resource (spec 014 plan D4).
+    Net(NetMsg),
+    /// A render task ended (spec 014 plan D2).
+    Rendered(Box<Rendered>),
+    /// A PDF read after its response was reported (spec 027 part C).
+    Pdf {
+        id: i64,
+        url: String,
+        depth: u32,
+        internal: bool,
+        read: pdf::pool::Read,
+    },
+    SiteFile(SiteFileRow),
+    SiteFilesFinished,
+}
+
+/// The per-host AI site files (spec 015 FR-010), fetched after the last page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SiteFiles {
+    NotStarted,
+    Pending,
+    Done,
+}
+
+struct SitemapRead {
+    file: SitemapFileRecord,
+    /// The location of the index that listed it.
+    parent: Option<String>,
+    /// What the entries resolve against: the final URL, or the address a
+    /// local file will have.
+    base: Option<Url>,
+    entries: Vec<sitemap::Entry>,
+}
+
+/// Where a sitemap comes from (spec 011 FR-001, FR-002).
+enum SitemapSource {
+    Url(Url),
+    Local { path: std::path::PathBuf, base: Url },
+}
+
+struct SitemapJob {
+    at: SitemapSource,
+    source: &'static str,
+    parent: Option<String>,
+    level: u32,
+}
+
+impl SitemapSource {
+    fn location(&self) -> String {
+        match self {
+            Self::Url(u) => u.to_string(),
+            Self::Local { path, .. } => format!("file:{}", path.display()),
+        }
+    }
+}
+
+/// Reads one sitemap file. None for a default location that is not there.
+async fn read_sitemap(client: &Client, job: &SitemapJob, optional: bool) -> Option<SitemapRead> {
+    let mut file = SitemapFileRecord {
+        location: job.at.location(),
+        source: job.source,
+        level: job.level,
+        read_at: jiff::Timestamp::now().as_millisecond(),
+        ..Default::default()
+    };
+    let (bytes, base) = match &job.at {
+        SitemapSource::Url(url) => match sitemap::fetch(client, url).await {
+            Ok(f) => {
+                file.http_status = f.status;
+                file.final_url = Some(f.final_url.to_string());
+                file.redirected = f.redirected;
+                (Some(f.bytes), Some(f.final_url))
+            }
+            Err(_) if optional => return None,
+            Err(e) => {
+                file.http_status = e.status;
+                file.final_url = e.final_url.as_ref().map(Url::to_string);
+                file.error_class = Some(e.class.to_string());
+                file.error = Some(e.message);
+                (None, Some(url.clone()))
+            }
+        },
+        SitemapSource::Local { path, base } => {
+            file.base_url = Some(base.to_string());
+            let p = path.clone();
+            let read = tokio::task::spawn_blocking(move || std::fs::read(p))
+                .await
+                .unwrap_or_else(|e| Err(std::io::Error::other(e)));
+            match read {
+                Ok(b) => (Some(b), Some(base.clone())),
+                Err(e) => {
+                    file.error_class = Some("file_unreadable".into());
+                    file.error = Some(format!("could not read {}: {e}", path.display()));
+                    (None, Some(base.clone()))
+                }
+            }
+        }
+    };
+    let mut entries = Vec::new();
+    if let Some(bytes) = bytes {
+        match sitemap::read(&bytes, |e| entries.push(e)) {
+            Ok(facts) => {
+                file.kind = Some(match facts.root {
+                    Root::Urlset => "urlset",
+                    Root::Index => "index",
+                });
+                file.compressed = facts.compressed;
+                file.bytes = facts.bytes;
+                file.entry_count = facts.entries;
+                file.over_limit = facts.over_limit;
+            }
+            Err(e) => {
+                file.error_class = Some(e.class.as_str().to_string());
+                file.error = Some(e.message);
+                file.error_line = e.line;
+                file.entry_count = e.entries;
+                file.bytes = bytes.len() as u64;
+            }
+        }
+    }
+    Some(SitemapRead {
+        file,
+        parent: job.parent.clone(),
+        base,
+        entries,
+    })
+}
+
+/// Queues the files an index lists, up to the depth limit.
+fn expand_index(read: &mut SitemapRead, job: &SitemapJob, todo: &mut Vec<SitemapJob>) {
+    if read.file.kind != Some("index") {
+        return;
+    }
+    if job.level + 1 >= MAX_INDEX_DEPTH {
+        read.file.error_class = Some("too_deep".into());
+        read.file.error = Some(format!(
+            "sitemap index nested deeper than {MAX_INDEX_DEPTH} levels"
+        ));
+        return;
+    }
+    let Some(base) = &read.base else { return };
+    for e in read.entries.iter().rev() {
+        if let Ok(child) = base.join(&e.loc)
+            && matches!(child.scheme(), "http" | "https")
+        {
+            todo.push(SitemapJob {
+                at: SitemapSource::Url(child),
+                source: job.source,
+                parent: Some(read.file.location.clone()),
+                level: job.level + 1,
+            });
+        }
+    }
 }
 
 struct PageOutcome {
@@ -439,24 +690,33 @@ struct PageOutcome {
     body_problem: Option<CheckError>,
     header_facts: HeaderFacts,
     page: Option<Extracted>,
+    /// A PDF body was handed to the reader pool; a `Msg::Pdf` follows.
+    pdf: bool,
 }
 
 /// What the extraction step produced for an HTML body.
 struct Extracted {
     data: Result<PageData, String>,
-    /// Compressed body and its size, when raw HTML is kept.
+    /// Rule results, encoded for the store.
+    custom: Option<EncodedCustom>,
+    /// Compressed body and its size, when raw HTML is stored or the page
+    /// may be rendered.
     html: Option<(Vec<u8>, usize)>,
 }
 
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
+/// `keep_html`: compress the body, to store it or to render it later.
+#[allow(clippy::too_many_arguments)]
 async fn finish_page(
     o: Once,
     url: Url,
     token: String,
-    store_html: bool,
-    rules: Arc<ContentRules>,
+    keep_html: bool,
+    custom: Option<Arc<CustomRun>>,
+    hook: Option<PageHook>,
+    content: Arc<ContentRules>,
     budget: &Semaphore,
 ) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
@@ -471,23 +731,36 @@ async fn finish_page(
                 .expect("the budget is never closed");
             let charset = o.charset.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let data = extract::extract_page_caught(&PageInput {
-                    url: &url,
-                    charset: charset.as_deref(),
-                    body: &bytes,
-                    truncated,
-                    robots_token: &token,
-                    content: Some(&rules),
-                });
-                let html = if store_html {
+                let mut data = extract::extract_page_caught(
+                    &PageInput {
+                        url: &url,
+                        charset: charset.as_deref(),
+                        body: &bytes,
+                        truncated,
+                        robots_token: &token,
+                        // Spec 026: stored once the crawl file has the tables.
+                        keep_text: false,
+                        a11y: false,
+                        hook: hook.as_ref(),
+                        content: Some(&content),
+                    },
+                    custom.as_deref().map(|c| &c.rules),
+                );
+                // Encoded here, so the single writer only inserts.
+                let custom = match (data.as_mut().ok().and_then(|d| d.custom.take()), &custom) {
+                    (Some(out), Some(c)) => encode_custom(&c.slots, &out).ok(),
+                    _ => None,
+                };
+                let html = if keep_html {
                     body::compress(&bytes).ok().map(|packed| (packed, bytes.len()))
                 } else {
                     None
                 };
-                Extracted { data, html }
+                Extracted { data, custom, html }
             });
             Some(job.await.unwrap_or_else(|e| Extracted {
                 data: Err(format!("Page extraction failed: {e}")),
+                custom: None,
                 html: None,
             }))
         }
@@ -504,6 +777,7 @@ async fn finish_page(
         body_problem: o.body_problem,
         header_facts,
         page,
+        pdf: false,
     }
 }
 
@@ -535,9 +809,20 @@ pub struct Crawler {
     start: Option<Url>,
     resolve: Vec<(String, SocketAddr)>,
     retry_base: Duration,
+    /// The browser to render with; found on the machine when not given.
+    browser: Option<spiderlens_render::BrowserInfo>,
+    /// How to start it; through the guard process when not given.
+    render_launch: Option<spiderlens_render::LaunchOptions>,
+    page_hook: Option<PageHook>,
 }
 
 impl Crawler {
+    /// Reads more from every parsed page during this crawl (see
+    /// [`PageHook`]); its facts are stored in `page_facts`.
+    pub fn set_page_hook(&mut self, hook: PageHook) {
+        self.page_hook = Some(hook);
+    }
+
     /// Creates the crawl file and records the seeds. The configuration must
     /// already be validated (spec 002); invalid patterns are refused here too.
     pub fn create(path: &Path, config: CrawlConfig, input: &ModeInput) -> Result<Self, CrawlError> {
@@ -580,14 +865,28 @@ impl Crawler {
             store.set_meta("start_url", s.as_str())?;
         }
         // What readers will find in this file (spec 007 plan D3).
-        store.set_meta(
-            "data_features",
+        let mut features = String::from(if config.extraction.store_html {
+            "extraction,timing,attempts,raw_html,readability,sitemap_entries,agents,near_dup"
+        } else {
+            "extraction,timing,attempts,readability,sitemap_entries,agents,near_dup"
+        });
+        if config.extraction.pdf.crawl {
+            features.push_str(",pdf");
+        }
+        if config.extraction.check_amp {
+            features.push_str(",amp");
+        }
+        store.set_meta("data_features", &features)?;
+        if config.rendering.is_on() {
+            let mut features = vec!["rendering"];
             if config.extraction.store_html {
-                "extraction,timing,attempts,raw_html,near_dup"
-            } else {
-                "extraction,timing,attempts,near_dup"
-            },
-        )?;
+                features.push("rendered_html");
+            }
+            if config.rendering.screenshots {
+                features.push("screenshots");
+            }
+            store.add_data_features(&features)?;
+        }
 
         store.begin()?;
         let source = match config.mode {
@@ -630,6 +929,9 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            browser: None,
+            render_launch: None,
+            page_hook: None,
         })
     }
 
@@ -664,19 +966,7 @@ impl Crawler {
             .and_then(|c| serde_json::from_str(&c).ok())
             .ok_or_else(|| CrawlError::Config("the crawl file has no readable configuration".into()))?;
         // Secrets are never stored (FR-034): the caller supplies them again.
-        let mut missing = Vec::new();
-        for h in &mut stored.config.identity.headers {
-            if h.value.is_secret() && h.value.expose().is_none() {
-                match options
-                    .secrets
-                    .iter()
-                    .find(|(n, _)| n.eq_ignore_ascii_case(&h.name))
-                {
-                    Some((_, v)) => h.value = HeaderValue::secret(v.clone()),
-                    None => missing.push(h.name.clone()),
-                }
-            }
-        }
+        let missing = stored.config.fill_secrets(&options.secrets);
         if !missing.is_empty() {
             return Err(CrawlError::NeedsSecrets(missing));
         }
@@ -749,6 +1039,9 @@ impl Crawler {
             start,
             resolve: Vec::new(),
             retry_base: Duration::from_secs(1),
+            browser: None,
+            render_launch: None,
+            page_hook: None,
         })
     }
 
@@ -759,6 +1052,20 @@ impl Crawler {
     }
 
     /// First wait between robots.txt attempts; doubles each time.
+    /// The browser a rendering crawl uses, instead of looking for one.
+    pub fn with_browser(mut self, browser: spiderlens_render::BrowserInfo) -> Self {
+        self.browser = Some(browser);
+        self
+    }
+
+    /// How a rendering crawl starts its browser. By default through a guard
+    /// process (this executable with `--render-guard`), so the browser is
+    /// closed even if this process is killed (research R12).
+    pub fn with_render_launch(mut self, launch: spiderlens_render::LaunchOptions) -> Self {
+        self.render_launch = Some(launch);
+        self
+    }
+
     pub fn with_retry_base(mut self, base: Duration) -> Self {
         self.retry_base = base;
         self
@@ -796,6 +1103,12 @@ impl Crawler {
         Ok(self)
     }
 
+    /// Stores a key in the crawl file's `meta` table, for callers that add
+    /// their own context, such as the schedule that started a run (spec 021).
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CrawlError> {
+        Ok(self.store.set_meta(key, value)?)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
@@ -813,9 +1126,22 @@ impl Crawler {
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<CrawlSummary, CrawlError> {
         let opts = CheckOptions::from(&self.config);
-        let client = build_client_with(&opts, &self.resolve).map_err(CrawlError::Client)?;
-        let mut run = Run::new(self, opts, client, control, events, commands)?;
-        match run.main_loop().await {
+        let net = NetSession::new(
+            &opts,
+            &self.config.access,
+            self.rules.internal().clone(),
+            &self.resolve,
+        )
+        .map_err(CrawlError::Client)?;
+        let mut run = Run::new(self, opts, net, control, events, commands)?;
+        if run.c.config.rendering.is_on() {
+            run.start_render().await?;
+        }
+        let ended = run.main_loop().await;
+        if let Some(stage) = run.render.take() {
+            stage.close().await;
+        }
+        match ended {
             Ok(()) => {}
             // A write failed: nothing of the open batch reached the file, so
             // no URL is marked crawled without its result (FR-028).
@@ -889,6 +1215,7 @@ struct Run {
     c: Crawler,
     opts: CheckOptions,
     client: Client,
+    net: NetSession,
     headers: Arc<Vec<RequestHeader>>,
     control: watch::Receiver<Control>,
     control_closed: bool,
@@ -899,9 +1226,20 @@ struct Run {
     hosts: HashMap<String, Host>,
     in_flight: u32,
     next_global: Instant,
+    /// Rendered pages' resource requests waiting for a slot (spec 014 D4).
+    permits: Permits,
+    /// A waiting resource holds the global caps: no new page may start.
+    permits_hold_global: bool,
+    /// The render stage; None unless the crawl renders (spec 014 D2).
+    render: Option<RenderStage>,
+    /// `meta.fetch_completed_at` was written in this run.
+    fetch_completed: bool,
     pages_started: u64,
     limit_reached: bool,
     sitemaps_pending: bool,
+    /// Ids of the sitemap files stored so far, by location.
+    sitemap_ids: HashMap<String, i64>,
+    site_files: SiteFiles,
     discovered: u64,
     crawled: u64,
     errors: u64,
@@ -917,6 +1255,14 @@ struct Run {
     extract_budget: Arc<Semaphore>,
     /// Main content settings, parsed once (spec 020 FR-003).
     content_rules: Arc<ContentRules>,
+    /// Reads PDFs when the crawl reads them (spec 027 part C).
+    pdf_pool: Option<pdf::pool::Pool>,
+    /// PDFs whose response is recorded but whose reading is not.
+    pdf_pending: u32,
+    /// PDFs whose X-Robots-Tag says nofollow.
+    pdf_nofollow: std::collections::HashSet<i64>,
+    /// Custom rules and where their results go (spec 013).
+    custom: Option<Arc<CustomRun>>,
     /// Active crawl time of earlier runs of this file.
     active_before_ms: u64,
     last_catch_up: Instant,
@@ -932,6 +1278,18 @@ struct Run {
     window_cap: usize,
     /// Set while a redirect past the hop limit is being recorded.
     redirect_over_limit: bool,
+    /// Set while a reference found only after rendering is discovered: its
+    /// position in the rendered page; its link row goes to `rendered_links`.
+    rendered_rpos: Option<u32>,
+    /// URLs finished per host, earlier runs included (spec 008 FR-029).
+    crawled_by_host: HashMap<String, u64>,
+    /// Speed events per host in this run (FR-021).
+    site_events: HashMap<String, SiteEvents>,
+    /// How busy the loop is: computer or saving as the limit (FR-028).
+    load: LoadMeter,
+    /// Every site is slow at once: requests stay at this many until it
+    /// passes (FR-019).
+    connection_hold: Option<u32>,
     /// A disk problem that is pausing the crawl (spec 006 FR-027).
     local: Option<LocalError>,
     next_disk_check: Instant,
@@ -941,7 +1299,7 @@ impl Run {
     fn new(
         c: Crawler,
         opts: CheckOptions,
-        client: Client,
+        net: NetSession,
         control: watch::Receiver<Control>,
         events: Option<mpsc::UnboundedSender<CrawlEvent>>,
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
@@ -952,6 +1310,7 @@ impl Run {
         c.store.checkpoint_in_background()?;
         c.store.drop_result_indexes()?;
         c.store.requeue_for_resume()?;
+        c.store.requeue_rendering()?;
         c.store.set_meta("status", "running")?;
         // URLs that were waiting for a retry keep their remaining wait
         // (FR-023).
@@ -1002,6 +1361,7 @@ impl Run {
             .find(|(s, _)| *s == UrlState::Crawled)
             .map_or(0, |(_, n)| *n);
         let errors = c.store.page_errors()?;
+        let crawled_by_host = c.store.crawled_by_host()?.into_iter().collect();
         let active_before_ms = c
             .store
             .meta("active_ms")?
@@ -1012,11 +1372,43 @@ impl Run {
         let content_rules =
             ContentRules::new(content.content_selector.as_deref(), &content.exclude_selectors)
                 .unwrap_or_default();
+        let pdf = &c.config.extraction.pdf;
+        let pdf_pool = pdf.crawl.then(|| {
+            pdf::pool::Pool::new(
+                pdf::pool::default_readers(),
+                Duration::from_secs(u64::from(pdf.time_limit_secs)),
+                c.config.extraction.store_html,
+            )
+        });
+        let custom = if c.config.custom.is_empty() && !c.store.has_custom_rules()? {
+            None
+        } else {
+            if !c.config.custom.is_empty() {
+                c.store.sync_custom_rules(&c.config.custom)?;
+            }
+            let (set, slots) = c.store.stored_rule_set()?;
+            match crate::custom::compile(&set) {
+                Ok(None) => None,
+                Ok(Some(rules)) => {
+                    c.store.mark_new_custom_rules_running()?;
+                    Some(Arc::new(CustomRun { rules, slots }))
+                }
+                Err(errors) => {
+                    let joined = errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(CrawlError::Config(format!("custom rules: {joined}")));
+                }
+            }
+        };
         Ok(Self {
             headers: Arc::new(opts.headers.clone()),
             c,
             opts,
-            client,
+            client: net.client().clone(),
+            net,
             control,
             control_closed: false,
             events,
@@ -1026,9 +1418,15 @@ impl Run {
             hosts,
             in_flight: 0,
             next_global: Instant::now(),
+            permits: Permits::default(),
+            permits_hold_global: false,
+            render: None,
+            fetch_completed: false,
             pages_started,
             limit_reached,
             sitemaps_pending: false,
+            sitemap_ids: HashMap::new(),
+            site_files: SiteFiles::NotStarted,
             discovered,
             crawled,
             errors,
@@ -1040,6 +1438,10 @@ impl Run {
             rate_samples: VecDeque::new(),
             extract_budget: Arc::new(Semaphore::new(EXTRACT_BUDGET_KIB)),
             content_rules: Arc::new(content_rules),
+            pdf_pool,
+            pdf_pending: 0,
+            pdf_nofollow: Default::default(),
+            custom,
             active_before_ms,
             last_catch_up: Instant::now(),
             commands,
@@ -1049,6 +1451,11 @@ impl Run {
             net_hosts: HashSet::new(),
             window_cap: WINDOW,
             redirect_over_limit: false,
+            rendered_rpos: None,
+            crawled_by_host,
+            site_events: HashMap::new(),
+            load: LoadMeter::new(now),
+            connection_hold: None,
             local: None,
             next_disk_check: Instant::now(),
         })
@@ -1076,6 +1483,7 @@ impl Run {
     fn progress(&mut self, force: bool) {
         if force || self.last_progress.elapsed() >= PROGRESS_EVERY {
             self.last_progress = Instant::now();
+            self.update_connection_hold(self.last_progress);
             if self.events.is_none() {
                 return;
             }
@@ -1103,6 +1511,8 @@ impl Run {
                     .window
                     .host_heads()
                     .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
+            let load = self.load.load(Instant::now());
+            let (limit, sites, sites_total) = self.pace(urls_per_sec, load);
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -1117,8 +1527,102 @@ impl Run {
                 waiting,
                 paused_hosts,
                 waiting_for_host,
+                limit,
+                sites,
+                sites_total,
             }));
         }
+    }
+
+    /// FR-019: when every answering site gets slow at once, the user's
+    /// connection is the problem. Requests stay where they are and no site
+    /// is cut for slowness until it passes.
+    fn update_connection_hold(&mut self, now: Instant) {
+        let slow = pace::connection_slow(self.hosts.values().map(|h| (&h.speed, h.last_answer)), now);
+        if slow == self.connection_hold.is_some() {
+            return;
+        }
+        self.connection_hold = slow.then_some(self.in_flight.max(1));
+        for h in self.hosts.values_mut() {
+            h.speed.set_hold(slow);
+        }
+    }
+
+    fn site_view<'a>(&'a self, key: &'a str, h: &'a Host, waiting: u64) -> SiteView<'a> {
+        use super::health::HealthState;
+        let now = Instant::now();
+        let paused = match h.health.state() {
+            HealthState::Paused { until } => {
+                Some(until.saturating_duration_since(now).as_secs_f64().ceil() as u64)
+            }
+            HealthState::Probing { .. } => Some(0),
+            HealthState::Active | HealthState::GivenUp => None,
+        };
+        SiteView {
+            host: key,
+            speed: &h.speed,
+            in_flight: h.in_flight,
+            limit: h.limit(),
+            delay: h.delay,
+            next_start: h.next_start,
+            paused,
+            crawled: self.crawled_by_host.get(key).copied().unwrap_or(0),
+            waiting,
+            robots_pending: !matches!(h.robots, RobotsState::Known(..)),
+        }
+    }
+
+    /// What limits the crawl (FR-028) and the per-site breakdown (FR-029).
+    fn pace(&self, urls_per_sec: f64, load: pace::Load) -> (Option<SpeedLimit>, Vec<SitePace>, u32) {
+        let now = Instant::now();
+        let mut waiting: HashMap<&str, u64> = self.window.host_counts().map(|(h, n)| (h, n as u64)).collect();
+        for (key, h) in &self.hosts {
+            if h.in_flight > 0 {
+                waiting.entry(key.as_str()).or_insert(0);
+            }
+        }
+        let more = !self.window.holds_everything();
+        let mut sites: Vec<SitePace> = Vec::with_capacity(waiting.len());
+        // The site holding up the most queued URLs, when no site with queued
+        // URLs can start a request now.
+        let mut blocking: Option<(&str, &Host, u64)> = None;
+        let mut any_can_start = false;
+        for (&key, &n) in &waiting {
+            let Some(h) = self.hosts.get(key) else {
+                // robots.txt not asked for yet: about to start.
+                any_can_start |= n > 0;
+                continue;
+            };
+            sites.push(pace::site_pace(&self.site_view(key, h, n), now, more && n > 0));
+            if n == 0 {
+                continue;
+            }
+            let ready = matches!(h.robots, RobotsState::Known(..));
+            if !ready || (h.in_flight < h.limit() && h.next_start <= now) {
+                any_can_start = true;
+            } else if blocking.is_none_or(|(_, _, m)| n > m) {
+                blocking = Some((key, h, n));
+            }
+        }
+        let total = sites.len() as u32;
+        sites.sort_by(|a, b| {
+            (b.in_flight as u64 + b.waiting)
+                .cmp(&(a.in_flight as u64 + a.waiting))
+                .then_with(|| a.host.cmp(&b.host))
+        });
+        sites.truncate(SITES_SHOWN);
+        let crawl = CrawlView {
+            in_flight: self.in_flight,
+            max_concurrent: self.c.config.speed.max_concurrent,
+            max_urls_per_sec: self.c.config.speed.max_urls_per_sec,
+            urls_per_sec,
+            connection_slow: self.connection_hold.is_some(),
+            load,
+        };
+        let blocking = blocking
+            .filter(|_| !any_can_start)
+            .map(|(key, h, n)| self.site_view(key, h, n));
+        (pace::crawl_limit(&crawl, blocking.as_ref(), now), sites, total)
     }
 
     fn paused_hosts(&self) -> Vec<PausedHost> {
@@ -1253,6 +1757,10 @@ impl Run {
                     }
                     Change::Retry(r) => self.c.config.retry = *r,
                     Change::MaxUrls(m) => self.c.config.limits.max_urls = *m,
+                    // Rendering settings take effect when a finished or
+                    // stopped crawl is resumed with them (spec 014 T008);
+                    // the render stage of a running crawl is fixed at start.
+                    Change::Rendering(_) => return Ok(()),
                 }
                 self.c.stored.record(jiff::Timestamp::now(), change);
                 self.c.store.set_meta(
@@ -1317,11 +1825,12 @@ impl Run {
                 .set_meta("active_ms", &self.active_ms().to_string())?;
         }
         if self.write_tx.take().is_some() {
+            let t = Instant::now();
             self.c.store.commit()?;
-            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
-                self.c.store.catch_up_checkpoint();
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY && self.c.store.catch_up_checkpoint() {
                 self.last_catch_up = Instant::now();
             }
+            self.load.saving(t.elapsed());
         }
         Ok(())
     }
@@ -1342,17 +1851,30 @@ impl Run {
             self.open_tx()?;
             self.check_disk();
             let running = self.state() == Control::Run;
+            // Resources of pages already rendering go first, paused or not:
+            // the render that waits for them holds a slot already.
+            let permit_wake = self.serve_permits()?;
             let mut wake = if running {
                 self.requeue_due_retries()?;
-                self.dispatch()?
+                let wake = self.dispatch()?;
+                if self.render.is_some() {
+                    self.dispatch_renders()?;
+                }
+                wake
             } else {
                 None
             };
+            if let Some(t) = permit_wake {
+                wake = Some(wake.map_or(t, |w| w.min(t)));
+            }
             if running && let Some(Reverse((due, _))) = self.retries.peek() {
                 wake = Some(wake.map_or(*due, |w| w.min(*due)));
             }
             self.progress(false);
-            if self.in_flight == 0 {
+            if self.in_flight == 0 && !self.fetch_completed && self.render.is_some() {
+                self.note_fetch_completed()?;
+            }
+            if self.in_flight == 0 && self.pdf_pending == 0 && self.render.as_ref().is_none_or(|r| r.open == 0) {
                 match self.state() {
                     Control::Pause => {
                         let reason = self.local.as_ref().map_or("user", |l| l.kind.as_str());
@@ -1368,6 +1890,9 @@ impl Run {
                         break;
                     }
                     Control::Stop => {
+                        if self.render.is_some() {
+                            self.c.store.stop_renders()?;
+                        }
                         self.c.store.stop_queue()?;
                         self.c.store.set_meta("status", "stopped")?;
                         self.c.store.record_event("stopped", None)?;
@@ -1375,19 +1900,29 @@ impl Run {
                     }
                     Control::Run => {
                         self.window.refill(&self.c.store)?;
-                        if self.window.is_empty()
+                        let fetch_done = self.window.is_empty()
                             && self.window.holds_everything()
                             && !self.sitemaps_pending
-                            && self.retries.is_empty()
-                        {
-                            self.c.store.set_meta("status", "completed")?;
-                            self.c
-                                .store
-                                .conn()
-                                .execute("DELETE FROM meta WHERE key = 'recovered'", [])
-                                .map_err(StoreError::from)?;
-                            self.c.store.record_event("completed", None)?;
-                            break;
+                            && self.retries.is_empty();
+                        let rendering = match &mut self.render {
+                            Some(r) if fetch_done => r.busy(&self.c.store)?,
+                            _ => false,
+                        };
+                        if fetch_done && !rendering {
+                            match self.site_files {
+                                SiteFiles::NotStarted => self.start_site_files()?,
+                                SiteFiles::Pending => {}
+                                SiteFiles::Done => {
+                                    self.c.store.set_meta("status", "completed")?;
+                                    self.c
+                                        .store
+                                        .conn()
+                                        .execute("DELETE FROM meta WHERE key = 'recovered'", [])
+                                        .map_err(StoreError::from)?;
+                                    self.c.store.record_event("completed", None)?;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1411,18 +1946,23 @@ impl Run {
                     None => std::future::pending().await,
                 }
             };
+            // Time spent waiting here is time the loop was not the limit.
+            let waiting_since = Instant::now();
             tokio::select! {
                 Some(cmd) = command => {
+                    self.load.idle(waiting_since.elapsed());
                     self.handle_command(cmd)?;
                 }
                 Some(msg) = self.rx.recv() => {
+                    self.load.idle(waiting_since.elapsed());
                     self.handle(msg)?;
                     if let Some((_, writes)) = &mut self.write_tx {
                         *writes += 1;
                     }
                 }
-                () = sleep => {}
+                () = sleep => self.load.idle(waiting_since.elapsed()),
                 r = self.control.changed(), if !self.control_closed => {
+                    self.load.idle(waiting_since.elapsed());
                     if r.is_err() {
                         self.control_closed = true;
                     }
@@ -1430,8 +1970,10 @@ impl Run {
             }
             self.commit_if_due()?;
         }
+        self.record_speed_summaries()?;
         self.commit()?;
         self.c.store.build_result_indexes()?;
+        self.c.store.link_sitemap_refs()?;
         #[cfg(debug_assertions)]
         {
             let mut counted = StateCounts::default();
@@ -1445,6 +1987,19 @@ impl Run {
                 }
             }
             debug_assert_eq!(self.c.store.live_counts(), counted, "live counts match the file");
+            // SC-008: a finished crawl leaves no render waiting or running.
+            let status = self.c.store.meta("status")?;
+            if matches!(status.as_deref(), Some("completed" | "stopped")) {
+                let left = self
+                    .c
+                    .store
+                    .render_counts()?
+                    .into_iter()
+                    .filter(|(s, _)| matches!(s, RenderStatus::Queued | RenderStatus::Rendering))
+                    .map(|(_, n)| n)
+                    .sum::<u64>();
+                debug_assert_eq!(left, 0, "no render left queued or rendering");
+            }
         }
         self.progress(true);
         Ok(())
@@ -1480,10 +2035,10 @@ impl Run {
             *wake = Some(wake.map_or(t, |w| w.min(t)));
         };
         let speed = self.c.config.speed;
-        let max_concurrent = speed.max_concurrent;
+        let max_concurrent = speed.max_concurrent.min(self.connection_hold.unwrap_or(u32::MAX));
         let robots_mode = self.c.config.robots.mode;
         loop {
-            if self.in_flight >= max_concurrent {
+            if self.in_flight >= max_concurrent || self.permits_hold_global {
                 break;
             }
             self.window.refill(&self.c.store)?;
@@ -1501,22 +2056,7 @@ impl Run {
                 }
             }
             for key in need_robots {
-                if robots_mode == RobotsMode::Ignore {
-                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
-                    host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
-                    self.c.store.upsert_host(&HostRow {
-                        host_key: key,
-                        robots_status: "ignored".into(),
-                        robots_http_status: None,
-                        robots_error: None,
-                        crawl_delay_ms: None,
-                        robots_txt: None,
-                    })?;
-                } else if self.in_flight < max_concurrent {
-                    let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
-                    host.robots = RobotsState::Fetching;
-                    self.spawn_robots(key);
-                }
+                self.ensure_robots(key)?;
             }
 
             // Hosts given up by the circuit breaker: their URLs end as "Host
@@ -1611,6 +2151,437 @@ impl Run {
         Ok(wake)
     }
 
+    /// Reads robots.txt of a host seen for the first time, or marks it
+    /// ignored, when a global slot is free for it.
+    fn ensure_robots(&mut self, key: String) -> Result<(), CrawlError> {
+        let speed = self.c.config.speed;
+        if self.c.config.robots.mode == RobotsMode::Ignore {
+            let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+            host.robots = RobotsState::Known(Arc::new(RobotsPolicy::allow_all()), None);
+            self.c.store.upsert_host(&HostRow {
+                host_key: key,
+                robots_status: "ignored".into(),
+                robots_http_status: None,
+                robots_error: None,
+                crawl_delay_ms: None,
+                robots_txt: None,
+            })?;
+        } else if self.in_flight < speed.max_concurrent {
+            let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
+            host.robots = RobotsState::Fetching;
+            self.spawn_robots(key);
+        }
+        Ok(())
+    }
+
+    /// Grants every waiting resource permit that may go now (spec 014 D4).
+    /// Returns when to look again if one waits on time.
+    fn serve_permits(&mut self) -> Result<Option<Instant>, CrawlError> {
+        if self.permits.waiting() == 0 {
+            self.permits_hold_global = false;
+            return Ok(None);
+        }
+        let speed = self.c.config.speed;
+        let mut slots = HostSlots {
+            hosts: &mut self.hosts,
+            in_flight: &mut self.in_flight,
+            next_global: &mut self.next_global,
+            max_concurrent: speed.max_concurrent,
+            rate: speed.max_urls_per_sec,
+        };
+        let served = self
+            .permits
+            .serve(&mut slots, self.c.config.robots.mode, Instant::now());
+        self.permits_hold_global = served.waiting_on_global;
+        let mut wake = served.wake;
+        if !served.need_robots.is_empty() {
+            for key in served.need_robots {
+                self.ensure_robots(key)?;
+            }
+            // Hosts marked ignored can be served at once.
+            if self.c.config.robots.mode == RobotsMode::Ignore {
+                wake = Some(Instant::now());
+            }
+        }
+        Ok(wake)
+    }
+
+    /// Finds and launches the browser and records it in the file (spec 014
+    /// D1, D12). Only called when the crawl renders.
+    async fn start_render(&mut self) -> Result<(), CrawlError> {
+        use spiderlens_render::{BrowserSource, FindOptions, GuardCommand, LaunchOptions};
+        let info = match self.c.browser.clone() {
+            Some(b) => b,
+            None => {
+                let data_dir = spiderlens_render::data_dir().unwrap_or_else(std::env::temp_dir);
+                spiderlens_render::find_browser(&FindOptions {
+                    user_path: None,
+                    data_dir,
+                })
+                .map_err(|e| CrawlError::Browser(format!("{e:?}")))?
+            }
+        };
+        let launch = self.c.render_launch.clone().unwrap_or_else(|| LaunchOptions {
+            guard: GuardCommand::current_exe().ok(),
+            ..LaunchOptions::default()
+        });
+        let tx = self.tx.clone();
+        let net = Arc::new(NetShared {
+            client: self.client.clone(),
+            headers: self.headers.clone(),
+            max_body: self.opts.max_body_bytes,
+            cache: std::sync::Mutex::new(ResourceCache::new(DEFAULT_CAPACITY)),
+            send: Box::new(move |m| tx.send(Msg::Net(m)).is_ok()),
+        });
+        let rules = self.c.rules.clone();
+        let internal: spiderlens_render::InternalHosts = Arc::new(move |u: &Url| rules.is_internal(u));
+        let stage = RenderStage::start(
+            &self.c.config,
+            self.opts.user_agent.clone(),
+            &info,
+            launch,
+            net,
+            internal,
+        )
+        .await
+        .map_err(|e| CrawlError::Browser(format!("{e:?}")))?;
+        let source = match info.source {
+            BrowserSource::Downloaded => "downloaded",
+            BrowserSource::Installed => "installed",
+            BrowserSource::UserPath => "user_path",
+        };
+        // No file path: the file may be shared (data-model.md).
+        let renderer = serde_json::json!({
+            "name": info.name.label(),
+            "version": info.version,
+            "source": source,
+        });
+        self.c.store.set_renderer(&renderer.to_string())?;
+        self.render = Some(stage);
+        Ok(())
+    }
+
+    /// Records when the fetch stage finished while renders go on
+    /// (`meta.fetch_completed_at`, plan D2).
+    fn note_fetch_completed(&mut self) -> Result<(), CrawlError> {
+        self.window.refill(&self.c.store)?;
+        if !(self.window.is_empty()
+            && self.window.holds_everything()
+            && !self.sitemaps_pending
+            && self.retries.is_empty())
+        {
+            return Ok(());
+        }
+        if let Some(r) = &mut self.render
+            && r.busy(&self.c.store)?
+        {
+            // The press is done; the bindery goes on (plan D2).
+            self.fetch_completed = true;
+            self.c
+                .store
+                .set_meta("fetch_completed_at", &now_ms().to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Starts queued renders up to the stage's limit (spec 014 D2).
+    fn dispatch_renders(&mut self) -> Result<(), CrawlError> {
+        let Some(stage) = &mut self.render else {
+            return Ok(());
+        };
+        stage.restart_if_needed();
+        let store = &self.c.store;
+        while stage.open < stage.limit {
+            let Some(mut e) = stage.next(store)? else { break };
+            if !store.mark_rendering(e.url_id)? {
+                continue;
+            }
+            e.attempts += 1;
+            let (Some((status, headers)), Some(raw)) =
+                (store.render_main(e.url_id)?, store.render_input(e.url_id)?)
+            else {
+                store.skip_render(e.url_id, "html_not_stored", None)?;
+                continue;
+            };
+            let tx = self.tx.clone();
+            stage.spawn(
+                e,
+                status,
+                headers,
+                raw,
+                self.opts.robots_token.clone(),
+                self.c.config.extraction.store_html,
+                self.extract_budget.clone(),
+                move |r| {
+                    let _ = tx.send(Msg::Rendered(Box::new(r)));
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Records the result of one render, or queues it again once after a
+    /// crash (FR-042). References found only after rendering, and a script
+    /// navigation, are discovered like raw ones (FR-013, FR-022). Raw rows
+    /// are never updated (FR-020).
+    fn on_rendered(&mut self, mut r: Rendered) -> Result<(), CrawlError> {
+        use spiderlens_render::{ConsoleLevel, FailReason, FailedReason, RenderState};
+        let Some(stage) = &mut self.render else {
+            return Ok(());
+        };
+        stage.open -= 1;
+        let id = r.entry.url_id;
+        if let RenderState::Failed { retryable: true, .. } = r.outcome.state
+            && r.entry.attempts < MAX_ATTEMPTS
+        {
+            self.c.store.requeue_render(id)?;
+            stage.retry(r.entry);
+            return Ok(());
+        }
+        let o = &r.outcome;
+        let (status, reason) = match o.state {
+            RenderState::Rendered => (RenderStatus::Rendered, None),
+            RenderState::TimedOut => (RenderStatus::TimedOut, None),
+            RenderState::Failed { reason, .. } => (
+                RenderStatus::Failed,
+                Some(match reason {
+                    FailedReason::Crash => "crash",
+                    FailedReason::RendererError => "renderer_error",
+                    FailedReason::PageTooLarge => "page_too_large",
+                    FailedReason::NavigationError => "navigation_error",
+                }),
+            ),
+        };
+
+        // Each resource's outcome: what the browser saw, plus what only the
+        // engine knows (cache, robots.txt, error class).
+        let mut notes: VecDeque<(Url, Note)> = std::mem::take(&mut r.notes).into();
+        let mut take_note = |url: &Url| {
+            let i = notes.iter().position(|(u, _)| u == url)?;
+            notes.remove(i).map(|(_, n)| n)
+        };
+        struct Res {
+            url: String,
+            kind: String,
+            host: String,
+            third_party: bool,
+            outcome: &'static str,
+            status: Option<u16>,
+            error: Option<String>,
+            robots_rule: Option<String>,
+            bytes: u64,
+        }
+        let (mut failed, mut blocked) = (0u32, 0u32);
+        let res: Vec<Res> = o
+            .resources
+            .iter()
+            .map(|x| {
+                let note = take_note(&x.url);
+                let (outcome, error, robots_rule) = match (&note, x.failed) {
+                    (Some(Note::BlockedByRobots(rule)), _) => ("blocked_robots", None, Some(rule.clone())),
+                    (Some(Note::Cached), None) => ("cached", None, None),
+                    (Some(Note::RobotsIgnored(rule)), None) => ("loaded", None, Some(rule.clone())),
+                    (_, None) => ("loaded", None, None),
+                    (Some(Note::Error(class)), Some(_)) => ("failed", Some(class.clone()), None),
+                    (_, Some(FailReason::BlockedByClient)) => ("blocked_setting", None, None),
+                    (_, Some(f)) => ("failed", Some(format!("{f:?}")), None),
+                };
+                match outcome {
+                    "failed" => failed += 1,
+                    "blocked_setting" | "blocked_robots" => blocked += 1,
+                    _ => {}
+                }
+                Res {
+                    url: x.url.to_string(),
+                    kind: format!("{:?}", x.kind).to_ascii_lowercase(),
+                    host: host_key(&x.url),
+                    third_party: x.third_party,
+                    outcome,
+                    status: x.status,
+                    error,
+                    robots_rule,
+                    bytes: x.bytes,
+                }
+            })
+            .collect();
+        let resources: Vec<ResourceRow> = res
+            .iter()
+            .map(|x| ResourceRow {
+                url: &x.url,
+                kind: &x.kind,
+                host: &x.host,
+                third_party: x.third_party,
+                outcome: x.outcome,
+                status: x.status,
+                error: x.error.as_deref(),
+                robots_rule: x.robots_rule.as_deref(),
+                bytes: x.bytes,
+            })
+            .collect();
+        let console: Vec<ConsoleRow> = o
+            .console
+            .iter()
+            .map(|c| ConsoleRow {
+                level: match c.level {
+                    ConsoleLevel::Error => "error",
+                    ConsoleLevel::Warning => "warning",
+                    ConsoleLevel::Exception => "exception",
+                },
+                message: &c.message,
+                source: c.source.as_ref().map(|(u, l, col)| (u.as_str(), *l, *col)),
+            })
+            .collect();
+
+        // Rendered meta directives with the header ones, which are the same
+        // for both versions (FR-019).
+        let rendered = r.rendered.as_ref().and_then(|d| d.as_ref().ok());
+        let page_url = Url::parse(&r.entry.url).expect("stored URLs parse");
+        let (noindex, nofollow, canonicals) = match rendered {
+            Some(d) => {
+                let dirs: Vec<Directive> = d
+                    .directives
+                    .iter()
+                    .chain(&r.header_facts.directives)
+                    .cloned()
+                    .collect();
+                let (noindex, nofollow) = page_flags(&dirs, &self.opts.robots_token);
+                let canonicals: Vec<String> = d
+                    .refs
+                    .iter()
+                    .map(|x| (x, &d.base))
+                    .chain(r.header_facts.refs.iter().map(|x| (x, &page_url)))
+                    .filter(|(x, _)| x.kind == LinkKind::Canonical)
+                    .filter_map(|(x, b)| b.join(x.raw.trim()).ok())
+                    .map(|mut u| {
+                        u.set_fragment(None);
+                        u.to_string()
+                    })
+                    .collect();
+                (noindex, nofollow, canonicals)
+            }
+            None => (false, false, Vec::new()),
+        };
+        let mut distinct = canonicals.clone();
+        distinct.sort();
+        distinct.dedup();
+        let raw_only_links: Vec<u32> = r
+            .comparison
+            .as_ref()
+            .map(|c| c.origins.refs.raw_only.iter().map(|&i| i as u32).collect())
+            .unwrap_or_default();
+        let page = r.rendered.as_ref().map(|d| RenderedPageRecord {
+            data: d.as_ref().ok(),
+            extract_error: d.as_ref().err().map(String::as_str),
+            raw: r.raw.as_ref(),
+            comparison: r.comparison.as_ref(),
+            noindex,
+            nofollow,
+            canonical: canonicals.first().map(String::as_str),
+            canonical_count: canonicals.len() as u32,
+            canonical_conflict: distinct.len() > 1,
+            html: r.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+            raw_only_links: &raw_only_links,
+        });
+        let js_redirect_id = self.discover_rendered(&r, &page_url, nofollow)?;
+        let o = &r.outcome;
+        let js_redirect = o.js_redirect.as_ref().map(Url::as_str);
+        self.c.store.record_render(
+            id,
+            &RenderRecord {
+                status,
+                reason,
+                reason_detail: None,
+                render_ms: Some(o.render_ms),
+                window: Some((o.window.width, o.window.height)),
+                js_redirect,
+                js_redirect_id,
+                console_totals: o.console_totals,
+                resources_failed: failed,
+                resources_blocked: blocked,
+                bot_challenge: r.bot_challenge,
+                rendered_at: now_ms(),
+                page,
+                resources: &resources,
+                console: &console,
+                screenshot: o
+                    .screenshot
+                    .as_ref()
+                    .map(|s| (s.webp.as_slice(), s.width, s.height)),
+            },
+        )?;
+        self.finished += 1;
+        Ok(())
+    }
+
+    /// Discovers the references of a rendered page that its raw HTML does
+    /// not have, with the page's depth plus one and the rendered page's own
+    /// nofollow (FR-022), then its script navigation, like a redirect
+    /// (FR-013). Returns the navigation target's row id.
+    fn discover_rendered(
+        &mut self,
+        r: &Rendered,
+        page_url: &Url,
+        page_nofollow: bool,
+    ) -> Result<Option<i64>, CrawlError> {
+        let id = r.entry.url_id;
+        let depth = r.entry.depth + 1;
+        let rendered = r.rendered.as_ref().and_then(|d| d.as_ref().ok());
+        // Rendered-only link rows count on from the page's last raw
+        // position: HTML references, then header ones (as in `on_page`).
+        let mut pos = r.raw.as_ref().map_or(0, |d| d.refs.len()) + r.header_facts.refs.len();
+        if let (Some(d), Some(c)) = (rendered, &r.comparison) {
+            for (rpos, (x, origin)) in d.refs.iter().zip(&c.origins.refs.rendered).enumerate() {
+                if *origin != Origin::Rendered {
+                    continue;
+                }
+                let nofollow = match x.kind {
+                    LinkKind::Anchor if x.nofollow => Some(Nofollow::Link),
+                    LinkKind::Anchor if page_nofollow => Some(Nofollow::Page),
+                    _ => None,
+                };
+                let parsed = self.c.rules.normalize(&d.base, &x.raw);
+                self.rendered_rpos = Some(rpos as u32);
+                let found = self.discover(
+                    Some(id),
+                    &x.raw,
+                    x.kind,
+                    parsed,
+                    depth,
+                    nofollow,
+                    false,
+                    false,
+                    Some((pos as u32, x)),
+                );
+                self.rendered_rpos = None;
+                found?;
+                pos += 1;
+            }
+        }
+        let mut target_id = None;
+        if let Some(target) = &r.outcome.js_redirect {
+            let parsed = self.c.rules.normalize(page_url, target.as_str());
+            self.rendered_rpos = Some(rendered.map_or(0, |d| d.refs.len()) as u32);
+            let found = self.discover(
+                Some(id),
+                target.as_str(),
+                LinkKind::JsRedirect,
+                parsed,
+                depth,
+                None,
+                false,
+                false,
+                None,
+            );
+            self.rendered_rpos = None;
+            target_id = found?;
+        }
+        // New URLs to fetch: the fetch stage is not done after all.
+        if self.fetch_completed && !self.window.is_empty() {
+            self.fetch_completed = false;
+        }
+        Ok(target_id)
+    }
+
     fn block(&mut self, e: QueueEntry, reason: NotCrawledReason, detail: String) -> Result<(), CrawlError> {
         self.window.remove(e.key());
         if e.check_only {
@@ -1652,14 +2623,34 @@ impl Run {
         let check_only = e.check_only;
         let budget = self.extract_budget.clone();
         let store_html = self.c.config.extraction.store_html;
-        let rules = self.content_rules.clone();
+        let pool = self.pdf_pool.clone().filter(|_| !check_only);
+        let pdf_max = pool
+            .as_ref()
+            .map(|_| u64::from(self.c.config.extraction.pdf.max_mb) * 1024 * 1024);
+        // Rules run on the pages spec 005 extracts for the results: internal ones.
+        let rules = self.custom.as_ref().filter(|_| internal).map(Arc::clone);
+        // The hook's facts stand in for stored HTML, so it runs only when the
+        // HTML is kept (a crawl without it has no content checks either).
+        let hook = self.c.page_hook.clone().filter(|_| store_html);
+        // Rendering on: an internal page keeps its body for the render input
+        // (one `Option` check when it is off, plan D2).
+        let keep_html = store_html || (internal && self.render.is_some());
+        let content = self.content_rules.clone();
         tokio::spawn(async move {
             let sent = Instant::now();
-            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body).await;
+            let fetched = fetch_once(&client, &url, &headers, internal, !check_only, max_body, pdf_max).await;
             // Response time ends with the body, before extraction (FR-001).
             let took = sent.elapsed();
+            let (id, depth, page_url) = (e.id, e.depth, url.to_string());
+            let mut pdf_body = None;
             let result = match fetched {
-                Ok(o) => Ok(finish_page(o, url, token, store_html, rules, &budget).await),
+                Ok(mut o) => {
+                    pdf_body = o.pdf.take();
+                    let mut outcome =
+                        finish_page(o, url, token, keep_html, rules, hook, content, &budget).await;
+                    outcome.pdf = pdf_body.is_some();
+                    Ok(outcome)
+                }
                 Err(e) => Err(e),
             };
             let _ = tx.send(Msg::Page {
@@ -1669,6 +2660,24 @@ impl Run {
                 took,
                 result,
             });
+            // The site slot is free now; reading may take a while.
+            if let (Some(body), Some(pool)) = (pdf_body, pool) {
+                let read = if body.over_limit {
+                    pdf::pool::Read {
+                        facts: PdfFacts::over_size_limit(pdf_max.unwrap_or_default()),
+                        text: None,
+                    }
+                } else {
+                    pool.read(pool.hold(body.bytes)).await
+                };
+                let _ = tx.send(Msg::Pdf {
+                    id,
+                    url: page_url,
+                    depth,
+                    internal,
+                    read,
+                });
+            }
         });
 
         if !check_only {
@@ -1752,8 +2761,70 @@ impl Run {
         });
     }
 
+    /// Fetches each internal host's AI site files, one at a time per host
+    /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    fn start_site_files(&mut self) -> Result<(), CrawlError> {
+        if !self.c.config.ai_checks.site_files {
+            self.site_files = SiteFiles::Done;
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        for key in self.c.store.internal_hosts()? {
+            let host = self.hosts.get(&key);
+            let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
+            let policy = match host.map(|h| &h.robots) {
+                Some(RobotsState::Known(p, _)) => Some(p.clone()),
+                _ => None,
+            };
+            // A host the crawl gave up on gets no more requests (spec 004).
+            let given_up = host.is_some_and(|h| h.health.is_given_up());
+            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+                .iter()
+                .map(|path| {
+                    if given_up {
+                        return (
+                            (*path).to_string(),
+                            Some("host unavailable: the crawl gave up on it".to_string()),
+                        );
+                    }
+                    let blocked = policy.as_ref().and_then(|p| {
+                        let url = Url::parse(&format!("{key}{path}")).ok()?;
+                        match p.check(&url) {
+                            RobotsVerdict::Disallowed(rule) => Some(format!("blocked by robots.txt: {rule}")),
+                            _ => None,
+                        }
+                    });
+                    ((*path).to_string(), blocked)
+                })
+                .collect();
+            jobs.push((key, delay, paths));
+        }
+        self.site_files = SiteFiles::Pending;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            for (key, delay, paths) in jobs {
+                for (i, (path, blocked)) in paths.into_iter().enumerate() {
+                    let row = match blocked {
+                        Some(why) => SiteFileRow::skipped(&key, &path, &why),
+                        None => {
+                            if i > 0 && !delay.is_zero() {
+                                tokio::time::sleep(delay).await;
+                            }
+                            site_files::fetch(&client, &key, &path).await
+                        }
+                    };
+                    let _ = tx.send(Msg::SiteFile(row));
+                }
+            }
+            let _ = tx.send(Msg::SiteFilesFinished);
+        });
+        Ok(())
+    }
+
     fn maybe_start_sitemaps(&mut self) -> Result<(), CrawlError> {
-        if !self.c.config.scope.use_sitemaps || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
+        if !self.c.config.scope.sitemaps.read
+            || self.c.store.meta("sitemaps_read")?.as_deref() == Some("true")
         {
             return Ok(());
         }
@@ -1766,64 +2837,155 @@ impl Run {
         else {
             return Ok(());
         };
-        let roots: Vec<Url> = policy
+        let listed: Vec<Url> = policy
             .sitemaps
             .iter()
             .filter_map(|s| Url::parse(s).ok())
             .collect();
+        let settings = &self.c.config.scope.sitemaps;
+        let mut roots: Vec<SitemapJob> = listed
+            .into_iter()
+            .map(|u| SitemapJob {
+                at: SitemapSource::Url(u),
+                source: "robots",
+                parent: None,
+                level: 0,
+            })
+            .collect();
+        // Spec 011 FR-001: robots.txt lists none, so try the usual places.
+        let defaults: Vec<Url> = if roots.is_empty() {
+            ["/sitemap.xml", "/sitemap_index.xml"]
+                .iter()
+                .filter_map(|p| start.join(p).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        roots.extend(
+            settings
+                .urls
+                .iter()
+                .filter_map(|u| Url::parse(u.trim()).ok())
+                .map(|u| SitemapJob {
+                    at: SitemapSource::Url(u),
+                    source: "user",
+                    parent: None,
+                    level: 0,
+                }),
+        );
+        roots.extend(settings.files.iter().filter_map(|f| {
+            Some(SitemapJob {
+                at: SitemapSource::Local {
+                    path: f.path.clone().into(),
+                    base: Url::parse(f.base_url.trim()).ok()?,
+                },
+                source: "local",
+                parent: None,
+                level: 0,
+            })
+        }));
         self.c.store.set_meta("sitemaps_read", "true")?;
-        if roots.is_empty() {
+        if roots.is_empty() && defaults.is_empty() {
             return Ok(());
         }
         self.sitemaps_pending = true;
         let client = self.client.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let mut todo: Vec<(Url, Option<String>, u32)> =
-                roots.into_iter().rev().map(|u| (u, None, 0)).collect();
+            let mut todo: Vec<SitemapJob> = roots.into_iter().rev().collect();
             let mut seen = std::collections::HashSet::new();
-            while let Some((url, parent, level)) = todo.pop() {
-                if !seen.insert(url.clone()) {
+            for url in defaults {
+                let job = SitemapJob {
+                    at: SitemapSource::Url(url),
+                    source: "default",
+                    parent: None,
+                    level: 0,
+                };
+                if let Some(mut read) = read_sitemap(&client, &job, true).await {
+                    seen.insert(job.at.location());
+                    expand_index(&mut read, &job, &mut todo);
+                    let _ = tx.send(Msg::SitemapFile(Box::new(read)));
+                    break;
+                }
+            }
+            while let Some(job) = todo.pop() {
+                if !seen.insert(job.at.location()) {
                     continue;
                 }
-                let mut row = SitemapRow {
-                    url: url.to_string(),
-                    parent,
-                    url_count: 0,
-                    error: None,
+                let Some(mut read) = read_sitemap(&client, &job, false).await else {
+                    continue;
                 };
-                match sitemap::fetch(&client, &url)
-                    .await
-                    .and_then(|b| sitemap::parse(&b))
-                {
-                    Ok(Sitemap::Urls(urls)) => {
-                        row.url_count = urls.len() as i64;
-                        let _ = tx.send(Msg::SitemapUrls {
-                            sitemap: url.clone(),
-                            urls,
-                        });
-                    }
-                    Ok(Sitemap::Index(children)) => {
-                        row.url_count = children.len() as i64;
-                        if level + 1 >= MAX_INDEX_DEPTH {
-                            row.error = Some(format!(
-                                "sitemap index nested deeper than {MAX_INDEX_DEPTH} levels"
-                            ));
-                        } else {
-                            for child in children.iter().rev() {
-                                match url.join(child) {
-                                    Ok(c) => todo.push((c, Some(url.to_string()), level + 1)),
-                                    Err(_) => row.error = Some(format!("invalid sitemap address {child}")),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => row.error = Some(e),
-                }
-                let _ = tx.send(Msg::SitemapDone(row));
+                expand_index(&mut read, &job, &mut todo);
+                let _ = tx.send(Msg::SitemapFile(Box::new(read)));
             }
             let _ = tx.send(Msg::SitemapsFinished);
         });
+        Ok(())
+    }
+
+    /// Stores a sitemap file and its entries; URL entries are discovered as
+    /// before (spec 003) and matched to their `urls` rows (spec 011 FR-006).
+    fn on_sitemap(&mut self, read: SitemapRead) -> Result<(), CrawlError> {
+        let SitemapRead {
+            mut file,
+            parent,
+            base,
+            entries,
+        } = read;
+        file.parent_id = parent.as_ref().and_then(|p| self.sitemap_ids.get(p).copied());
+        if let Some(e) = &file.error {
+            self.warn(format!("Sitemap {} could not be used: {e}", file.location))?;
+        }
+        self.c.store.upsert_sitemap(&SitemapRow {
+            url: file.location.clone(),
+            parent,
+            url_count: entries.len() as i64,
+            error: file.error.clone(),
+        })?;
+        let file_id = self.c.store.insert_sitemap_file(&file)?;
+        self.sitemap_ids.insert(file.location.clone(), file_id);
+        let urls = file.kind != Some("index");
+        let mut image_urls = Vec::new();
+        let mut alternate_urls = Vec::new();
+        for e in &entries {
+            let (url_id, invalid) = match &base {
+                Some(base) if urls => {
+                    let parsed = self.c.rules.normalize(base, &e.loc);
+                    let invalid = match &parsed {
+                        Ok(_) => None,
+                        Err(LinkProblem::SelfReference) => Some("no address".to_string()),
+                        Err(LinkProblem::Malformed { message, .. }) => Some(message.clone()),
+                        Err(LinkProblem::UnsupportedScheme { scheme, .. }) => {
+                            Some(format!("{scheme}: address"))
+                        }
+                        Err(LinkProblem::TooLong { length, .. }) => Some(format!("{length} characters long")),
+                    };
+                    let id =
+                        self.discover(None, &e.loc, LinkKind::Anchor, parsed, 1, None, false, true, None)?;
+                    (id, invalid)
+                }
+                Some(base) => (None, base.join(&e.loc).err().map(|x| x.to_string())),
+                None => (None, None),
+            };
+            image_urls.clear();
+            alternate_urls.clear();
+            if let Some(base) = &base {
+                let norm = |raw: &str| self.c.rules.normalize(base, raw).ok().map(String::from);
+                image_urls.extend(e.images.iter().map(|r| norm(r)));
+                alternate_urls.extend(e.alternates.iter().map(|a| norm(&a.href)));
+            }
+            self.c.store.insert_sitemap_entry(
+                file_id,
+                &SitemapEntryRecord {
+                    entry: e,
+                    kind: if urls { "url" } else { "sitemap" },
+                    url_id,
+                    invalid: invalid.as_deref(),
+                    image_urls: &image_urls,
+                    alternate_urls: &alternate_urls,
+                },
+            )?;
+        }
         Ok(())
     }
 
@@ -1839,23 +3001,52 @@ impl Run {
             } => {
                 self.in_flight -= 1;
                 self.finished += 1;
+                if matches!(&result, Ok(o) if o.pdf) {
+                    self.pdf_pending += 1;
+                }
                 self.on_result(entry, internal, robots_rule, took, result)
             }
-            Msg::SitemapUrls { sitemap, urls } => {
-                for loc in urls {
-                    let parsed = self.c.rules.normalize(&sitemap, &loc);
-                    self.discover(None, &loc, LinkKind::Anchor, parsed, 1, None, false, true, None)?;
-                }
-                Ok(())
+            Msg::Pdf {
+                id,
+                url,
+                depth,
+                internal,
+                read,
+            } => {
+                self.pdf_pending -= 1;
+                self.on_pdf(id, &url, depth, internal, read)
             }
-            Msg::SitemapDone(row) => {
-                if let Some(e) = &row.error {
-                    self.warn(format!("Sitemap {} could not be used: {e}", row.url))?;
-                }
-                Ok(self.c.store.upsert_sitemap(&row)?)
-            }
+            Msg::SitemapFile(read) => self.on_sitemap(*read),
             Msg::SitemapsFinished => {
                 self.sitemaps_pending = false;
+                Ok(())
+            }
+            Msg::Rendered(r) => self.on_rendered(*r),
+            Msg::Net(NetMsg::Permit(r)) => {
+                self.permits.push(r);
+                Ok(())
+            }
+            Msg::Net(NetMsg::Done {
+                host_key,
+                third_party,
+                took,
+                signal,
+            }) => {
+                let speed = self.c.config.speed;
+                let mut slots = HostSlots {
+                    hosts: &mut self.hosts,
+                    in_flight: &mut self.in_flight,
+                    next_global: &mut self.next_global,
+                    max_concurrent: speed.max_concurrent,
+                    rate: speed.max_urls_per_sec,
+                };
+                self.permits
+                    .done(&mut slots, &host_key, third_party, took, signal);
+                Ok(())
+            }
+            Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::SiteFilesFinished => {
+                self.site_files = SiteFiles::Done;
                 Ok(())
             }
         }
@@ -1879,7 +3070,7 @@ impl Run {
         let transient = attempt.is_transient();
         let max_wait = Duration::from_secs_f64(settings.max_wait_secs);
 
-        let host_blocked = match self.hosts.get_mut(&entry.host_key) {
+        let (host_blocked, speed_event) = match self.hosts.get_mut(&entry.host_key) {
             Some(h) => {
                 h.in_flight -= 1;
                 // Retry-After pauses the whole host, up to the maximum wait
@@ -1898,16 +3089,26 @@ impl Run {
                 {
                     signal = Signal::Other;
                 }
-                if let Some(until) = h.speed.on_response(took, signal, now) {
-                    h.next_start = h.next_start.max(until.min(now + max_wait));
+                let cut_before = h.speed.last_cut();
+                let until = h.speed.on_response(took, signal, now);
+                if signal == Signal::Answered {
+                    h.last_answer = now;
                 }
-                matches!(
+                let cut = h.speed.last_cut().filter(|c| Some(*c) != cut_before);
+                let wait = until.map(|u| u.min(now + max_wait).saturating_duration_since(now));
+                if let Some(w) = wait {
+                    h.next_start = h.next_start.max(now + w);
+                }
+                let blocked = matches!(
                     h.health.state(),
                     HealthState::Paused { .. } | HealthState::GivenUp
-                )
+                );
+                let typical = (h.speed.typical_ms(), h.speed.baseline_ms());
+                (blocked, (cut.map(|(_, c)| c), wait, h.speed.allowance(), typical))
             }
-            None => false,
+            None => (false, (None, None, 0, (None, None))),
         };
+        self.record_speed_event(&entry, &result, speed_event)?;
         // A request that was in flight when its host paused, or when the
         // network went down, does not use an attempt (FR-027).
         if transient && (host_blocked || self.local.is_some()) {
@@ -1941,6 +3142,7 @@ impl Run {
             let key = entry.host_key.clone();
             match t {
                 Transition::Paused { pause, failures } => {
+                    self.site_events.entry(key.clone()).or_default().pauses += 1;
                     let why = if failures > 0 {
                         format!("{failures} requests in a row failed")
                     } else {
@@ -2047,7 +3249,72 @@ impl Run {
                 ),
             )?;
         }
+        *self.crawled_by_host.entry(entry.host_key.clone()).or_default() += 1;
         self.on_page(entry, internal, robots_rule, took, result, attempt.round_attempts)
+    }
+
+    /// Logs a cut or a requested wait, and counts it for the site's summary
+    /// (spec 008 FR-021).
+    fn record_speed_event(
+        &mut self,
+        entry: &QueueEntry,
+        result: &Result<PageOutcome, CheckError>,
+        (cut, wait, allowance, (typical, usual)): SpeedEvent,
+    ) -> Result<(), CrawlError> {
+        let host = entry.host_key.as_str();
+        let wall = now_ms();
+        if let Some(cut) = cut {
+            let events = self.site_events.entry(host.to_string()).or_default();
+            let what = match cut {
+                Cut::Overloaded => {
+                    events.overloads += 1;
+                    let status = result.as_ref().map_or(0, |o| o.status);
+                    format!("{host} answered {status} (overloaded)")
+                }
+                Cut::Slower => {
+                    events.slowdowns += 1;
+                    format!(
+                        "{host} got slower ({} ms, usually {} ms)",
+                        typical.unwrap_or(0.0).round(),
+                        usual.unwrap_or(0.0).round()
+                    )
+                }
+                Cut::TimedOut => {
+                    events.slowdowns += 1;
+                    format!("A request to {host} timed out")
+                }
+            };
+            let message = format!("{what}; requests to it at once cut to {allowance}.");
+            self.c
+                .store
+                .log(wall, "speed_cut", Some(host), Some(entry.id), &message)?;
+        }
+        if let Some(w) = wait.filter(|w| !w.is_zero()) {
+            self.site_events.entry(host.to_string()).or_default().wait(w);
+            let message = format!(
+                "{host} asked to wait {} (Retry-After); no requests to it until then.",
+                human_duration(w)
+            );
+            self.c
+                .store
+                .log(wall, "speed_wait", Some(host), Some(entry.id), &message)?;
+        }
+        Ok(())
+    }
+
+    /// One line per site that slowed down, waited or paused in this run
+    /// (FR-021), so a finished crawl can explain why parts of it were slow.
+    fn record_speed_summaries(&mut self) -> Result<(), CrawlError> {
+        let mut events: Vec<_> = self.site_events.drain().filter(|(_, e)| !e.is_empty()).collect();
+        events.sort_by(|a, b| a.0.cmp(&b.0));
+        let wall = now_ms();
+        for (host, e) in events {
+            let message = format!("{host}: {}.", e.summary());
+            self.c
+                .store
+                .log(wall, "speed_summary", Some(&host), None, &message)?;
+        }
+        Ok(())
     }
 
     fn return_to_queue(&mut self, entry: QueueEntry) -> Result<(), CrawlError> {
@@ -2185,6 +3452,7 @@ impl Run {
                         && self.c.rules.adopt_start_redirect(t)
                     {
                         seed = true;
+                        self.net.adopt_host(t);
                         self.c.stored.resolved_hosts = self.c.rules.internal_hosts().to_vec();
                         self.c.store.set_meta(
                             "config",
@@ -2214,7 +3482,13 @@ impl Run {
                     )?;
                     self.redirect_over_limit = false;
                 } else {
-                    response.resource_type = Some(if o.page.is_some() { "html" } else { "other" });
+                    response.resource_type = Some(if o.page.is_some() {
+                        "html"
+                    } else if o.pdf {
+                        "pdf"
+                    } else {
+                        "other"
+                    });
                 }
 
                 let data = o.page.as_ref().and_then(|p| p.data.as_ref().ok());
@@ -2227,6 +3501,9 @@ impl Run {
                 let (noindex, page_nofollow) = page_flags(&all_dirs, &self.opts.robots_token);
                 response.noindex = Some(noindex);
                 response.nofollow = Some(page_nofollow);
+                if o.pdf && page_nofollow {
+                    self.pdf_nofollow.insert(entry.id);
+                }
                 if let Some(t) = data.and_then(PageData::title).filter(|t| !t.is_empty()) {
                     response.title = Some(t.to_string());
                 }
@@ -2239,6 +3516,9 @@ impl Run {
                     .iter()
                     .map(|r| (r, &base))
                     .chain(o.header_facts.refs.iter().map(|r| (r, &url)))
+                    // amphtml links are followed only with AMP checks on
+                    // (spec 027 FR-E01); otherwise the crawl is unchanged.
+                    .filter(|(r, _)| r.kind != LinkKind::AmpHtml || self.c.config.extraction.check_amp)
                     .collect();
 
                 let canonicals: Vec<String> = refs
@@ -2259,7 +3539,11 @@ impl Run {
                     response.canonical_conflict = Some(distinct.len() > 1);
                 }
 
-                if internal && !entry.check_only {
+                // A 503 or 429 page is the server's "try later" page, not the
+                // page itself: its links are not followed, so a manual retry
+                // that gets the real page leaves nothing behind (spec 004).
+                let try_later = FinalClass::of_status(o.status).is_transient(Some(o.status), None);
+                if internal && !entry.check_only && !try_later {
                     for (pos, (r, b)) in refs.iter().enumerate() {
                         let nofollow = match r.kind {
                             LinkKind::Anchor if r.nofollow => Some(Nofollow::Link),
@@ -2296,7 +3580,17 @@ impl Run {
             .record_response(entry.id, entry.check_only, &response, now_ms())?;
         if let Some(o) = outcome {
             let store = &self.c.store;
+            let store_html = self.c.config.extraction.store_html;
             store.record_headers(entry.id, &o.headers)?;
+            // The cookie audit costs nothing on responses without cookies.
+            if o.headers.iter().any(|(n, _)| n == "set-cookie")
+                && let Ok(url) = Url::parse(&entry.url)
+            {
+                store.record_cookies(
+                    entry.id,
+                    &super::cookies::from_headers(&url, &o.headers, now_ms()),
+                )?;
+            }
             let meta_count = match &o.page {
                 Some(p) => {
                     store.record_page(
@@ -2304,14 +3598,112 @@ impl Run {
                         &PageRecord {
                             data: p.data.as_ref().ok(),
                             extract_error: p.data.as_ref().err().map(String::as_str),
-                            html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
+                            html: p
+                                .html
+                                .as_ref()
+                                .filter(|_| store_html)
+                                .map(|(b, n)| (b.as_slice(), *n)),
+                            header_agent_links: &o.header_facts.agent_links,
                         },
                     )?;
+                    if self.c.config.extraction.check_amp
+                        && let Some(amp) = p.data.as_ref().ok().and_then(|d| d.amp.as_ref())
+                    {
+                        store.record_amp(entry.id, amp)?;
+                    }
+                    if let Some(c) = &p.custom {
+                        store.record_custom(entry.id, c)?;
+                    }
                     p.data.as_ref().map_or(0, |d| d.directives.len())
                 }
                 None => 0,
             };
             store.record_directives(entry.id, &o.header_facts.directives, meta_count)?;
+            if let Some(stage) = &mut self.render {
+                let html = o.page.is_some();
+                match stage.eligibility(&entry.url, internal && !entry.check_only, html, o.status) {
+                    Eligibility::No => {}
+                    Eligibility::OutsideRules => store.skip_render(entry.id, "outside_rules", None)?,
+                    Eligibility::Queue => {
+                        // With "Store page HTML" off the input waits in
+                        // `render_inputs` (research R8).
+                        let input = o
+                            .page
+                            .as_ref()
+                            .and_then(|p| p.html.as_ref())
+                            .filter(|_| !store_html)
+                            .map(|(b, n)| (b.as_slice(), *n));
+                        store.enqueue_render(entry.id, input)?;
+                        stage.on_enqueued();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A link row: `links`, or `rendered_links` while references found
+    /// only after rendering are discovered (spec 014 data-model.md).
+    fn put_link(&self, link: &NewLink) -> Result<(), CrawlError> {
+        match self.rendered_rpos {
+            Some(rpos) => self.c.store.add_rendered_link(link, rpos)?,
+            None => self.c.store.add_link(link)?,
+        }
+        Ok(())
+    }
+
+    /// Records what was read from a PDF and its link annotations (FR-C03).
+    /// Links are followed only from internal PDFs, and only when the crawl
+    /// follows PDF links; otherwise they are stored as not followed.
+    fn on_pdf(
+        &mut self,
+        id: i64,
+        url: &str,
+        depth: u32,
+        internal: bool,
+        read: pdf::pool::Read,
+    ) -> Result<(), CrawlError> {
+        let facts = read.facts;
+        self.c
+            .store
+            .record_pdf(id, &facts, read.text.as_ref().map(|(b, n)| (b.as_slice(), *n)))?;
+        let page_nofollow = self.pdf_nofollow.remove(&id);
+        if !internal {
+            return Ok(());
+        }
+        let base = Url::parse(url).expect("stored URLs parse");
+        let follow = self.c.config.extraction.pdf.follow_links;
+        for link in &facts.links {
+            let r = Ref::new(LinkKind::Anchor, &link.uri, RefSource::Pdf);
+            let parsed = self.c.rules.normalize(&base, &link.uri);
+            if follow {
+                self.discover(
+                    Some(id),
+                    &link.uri,
+                    LinkKind::Anchor,
+                    parsed,
+                    depth + 1,
+                    page_nofollow.then_some(Nofollow::Page),
+                    false,
+                    false,
+                    Some((link.page, &r)),
+                )?;
+            } else {
+                let target = parsed.as_ref().ok().map(Url::to_string);
+                self.c.store.add_link(&NewLink {
+                    from: id,
+                    to: None,
+                    raw: &link.uri,
+                    kind: LinkKind::Anchor,
+                    nofollow: false,
+                    page_nofollow,
+                    followed: false,
+                    pos: Some(link.page),
+                    target: target.as_deref().or(Some(&link.uri)),
+                    skip_reason: Some("pdf_links_not_followed"),
+                    context: Some(&r),
+                })?;
+            }
         }
         Ok(())
     }
@@ -2361,6 +3753,24 @@ impl Run {
                         )),
                     };
                 }
+                // Spec 011 FR-009: with "Crawl URLs found only in sitemaps"
+                // off, a sitemap URL waits for a link before it is queued.
+                if in_sitemap
+                    && internal
+                    && !self.c.config.scope.sitemaps.crawl_sitemap_only
+                    && matches!(
+                        placement,
+                        Placement::Queue {
+                            check_only: false,
+                            ..
+                        }
+                    )
+                {
+                    placement = Placement::NotCrawled {
+                        reason: NotCrawledReason::SitemapOnly,
+                        detail: None,
+                    };
+                }
                 (url.to_string(), host, internal, placement)
             }
             Err(problem) => {
@@ -2368,7 +3778,7 @@ impl Run {
                     // Empty, fragment-only or self links: stored on the
                     // page with a reason, never queued (FR-024).
                     if let Some(from) = from {
-                        self.c.store.add_link(&NewLink {
+                        self.put_link(&NewLink {
                             from,
                             to: Some(from),
                             raw,
@@ -2439,7 +3849,7 @@ impl Run {
         if let Some(from) = from {
             let link_nofollow = nofollow == Some(Nofollow::Link);
             let page_nofollow = nofollow == Some(Nofollow::Page);
-            self.c.store.add_link(&NewLink {
+            self.put_link(&NewLink {
                 from,
                 to: Some(id),
                 raw,

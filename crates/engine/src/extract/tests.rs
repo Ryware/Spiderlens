@@ -18,6 +18,9 @@ fn page_bytes(url: &str, charset: Option<&str>, body: &[u8], truncated: bool) ->
         truncated,
         robots_token: "SpiderLens",
         content: None,
+        keep_text: false,
+        a11y: false,
+        hook: None,
     })
 }
 
@@ -299,7 +302,14 @@ fn parse_time_budget_cuts_pathological_pages() {
     let html = "<title>t</title>".to_string() + &"<div>".repeat(100_000) + "end";
     let url = Url::parse("https://e.test/").unwrap();
     let started = std::time::Instant::now();
-    let d = walk::walk(&html, &url, "x", None, std::time::Duration::from_millis(200));
+    let d = walk::walk(
+        &html,
+        &url,
+        "x",
+        std::time::Duration::from_millis(200),
+        false,
+        None,
+    );
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
     assert!(d.partial);
     assert_eq!(d.title(), Some("t"));
@@ -396,4 +406,263 @@ fn svg_title_and_links_are_not_html() {
 fn extraction_is_deterministic() {
     let html = r#"<title>x</title><a href="/a">a</a><img src="/i"><h2>h</h2>"#;
     assert_eq!(p(html), p(html));
+}
+
+#[test]
+fn visible_text_is_kept_only_when_asked() {
+    let html = "<html><head><title>T</title><script>var x = 1;</script></head>\
+                <body><h1>Hello  there</h1><p>Some <b>bold</b> words.</p>\
+                <a href='/x'>link</a><div hidden>still text</div></body></html>";
+    let url = Url::parse("https://example.com/").unwrap();
+    let input = |keep_text| PageInput {
+        url: &url,
+        charset: None,
+        body: html.as_bytes(),
+        truncated: false,
+        robots_token: "SpiderLens",
+        content: None,
+        keep_text,
+        a11y: false,
+        hook: None,
+    };
+    let raw = extract_page(&input(false));
+    assert_eq!(raw.visible_text, None);
+    let kept = extract_page(&input(true));
+    let text = kept.visible_text.clone().expect("kept");
+    assert!(text.contains("Hello there"), "{text}");
+    assert!(!text.contains("var x"), "{text}");
+    assert_eq!(text::word_count(&text), kept.word_count);
+    assert_eq!(text::hash(&text), kept.text_hash);
+    // Every other field is identical with either value.
+    let mut without = kept.clone();
+    without.visible_text = None;
+    assert_eq!(without, raw);
+    // Serialised output of the raw crawl is unchanged.
+    assert!(serde_json::to_value(&raw).unwrap().get("visible_text").is_none());
+    // A body that is not a document keeps an empty text.
+    let empty = extract_page(&PageInput {
+        body: b"   ",
+        ..input(true)
+    });
+    assert_eq!(empty.visible_text.as_deref(), Some(""));
+}
+
+// --- Spec 016: forms, actions and agent links ---
+
+mod agents {
+    use super::p;
+    use crate::extract::agents::{ActionKind, AgentLinkKind, FormMethod, NameSource};
+
+    #[test]
+    fn search_form_with_label_for() {
+        let d = p(r##"<form action="/search"><label for="q">Search the shop</label>
+            <input id="q" name="q" type="text"><button>Go</button></form>"##);
+        let a = &d.agents;
+        assert_eq!(a.forms.len(), 1);
+        let f = &a.forms[0];
+        assert_eq!(f.method, FormMethod::Get);
+        assert_eq!(f.action.as_deref(), Some("/search"));
+        assert!(f.is_search && f.has_submit);
+        assert_eq!(a.fields.len(), 1);
+        assert_eq!(a.fields[0].accessible_name.as_deref(), Some("Search the shop"));
+        assert_eq!(a.fields[0].name_source, NameSource::Label);
+        assert_eq!(a.unlabelled_fields(), 0);
+        assert_eq!(a.nameless_buttons, 0);
+    }
+
+    #[test]
+    fn name_sources_in_order() {
+        let d = p(r##"<form method="POST">
+            <span id="l1">Email address</span>
+            <input name="a" aria-labelledby="l1" aria-label="ignored">
+            <input name="b" aria-label="Phone">
+            <label>Wrapped <input name="c"></label>
+            <input name="d" title="Postcode">
+            <input name="e" placeholder="City">
+            <input name="f">
+            <input type="hidden" name="token">
+            <select name="g"><option>One</option></select>
+            <textarea name="h" required></textarea>
+            <input type="submit">
+        </form>"##);
+        let a = &d.agents;
+        assert_eq!(a.forms[0].method, FormMethod::Post);
+        let got: Vec<_> = a
+            .fields
+            .iter()
+            .map(|f| {
+                (
+                    f.name.as_deref().unwrap(),
+                    f.name_source,
+                    f.accessible_name.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("a", NameSource::LabelledBy, Some("Email address")),
+                ("b", NameSource::AriaLabel, Some("Phone")),
+                ("c", NameSource::Label, Some("Wrapped")),
+                ("d", NameSource::Title, Some("Postcode")),
+                ("e", NameSource::Placeholder, Some("City")),
+                ("f", NameSource::None, None),
+                ("g", NameSource::None, None),
+                ("h", NameSource::None, None),
+            ]
+        );
+        assert!(a.fields[7].required);
+        assert_eq!(a.fields[6].kind, "select");
+        assert_eq!(a.unlabelled_fields(), 3);
+        assert_eq!(a.placeholder_only_fields(), 1);
+        assert!(a.forms[0].has_submit);
+    }
+
+    #[test]
+    fn label_for_later_in_document_and_missing_id() {
+        let d = p(r##"<form><input id="x" name="x"><input id="y" name="y"></form>
+            <label for="x">Later label</label><label for="nope">Orphan</label>"##);
+        let a = &d.agents;
+        assert_eq!(a.fields[0].accessible_name.as_deref(), Some("Later label"));
+        assert_eq!(a.fields[1].name_source, NameSource::None);
+    }
+
+    #[test]
+    fn form_attribute_and_fields_outside_forms() {
+        let d = p(
+            r##"<form id="f1" action="/a"></form><input name="q" form="f1" aria-label="Q">
+            <input name="loose" aria-label="Loose"><button form="f1">Send</button>"##,
+        );
+        let a = &d.agents;
+        assert_eq!(a.fields[0].form, Some(0));
+        assert_eq!(a.fields[1].form, None);
+        assert!(a.forms[0].has_submit);
+    }
+
+    #[test]
+    fn buttons_and_names() {
+        let d = p(r##"<button><svg></svg></button>
+            <button aria-label="Close"><svg></svg></button>
+            <button><img src="x.png" alt="Search"></button>
+            <button><img src="x.png"></button>
+            <button aria-labelledby="t"></button><span id="t">Menu</span>
+            <button aria-labelledby="missing"></button>
+            <input type="button">
+            <input type="image" src="go.png">
+            <input type="image" src="go.png" alt="Go">
+            <div role="button" tabindex="0"><i class="icon"></i></div>"##);
+        // svg-only, img without alt, labelledby missing, input button without
+        // value, image input without alt, role=button without text.
+        assert_eq!(d.agents.nameless_buttons, 6);
+    }
+
+    #[test]
+    fn actions_without_links() {
+        let d = p(r##"<a onclick="go()">No href</a>
+            <a>Plain placeholder</a>
+            <a href="#">Hash</a>
+            <a href="#top">Skip to top</a>
+            <a href="javascript:void(0)">JS</a>
+            <a href="/real" onclick="track()"><span onclick="x()">Real</span></a>
+            <div onclick="open()">Div click</div>
+            <span role="link">Span link</span>
+            <button onclick="ok()">Native</button>"##);
+        let got: Vec<_> = d
+            .agents
+            .actions
+            .iter()
+            .map(|a| (a.kind, a.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (ActionKind::AnchorNoHref, "No href"),
+                (ActionKind::AnchorHash, "Hash"),
+                (ActionKind::AnchorJs, "JS"),
+                (ActionKind::Onclick, "Div click"),
+                (ActionKind::RoleLink, "Span link"),
+            ]
+        );
+        assert_eq!(d.agents.actions_total, 5);
+    }
+
+    #[test]
+    fn actions_are_capped_but_counted() {
+        let html: String = (0..80).map(|i| format!("<a href=\"#\">x{i}</a>")).collect();
+        let d = p(&html);
+        assert_eq!(d.agents.actions.len(), crate::extract::agents::MAX_ACTIONS);
+        assert_eq!(d.agents.actions_total, 80);
+    }
+
+    #[test]
+    fn challenge_widgets_attach_to_forms() {
+        let d = p(
+            r##"<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+            <form action="/contact"><input name="m" aria-label="Message">
+            <div class="cf-turnstile" data-sitekey="x"></div></form>
+            <form action="/b"></form><div class="g-recaptcha"></div>"##,
+        );
+        let a = &d.agents;
+        assert_eq!(a.forms[0].challenge, Some("turnstile"));
+        assert_eq!(a.forms[1].challenge, Some("recaptcha"));
+        assert_eq!(a.challenges, ["turnstile", "recaptcha"]);
+    }
+
+    #[test]
+    fn webmcp_declarative_tool() {
+        let d = p(
+            r##"<form toolname="book_table" tooldescription="Book a table" toolautosubmit>
+            <input name="date" type="date" toolparamdescription="Day of the booking" aria-label="Date">
+            <input name="size" type="number" aria-label="Guests"></form>
+            <form toolname="no_desc"></form>"##,
+        );
+        let a = &d.agents;
+        let t = a.forms[0].tool.as_ref().unwrap();
+        assert_eq!(
+            (t.name.as_str(), t.description.as_deref(), t.autosubmit),
+            ("book_table", Some("Book a table"), true)
+        );
+        assert_eq!(
+            a.fields[0].tool_param_description.as_deref(),
+            Some("Day of the booking")
+        );
+        assert_eq!(a.fields[1].tool_param_description, None);
+        assert_eq!(a.forms[1].tool.as_ref().unwrap().description, None);
+    }
+
+    #[test]
+    fn agent_links_in_html() {
+        let d = p(r##"<head><link rel="alternate" type="text/markdown" href="/b.md">
+            <link rel="service-desc" href="/openapi.json"><link rel="alternate" hreflang="de" href="/de"></head>"##);
+        let kinds: Vec<_> = d.agents.links.iter().map(|l| (l.kind, l.href.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [
+                (AgentLinkKind::MarkdownAlternate, "/b.md"),
+                (AgentLinkKind::ServiceDesc, "/openapi.json")
+            ]
+        );
+        assert_eq!(d.agents.markdown_alternate().unwrap().href, "/b.md");
+    }
+
+    #[test]
+    fn templates_and_role_search() {
+        let d = p(r##"<template><form><input name="t"></form></template>
+            <div role="search"><form method="get" action="/s"><input name="term" aria-label="Find"></form></div>
+            <form method="get" action="/f"><input name="q"><input name="page"></form>"##);
+        let a = &d.agents;
+        assert_eq!(a.forms.len(), 2);
+        assert!(a.forms[0].is_search);
+        assert!(!a.forms[1].is_search, "two text fields: not a plain search form");
+    }
+
+    #[test]
+    fn header_agent_links() {
+        let h = crate::extract::header_facts(
+            &[],
+            &[r##"</x.md>; rel="alternate"; type="text/markdown""##.into()],
+        );
+        assert_eq!(h.agent_links.len(), 1);
+        assert!(h.refs.is_empty());
+    }
 }

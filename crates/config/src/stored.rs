@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::{CrawlConfig, ModeInput, RetrySettings, SpeedSettings};
+use crate::{CrawlConfig, ModeInput, RenderSettings, RetrySettings, SpeedSettings};
 
 pub const STORED_FORMAT_VERSION: u32 = 1;
 
 /// Only speed, retry and the URL limit may change during or between runs of
-/// a crawl (spec 006 FR-011). The type cannot express any other change, so a
-/// resumed crawl can never change which URLs are in scope.
+/// a crawl (spec 006 FR-011), plus the rendering settings when a finished
+/// crawl is rendered later (spec 014 FR-006, plan owner point 2). The type
+/// cannot express any other change, so a resumed crawl can never change
+/// which URLs are in scope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -20,6 +22,8 @@ pub enum Change {
     Retry(RetrySettings),
     /// Blank (null) means no limit.
     MaxUrls(#[ts(type = "number | null")] Option<u64>),
+    /// The settings of a later rendering run of a finished crawl (spec 014).
+    Rendering(RenderSettings),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -77,6 +81,7 @@ impl StoredCrawlConfig {
                 Change::Speed(s) => c.speed = *s,
                 Change::Retry(r) => c.retry = *r,
                 Change::MaxUrls(m) => c.limits.max_urls = *m,
+                Change::Rendering(r) => c.rendering = r.clone(),
             }
         }
         c
@@ -161,6 +166,26 @@ mod tests {
         assert_eq!(e.speed, SpeedSettings::POLITE);
         assert_eq!(e.retry.attempts, 1);
         assert_eq!(s.config, CrawlConfig::default(), "original is never edited");
+    }
+
+    #[test]
+    fn rendering_later_is_a_recorded_change() {
+        let mut s = stored();
+        let mut r = crate::RenderSettings {
+            mode: crate::RenderMode::Javascript,
+            ..Default::default()
+        };
+        r.screenshots = true;
+        s.record(
+            "2026-10-12T09:00:00Z".parse().unwrap(),
+            Change::Rendering(r.clone()),
+        );
+        assert_eq!(s.effective().rendering, r);
+        assert!(!s.config.rendering.is_on(), "the original is never edited");
+        let back: StoredCrawlConfig = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back, s);
+        let v = serde_json::to_value(&s.changes[0].change).unwrap();
+        assert_eq!(v["rendering"]["mode"], "javascript");
     }
 
     #[test]

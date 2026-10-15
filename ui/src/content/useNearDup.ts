@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ContentSettings } from "../generated/ContentSettings";
 import type { NearDupStatus } from "../generated/NearDupStatus";
-import type { AnalysisFinished, AnalysisProgress, Transport } from "../transport";
+import type { NearDupFinished, NearDupProgress, Transport } from "../transport";
 
 /**
  * The open crawl's near duplicate analysis (spec 020): its status, the
@@ -10,8 +10,8 @@ import type { AnalysisFinished, AnalysisProgress, Transport } from "../transport
  */
 export function useNearDup(transport: Transport, path: string | null, live: boolean) {
   const [status, setStatus] = useState<NearDupStatus | null>(null);
-  const [progress, setProgress] = useState<AnalysisProgress | null>(null);
-  const [finished, setFinished] = useState<AnalysisFinished | null>(null);
+  const [progress, setProgress] = useState<NearDupProgress | null>(null);
+  const [finished, setFinished] = useState<NearDupFinished | null>(null);
   const [generation, setGeneration] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,12 +40,12 @@ export function useNearDup(transport: Transport, path: string | null, live: bool
   useEffect(() => {
     if (!path) return;
     const offs = [
-      transport.onAnalysisProgress((p) => {
+      transport.onNearDupProgress((p) => {
         if (p.path !== path) return;
         setProgress(p);
         setStatus((s) => (s && s.state !== "running" ? { ...s, state: "running", reason: null } : s));
       }),
-      transport.onAnalysisFinished((f) => {
+      transport.onNearDupFinished((f) => {
         if (f.path !== path) return;
         setProgress(null);
         setFinished(f);

@@ -5,8 +5,8 @@
 //! The analysis pass runs on its own thread with its own writing connection
 //! and announces itself with two events:
 //!
-//! - `analysis-progress` while it runs,
-//! - `analysis-finished` when it completes, fails or is cancelled.
+//! - `near-dup-progress` while it runs,
+//! - `near-dup-finished` when it completes, fails or is cancelled.
 //!
 //! A file that cannot be written is analysed on the reader's connection
 //! instead, into its `temp` schema, so the results last while it is open.
@@ -95,7 +95,7 @@ fn progress(app: &AppHandle, path: &Path) -> impl FnMut(usize, usize, &str) {
         }
         last = Some(Instant::now());
         let _ = app.emit(
-            "analysis-progress",
+            "near-dup-progress",
             ProgressEvent {
                 path: path.clone(),
                 done,
@@ -120,7 +120,7 @@ fn finish(
         Err(e) => (None, Some(e.to_string())),
     };
     let _ = app.emit(
-        "analysis-finished",
+        "near-dup-finished",
         FinishedEvent {
             path: path.to_path_buf(),
             summary,
@@ -235,7 +235,7 @@ pub fn run_near_dup(
     path: PathBuf,
     settings: Option<ContentSettings>,
 ) -> Cmd<()> {
-    if crawl.is_running(&path) {
+    if crawl.is_writing(&path) {
         return Err("The analysis runs when this crawl finishes or is paused.".into());
     }
     let Some(cancel) = state.claim(&path) else {

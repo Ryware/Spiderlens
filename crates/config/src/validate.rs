@@ -10,7 +10,7 @@ use ts_rs::TS;
 
 use crate::patterns::{Decision, UrlFilter, check_pattern};
 use crate::presets::{UaPreset, suggest_robots_token};
-use crate::{CrawlConfig, HeaderValue, Mode, ModeInput, RobotsMode, normalize_url};
+use crate::{CrawlConfig, HeaderValue, Mode, ModeInput, RobotsMode, WindowPreset, normalize_url};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +44,17 @@ const RESERVED_HEADERS: [&str; 10] = [
     "trailer",
     "proxy-connection",
 ];
+
+impl Issue {
+    pub(crate) fn error(path: impl Into<String>, code: &str, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            severity: Severity::Error,
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
 
 struct Issues(Vec<Issue>);
 
@@ -138,6 +149,15 @@ pub fn validate(config: &CrawlConfig, input: &ModeInput) -> Vec<Issue> {
 pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
     let mut i = Issues(Vec::new());
 
+    // Custom rules (spec 013)
+    for p in crate::custom::check_rules(&c.custom) {
+        if p.warning {
+            i.warn(p.path, p.code, p.message);
+        } else {
+            i.error(p.path, p.code, p.message);
+        }
+    }
+
     // Limits
     if c.limits.max_urls == Some(0) {
         i.error(
@@ -184,6 +204,102 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "scope.query_params.names",
             "query_names_missing",
             "List at least one parameter name to remove, or choose another option.",
+        );
+    }
+
+    // Sitemaps (spec 011)
+    let http_url = |s: &str| {
+        url::Url::parse(s.trim())
+            .ok()
+            .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+    };
+    for (index, u) in c.scope.sitemaps.urls.iter().enumerate() {
+        if http_url(u).is_none() {
+            i.error(
+                format!("scope.sitemaps.urls[{index}]"),
+                "sitemap_url_invalid",
+                "Enter the full sitemap address, starting with http:// or https://.",
+            );
+        }
+    }
+    for (index, f) in c.scope.sitemaps.files.iter().enumerate() {
+        if f.path.trim().is_empty() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].path"),
+                "sitemap_file_missing",
+                "Choose the sitemap file.",
+            );
+        }
+        if http_url(&f.base_url).is_none() {
+            i.error(
+                format!("scope.sitemaps.files[{index}].base_url"),
+                "sitemap_base_invalid",
+                "Enter the address this file will be published at, starting with http:// or https://.",
+            );
+        }
+    }
+    if !c.scope.sitemaps.read && (!c.scope.sitemaps.urls.is_empty() || !c.scope.sitemaps.files.is_empty()) {
+        i.warn(
+            "scope.sitemaps.read",
+            "sitemaps_off",
+            "Sitemaps you added are not read while \"Read sitemaps\" is off.",
+        );
+    }
+
+    // Sitemap generation (spec 011 FR-021)
+    let g = &c.sitemap_generate;
+    if !(1..=50_000).contains(&g.max_urls_per_file) {
+        i.error(
+            "sitemap_generate.max_urls_per_file",
+            "out_of_range",
+            "URLs per sitemap file must be between 1 and 50,000.",
+        );
+    }
+    if let crate::PrioritySource::Fixed(p) = g.priority
+        && !(0.0..=1.0).contains(&p)
+    {
+        i.error(
+            "sitemap_generate.priority",
+            "out_of_range",
+            "Priority must be between 0.0 and 1.0.",
+        );
+    }
+    if let crate::LastmodSource::Fixed(d) = &g.lastmod
+        && jiff::civil::Date::strptime("%Y-%m-%d", d.trim()).is_err()
+    {
+        i.error(
+            "sitemap_generate.lastmod",
+            "lastmod_invalid",
+            "Enter the date as YYYY-MM-DD.",
+        );
+    }
+    if !g.base_url.trim().is_empty() && http_url(&g.base_url).is_none() {
+        i.error(
+            "sitemap_generate.base_url",
+            "sitemap_base_invalid",
+            "Enter the address the sitemap files will be published at, starting with http:// or https://.",
+        );
+    }
+    for (group, list) in [("include", &g.include), ("exclude", &g.exclude)] {
+        for (index, p) in list.iter().enumerate() {
+            if let Err(message) = check_pattern(p) {
+                i.error(
+                    format!("sitemap_generate.{group}[{index}]"),
+                    "pattern_syntax",
+                    message,
+                );
+            }
+        }
+    }
+    let prefix_ok = !g.file_prefix.is_empty()
+        && g.file_prefix
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if !prefix_ok {
+        i.error(
+            "sitemap_generate.file_prefix",
+            "file_prefix_invalid",
+            "Use letters, digits, dots, hyphens and underscores for the file name.",
         );
     }
 
@@ -285,6 +401,71 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         }
     }
 
+    // Cookies (spec 025 data-model.md)
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+    };
+    let mut per_domain: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (index, ck) in c.access.cookies.iter().enumerate() {
+        let path = format!("access.cookies[{index}]");
+        if !token(ck.name.trim()) {
+            i.error(
+                format!("{path}.name"),
+                "cookie_name",
+                "A cookie name is letters, digits and simple symbols, without spaces, = or ;.",
+            );
+        }
+        match ck.value.expose() {
+            None => i.error(
+                format!("{path}.value"),
+                "cookie_secret_missing",
+                "This secret value is not saved in files. Enter it again to start the crawl.",
+            ),
+            Some(v)
+                if v.bytes()
+                    .any(|b| b.is_ascii_control() || b == b';' || b == b',' || b == b' ') =>
+            {
+                i.error(
+                    format!("{path}.value"),
+                    "cookie_value",
+                    "A cookie value cannot contain spaces, commas, semicolons or line breaks.",
+                )
+            }
+            Some(v) if ck.name.len() + v.len() > 4096 => i.error(
+                format!("{path}.value"),
+                "cookie_too_large",
+                "Browsers refuse cookies over 4 KB, so sites never receive them.",
+            ),
+            Some(_) => {}
+        }
+        let domain = ck.domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        if domain.is_empty() || domain.contains('/') || domain.contains(' ') {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_domain",
+                "Enter the site the cookie belongs to, for example example.com.",
+            );
+        }
+        if !ck.path.starts_with('/') {
+            i.error(
+                format!("{path}.path"),
+                "cookie_path",
+                "A cookie path starts with /.",
+            );
+        }
+        let n = per_domain.entry(domain).or_default();
+        *n += 1;
+        if *n == 181 {
+            i.error(
+                format!("{path}.domain"),
+                "cookie_count",
+                "Browsers keep at most 180 cookies per site.",
+            );
+        }
+    }
+
     // Speed
     let s = &c.speed;
     if !(1..=512).contains(&s.max_concurrent) {
@@ -365,6 +546,36 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "network.max_body_mb",
             "out_of_range",
             "The size limit must be between 1 and 4096 MB.",
+        );
+    }
+
+    // Spelling
+    let lang = c.spelling.default_lang.trim();
+    if lang.is_empty()
+        || lang.len() > 35
+        || !lang
+            .split('-')
+            .all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_alphanumeric()))
+    {
+        i.error(
+            "spelling.default_lang",
+            "invalid_language",
+            "Use a language code such as en, en-GB or he.",
+        );
+    }
+    // PDFs (spec 027 part C)
+    if !(1..=500).contains(&c.extraction.pdf.max_mb) {
+        i.error(
+            "extraction.pdf.max_mb",
+            "out_of_range",
+            "The PDF size limit must be between 1 and 500 MB.",
+        );
+    }
+    if !(1..=120).contains(&c.extraction.pdf.time_limit_secs) {
+        i.error(
+            "extraction.pdf.time_limit_secs",
+            "out_of_range",
+            "The PDF time limit must be between 1 and 120 seconds.",
         );
     }
 
@@ -472,7 +683,122 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             );
         }
     }
+    validate_rendering(c, &mut i);
+    // Link analysis (spec 023)
+    for (index, rule) in c.links.position_rules.iter().enumerate() {
+        if let Err(message) = crate::check_selector(&rule.selector) {
+            i.error(
+                format!("links.position_rules[{index}].selector"),
+                "selector_syntax",
+                message,
+            );
+        }
+    }
+    if let Some(w) = &c.links.weighting {
+        for (name, value) in w.fields() {
+            if !(value.is_finite() && (0.0..=1.0).contains(&value)) {
+                i.error(
+                    format!("links.weighting.{name}"),
+                    "out_of_range",
+                    "Weights must be between 0 and 1.",
+                );
+            }
+        }
+    }
+    // Segments (spec 027 part B)
+    i.0.extend(crate::segments::validate_segments(&c.segments));
+
     i.0
+}
+
+/// JavaScript rendering (spec 014, data-model.md "Settings"). Ranges are
+/// checked whatever the mode, so a saved profile is never half valid.
+fn validate_rendering(c: &CrawlConfig, i: &mut Issues) {
+    let r = &c.rendering;
+    let cap = r.max_render_secs;
+    let cap_ok = cap.is_finite() && (1.0..=60.0).contains(&cap);
+    if !cap_ok {
+        i.error(
+            "rendering.max_render_secs",
+            "out_of_range",
+            "The maximum render time must be between 1 and 60 seconds.",
+        );
+    }
+    let wait = r.min_wait_secs;
+    if !(wait.is_finite() && wait >= 0.0 && (!cap_ok || wait <= cap)) {
+        i.error(
+            "rendering.min_wait_secs",
+            "out_of_range",
+            "The minimum wait must be between 0 seconds and the maximum render time.",
+        );
+    }
+    if r.window.preset == WindowPreset::Custom {
+        match r.window.width {
+            Some(w) if (320..=3_840).contains(&w) => {}
+            _ => i.error(
+                "rendering.window.width",
+                "out_of_range",
+                "A custom window width must be between 320 and 3,840 pixels.",
+            ),
+        }
+        match r.window.height {
+            Some(h) if (480..=4_320).contains(&h) => {}
+            _ => i.error(
+                "rendering.window.height",
+                "out_of_range",
+                "A custom window height must be between 480 and 4,320 pixels.",
+            ),
+        }
+    }
+    for (group, list) in [("include", &r.include), ("exclude", &r.exclude)] {
+        for (index, p) in list.iter().enumerate() {
+            if let Err(message) = check_pattern(p) {
+                i.error(format!("rendering.{group}[{index}]"), "pattern_syntax", message);
+            }
+        }
+    }
+    if r.concurrency.is_some_and(|n| !(1..=16).contains(&n)) {
+        i.error(
+            "rendering.concurrency",
+            "out_of_range",
+            "Pages rendered at once must be between 1 and 16. Leave it blank for automatic.",
+        );
+    }
+    if r.memory_budget_mb.is_some_and(|n| !(256..=65_536).contains(&n)) {
+        i.error(
+            "rendering.memory_budget_mb",
+            "out_of_range",
+            "The browser memory budget must be between 256 and 65,536 MB. Leave it blank for automatic.",
+        );
+    }
+    if !(1..=1_000).contains(&r.js_content_min_percent) {
+        i.error(
+            "rendering.js_content_min_percent",
+            "out_of_range",
+            "The JavaScript content threshold must be between 1 and 1,000 percent.",
+        );
+    }
+    if r.js_content_min_words > 100_000 {
+        i.error(
+            "rendering.js_content_min_words",
+            "out_of_range",
+            "The JavaScript content word threshold must be between 0 and 100,000 words.",
+        );
+    }
+    if !(1..=100).contains(&r.hidden_content_percent) {
+        i.error(
+            "rendering.hidden_content_percent",
+            "out_of_range",
+            "The hidden content threshold must be between 1 and 100 percent.",
+        );
+    }
+    if r.is_on() && c.robots.mode == RobotsMode::Ignore {
+        i.warn(
+            "rendering.mode",
+            "rendering_robots_ignored",
+            "robots.txt is not read, so pages will load scripts and other files that robots.txt may disallow.",
+        );
+    }
 }
 
 /// RFC 9110 token characters.
@@ -496,6 +822,69 @@ mod tests {
             .iter()
             .map(|i| (i.path.as_str(), i.code.as_str(), i.severity))
             .collect()
+    }
+
+    #[test]
+    fn sitemap_sources_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.scope.sitemaps.urls = vec!["https://a.test/s.xml".into(), "/sitemap.xml".into()];
+        c.scope.sitemaps.files = vec![crate::LocalSitemap {
+            path: String::new(),
+            base_url: "ftp://a.test/".into(),
+        }];
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("scope.sitemaps.urls[1]", "sitemap_url_invalid", Severity::Error),
+                (
+                    "scope.sitemaps.files[0].path",
+                    "sitemap_file_missing",
+                    Severity::Error
+                ),
+                (
+                    "scope.sitemaps.files[0].base_url",
+                    "sitemap_base_invalid",
+                    Severity::Error
+                ),
+            ]
+        );
+        c.scope.sitemaps.urls.pop();
+        c.scope.sitemaps.files.clear();
+        c.scope.sitemaps.read = false;
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![("scope.sitemaps.read", "sitemaps_off", Severity::Warning)]
+        );
+    }
+
+    #[test]
+    fn link_position_rules_and_weights_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.links.position_rules = vec![
+            crate::PositionRule {
+                selector: ".mega-menu".into(),
+                position: crate::Position::Navigation,
+            },
+            crate::PositionRule {
+                selector: "div[".into(),
+                position: crate::Position::Footer,
+            },
+        ];
+        c.links.weighting = Some(crate::PositionWeights {
+            footer: 1.5,
+            ..Default::default()
+        });
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                (
+                    "links.position_rules[1].selector",
+                    "selector_syntax",
+                    Severity::Error
+                ),
+                ("links.weighting.footer", "out_of_range", Severity::Error),
+            ]
+        );
     }
 
     #[test]
@@ -717,6 +1106,163 @@ mod tests {
         assert!(got.contains(&"speed.max_per_host".to_string()));
         assert!(got.contains(&"retry.attempts".to_string()));
         assert!(got.contains(&"network.read_timeout_secs".to_string()));
+    }
+
+    #[test]
+    fn rendering_defaults_are_clean_and_ranges_are_checked() {
+        let mut c = CrawlConfig::default();
+        c.rendering.mode = crate::RenderMode::Javascript;
+        assert!(validate_config(&c).is_empty());
+        c.rendering.max_render_secs = 61.0;
+        c.rendering.min_wait_secs = -1.0;
+        c.rendering.concurrency = Some(17);
+        c.rendering.memory_budget_mb = Some(255);
+        c.rendering.js_content_min_percent = 0;
+        c.rendering.js_content_min_words = 100_001;
+        c.rendering.hidden_content_percent = 101;
+        let got = validate_config(&c);
+        assert_eq!(
+            codes(&got),
+            vec![
+                ("rendering.max_render_secs", "out_of_range", Severity::Error),
+                ("rendering.min_wait_secs", "out_of_range", Severity::Error),
+                ("rendering.concurrency", "out_of_range", Severity::Error),
+                ("rendering.memory_budget_mb", "out_of_range", Severity::Error),
+                (
+                    "rendering.js_content_min_percent",
+                    "out_of_range",
+                    Severity::Error
+                ),
+                ("rendering.js_content_min_words", "out_of_range", Severity::Error),
+                (
+                    "rendering.hidden_content_percent",
+                    "out_of_range",
+                    Severity::Error
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn cookies() {
+        use crate::{HeaderValue, SuppliedCookie};
+        let ck = |name: &str, value: HeaderValue, domain: &str, path: &str| SuppliedCookie {
+            name: name.into(),
+            value,
+            domain: domain.into(),
+            path: path.into(),
+            secure_only: false,
+        };
+        let mut c = CrawlConfig::default();
+        c.access.cookies = vec![
+            ck("ok", HeaderValue::Plain("yes".into()), "example.com", "/"),
+            ck("bad name", HeaderValue::Plain("x".into()), "example.com", "/"),
+            ck("v", HeaderValue::Plain("a;b".into()), "example.com", "/"),
+            ck("s", HeaderValue::Secret(None), "", "shop"),
+        ];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("access.cookies[1].name".to_string(), "cookie_name".to_string()),
+                ("access.cookies[2].value".to_string(), "cookie_value".to_string()),
+                (
+                    "access.cookies[3].value".to_string(),
+                    "cookie_secret_missing".to_string()
+                ),
+                (
+                    "access.cookies[3].domain".to_string(),
+                    "cookie_domain".to_string()
+                ),
+                ("access.cookies[3].path".to_string(), "cookie_path".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rendering_range_edges_are_allowed() {
+        let mut c = CrawlConfig::default();
+        let r = &mut c.rendering;
+        r.max_render_secs = 60.0;
+        r.min_wait_secs = 60.0;
+        r.concurrency = Some(16);
+        r.memory_budget_mb = Some(65_536);
+        r.js_content_min_percent = 1_000;
+        r.js_content_min_words = 0;
+        r.hidden_content_percent = 1;
+        r.window.preset = WindowPreset::Custom;
+        r.window.width = Some(320);
+        r.window.height = Some(4_320);
+        assert!(validate_config(&c).is_empty());
+        c.rendering.max_render_secs = 1.0;
+        c.rendering.min_wait_secs = 1.5;
+        c.rendering.concurrency = Some(1);
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![("rendering.min_wait_secs", "out_of_range", Severity::Error)]
+        );
+    }
+
+    #[test]
+    fn custom_window_needs_both_sizes_in_range() {
+        let mut c = CrawlConfig::default();
+        c.rendering.window.preset = WindowPreset::Custom;
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("rendering.window.width", "out_of_range", Severity::Error),
+                ("rendering.window.height", "out_of_range", Severity::Error),
+            ]
+        );
+        c.rendering.window.width = Some(3_841);
+        c.rendering.window.height = Some(479);
+        assert_eq!(validate_config(&c).len(), 2);
+        // Sizes are ignored for a preset.
+        c.rendering.window.preset = WindowPreset::Desktop;
+        assert!(validate_config(&c).is_empty());
+    }
+
+    #[test]
+    fn rendering_patterns_use_the_scope_pattern_rules() {
+        let mut c = CrawlConfig::default();
+        c.rendering.include = vec!["/app/".into(), "(".into()];
+        c.rendering.exclude = vec!["[".into()];
+        assert_eq!(
+            codes(&validate_config(&c)),
+            vec![
+                ("rendering.include[1]", "pattern_syntax", Severity::Error),
+                ("rendering.exclude[0]", "pattern_syntax", Severity::Error),
+            ]
+        );
+    }
+
+    #[test]
+    fn rendering_with_robots_ignored_warns() {
+        let mut c = CrawlConfig::default();
+        c.robots.mode = RobotsMode::Ignore;
+        assert!(
+            !validate_config(&c)
+                .iter()
+                .any(|i| i.code == "rendering_robots_ignored")
+        );
+        c.rendering.mode = crate::RenderMode::Javascript;
+        let got = validate_config(&c);
+        let warning = got
+            .iter()
+            .find(|i| i.code == "rendering_robots_ignored")
+            .expect("warning");
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.path, "rendering.mode");
+        // Respecting robots.txt (or ignoring it but reporting) gives no warning.
+        c.robots.mode = RobotsMode::IgnoreReport;
+        assert!(
+            !validate_config(&c)
+                .iter()
+                .any(|i| i.code == "rendering_robots_ignored")
+        );
     }
 
     #[test]

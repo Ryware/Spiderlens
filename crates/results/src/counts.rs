@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use ts_rs::TS;
 
+use crate::Result;
 use crate::reader::Reader;
 use crate::tabs::{self, Derived};
+use crate::values::Values;
 use crate::view::UrlScope;
-use crate::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -20,14 +21,51 @@ pub struct FilterCounts {
     /// Why each unavailable filter is unavailable.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
+    /// Labels of filters whose threshold is an issue setting, with the value
+    /// in force ("Over 70 characters"; spec 009 US4 scenario 1).
+    #[ts(type = "Record<string, string>")]
+    pub labels: BTreeMap<String, String>,
     pub version: u32,
 }
 
 impl Reader {
     pub fn counts(&mut self, tab: &str, scope: UrlScope) -> Result<FilterCounts> {
-        let t = tabs::tab(tab).ok_or_else(|| Error::invalid(format!("unknown tab {tab:?}")))?;
+        self.counts_in(tab, scope, None)
+    }
+
+    /// [`Self::counts`] for raw or rendered values (spec 014 FR-021);
+    /// None means rendered when the crawl has rendering.
+    pub fn counts_with(
+        &mut self,
+        tab: &str,
+        scope: UrlScope,
+        values: Option<Values>,
+    ) -> Result<FilterCounts> {
+        self.counts_for(tab, scope, None, values)
+    }
+
+    /// [`Reader::counts`] within one segment (0: URLs in no segment).
+    pub fn counts_in(&mut self, tab: &str, scope: UrlScope, segment: Option<u32>) -> Result<FilterCounts> {
+        self.counts_for(tab, scope, segment, None)
+    }
+
+    /// [`Reader::counts`] within one segment, for raw or rendered values.
+    pub fn counts_for(
+        &mut self,
+        tab: &str,
+        scope: UrlScope,
+        segment: Option<u32>,
+        values: Option<Values>,
+    ) -> Result<FilterCounts> {
+        let t = self.find_tab(tab)?;
+        let values = Values::resolve(values, &self.features);
+        self.use_values(values)?;
         let available: Vec<_> = t.filters.iter().filter(|f| self.features.has(f.need)).collect();
-        let derived: Vec<Derived> = available.iter().filter_map(|f| f.derived).collect();
+        let derived: Vec<Derived> = t
+            .rows
+            .into_iter()
+            .chain(available.iter().filter_map(|f| f.derived))
+            .collect();
         self.ensure_derived(derived)?;
         let version = self.version()? as u32;
         let mut sql = String::from("SELECT ");
@@ -37,18 +75,38 @@ impl Reader {
             }
             sql.push_str(&format!(
                 "COALESCE(SUM(CASE WHEN ({}) THEN 1 ELSE 0 END), 0)",
-                f.cond
+                f.sql(values)
             ));
         }
-        sql.push_str(&format!(" FROM urls u NOT INDEXED WHERE ({})", t.eligible));
+        let mut filter = format!(" WHERE ({})", t.eligible);
         match (t.scoped, scope) {
-            (true, UrlScope::Internal) => sql.push_str(" AND u.internal = 1"),
-            (true, UrlScope::External) => sql.push_str(" AND u.internal = 0"),
+            (true, UrlScope::Internal) => filter.push_str(" AND u.internal = 1"),
+            (true, UrlScope::External) => filter.push_str(" AND u.internal = 0"),
             _ => {}
         }
-        let values: Vec<i64> = self.conn.query_row(&sql, [], |r| {
-            (0..available.len()).map(|i| r.get::<_, i64>(i)).collect()
-        })?;
+        // SQLite keeps the rendered view's join in an aggregate even when
+        // no rendered field is read, so a tab whose conditions read none
+        // counts from the table itself (spec 014 T030).
+        let from = match t.rows {
+            Some(_) => t.source_sql(),
+            None if values == Values::Rendered
+                && (crate::values::reads_overlay(&sql) || crate::values::reads_overlay(&filter)) =>
+            {
+                "urls u NOT INDEXED".to_string()
+            }
+            None => "main.urls u NOT INDEXED".to_string(),
+        };
+        sql.push_str(&format!(" FROM {from}{filter}"));
+        sql.push_str(&crate::view::segment_sql(segment));
+        // A tab whose data this file lacks (spec 024 tabs before a fetch) has
+        // no filter to count.
+        let values: Vec<i64> = if available.is_empty() {
+            Vec::new()
+        } else {
+            self.conn.query_row(&sql, [], |r| {
+                (0..available.len()).map(|i| r.get::<_, i64>(i)).collect()
+            })?
+        };
         let mut counts = BTreeMap::new();
         let mut unavailable = BTreeMap::new();
         for f in &t.filters {
@@ -60,10 +118,18 @@ impl Reader {
                 unavailable.insert(f.id.to_string(), f.need.unavailable_reason().to_string());
             }
         }
+        let values = self.thresholds.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let labels = t
+            .filters
+            .iter()
+            .filter(|f| f.threshold.is_some())
+            .map(|f| (f.id.to_string(), f.label_with(&values)))
+            .collect();
         Ok(FilterCounts {
             tab: t.id.to_string(),
             counts,
             unavailable,
+            labels,
             version,
         })
     }
@@ -90,8 +156,9 @@ impl Reader {
         }
         let mut conds: Vec<&str> = Vec::new();
         for t in tabs::tabs() {
-            if !conds.contains(&t.eligible) {
-                conds.push(t.eligible);
+            let c = t.eligible_on_urls();
+            if !conds.contains(&c) {
+                conds.push(c);
             }
         }
         let sums: Vec<String> = conds
@@ -105,7 +172,10 @@ impl Reader {
         let counts = tabs::tabs()
             .iter()
             .map(|t| {
-                let i = conds.iter().position(|c| *c == t.eligible).expect("listed");
+                let i = conds
+                    .iter()
+                    .position(|c| *c == t.eligible_on_urls())
+                    .expect("listed");
                 (t.id.to_string(), values[i] as u64)
             })
             .collect();

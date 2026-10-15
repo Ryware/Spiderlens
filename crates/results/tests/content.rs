@@ -236,7 +236,9 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
         filter: filter.into(),
         scope: UrlScope::All,
         search: String::new(),
+        values: None,
         sort: None,
+        segment: None,
     }
 }
 
@@ -396,13 +398,22 @@ async fn content_filters_list_exactly_the_seeded_pages() {
     assert!(cell(&mut r, &c, "internal", "/", "response_time").is_i64());
 
     // Every filter is available, and its count equals the rows it lists.
+    // The AI checks (spec 015) run after the crawl and have their own tests;
+    // AMP is checked only when asked (spec 027 part E has its own test);
+    // this crawl does not read PDFs (spec 027 part C has its own test).
     for tab in tabs() {
-        let counts = r.counts(tab.id, UrlScope::All).unwrap();
-        for f in &tab.filters {
-            let n = counts.counts[f.id].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
+        let counts = r.counts(&tab.id, UrlScope::All).unwrap();
+        for f in tab.filters.iter().filter(|f| f.need != Need::AiChecks && f.need != Need::Pdf && f.need != Need::Spelling && f.need != Need::Amp) {
+            // Integration data is fetched after a crawl (spec 024), not by it.
+            if f.need == Need::SearchConsole {
+                assert!(counts.counts[f.id.as_ref()].is_none());
+                continue;
+            }
+            let n = counts.counts[f.id.as_ref()].unwrap_or_else(|| panic!("{}/{} unavailable", tab.id, f.id));
+
             assert_eq!(
                 n,
-                paths(&mut r, &c, &q(tab.id, f.id)).len() as u64,
+                paths(&mut r, &c, &q(&tab.id, &f.id)).len() as u64,
                 "{}/{}",
                 tab.id,
                 f.id

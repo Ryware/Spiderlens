@@ -18,7 +18,9 @@ fn q(filter: &str) -> ViewQuery {
         filter: filter.into(),
         scope: UrlScope::All,
         search: String::new(),
+        values: None,
         sort: None,
+        segment: None,
     }
 }
 
@@ -92,6 +94,9 @@ async fn attempts_and_failure_filters() {
     assert_eq!(counts.counts["transient"], Some(1));
     assert_eq!(counts.counts["permanent"], Some(2));
     assert!(counts.unavailable.is_empty(), "{:?}", counts.unavailable);
+    // One filter per error class: none of these happened here.
+    assert_eq!(counts.counts["class_timeout"], Some(0));
+    assert_eq!(counts.counts["class_dns"], Some(0));
 
     let id = all.iter().find(|(p, _)| p == "/down").unwrap().1[0]
         .as_i64()

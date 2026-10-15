@@ -12,6 +12,10 @@ export interface UiState extends Appearance {
   settingsCategory: string;
   recentCommands: string[];
   translucent: boolean;
+  /** Switch to the report when a crawl finishes (spec 010). */
+  openReportOnFinish: boolean;
+  /** Last title, note and URLs per issue used for the report file. */
+  reportFile: { title: string; note: string; urls_per_issue: number };
 }
 
 export const defaults: UiState = {
@@ -28,6 +32,8 @@ export const defaults: UiState = {
   settingsCategory: "speed",
   recentCommands: [],
   translucent: true,
+  openReportOnFinish: false,
+  reportFile: { title: "", note: "", urls_per_issue: 100 },
 };
 
 const KEY = "spiderlens.ui";

@@ -54,6 +54,24 @@ jobs:
       - name: Build UI
         run: pnpm --filter spiderlens-ui build
 
+      # Spec 014 (T002): which browser each runner offers for the rendering
+      # tests. Informational only; T074 makes it binding.
+      - name: Browser for rendering tests
+        shell: bash
+        continue-on-error: true
+        run: |
+          {
+            echo "### Browser for rendering tests (${{ matrix.os }})"
+            echo
+            if out="$(bash scripts/find-browser.sh 2>&1)"; then
+              echo '```'
+              echo "$out"
+              echo '```'
+            else
+              echo "None found. $out"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -62,10 +80,12 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          if cargo tree -p spiderlens-engine -e normal --prefix none | grep -E '^(tauri|wry|tao)[ -]'; then
-            echo "::error::spiderlens-engine must not depend on Tauri"
-            exit 1
-          fi
+          for crate in spiderlens-engine spiderlens-render; do
+            if cargo tree -p "$crate" -e normal --prefix none | grep -E '^(tauri|wry|tao)[ -]'; then
+              echo "::error::$crate must not depend on Tauri"
+              exit 1
+            fi
+          done
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -78,6 +98,14 @@ jobs:
       - name: Generated TypeScript types are current
         if: runner.os == 'Linux'
         run: git diff --exit-code -- ui/src/generated
+
+      # The SERP width table is generated from the fonts in tools/serp-widths
+      # (spec 027 plan D1); a diff means the table was edited by hand.
+      - name: SERP width table is current
+        if: runner.os == 'Linux'
+        run: |
+          cargo run --quiet --manifest-path tools/serp-widths/Cargo.toml
+          git diff --exit-code -- crates/results/src/serp/widths.rs ui/src/generated/serpWidths.json
 
       - name: UI tests
         run: pnpm test

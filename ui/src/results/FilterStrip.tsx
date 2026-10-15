@@ -4,7 +4,8 @@ import { Chip, Tooltip } from "../components/ui";
 
 /**
  * The tab's filters with live counts (FR-010, FR-011). A filter the crawl
- * file has no data for stays visible, disabled, with the reason.
+ * file has no data for stays visible, disabled, with the reason; one marked
+ * hide_when_empty is left out while nothing matches it.
  */
 export function FilterStrip({ tab, active, counts, onSelect }: { tab: TabDef; active: string; counts: FilterCounts | null; onSelect: (id: string) => void }) {
   const mine = counts?.tab === tab.id ? counts : null;
@@ -12,6 +13,8 @@ export function FilterStrip({ tab, active, counts, onSelect }: { tab: TabDef; ac
     <div role="toolbar" aria-label="Filters" className="flex min-w-0 flex-wrap items-center gap-0.5">
       {tab.filters.map((f) => {
         const reason = mine?.unavailable[f.id];
+        // Rarely used filters (one per error class) show only when they match.
+        if (f.hide_when_empty && f.id !== active && !(mine?.counts[f.id] ?? 0)) return null;
         const chip = (
           <Chip
             key={f.id}

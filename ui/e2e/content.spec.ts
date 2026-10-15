@@ -32,7 +32,7 @@ async function openContent(page: Page, scheme: "light" | "dark") {
   await page.evaluate(() => window.spiderlens.crawls.finish({ report: window.spiderlens.fakeReport("completed", 5000) }));
   await page.getByRole("button", { name: "Content" }).click();
   await page.getByRole("button", { name: "Find near duplicates" }).click();
-  await page.evaluate(() => window.spiderlens.results.analysisProgress({ done: 2, total: 3, step: "Comparing pages" }));
+  await page.evaluate(() => window.spiderlens.results.nearDupProgress({ done: 2, total: 3, step: "Comparing pages" }));
   await expect(page.getByRole("meter", { name: "Analysis progress" })).toBeVisible();
   await page.evaluate(() => window.spiderlens.results.finishAnalysis());
   await expect(page.getByTestId("analysis-summary")).toContainText("near duplicates at 90%");

@@ -1,0 +1,405 @@
+{
+  "source": "https://github.com/wooorm/dictionaries/tree/8cfea406b505e4d7df52d5a19bce525df98c54ab",
+  "dictionaries": [
+    {
+      "lang": "en-GB",
+      "name": "English (United Kingdom)",
+      "licence": "MIT AND BSD",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-GB/index.aff",
+          "size": 3086,
+          "sha256": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-GB/index.dic",
+          "size": 552106,
+          "sha256": "869fe17ba4ee4b5401c60a666ee2d6a3dcc237f460b7294435df1cc6a799aa57"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-GB/license",
+          "size": 15739,
+          "sha256": "81b644347b40804c25811267efbea024a30b2bb1642fefa9c9c50f7b0bbcb67f"
+        }
+      ]
+    },
+    {
+      "lang": "en-AU",
+      "name": "English (Australia)",
+      "licence": "MIT AND BSD",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-AU/index.aff",
+          "size": 3086,
+          "sha256": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-AU/index.dic",
+          "size": 554336,
+          "sha256": "aa07c46571f306b79fc1bc534357ed357af15687381b26f891ba66e8a2caed89"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-AU/license",
+          "size": 15731,
+          "sha256": "510a37a13ae92cd25989211834b342747d6b96bceb80c48301e4d15142fd6d0a"
+        }
+      ]
+    },
+    {
+      "lang": "en-CA",
+      "name": "English (Canada)",
+      "licence": "MIT AND BSD",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-CA/index.aff",
+          "size": 3086,
+          "sha256": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-CA/index.dic",
+          "size": 551583,
+          "sha256": "53096689870246a78fa408b1e7a8c49bc140bd466a84a384cfb509445fff7173"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en-CA/license",
+          "size": 15731,
+          "sha256": "5df9138713211272cc2da7e8595cf5898f4b9793fb67eb6ebff494de4052fdd6"
+        }
+      ]
+    },
+    {
+      "lang": "he",
+      "name": "Hebrew",
+      "licence": "AGPL-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/he/index.aff",
+          "size": 78883,
+          "sha256": "e115a0a5014d17a8e904f9d4a67d7992039b396c5fa031eb036a13bf63dfb037"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/he/index.dic",
+          "size": 5688111,
+          "sha256": "9bd95042a927e13ab422231e355caa8a7018456e7c49b889f2e6c62ddb5a0552"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/he/license",
+          "size": 461,
+          "sha256": "bb0a75c473e49224e0428b95c17ad90f1774a7f6cb97be921f9d6a93a3af80d7"
+        }
+      ]
+    },
+    {
+      "lang": "de",
+      "name": "German",
+      "licence": "GPL-2.0 OR GPL-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/de/index.aff",
+          "size": 19199,
+          "sha256": "57fdd1b16aac2131003c91e0cf2a488becb970382a402a9ce089307301cb3ef0"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/de/index.dic",
+          "size": 1118194,
+          "sha256": "b5c781a0cf6f285fb6b9b8ab02fbea104b987104a1efdda8a835837e89e3ec77"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/de/license",
+          "size": 760,
+          "sha256": "03abf202c6e207d41f054083cafccbb174a30f6b330ea8dba3aeef0a279cb83e"
+        }
+      ]
+    },
+    {
+      "lang": "fr",
+      "name": "French",
+      "licence": "MPL-2.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/fr/index.aff",
+          "size": 199870,
+          "sha256": "05a735d34c912e4e381ff08ee7c747923ccf5cf9dca81d8467982fa1ca51c2b7"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/fr/index.dic",
+          "size": 1229133,
+          "sha256": "984e933237bc1224a48f42828233be9b03228260ef67aa8e2bdddcd03a26230d"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/fr/license",
+          "size": 2758,
+          "sha256": "0c785aebc7aae8aa00b8163e9b3219a8785a9900b71e85475204e48a5651ced4"
+        }
+      ]
+    },
+    {
+      "lang": "es",
+      "name": "Spanish",
+      "licence": "GPL-3.0 OR LGPL-3.0 OR MPL-1.1",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/es/index.aff",
+          "size": 167135,
+          "sha256": "892039d59db11d747061b81c3a92a52d48ba0e055b5835af1943cbd3c2fba85b"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/es/index.dic",
+          "size": 706202,
+          "sha256": "907f786a8ceb3456722b20ad91dd4dbe99c5c16e45015ea63155e36f26b06d2c"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/es/license",
+          "size": 2596,
+          "sha256": "a21581497f07b5e550e438d26890ea2b1704492357de67740613bd589b1c652a"
+        }
+      ]
+    },
+    {
+      "lang": "it",
+      "name": "Italian",
+      "licence": "GPL-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/it/index.aff",
+          "size": 70020,
+          "sha256": "5770cd3e16d494c045b4a9a4a9fcd7962577e642d0384a7129c020a12cdd2c79"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/it/index.dic",
+          "size": 1295754,
+          "sha256": "b1348fbdb6f441ea9dd7e33b2cfcb96ead39ccd5e48bf894972774cd5aa86abb"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/it/license",
+          "size": 38596,
+          "sha256": "e48a7f7b3ec37ebb2c0d625528a7a677818de039bbae43e8f2c1dce6fd2a13e6"
+        }
+      ]
+    },
+    {
+      "lang": "nl",
+      "name": "Dutch",
+      "licence": "BSD-3-Clause OR CC-BY-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nl/index.aff",
+          "size": 46732,
+          "sha256": "b430d9cf5f4170d9e5072397927e1402b34aa877d1f4c8fbc00dab6370d87312"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nl/index.dic",
+          "size": 2489166,
+          "sha256": "be192fdc36efd39dde0fb9a5a113143e0a906782e81ed68a74a710edced378d0"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nl/license",
+          "size": 25817,
+          "sha256": "fd9e95c360245eab3c388885062820754785faa4123964994cfdecb950b71948"
+        }
+      ]
+    },
+    {
+      "lang": "pt",
+      "name": "Portuguese (Brazil)",
+      "licence": "LGPL-3.0 OR MPL-2.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt/index.aff",
+          "size": 979789,
+          "sha256": "a9f3621b94eb4d6838474bf9982027758e77dcb248815f49409b1a4a477dbd27"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt/index.dic",
+          "size": 4477692,
+          "sha256": "32e2edd83541d58613bcc83ef731a79aadf85ed57e977a16c6b5f711a7a36cee"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt/license",
+          "size": 1461,
+          "sha256": "bb064f3db7ba5f5536da7d079773f692c5f928822e8aebc3d78259ff6cceb9e5"
+        }
+      ]
+    },
+    {
+      "lang": "pt-PT",
+      "name": "Portuguese (Portugal)",
+      "licence": "GPL-2.0 OR LGPL-2.1 OR MPL-1.1",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt-PT/index.aff",
+          "size": 95089,
+          "sha256": "975a209fcc892cb382fa5f34a28c391a39668661ce373ae071287809c5fcae24"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt-PT/index.dic",
+          "size": 1475328,
+          "sha256": "fcac21564163586df74ba88cde362bb75560548b35bcaa780558c8f97f43de04"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pt-PT/license",
+          "size": 1148,
+          "sha256": "a5d807381c41a7186b235f17cdf472f53d83831cb05a2bae3c44581cc818570c"
+        }
+      ]
+    },
+    {
+      "lang": "ru",
+      "name": "Russian",
+      "licence": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/ru/index.aff",
+          "size": 71236,
+          "sha256": "38ce7d4af78e211e9bafe4bf7e3d6a2c420591136cb738ec6648f8fdf6524cd7"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/ru/index.dic",
+          "size": 3473191,
+          "sha256": "f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/ru/license",
+          "size": 1886,
+          "sha256": "262af2f6ad70a61e5ee1332ff44fa8ee50edca819cf33207d8ad6ba6a0c9be52"
+        }
+      ]
+    },
+    {
+      "lang": "pl",
+      "name": "Polish",
+      "licence": "GPL-3.0 OR LGPL-3.0 OR MPL-2.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pl/index.aff",
+          "size": 268824,
+          "sha256": "de7b54a8fa37562d58b481cf3d87a63e3dcc2d74021f6403eb0e4f5df9ecc225"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pl/index.dic",
+          "size": 4683579,
+          "sha256": "74b6155391025419967c26913541b55b36d58e80b1028037d4a0b8ddcb18d0b7"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/pl/license",
+          "size": 2138,
+          "sha256": "8bb92c291eb431ffe32f7c42a719a0b54acf2851690fe12ca292e248a12a37e6"
+        }
+      ]
+    },
+    {
+      "lang": "sv",
+      "name": "Swedish",
+      "licence": "LGPL-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/sv/index.aff",
+          "size": 18581,
+          "sha256": "ff8ddb979daa9f128e7489ece5edd666ada7af787933221543b7cecb2b3ed478"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/sv/index.dic",
+          "size": 2344199,
+          "sha256": "540ff8d0d9b05aae66dd919625d3a0bd25026d1e157027e6602e5dd11a07b645"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/sv/license",
+          "size": 378,
+          "sha256": "1314b6004bff32053ca25aca5fc419e905d75a6d49f9f9825baf4f02298af6d9"
+        }
+      ]
+    },
+    {
+      "lang": "nb",
+      "name": "Norwegian Bokmål",
+      "licence": "GPL-2.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nb/index.aff",
+          "size": 17381,
+          "sha256": "515a1e5f32ffa555d253c827830420dc5bb1d9a59ea9f720729acb0874c6a8c3"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nb/index.dic",
+          "size": 5349724,
+          "sha256": "e97fdf7f441b3c46e1d0761a8ad25fa1883d0977d70ea8cb04751cb1c47fa10e"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/nb/license",
+          "size": 284,
+          "sha256": "583b1f60fd05cd7dec21293ebfb1f9f1d5b50d217521ef4f76287b50f2824770"
+        }
+      ]
+    },
+    {
+      "lang": "uk",
+      "name": "Ukrainian",
+      "licence": "GPL-3.0",
+      "files": [
+        {
+          "name": "index.aff",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/uk/index.aff",
+          "size": 203292,
+          "sha256": "4243327a3aa19c6db5a4fb2e0c4e3eba6ad26e7ccb8a3f4e634c28d9a2d18956"
+        },
+        {
+          "name": "index.dic",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/uk/index.dic",
+          "size": 8493094,
+          "sha256": "48cbe32567a2c3c98f83d437bcd84ad3c11310e9df4d6c15d888b1e67654be31"
+        },
+        {
+          "name": "license",
+          "url": "https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/uk/license",
+          "size": 35142,
+          "sha256": "d62f065830aa3739cc031156b9690805c7b2e811b4a178c8b4acd8725d561c94"
+        }
+      ]
+    }
+  ]
+}

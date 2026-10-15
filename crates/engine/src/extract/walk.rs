@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use ego_tree::NodeRef;
+use ego_tree::{NodeId, NodeRef};
 use html5ever::driver::ParseOpts;
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeBuilderOpts;
@@ -14,10 +14,12 @@ use scraper::node::Element;
 use scraper::{ElementRef, Html, HtmlTreeSink, Node};
 use url::Url;
 
+use super::agents::{AgentCtx, Collector};
+use super::a11y::A11yCollector;
 use super::directives::{meta_crawler, parse_meta};
 use super::link_header::{link_kind, rel_has};
 use super::main_content::{ARTICLE, BOILER, ContentRules, EXCLUDED, MAIN, MainText, SELECTED, Spans};
-use super::text::{collapse, hash, word_count};
+use super::text::{collapse, hash, readability_counts, word_count};
 use super::{
     Heading, MetaRefresh, PageData, Ref, RefSource, StructuredBlock, StructuredKind, TextItem, microdata,
 };
@@ -71,6 +73,7 @@ struct Ctx {
     /// Inside `main`, `article` or `section`, where `header` and `footer`
     /// are not site-wide landmarks.
     sectioning: bool,
+    agent: AgentCtx,
 }
 
 /// Text being collected for an element that is still open.
@@ -90,54 +93,79 @@ enum Frame<'a> {
 struct Walker<'p> {
     page: &'p Url,
     token: &'p str,
-    rules: Option<&'p ContentRules>,
+    content: Option<&'p ContentRules>,
     data: PageData,
     base_seen: bool,
     visible: String,
     body: Spans,
     anchor: Option<Open>,
     heading: Option<Open>,
+    agents: Collector,
+    /// Record the element each reference came from (spec 023 link
+    /// positions, after the crawl only).
+    track: bool,
+    at: Option<NodeId>,
+    nodes: Vec<NodeId>,
 }
 
+#[cfg(test)]
 pub(super) fn walk(
     text: &str,
     page: &Url,
     token: &str,
-    rules: Option<&ContentRules>,
     budget: Duration,
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
 ) -> PageData {
-    walk_full(text, page, token, rules, budget).0
+    walk_doc(text, page, token, budget, a11y, hook, false, None, false, None).1
 }
 
 /// The page's body text by paragraph with its main content marked, for the
 /// comparison view (spec 020, plan D8).
-pub(super) fn main_text(text: &str, page: &Url, rules: Option<&ContentRules>) -> MainText {
-    let (_, body) = walk_full(text, page, "", rules, PARSE_BUDGET);
-    body.paragraphs(rules)
+pub(super) fn main_text(text: &str, page: &Url, content: Option<&ContentRules>) -> MainText {
+    let (_, _, _, body) = walk_doc(text, page, "", PARSE_BUDGET, false, None, false, None, false, content);
+    body.paragraphs(content)
 }
 
-fn walk_full(
+/// [`walk`], also returning the document and, when `track` is set, the
+/// element of each reference (same index as `PageData::refs`), then the
+/// crawl's custom rules on the same parse (spec 013 plan D1) and the body
+/// text spans for the main content (spec 020).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn walk_doc(
     text: &str,
     page: &Url,
     token: &str,
-    rules: Option<&ContentRules>,
     budget: Duration,
-) -> (PageData, Spans) {
-    let rules = rules.filter(|r| !r.is_default());
+    a11y: bool,
+    hook: Option<(&super::PageHook, usize)>,
+    track: bool,
+    rules: Option<&crate::custom::CompiledRules>,
+    keep_text: bool,
+    content: Option<&ContentRules>,
+) -> (Html, PageData, Vec<NodeId>, Spans) {
+    let content = content.filter(|r| !r.is_default());
     let (doc, cut) = parse(text, budget);
+    // Spec 026: only created when asked for, so "Off" costs this test.
+    let mut checks = a11y.then(|| A11yCollector::new(&doc));
     let mut w = Walker {
         page,
         token,
-        rules,
+        content,
         data: PageData::empty(page.clone(), "", false),
         base_seen: false,
         visible: String::new(),
         body: Spans::default(),
         anchor: None,
         heading: None,
+        agents: Collector::default(),
+        track,
+        at: None,
+        nodes: Vec::new(),
     };
     w.data.no_content = false;
     w.data.partial = cut;
+    w.data.amp = super::amp::check(&doc);
     w.data.lang = doc
         .root_element()
         .value()
@@ -147,7 +175,12 @@ fn walk_full(
     let mut stack: Vec<Frame<'_>> = vec![Frame::Enter(doc.tree.root(), Ctx::default())];
     while let Some(frame) = stack.pop() {
         match frame {
-            Frame::Enter(node, ctx) => w.enter(node, ctx, &mut stack),
+            Frame::Enter(node, ctx) => {
+                if let Some(c) = checks.as_mut() {
+                    c.enter(node, ctx.noscript);
+                }
+                w.enter(node, ctx, &mut stack);
+            }
             Frame::Separate => w.separate(),
             Frame::EndAnchor(prev) => {
                 if let Some(open) = std::mem::replace(&mut w.anchor, prev) {
@@ -164,9 +197,97 @@ fn walk_full(
 
     let visible = collapse(&w.visible);
     w.data.word_count = word_count(&visible);
+    // English or undeclared: "en", "en-GB", "EN_us" (spec 009 FR-031).
+    let english = w.data.lang.as_deref().is_none_or(|l| {
+        let l = l.to_ascii_lowercase();
+        l.is_empty() || l == "en" || l.starts_with("en-") || l.starts_with("en_")
+    });
+    if english {
+        let (sentences, syllables) = readability_counts(&visible);
+        w.data.sentence_count = Some(sentences);
+        w.data.syllable_count = Some(syllables);
+    }
     w.data.text_hash = hash(&visible);
-    w.data.main = w.body.summary(rules);
-    (w.data, w.body)
+    w.data.main = w.body.summary(content);
+    if let Some(rules) = rules {
+        w.data.custom = Some(crate::custom::apply(
+            rules,
+            &crate::custom::DocView {
+                doc: &doc,
+                source: text,
+                visible: &visible,
+                structured: &w.data.structured,
+            },
+        ));
+    }
+    w.data.a11y = checks.map(|c| c.finish(&doc));
+    if let Some((hook, body_len)) = hook {
+        let input = super::HookInput {
+            url: page,
+            body_len,
+            lang: w.data.lang.as_deref(),
+        };
+        w.data.facts = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.0)(&doc, &input)))
+            .ok()
+            .flatten();
+    }
+    w.data.agents = w.agents.finish(&doc);
+    if keep_text {
+        w.data.visible_text = Some(visible);
+    }
+    (doc, w.data, w.nodes, w.body)
+}
+
+/// The visible text under `node`, as the walk collects it for the page:
+/// script, style, template, noscript and comments skipped, a space at the
+/// edges of block elements. Not collapsed.
+pub(crate) fn visible_text_into(node: NodeRef<'_, Node>, buf: &mut String) {
+    enum Step<'a> {
+        Enter(NodeRef<'a, Node>),
+        Space,
+    }
+    let mut stack = vec![Step::Enter(node)];
+    while let Some(step) = stack.pop() {
+        let n = match step {
+            Step::Space => {
+                if !buf.ends_with(' ') {
+                    buf.push(' ');
+                }
+                continue;
+            }
+            Step::Enter(n) => n,
+        };
+        match n.value() {
+            Node::Text(t) => {
+                buf.push_str(t);
+                continue;
+            }
+            Node::Element(e) => {
+                if e.name.ns == ns!(html) {
+                    if matches!(
+                        e.name.local,
+                        local_name!("script")
+                            | local_name!("style")
+                            | local_name!("template")
+                            | local_name!("noscript")
+                    ) {
+                        continue;
+                    }
+                    if !is_inline(&e.name.local) {
+                        if !buf.ends_with(' ') {
+                            buf.push(' ');
+                        }
+                        stack.push(Step::Space);
+                    }
+                }
+            }
+            Node::Document | Node::Fragment => {}
+            _ => continue,
+        }
+        let first = stack.len();
+        stack.extend(n.children().map(Step::Enter));
+        stack[first..].reverse();
+    }
 }
 
 /// The first token of a `role` attribute, lowercase.
@@ -257,6 +378,9 @@ impl Walker<'_> {
 
     fn push_ref(&mut self, mut r: Ref, ctx: Ctx) -> usize {
         r.noscript = ctx.noscript;
+        if self.track {
+            self.nodes.push(self.at.expect("set on entering the element"));
+        }
         self.data.refs.push(r);
         self.data.refs.len() - 1
     }
@@ -281,9 +405,15 @@ impl Walker<'_> {
             push_children(node, ctx, stack);
             return;
         }
+        if self.track {
+            self.at = Some(node.id());
+        }
         let name = e.name.local.clone();
         if ctx.in_body {
             self.main_flags(node, e, &name, &mut ctx);
+        }
+        if name != local_name!("template") {
+            ctx.agent = self.agents.enter(node, e, ctx.agent);
         }
         let inline = is_inline(&name);
         if !inline {
@@ -414,7 +544,7 @@ impl Walker<'_> {
         if matches!(name, "main" | "article" | "section") {
             ctx.sectioning = true;
         }
-        if let Some(rules) = self.rules
+        if let Some(rules) = self.content
             && let Some(el) = ElementRef::wrap(node)
         {
             if rules.is_excluded(el) {
@@ -495,7 +625,7 @@ fn push_children<'a>(node: NodeRef<'a, Node>, ctx: Ctx, stack: &mut Vec<Frame<'a
 }
 
 /// `5; url=/new`, `0;URL='/x'`, `3`, `0; /new`.
-fn parse_refresh(content: &str) -> Option<MetaRefresh> {
+pub(super) fn parse_refresh(content: &str) -> Option<MetaRefresh> {
     let s = content.trim_start();
     let num_len = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))

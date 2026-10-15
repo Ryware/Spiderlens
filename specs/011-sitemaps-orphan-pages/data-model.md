@@ -1,6 +1,6 @@
 # Data Model: Sitemaps and Orphan Pages
 
-All new tables and columns come in one additive migration step in `crates/engine/src/crawl/migrate.rs` (number taken at merge: main's `LATEST + 1`). All new columns are nullable. The base `sitemaps` table is still written (older readers).
+The ingestion tables (`sitemap_files`, `sitemap_entries`, `sitemap_refs`) come in one additive migration step in `crates/engine/src/crawl/migrate.rs` with part a (number taken at merge: main's `LATEST + 1`); the pass tables (`sitemap_problems`, `orphans`, `url_sources`) come in part b's own step, as spec 009 D12 asks of passes. All new columns are nullable. The base `sitemaps` table is still written (older readers).
 
 ## Settings (`crates/config`)
 
@@ -87,7 +87,8 @@ Indexes: `(url_id)`, `(file_id, pos)`.
 | entry_id | INTEGER NOT NULL | |
 | kind | TEXT NOT NULL | `image` or `hreflang` |
 | raw | TEXT NOT NULL | |
-| url_id | INTEGER | matched `urls.id` when discovered |
+| url | TEXT | `raw` normalized against the file's address |
+| url_id | INTEGER | matched `urls.id`, filled when the crawl ends (references are often discovered after the sitemap is read) |
 | lang | TEXT | hreflang only |
 
 Index: `(entry_id)`.

@@ -30,7 +30,7 @@ test("content_tab_offers_the_analysis_and_shows_progress_then_results", async ()
   const t = await openContent(fakeTransport(), false);
   fireEvent.click(await screen.findByRole("button", { name: "Find near duplicates" }));
   await waitFor(() => expect(t.results.analysisRuns).toBe(1));
-  act(() => t.results.analysisProgress({ done: 1, total: 3, step: "Comparing pages" }));
+  act(() => t.results.nearDupProgress({ done: 1, total: 3, step: "Comparing pages" }));
   expect(await screen.findByText("Comparing pages…")).toBeTruthy();
   expect(screen.getByRole("meter", { name: "Analysis progress" }).getAttribute("aria-valuenow")).toBe("33");
   act(() => t.results.finishAnalysis());

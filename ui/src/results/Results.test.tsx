@@ -49,6 +49,23 @@ test("filters_show_counts_and_explain_unavailable_ones", async () => {
   await waitFor(() => expect(rowCount()).toContain("27 URLs"));
 });
 
+test("crawl_log_opens_from_the_sidebar", async () => {
+  const t = fakeTransport();
+  t.crawlLog = async () => [{ at_ms: 0, kind: "retry", host: "https://example.com", url: "https://example.com/a", message: "503: trying again in 1 s (attempt 2 of 3)." }];
+  await openInternal(t);
+  fireEvent.click(screen.getByRole("button", { name: "Crawl log" }));
+  const log = await screen.findByRole("region", { name: "Crawl log" });
+  expect(await within(log).findByText("503: trying again in 1 s (attempt 2 of 3).")).toBeTruthy();
+});
+
+test("error_class_filters_show_only_when_they_match", async () => {
+  await openInternal();
+  fireEvent.click(screen.getByRole("button", { name: "Response codes" }));
+  const notFound = await screen.findByRole("button", { name: /Not found \(404\)/ });
+  await waitFor(() => expect(notFound.textContent).toBe("Not found (404)3"));
+  expect(screen.queryByRole("button", { name: /Timed out/ })).toBeNull();
+});
+
 test("header_click_sorts_then_reverses_then_clears", async () => {
   const t = await openInternal();
   const header = () => within(grid()).getByRole("columnheader", { name: /Title/ });
@@ -205,6 +222,36 @@ test("live_refresh_never_blanks_the_rows_on_screen", async () => {
   expect(filled()).toBe(true);
 });
 
+test("values_switch_is_hidden_without_rendering", async () => {
+  // Spec 014 T029: a raw crawl has no rendered values to show.
+  const t = await openInternal();
+  expect(screen.queryByRole("radiogroup", { name: "Which values" })).toBeNull();
+  expect(t.results.opened.every((q) => q.values === undefined)).toBe(true);
+});
+
+test("values_switch_reopens_the_view_with_the_chosen_values", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "rendering"];
+  await openInternal(t);
+  const group = await screen.findByRole("radiogroup", { name: "Which values" });
+  const rendered = within(group).getByRole("radio", { name: "Rendered values" });
+  await waitFor(() => expect(rendered.getAttribute("aria-checked")).toBe("true"));
+  await waitFor(() => expect(t.results.opened.at(-1)?.values).toBe("rendered"));
+  await waitFor(() => expect(t.results.counted.at(-1)).toBe("rendered"));
+
+  fireEvent.click(within(group).getByRole("radio", { name: "Raw values" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.values).toBe("raw"));
+  await waitFor(() => expect(t.results.counted.at(-1)).toBe("raw"));
+  expect(within(group).getByRole("radio", { name: "Raw values" }).getAttribute("aria-checked")).toBe("true");
+
+  // The choice belongs to the crawl, so another tab keeps it.
+  fireEvent.click(screen.getByRole("button", { name: "Response codes" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.tab).toBe("response-codes"));
+  expect(t.results.opened.at(-1)?.values).toBe("raw");
+  const again = screen.getByRole("radiogroup", { name: "Which values" });
+  expect(within(again).getByRole("radio", { name: "Raw values" }).getAttribute("aria-checked")).toBe("true");
+});
+
 // Sidebar counts (T014) ---------------------------------------------------------
 
 const sidebarCount = (tab: string) => {
@@ -263,4 +310,52 @@ test("sidebar_counts_follow_a_live_crawl_one_query_at_a_time", async () => {
   await new Promise((r) => setTimeout(r, 1200));
   expect(t.results.tabCountCalls).toBe(calls);
   expect(overlapped).toBe(false);
+});
+
+// "Show in table" from the inspector's lists (T027).
+
+const detailsPane = () => screen.getByRole("complementary", { name: "Details" });
+const selectedRow = () => rows().find((r) => r.getAttribute("aria-selected") === "true");
+
+test("show_in_table_clears_a_search_that_hides_the_url_and_selects_it", async () => {
+  const t = await openInternal();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search Internal" }), { target: { value: "page-1" } });
+  await waitFor(() => expect(t.results.opened.at(-1)?.search).toBe("page-1"));
+  act(() => t.results.ready());
+  await waitFor(() => expect(within(rows()[0]).getAllByRole("gridcell")[0].textContent).toBe("https://example.com/page-1"));
+  fireEvent.click(rows()[0]);
+  // The home page links to it; the home page is hidden by the search.
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(t.results.opened.at(-1)?.search).toBe(""));
+  act(() => t.results.ready());
+  await waitFor(() => expect(selectedRow()?.getAttribute("data-id")).toBe("1"));
+  expect((screen.getByRole("searchbox", { name: "Search Internal" }) as HTMLInputElement).value).toBe("");
+  await waitFor(() => expect(within(detailsPane()).getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/"));
+  expect(document.activeElement).toBe(grid());
+});
+
+test("show_in_table_switches_to_a_tab_that_lists_the_url", async () => {
+  const t = fakeTransport();
+  t.results.urls.push({ id: 500, url: "https://other.example/", status: 200, title: "Other", depth: 1, internal: false });
+  const list = t.urlList;
+  t.urlList = async (p, id, kind, from, count) => {
+    const page = await list(p, id, kind, from, count);
+    return kind === "inlinks" ? { ...page, rows: [{ ...page.rows[0], id: 500, url: "https://other.example/", internal: false }] } : page;
+  };
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://other.example/ in table" }));
+  await waitFor(() => expect(screen.getByRole("region", { name: "Response codes" })).toBeTruthy());
+  act(() => t.results.ready());
+  await waitFor(() => expect(selectedRow()?.getAttribute("data-id")).toBe("500"));
+  await waitFor(() => expect(within(detailsPane()).getByRole("heading", { level: 2 }).textContent).toBe("https://other.example/"));
+});
+
+test("show_in_table_says_when_no_tab_lists_the_url", async () => {
+  await openInternal();
+  fireEvent.click(rows()[1]);
+  fireEvent.click(await within(detailsPane()).findByRole("radio", { name: /^Images/ }));
+  fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://example.com/img-0.png in table" }));
+  await waitFor(() => expect(within(detailsPane()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
+  expect(selectedRow()?.getAttribute("data-id")).toBe("2");
 });

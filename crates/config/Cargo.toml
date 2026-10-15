@@ -22,6 +22,9 @@ jiff.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
 scraper.workspace = true
+sxd-xpath.workspace = true
+serde_json_path.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

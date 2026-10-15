@@ -50,6 +50,13 @@ pub struct CrawlCmd {
     /// store. Repeatable.
     #[arg(long, value_name = "NAME=VALUE", requires = "resume")]
     header_secret: Vec<String>,
+    /// The browser to render with [default: detected]. Not stored in the
+    /// crawl file.
+    #[arg(long, value_name = "PATH", help_heading = "Rendering")]
+    browser: Option<PathBuf>,
+    /// Download the pinned browser if none is usable, without asking.
+    #[arg(long, help_heading = "Rendering")]
+    allow_browser_download: bool,
     #[command(flatten)]
     crawl: CrawlArgs,
 }
@@ -83,6 +90,27 @@ pub struct ReportArgs {
     /// JSON (one object per line for URL listings).
     #[arg(long)]
     json: bool,
+    /// Print the crawl report: health score, issues and each section (spec 010).
+    #[arg(long, conflicts_with_all = ["not_crawled", "crawled", "reason", "html"])]
+    audit: bool,
+    /// Write the self-contained HTML report file.
+    #[arg(long, value_name = "OUT", conflicts_with_all = ["not_crawled", "crawled", "reason"])]
+    html: Option<PathBuf>,
+    /// With --html: the report title.
+    #[arg(long, requires = "html")]
+    title: Option<String>,
+    /// With --html: a note shown under the title.
+    #[arg(long, requires = "html")]
+    note: Option<String>,
+    /// With --html: URLs listed under each issue.
+    #[arg(long, requires = "html", default_value_t = spiderlens_results::report::html::URLS_PER_ISSUE_DEFAULT)]
+    urls_per_issue: u32,
+    /// With --html: replace an existing file.
+    #[arg(long, requires = "html")]
+    force: bool,
+    /// Issue settings JSON (rule overrides) for --audit and --html.
+    #[arg(long, value_name = "FILE")]
+    issues: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -173,6 +201,14 @@ fn runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
         })
 }
 
+fn browser_choice(cmd: &CrawlCmd) -> crate::browser::BrowserChoice {
+    crate::browser::BrowserChoice {
+        path: cmd.browser.clone(),
+        allow_download: cmd.allow_browser_download,
+        quiet: cmd.quiet,
+    }
+}
+
 fn default_out(input: &ModeInput) -> PathBuf {
     PathBuf::from(default_file_name(input))
 }
@@ -181,8 +217,10 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 12] = [
+        const ALLOWED: [&str; 14] = [
             "resume",
+            "browser",
+            "allow_browser_download",
             "json",
             "quiet",
             "disk_reserve",
@@ -218,11 +256,27 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                 }
             }
         }
+        // Secret cookie values come back from the environment, as on a
+        // first run (spec 025 contracts/cli.md).
+        if let Ok(info) = file::info(path) {
+            for key in &info.missing_secrets {
+                if let Some(name) = key
+                    .strip_prefix("cookie:")
+                    .and_then(|k| k.rsplit_once('/'))
+                    .map(|(_, n)| n)
+                    && let Ok(v) = std::env::var(crate::options::cookie_env(name))
+                {
+                    secrets.push((key.clone(), v));
+                }
+            }
+        }
         let mut changes = Vec::new();
+        let mut renders = false;
         if let Ok(info) = file::info(path)
             && let Some(stored) = &info.config
         {
             let current = stored.effective();
+            renders = current.rendering.is_on();
             if let Some(speed) = cmd.crawl.speed_change(current.speed)
                 && speed != current.speed
             {
@@ -243,8 +297,20 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             changes,
             secrets,
         };
+        let browser = if renders {
+            match crate::browser::choose(&browser_choice(&cmd)) {
+                Ok(b) => Some(b),
+                Err(code) => return code,
+            }
+        } else {
+            None
+        };
         match Crawler::open_with(path, &options) {
             Ok(c) => {
+                let c = match browser {
+                    Some(b) => c.with_browser(b),
+                    None => c,
+                };
                 if !cmd.quiet {
                     if let Some(n) = c.opened().recovered {
                         eprintln!(
@@ -297,9 +363,37 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         if print_issues(&validate(&resolved.config, &input)) {
             return ExitCode::from(exit::USAGE);
         }
+        // The profile's issue settings get the app's validation before the
+        // crawl starts (spec 009 FR-028).
+        let (_, notices) = spiderlens_results::issues::resolve(&resolved.config.issues);
+        for n in &notices {
+            let level = if n.error { "error" } else { "notice" };
+            eprintln!("{level}: issues: {}: {}", n.rule, n.message);
+        }
+        if notices.iter().any(|n| n.error) {
+            return ExitCode::from(exit::USAGE);
+        }
+        let renders = resolved.config.rendering.is_on();
+        if !renders && (cmd.browser.is_some() || cmd.allow_browser_download) {
+            eprintln!("error: --browser and --allow-browser-download need --render");
+            return ExitCode::from(exit::USAGE);
+        }
+        // Before the file exists: no browser, no crawl file (FR-045).
+        let browser = if renders {
+            match crate::browser::choose(&browser_choice(&cmd)) {
+                Ok(b) => Some(b),
+                Err(code) => return code,
+            }
+        } else {
+            None
+        };
         let out = cmd.out.clone().unwrap_or_else(|| default_out(&input));
         match Crawler::create(&out, resolved.config, &input) {
             Ok(c) => {
+                let c = match browser {
+                    Some(b) => c.with_browser(b),
+                    None => c,
+                };
                 if !cmd.quiet {
                     eprintln!("crawl file: {}", out.display());
                 }
@@ -311,7 +405,11 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     };
-    let crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    let mut crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    // The AI checks read page content while the crawl has each page parsed.
+    if crawler.config().ai_checks.auto {
+        crawler.set_page_hook(spiderlens_aeo::content::page_hook());
+    }
     execute(crawler, file, cmd.quiet, cmd.json)
 }
 
@@ -322,6 +420,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         Ok(rt) => rt,
         Err(code) => return code,
     };
+    let ai_auto = crawler.config().ai_checks.auto;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -368,8 +467,13 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
                             } else {
                                 String::new()
                             };
+                            // What keeps it from going faster (spec 008 FR-028).
+                            let limit = match &p.limit {
+                                Some(l) if !p.waiting_for_host => format!("  ({})", l.message),
+                                _ => String::new(),
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
                         }
@@ -399,6 +503,18 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         }
     };
     print_summary(&summary, json, &file);
+    record_issue_settings(&file);
+    // The Crawl Analysis phase, while this process still owns the file
+    // (spec 009 plan D12).
+    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
+        eprintln!(
+            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+            file.display()
+        );
+    }
+    if ai_auto && summary.status == "completed" {
+        crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
     if !json && !quiet {
         eprintln!(
             "took {} at {:.0} URLs/s on average, {:.0} at peak",
@@ -437,6 +553,17 @@ fn duration(secs: u64) -> String {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
         s => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Records the rule set version and issue settings in the file at run end
+/// (spec 009 FR-013). The issues themselves are evaluated when read.
+fn record_issue_settings(file: &Path) {
+    let stored = spiderlens_results::Reader::open(file).and_then(|r| r.stored_issue_settings());
+    if let Ok(Some(s)) = stored
+        && let Err(e) = spiderlens_results::issues::record_issue_settings(file, &s)
+    {
+        eprintln!("warning: could not record the issue settings: {e}");
     }
 }
 
@@ -505,6 +632,13 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
         let err = h.error.as_deref().map(|e| format!(" ({e})")).unwrap_or_default();
         let _ = writeln!(out, "robots.txt       {}  {}{delay}{err}", h.host, h.robots);
     }
+    if let Some(r) = &s.render {
+        print_render_summary(&mut out, r);
+    }
+    // Why parts of the crawl were slow (spec 008 FR-021).
+    for e in &s.speed_events {
+        let _ = writeln!(out, "speed            {}", e.summary);
+    }
     for m in &s.sitemaps {
         let err = m
             .error
@@ -516,7 +650,74 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
     let _ = writeln!(out, "{:<16} {}", "File", file.display());
 }
 
+/// The Rendering block (contracts/cli.md "Summary"): final states and
+/// reasons add up to the pages eligible for rendering.
+fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::RenderSummary) {
+    let n = |k: &str| r.by_state.get(k).copied().unwrap_or(0);
+    let reason = |k: &str| r.by_reason.get(k).copied().unwrap_or(0);
+    let label = |k: &'static str| match k {
+        "crash" => "Browser crash",
+        "renderer_error" => "Renderer error",
+        "page_too_large" => "Page too large",
+        "navigation_error" => "Navigation error",
+        "outside_rules" => "Outside rendering rules",
+        "crawl_stopped" => "Crawl stopped",
+        "browser_unavailable" => "Browser unavailable",
+        "html_not_stored" => "Raw HTML not stored",
+        other => other,
+    };
+    let _ = writeln!(out, "Rendering");
+    let _ = writeln!(out, "  {:<32} {}", "Rendered", n("rendered"));
+    let _ = writeln!(out, "  {:<32} {}", "Timed out", n("timed_out"));
+    let _ = writeln!(out, "  {:<32} {}", "Failed", n("failed"));
+    for k in ["crash", "renderer_error", "page_too_large", "navigation_error"] {
+        if reason(k) > 0 {
+            let _ = writeln!(out, "    {:<30} {}", label(k), reason(k));
+        }
+    }
+    let _ = writeln!(out, "  {:<32} {}", "Not rendered", n("not_rendered"));
+    for k in [
+        "outside_rules",
+        "crawl_stopped",
+        "browser_unavailable",
+        "html_not_stored",
+    ] {
+        if reason(k) > 0 {
+            let _ = writeln!(out, "    {:<30} {}", label(k), reason(k));
+        }
+    }
+    let waiting = n("queued") + n("rendering");
+    if waiting > 0 {
+        let _ = writeln!(out, "  {:<32} {waiting}", "Still waiting");
+    }
+    if let (Some(avg), Some(max)) = (r.avg_render_ms, r.max_render_ms) {
+        let _ = writeln!(out, "  {:<32} {avg} ms average, {max} ms slowest", "Render time");
+    }
+    let _ = writeln!(out, "  {:<32} {}", "JavaScript errors", r.js_errors);
+    let _ = writeln!(
+        out,
+        "  {:<32} {} failed, {} blocked",
+        "Resources", r.failed_resources, r.blocked_resources
+    );
+    if let Some(b) = &r.renderer {
+        let _ = writeln!(out, "  {:<32} {} {}", "Renderer", b.name, b.version);
+    }
+}
+
 pub fn run_report(args: ReportArgs) -> ExitCode {
+    if args.audit {
+        return crate::report_cmd::run_audit(&args.file, args.issues.as_deref(), args.json);
+    }
+    if let Some(out) = args.html {
+        let a = crate::report_cmd::HtmlArgs {
+            out,
+            title: args.title,
+            note: args.note,
+            urls_per_issue: args.urls_per_issue,
+            force: args.force,
+        };
+        return crate::report_cmd::run_html(&args.file, args.issues.as_deref(), a);
+    }
     let mut reasons = Vec::new();
     for r in &args.reason {
         match NotCrawledReason::parse(r) {
@@ -682,7 +883,7 @@ fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
         .find(|c| matches!(store.id_of(c), Ok(Some(_))))
 }
 
-fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
+pub(crate) fn open_for_page(file: &Path, url: &str) -> Result<(CrawlStore, String), ExitCode> {
     let store = CrawlStore::open_read_only(file).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::from(exit::USAGE)
@@ -715,6 +916,61 @@ pub fn run_page(args: PageArgs) -> ExitCode {
         print_page(&report);
     }
     ExitCode::from(exit::FETCHED)
+}
+
+/// The short Rendering section of `spiderlens page` (spec 014 T026).
+fn print_render_section(out: &mut impl Write, r: &serde_json::Value) {
+    use serde_json::Value;
+    let render = &r["render"];
+    if render.is_null() {
+        return;
+    }
+    let s = |v: &Value| match v {
+        Value::Null => "-".to_string(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let state = match render["reason"].as_str() {
+        Some(reason) => format!("{} ({reason})", s(&render["state"])),
+        None => s(&render["state"]),
+    };
+    let _ = writeln!(out, "  Rendering: {state}");
+    if !render["render_ms"].is_null() {
+        let _ = writeln!(out, "    Render time (ms): {}", s(&render["render_ms"]));
+    }
+    if !render["js_redirect"].is_null() {
+        let _ = writeln!(out, "    JavaScript redirect: {}", s(&render["js_redirect"]));
+    }
+    let p = &r["rendered"]["page"];
+    if !p.is_null() {
+        let _ = writeln!(out, "    Rendered title: {}", s(&p["title"]));
+        let _ = writeln!(out, "    Rendered noindex: {}", s(&p["noindex"]));
+    }
+    let c = &r["comparison"];
+    if !c.is_null() {
+        let _ = writeln!(
+            out,
+            "    Words: {} raw, {} rendered",
+            s(&c["words_raw"]),
+            s(&c["words_rendered"])
+        );
+        let _ = writeln!(
+            out,
+            "    Links only after rendering: {}, gone after rendering: {}",
+            s(&c["links_rendered_only"]),
+            s(&c["links_raw_only"])
+        );
+    }
+    if let Some(d) = r["dependence"]["overall"].as_f64() {
+        let _ = writeln!(out, "    JavaScript dependence: {d:.0}%");
+    }
+    let _ = writeln!(
+        out,
+        "    JavaScript errors: {}, resources failed: {}, blocked: {}",
+        s(&render["console_errors"]),
+        s(&render["resources_failed"]),
+        s(&render["resources_blocked"])
+    );
 }
 
 fn print_page(r: &serde_json::Value) {
@@ -782,6 +1038,7 @@ fn print_page(r: &serde_json::Value) {
         r["structured_data"].as_array().map_or(0, Vec::len)
     );
     let _ = writeln!(out, "  Raw HTML stored: {}", s(&r["html_stored"]));
+    print_render_section(&mut out, r);
 }
 
 pub fn run_html(args: HtmlArgs) -> ExitCode {
