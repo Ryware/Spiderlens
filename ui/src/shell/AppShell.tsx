@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
+import { CrawlLog } from "../crawl/CrawlLog";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { categories, type CategoryId } from "../settings/categories";
@@ -254,6 +255,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           run: () => openSettings(c.id),
         })),
       { id: "go-overview", title: "Overview", group: "Go to", run: () => setSection("overview") },
+      { id: "go-log", title: "Crawl log", group: "Go to", keywords: ["retries", "failures", "events", "history"], enabled: crawl.path !== null, run: () => setSection("log") },
       // Mod+1…Mod+9 open the first nine result tabs (FR-018).
       ...resultTabs.map((t, i) => ({ id: `go-${t.id}`, title: t.title, group: "Go to" as const, shortcut: i < 9 ? `Mod+${i + 1}` : undefined, enabled: crawl.path !== null, run: () => setSection(t.id) })),
       { id: "toggle-sidebar", title: ui.sidebarCollapsed ? "Show sidebar" : "Collapse sidebar", group: "View", shortcut: "Mod+Alt+S", run: () => updateUi({ sidebarCollapsed: !ui.sidebarCollapsed }) },
@@ -325,6 +327,8 @@ export function AppShell({ transport }: { transport: Transport }) {
         <main className="min-w-0 flex-1 overflow-hidden bg-bg">
           {section === "comparison" && comparing ? (
             <CompareView transport={transport} comparison={comparison} selected={pair} onSelect={setPair} onNew={() => setCompareOpen(true)} />
+          ) : section === "log" && crawl.path ? (
+            <CrawlLog transport={transport} path={crawl.path} live={crawl.running} />
           ) : resultTab && crawl.path ? (
             <ResultsView
               // One instance per tab: a tab switch must not carry the old

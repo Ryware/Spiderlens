@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, GitCompareArrows, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -97,6 +97,7 @@ export function Sidebar({
         {item({ id: "overview", title: "Overview", icon: Activity }, true)}
         {/* Spec 012: the open comparison, alongside the crawl. */}
         {comparison && item({ id: "comparison", title: "Comparison", icon: GitCompareArrows }, true)}
+        {item({ id: "log", title: "Crawl log", icon: ScrollText }, results)}
       </ul>
       {heading("Crawl results")}
       <ul className="m-0 flex list-none flex-col gap-px p-0">{resultTabs.map((t) => item(t, results))}</ul>
