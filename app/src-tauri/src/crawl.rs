@@ -19,8 +19,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use serde::Deserialize;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, Mode, ModeInput, RetrySettings, Severity, SpeedSettings, validate,
+    AccessSettings, AuthMethod, Change, CrawlConfig, Mode, ModeInput, ProxySettings, RetrySettings, Secret,
+    Severity, SignIn, SpeedSettings, validate,
 };
+use spiderlens_engine::net::{ProxyInEffect, ProxyProblem};
 use spiderlens_engine::crawl::{
     Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, LocalError, LogEntry,
     NotCrawledReason, Notice, Progress, ResumeOptions, RunCommand, Upgrade, default_file_name,
@@ -365,6 +367,76 @@ fn browser_message(e: &NotUsable) -> String {
     }
 }
 
+/// Adds a sign-in to the running crawl and fetches the origin's 401 URLs
+/// again (spec 025 FR-004). Returns how many were queued again.
+#[tauri::command]
+pub async fn crawl_add_sign_in(
+    app: AppHandle,
+    id: u64,
+    origin: String,
+    user: String,
+    password: String,
+    method: Option<AuthMethod>,
+) -> Cmd<u64> {
+    let sign_in = SignIn {
+        origin,
+        user,
+        password: Secret::new(password),
+        method: method.unwrap_or_default(),
+    };
+    if sign_in.origin_key().is_none() {
+        return Err("Enter the site's address, such as https://staging.example.com.".into());
+    }
+    let (reply, answer) = oneshot::channel();
+    command(&app.state::<State>(), id, RunCommand::AddSignIn { sign_in, reply });
+    answer.await.map_err(|_| "The crawl is not running.".to_string())
+}
+
+/// The answer of the proxy Test button (spec 025 FR-022).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyTest {
+    pub ok: bool,
+    pub in_effect: Option<ProxyInEffect>,
+    /// `unreachable`, `rejected`, `pac_unreadable`, `pac_unsupported` or
+    /// `invalid`.
+    pub problem: Option<&'static str>,
+    pub message: Option<String>,
+}
+
+/// Requests the start URL's robots.txt through the proxy settings on
+/// screen.
+#[tauri::command]
+pub async fn proxy_test(proxy: ProxySettings, probe_url: String) -> Cmd<ProxyTest> {
+    let start = spiderlens_config::normalize_url(&probe_url).map_err(|_| "Enter a start URL to test the proxy with.".to_string())?;
+    let probe = start.join("/robots.txt").map_err(|e| e.to_string())?;
+    let access = AccessSettings {
+        proxy,
+        ..AccessSettings::default()
+    };
+    Ok(
+        match spiderlens_engine::net::test_proxy(&access, &spiderlens_engine::CheckOptions::default(), &probe).await {
+            Ok(in_effect) => ProxyTest {
+                ok: true,
+                in_effect: Some(in_effect),
+                problem: None,
+                message: None,
+            },
+            Err(p) => ProxyTest {
+                ok: false,
+                in_effect: None,
+                problem: Some(match &p {
+                    ProxyProblem::Unreachable(_) => "unreachable",
+                    ProxyProblem::Rejected => "rejected",
+                    ProxyProblem::PacUnreadable(_) => "pac_unreadable",
+                    ProxyProblem::PacUnsupported => "pac_unsupported",
+                    ProxyProblem::Invalid(_) => "invalid",
+                }),
+                message: Some(p.message()),
+            },
+        },
+    )
+}
+
 /// Finish the requests in flight, keep the queue, save as paused.
 #[tauri::command]
 pub fn crawl_pause(state: tauri::State<State>, id: u64) {
@@ -606,6 +678,13 @@ fn run(
     };
     let reserve = app.state::<crate::files::State>().disk_reserve();
     let mut crawler = crawler.with_disk_reserve(Some(reserve));
+    // A crawl with a login page signs in with the session captured in the
+    // login window or imported from a cookies file (spec 025 US2).
+    if crawler.config().access.login.is_some()
+        && let Some(session) = app.state::<crate::login::State>().session()
+    {
+        crawler.set_login(session);
+    }
     // The AI checks read page content while the crawl has each page parsed.
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());

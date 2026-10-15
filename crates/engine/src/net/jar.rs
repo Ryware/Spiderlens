@@ -63,6 +63,29 @@ impl CrawlJar {
         }
     }
 
+    /// Adds the login session's cookies (spec 025 plan D5). Like supplied
+    /// cookies, the site may replace them under "Ignore" (session
+    /// rotation, FR-013).
+    pub fn supply_session(&mut self, cookies: &[super::SessionCookie]) {
+        let store = self.store.get_mut().unwrap_or_else(PoisonError::into_inner);
+        for c in cookies {
+            let Some(value) = c.value.expose() else { continue };
+            let Ok(url) = Url::parse(&format!("https://{}{}", c.domain, c.path)) else {
+                continue;
+            };
+            let mut raw = RawCookie::new(c.name.clone(), value.to_string());
+            // Without a Domain attribute the cookie stays on its host.
+            if !c.host_only {
+                raw.set_domain(c.domain.clone());
+            }
+            raw.set_path(c.path.clone());
+            raw.set_secure(c.secure);
+            raw.set_http_only(c.http_only);
+            let _ = store.insert_raw(&raw, &url);
+            self.pinned.insert(c.name.clone());
+        }
+    }
+
     /// The start URL redirected to another host of the same site.
     pub fn adopt_host(&self, host: &str) {
         let mut internal = self.internal.write().unwrap_or_else(PoisonError::into_inner);
@@ -208,6 +231,25 @@ mod tests {
         assert_eq!(both, ["a=1", "b=2"]);
         j.receive(["a=; Max-Age=0; Path=/"].into_iter(), &u);
         assert_eq!(j.header_for(&url("https://example.com/")), None);
+    }
+
+    #[test]
+    fn login_session_cookies_are_sent_and_may_rotate_under_ignore() {
+        let mut j = jar(CookiePolicy::Ignore);
+        j.supply_session(&[super::super::SessionCookie {
+            name: "session".into(),
+            value: spiderlens_config::Secret::new("one"),
+            domain: "example.com".into(),
+            host_only: false,
+            path: "/".into(),
+            secure: true,
+            http_only: true,
+            expires: None,
+        }]);
+        let u = url("https://shop.example.com/");
+        assert_eq!(j.header_for(&u).as_deref(), Some("session=one"));
+        j.receive(["session=two; Domain=example.com; Path=/"].into_iter(), &u);
+        assert_eq!(j.header_for(&u).as_deref(), Some("session=two"));
     }
 
     #[test]

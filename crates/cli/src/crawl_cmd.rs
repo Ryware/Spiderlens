@@ -57,6 +57,10 @@ pub struct CrawlCmd {
     /// Download the pinned browser if none is usable, without asking.
     #[arg(long, help_heading = "Rendering")]
     allow_browser_download: bool,
+    /// Check the proxy with the start URL's robots.txt and exit: 0 when it
+    /// works, 2 with the problem printed.
+    #[arg(long, help_heading = "Proxy")]
+    proxy_test: bool,
     #[command(flatten)]
     crawl: CrawlArgs,
 }
@@ -217,8 +221,9 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 14] = [
+        const ALLOWED: [&str; 15] = [
             "resume",
+            "cookies_file",
             "browser",
             "allow_browser_download",
             "json",
@@ -256,16 +261,22 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
                 }
             }
         }
-        // Secret cookie values come back from the environment, as on a
-        // first run (spec 025 contracts/cli.md).
+        // Secret cookie values, sign-in and proxy passwords come back from
+        // the environment, as on a first run (spec 025 contracts/cli.md).
         if let Ok(info) = file::info(path) {
             for key in &info.missing_secrets {
-                if let Some(name) = key
+                if secrets.iter().any(|(k, _)| k.eq_ignore_ascii_case(key)) {
+                    continue;
+                }
+                let var = match key
                     .strip_prefix("cookie:")
                     .and_then(|k| k.rsplit_once('/'))
                     .map(|(_, n)| n)
-                    && let Ok(v) = std::env::var(crate::options::cookie_env(name))
                 {
+                    Some(name) => crate::options::cookie_env(name),
+                    None => spiderlens_config::CrawlConfig::secret_env_var(key),
+                };
+                if let Ok(v) = std::env::var(var) {
                     secrets.push((key.clone(), v));
                 }
             }
@@ -363,6 +374,9 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         if print_issues(&validate(&resolved.config, &input)) {
             return ExitCode::from(exit::USAGE);
         }
+        if cmd.proxy_test {
+            return proxy_test(&resolved.config, &input);
+        }
         // The profile's issue settings get the app's validation before the
         // crawl starts (spec 009 FR-028).
         let (_, notices) = spiderlens_results::issues::resolve(&resolved.config.issues);
@@ -406,11 +420,94 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         }
     };
     let mut crawler = crawler.with_disk_reserve(Some(cmd.disk_reserve.saturating_mul(1024 * 1024)));
+    // A cookies.txt is the login session: read for this run, never stored
+    // (spec 025 FR-015).
+    if let Some(cookies) = &cmd.crawl.access.cookies_file {
+        let start_host = match &cmd.resume {
+            Some(path) => file::info(path).ok().and_then(|i| i.start_url),
+            None => cmd.url.clone(),
+        }
+        .and_then(|u| reqwest::Url::parse(&u).ok())
+        .and_then(|u| u.host_str().map(str::to_string));
+        match load_cookies_file(cookies, start_host.as_deref(), cmd.quiet) {
+            Ok(session) => crawler.set_login(session),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(exit::USAGE);
+            }
+        }
+    }
     // The AI checks read page content while the crawl has each page parsed.
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());
     }
     execute(crawler, file, cmd.quiet, cmd.json)
+}
+
+/// Reads a browser's `cookies.txt` as a login session, keeping the start
+/// host's cookies and its subdomains' (all hosts in List mode).
+fn load_cookies_file(
+    path: &Path,
+    start_host: Option<&str>,
+    quiet: bool,
+) -> Result<spiderlens_engine::net::LoginSession, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let internal = start_host.map(|h| {
+        spiderlens_config::InternalHosts::new(spiderlens_config::SubdomainMode::AllSubdomains, h.trim_start_matches("www."))
+    });
+    let keep = |host: &str| internal.as_ref().is_none_or(|i| i.is_internal(host));
+    let now = jiff::Timestamp::now().as_millisecond();
+    let name = path
+        .file_name()
+        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let (session, counts) = spiderlens_engine::net::LoginSession::from_cookies_txt(&text, &name, now, keep);
+    if session.cookies.is_empty() {
+        return Err(format!(
+            "{} has no usable cookies for this site ({} expired, {} for other sites, {} unreadable lines)",
+            path.display(),
+            counts.skipped_expired,
+            counts.skipped_external,
+            counts.skipped_malformed
+        ));
+    }
+    if !quiet {
+        eprintln!(
+            "login: {} cookies from {name} ({} expired, {} for other sites skipped)",
+            counts.imported, counts.skipped_expired, counts.skipped_external
+        );
+    }
+    Ok(session)
+}
+
+/// `--proxy-test`: requests the start URL's robots.txt through the proxy
+/// and exits (spec 025 FR-022).
+fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config::ModeInput) -> ExitCode {
+    let start = match input {
+        spiderlens_config::ModeInput::Spider { start_url } => Some(start_url.clone()),
+        spiderlens_config::ModeInput::List(_) => None,
+    };
+    let Some(probe) = start
+        .and_then(|u| reqwest::Url::parse(&u).ok())
+        .and_then(|u| u.join("/robots.txt").ok())
+    else {
+        eprintln!("error: --proxy-test needs a start URL");
+        return ExitCode::from(exit::USAGE);
+    };
+    let rt = match runtime() {
+        Ok(rt) => rt,
+        Err(code) => return code,
+    };
+    let opts = spiderlens_engine::CheckOptions::from(config);
+    match rt.block_on(spiderlens_engine::net::test_proxy(&config.access, &opts, &probe)) {
+        Ok(p) => {
+            println!("proxy ok: {}", p.describe());
+            ExitCode::SUCCESS
+        }
+        Err(problem) => {
+            eprintln!("proxy problem: {}", problem.message());
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and

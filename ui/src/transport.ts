@@ -11,7 +11,9 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type { ClustersPage } from "./generated/ClustersPage";
 import type { Comparison } from "./generated/Comparison";
 import type { ContentSettings } from "./generated/ContentSettings";
+import type { AuthMethod } from "./generated/AuthMethod";
 import type { CookieFilter } from "./generated/CookieFilter";
+import type { ProxySettings } from "./generated/ProxySettings";
 import type { CookiePage } from "./generated/CookiePage";
 import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
@@ -262,6 +264,42 @@ export interface CrawlNotice {
   kind: string;
   host: string | null;
   message: string;
+}
+
+/** Cookie names the login window captured, per domain; values never leave Rust (spec 025 FR-009). */
+export interface LoginCaptured {
+  sites: { domain: string; names: string[] }[];
+  captured_at: number;
+  login_url: string;
+}
+
+/** What importing a cookies.txt found (spec 025 US3 scenario 5). */
+export interface CookiesImported {
+  imported: number;
+  skipped_expired: number;
+  skipped_external: number;
+  skipped_malformed: number;
+  captured: LoginCaptured | null;
+}
+
+/** The proxy a crawl uses, as resolved when it starts (spec 025 FR-023). */
+export interface ProxyInEffect {
+  mode: "none" | "system" | "manual";
+  kind: string | null;
+  host: string | null;
+  port: number | null;
+  user: string | null;
+  /** "manual", "env", "os", or "none" when the system has no proxy. */
+  source: string;
+  bypass: string[];
+}
+
+/** The proxy Test button's answer (spec 025 FR-022). */
+export interface ProxyTestResult {
+  ok: boolean;
+  in_effect: ProxyInEffect | null;
+  problem: "unreachable" | "rejected" | "pac_unreadable" | "pac_unsupported" | "invalid" | null;
+  message: string | null;
 }
 
 /** What "Retry failed URLs" would do, before anything changes (spec 004 US5.1, FR-034). */
@@ -791,6 +829,22 @@ export interface Transport {
   urlDetail(path: string, id: number): Promise<UrlDetail>;
   /** `position` keeps only links at that position (spec 023 FR-024). */
   urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  // Site login and proxy (spec 025, contracts/desktop-commands.md).
+  /** Opens the login page in a private window; its addresses arrive through onLoginNavigated. */
+  loginOpen(loginUrl: string, internalHosts: string[], userAgent: string | null): Promise<void>;
+  /** Keeps the window's cookies for the crawl's own hosts and closes it. */
+  loginDone(): Promise<LoginCaptured>;
+  loginCancel(): Promise<void>;
+  /** Forgets the captured session. */
+  loginClear(): Promise<void>;
+  loginStatus(): Promise<LoginCaptured | null>;
+  onLoginNavigated(cb: (url: string) => void): Promise<() => void>;
+  onLoginClosed(cb: () => void): Promise<() => void>;
+  pickCookiesFile(): Promise<string | null>;
+  cookiesImport(path: string, internalHosts: string[]): Promise<CookiesImported>;
+  /** Adds a sign-in to a running crawl and re-queues the origin's 401 URLs; resolves to how many. */
+  crawlAddSignIn(id: number, origin: string, user: string, password: string, method: AuthMethod | null): Promise<number>;
+  proxyTest(proxy: ProxySettings, probeUrl: string): Promise<ProxyTestResult>;
   // Cookie audit (spec 025, contracts/desktop-commands.md).
   /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
   cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
@@ -1072,6 +1126,17 @@ export const tauriTransport: Transport = {
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
   urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  loginOpen: (loginUrl, internalHosts, userAgent) => invoke("login_open", { loginUrl, internalHosts, userAgent }),
+  loginDone: () => invoke("login_done"),
+  loginCancel: () => invoke("login_cancel"),
+  loginClear: () => invoke("login_clear"),
+  loginStatus: () => invoke("login_status"),
+  onLoginNavigated: (cb) => listen<{ url: string }>("login://navigated", (e) => cb(e.payload.url)),
+  onLoginClosed: (cb) => listen("login://closed", () => cb()),
+  pickCookiesFile: async () => asPath(await open({ filters: [{ name: "cookies.txt", extensions: ["txt"] }] })),
+  cookiesImport: (path, internalHosts) => invoke("cookies_import", { path, internalHosts }),
+  crawlAddSignIn: (id, origin, user, password, method) => invoke("crawl_add_sign_in", { id, origin, user, password, method }),
+  proxyTest: (proxy, probeUrl) => invoke("proxy_test", { proxy, probeUrl }),
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   urlHtml: (path, id) => invoke("url_html", { path, id }),

@@ -466,6 +466,10 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
         }
     }
 
+    validate_sign_ins(c, &mut i);
+    validate_login(c, &mut i);
+    validate_proxy(c, &mut i);
+
     // Speed
     let s = &c.speed;
     if !(1..=512).contains(&s.max_concurrent) {
@@ -713,6 +717,162 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
 
 /// JavaScript rendering (spec 014, data-model.md "Settings"). Ranges are
 /// checked whatever the mode, so a saved profile is never half valid.
+/// HTTP sign-ins (spec 025 data-model.md).
+fn validate_sign_ins(c: &CrawlConfig, i: &mut Issues) {
+    let mut seen = std::collections::HashSet::new();
+    for (index, s) in c.access.sign_ins.iter().enumerate() {
+        let path = format!("access.sign_ins[{index}]");
+        let url = url::Url::parse(s.origin.trim()).ok();
+        let origin_ok = url.as_ref().is_some_and(|u| {
+            matches!(u.scheme(), "http" | "https")
+                && u.host_str().is_some()
+                && u.path() == "/"
+                && u.query().is_none()
+                && u.fragment().is_none()
+                && u.username().is_empty()
+        });
+        if !origin_ok {
+            i.error(
+                format!("{path}.origin"),
+                "sign_in_origin",
+                "Enter the site's address only, for example https://staging.example.com, without a path.",
+            );
+        } else if let Some(key) = s.origin_key()
+            && !seen.insert(key)
+        {
+            i.error(
+                format!("{path}.origin"),
+                "sign_in_duplicate",
+                "This site already has a sign-in. Keep one per site.",
+            );
+        }
+        if s.user.trim().is_empty() {
+            i.error(
+                format!("{path}.user"),
+                "sign_in_user",
+                "Enter the user name.",
+            );
+        }
+        if !s.password.is_set() {
+            i.error(
+                format!("{path}.password"),
+                "sign_in_password_missing",
+                "Passwords are not saved in files. Enter it again to start the crawl.",
+            );
+        }
+        if url.as_ref().is_some_and(|u| u.scheme() == "http") {
+            i.warn(
+                format!("{path}.origin"),
+                "sign_in_insecure",
+                "This site uses http://, so the password can be read by anyone on the network. Use it only for test sites.",
+            );
+        }
+    }
+}
+
+/// The login page settings (spec 025 data-model.md).
+fn validate_login(c: &CrawlConfig, i: &mut Issues) {
+    let Some(login) = &c.access.login else { return };
+    let http = |s: &str| url::Url::parse(s.trim()).is_ok_and(|u| matches!(u.scheme(), "http" | "https"));
+    if !http(&login.login_url) {
+        i.error(
+            "access.login.login_url",
+            "login_url",
+            "Enter the login page's full address, starting with https://.",
+        );
+    }
+    for (index, p) in login.sign_out_patterns.iter().enumerate() {
+        if p.trim().is_empty() {
+            i.error(
+                format!("access.login.sign_out_patterns[{index}]"),
+                "login_pattern_empty",
+                "Remove the empty pattern or enter text such as logout.",
+            );
+        }
+    }
+    if let Some(check) = &login.check {
+        if !http(&check.url) {
+            i.error(
+                "access.login.check.url",
+                "login_check_url",
+                "Enter the full address of a page that only signed-in visitors can see.",
+            );
+        }
+        let empty = match &check.when {
+            crate::CheckCondition::RedirectsTo(t) | crate::CheckCondition::Contains(t) => t.trim().is_empty(),
+            crate::CheckCondition::Status(n) => !(100..=599).contains(n),
+        };
+        if empty {
+            i.error(
+                "access.login.check.when",
+                "login_check_condition",
+                "Enter the text or status code that shows the session ended.",
+            );
+        }
+    }
+}
+
+/// A bypass entry: a host, `*.host`, an IP address or a CIDR range.
+fn bypass_entry_ok(entry: &str) -> bool {
+    let e = entry.trim();
+    if e.is_empty() || e.contains(' ') {
+        return false;
+    }
+    if let Some((ip, bits)) = e.split_once('/') {
+        let Ok(ip) = ip.parse::<std::net::IpAddr>() else { return false };
+        let max = if ip.is_ipv4() { 32 } else { 128 };
+        return bits.parse::<u8>().is_ok_and(|b| b <= max);
+    }
+    if e.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let host = e.strip_prefix("*.").or_else(|| e.strip_prefix('.')).unwrap_or(e);
+    !host.is_empty()
+        && host
+            .split('.')
+            .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+}
+
+/// The proxy (spec 025 data-model.md).
+fn validate_proxy(c: &CrawlConfig, i: &mut Issues) {
+    let p = &c.access.proxy;
+    if p.mode == crate::ProxyMode::Manual {
+        let host = p.host.trim();
+        if host.is_empty() || host.contains("://") || host.contains('/') || host.contains(' ') {
+            i.error(
+                "access.proxy.host",
+                "proxy_host",
+                "Enter the proxy's host name or IP address, without http://.",
+            );
+        }
+        if p.port == 0 {
+            i.error(
+                "access.proxy.port",
+                "proxy_port",
+                "Enter the proxy's port, a number from 1 to 65535.",
+            );
+        }
+        if p.needs_password() {
+            i.error(
+                "access.proxy.password",
+                "proxy_password_missing",
+                "Passwords are not saved in files. Enter the proxy password again to start the crawl.",
+            );
+        }
+    }
+    if p.mode != crate::ProxyMode::None {
+        for (index, b) in p.bypass.iter().enumerate() {
+            if !bypass_entry_ok(b) {
+                i.error(
+                    format!("access.proxy.bypass[{index}]"),
+                    "proxy_bypass",
+                    "Enter a host (example.com), a wildcard (*.example.com), an IP address or a range (10.0.0.0/8).",
+                );
+            }
+        }
+    }
+}
+
 fn validate_rendering(c: &CrawlConfig, i: &mut Issues) {
     let r = &c.rendering;
     let cap = r.max_render_secs;
@@ -1179,6 +1339,59 @@ mod tests {
                 ),
                 ("access.cookies[3].path".to_string(), "cookie_path".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn sign_ins_login_and_proxy() {
+        use crate::{
+            AuthMethod, CheckCondition, LoginSettings, ProxyMode, Secret, SignIn, SignedOutCheck,
+        };
+        let si = |origin: &str, user: &str, pw: Option<&str>| SignIn {
+            origin: origin.into(),
+            user: user.into(),
+            password: pw.map(Secret::new).unwrap_or_default(),
+            method: AuthMethod::Any,
+        };
+        let mut c = CrawlConfig::default();
+        c.access.sign_ins = vec![
+            si("https://staging.example.com", "ann", Some("pw")),
+            si("https://staging.example.com/", "bob", Some("pw")),
+            si("https://example.com/admin", "", None),
+            si("http://test.example.com:8080", "eve", Some("pw")),
+        ];
+        let mut login = LoginSettings::new("example.com/login");
+        login.sign_out_patterns.push(" ".into());
+        login.check = Some(SignedOutCheck {
+            url: "https://example.com/account".into(),
+            when: CheckCondition::Contains(String::new()),
+        });
+        c.access.login = Some(login);
+        c.access.proxy.mode = ProxyMode::Manual;
+        c.access.proxy.host = "http://proxy".into();
+        c.access.proxy.user = Some("ann".into());
+        c.access.proxy.bypass = vec!["localhost".into(), "*.corp.example".into(), "10.0.0.0/8".into(), "bad host".into()];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        let want = [
+            ("access.sign_ins[1].origin", "sign_in_duplicate"),
+            ("access.sign_ins[2].origin", "sign_in_origin"),
+            ("access.sign_ins[2].user", "sign_in_user"),
+            ("access.sign_ins[2].password", "sign_in_password_missing"),
+            ("access.sign_ins[3].origin", "sign_in_insecure"),
+            ("access.login.login_url", "login_url"),
+            ("access.login.sign_out_patterns[6]", "login_pattern_empty"),
+            ("access.login.check.when", "login_check_condition"),
+            ("access.proxy.host", "proxy_host"),
+            ("access.proxy.port", "proxy_port"),
+            ("access.proxy.password", "proxy_password_missing"),
+            ("access.proxy.bypass[3]", "proxy_bypass"),
+        ];
+        assert_eq!(
+            got,
+            want.map(|(p, c)| (p.to_string(), c.to_string()))
         );
     }
 

@@ -292,6 +292,9 @@ pub struct Response {
     pub attempts: u32,
     pub round_attempts: u32,
     pub error_reason: Option<&'static str>,
+    /// Why a 401 stayed a 401 (spec 025): `auth_required:<schemes>` or
+    /// `auth_rejected:<method>`.
+    pub reason_detail: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1747,7 +1750,7 @@ impl CrawlStore {
                  response_ms = ?11, size_bytes = ?12, transfer_bytes = ?13, resource_type = ?14,
                  redirect_kind = ?15, noindex = ?16, nofollow = ?17, canonical = ?18, canonical_count = ?19,
                  canonical_conflict = ?20, attempts = ?21, round_attempts = ?22, error_reason = ?23,
-                 retry_at = NULL
+                 retry_at = NULL, reason_detail = ?24
                  WHERE id = ?1 AND state = 'in_flight'",
             )?
             .execute(params![
@@ -1774,6 +1777,7 @@ impl CrawlStore {
                 r.attempts,
                 r.round_attempts,
                 r.error_reason,
+                r.reason_detail,
             ])?;
         self.shift(Some(UrlState::InFlight), state, n);
         Ok(())
@@ -2505,6 +2509,101 @@ impl CrawlStore {
         ))?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// After a session ended mid-crawl (spec 025 FR-012): internal pages
+    /// fetched after `since_ms` were answered as signed out, so they go
+    /// back to the queue. Returns how many. Runs in one transaction.
+    pub fn requeue_fetched_since(&mut self, since_ms: i64) -> Result<u64> {
+        let ids: Vec<i64> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM urls WHERE state = 'crawled' AND check_only = 0 AND fetched_at > ?1
+                 ORDER BY depth, id",
+            )?;
+            let rows = stmt.query_map([since_ms], |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        self.begin()?;
+        for id in &ids {
+            let seq = self.take_seq();
+            self.conn
+                .prepare_cached(
+                    "UPDATE urls SET state = 'queued', queue_seq = ?2, round_attempts = 0,
+                     status = NULL, error_class = NULL, error_reason = NULL, error_message = NULL, redirect_to = NULL,
+                     title = NULL, retry_at = NULL, reason_detail = NULL
+                     WHERE id = ?1",
+                )?
+                .execute(params![id, seq])?;
+            for table in [
+                "links WHERE from_id",
+                "page_text WHERE url_id",
+                "directives WHERE url_id",
+                "structured_data WHERE url_id",
+                "pages WHERE url_id",
+                "bodies WHERE url_id",
+                "headers WHERE url_id",
+                "cookies WHERE url_id",
+            ] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} = ?1"))?
+                    .execute([id])?;
+            }
+            self.shift(Some(UrlState::Crawled), UrlState::Queued, 1);
+        }
+        self.commit()?;
+        Ok(ids.len() as u64)
+    }
+
+    /// After a sign-in is added mid-crawl (spec 025 FR-004): the origin's
+    /// URLs that ended in 401 go back to the queue, like a manual retry.
+    /// Runs inside the caller's transaction, if any. Returns the queued
+    /// entries.
+    pub fn requeue_unauthorized(&mut self, origin: &str) -> Result<Vec<QueueEntry>> {
+        let prefix = format!("{origin}/");
+        let rows: Vec<(i64, String, String, u32, String, u32)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, url, host_key, depth, source, COALESCE(attempts, 0) FROM urls
+                 WHERE state = 'crawled' AND status = 401 AND check_only = 0
+                 AND substr(url, 1, ?2) = ?1 ORDER BY depth, id",
+            )?;
+            let rows = stmt.query_map(params![prefix, prefix.chars().count() as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, url, host_key, depth, source, attempts) in rows {
+            let seq = self.take_seq();
+            self.conn
+                .prepare_cached(
+                    "UPDATE urls SET state = 'queued', queue_seq = ?2, round_attempts = 0, manual_retry = 1,
+                     status = NULL, error_class = NULL, error_reason = NULL, error_message = NULL, redirect_to = NULL,
+                     title = NULL, retry_at = NULL, reason_detail = NULL
+                     WHERE id = ?1",
+                )?
+                .execute(params![id, seq])?;
+            for table in ["links WHERE from_id", "pages WHERE url_id", "headers WHERE url_id"] {
+                self.conn
+                    .prepare_cached(&format!("DELETE FROM {table} = ?1"))?
+                    .execute([id])?;
+            }
+            self.shift(Some(UrlState::Crawled), UrlState::Queued, 1);
+            out.push(QueueEntry {
+                id,
+                url,
+                host_key,
+                depth,
+                seq,
+                check_only: false,
+                source: DiscoverySource::parse(&source).unwrap_or(DiscoverySource::Link),
+                attempts,
+                round_attempts: 0,
+            });
+        }
+        Ok(out)
     }
 
     /// "Retry failed URLs" (spec 004 FR-030 to FR-033, plan D12): every

@@ -10,6 +10,7 @@ mod compare;
 mod crawl;
 mod custom;
 mod files;
+mod login;
 mod integrations;
 mod manage;
 mod near_dup;
@@ -90,6 +91,7 @@ fn main() {
                 app.manage(s);
             }
             app.manage(report::State::default());
+            app.manage(login::State::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -172,6 +174,14 @@ fn main() {
             results::viz_term_links,
             results::viz_export,
             results::cookies_list,
+            login::login_open,
+            login::login_done,
+            login::login_cancel,
+            login::login_clear,
+            login::login_status,
+            login::cookies_import,
+            crawl::crawl_add_sign_in,
+            crawl::proxy_test,
             results::cookie_urls,
             results::url_html,
             results::url_tabs,
