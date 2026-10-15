@@ -7,13 +7,15 @@ import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { Transport } from "../transport";
 import { Input, NumberInput, Segmented, Select, Switch, Textarea } from "../components/ui";
 import { Group, issuesAt, Row } from "./fields";
+import { CookiesEditor, hostOf } from "./CookiesEditor";
 import { HeadersEditor } from "./HeadersEditor";
 import { ListInputPanel } from "./ListInputPanel";
 import { PatternTester } from "./PatternTester";
 import { ScopeTester } from "./ScopeTester";
 import { SitemapSources } from "./SitemapSources";
+import { StorageSettings } from "./StorageSettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "extraction" | "appearance";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "storage" | "appearance";
 
 export interface Category {
   id: CategoryId;
@@ -22,7 +24,7 @@ export interface Category {
   /** Issue paths that belong to this category; its counts come from these (FR-011). */
   prefixes: string[];
   listOnly?: boolean;
-  /** An app preference, not part of the crawl profile (spec 018 FR-012). */
+  /** An app preference, not part of the crawl profile (spec 018 FR-012, spec 019 FR-025). */
   app?: boolean;
 }
 
@@ -34,7 +36,15 @@ export const categories: Category[] = [
   { id: "speed", title: "Speed", description: "How hard SpiderLens works the site. Polite is right for sites you don't own.", prefixes: ["speed"] },
   { id: "robots", title: "robots.txt", description: "Whether to follow the site's crawling rules.", prefixes: ["robots"] },
   { id: "network", title: "Network and retries", description: "Timeouts, size limits and what happens when a request fails.", prefixes: ["network", "retry"] },
+  { id: "access", title: "Sign-in and cookies", description: "Cookies sent to the site, and what happens to the cookies it sets. Secret values are never saved.", prefixes: ["access"] },
   { id: "extraction", title: "Page data", description: "What SpiderLens keeps from each page it crawls.", prefixes: ["extraction"] },
+  {
+    id: "storage",
+    title: "Storage",
+    description: "Disk space and cleanup of unsaved crawls. Saved on this computer, not in the crawl profile.",
+    prefixes: [],
+    app: true,
+  },
   {
     id: "appearance",
     title: "Appearance",
@@ -56,6 +66,7 @@ function Lines({ id, value, onChange, placeholder }: { id: string; value: string
 
 /** `live`: a crawl is running and only the settings it can take on at once are editable. */
 export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; setup: CrawlSetup; transport: Transport; live?: boolean }): ReactNode {
+  if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
   if (!config || !presets) return null;
   const at = (p: string) => issuesAt(issues, p);
@@ -361,6 +372,49 @@ export function CategoryBody({ id, setup, transport, live }: { id: CategoryId; s
             <Row label="Give up after failed tests" help={'Its remaining URLs are then listed as "Host unavailable" and can be retried later.'} issues={at("retry.host_give_up_after")}>
               {(i) => (
                 <NumberInput id={i} min={1} max={50} value={config.retry.host_give_up_after} onChange={(v) => set((c) => ({ ...c, retry: { ...c.retry, host_give_up_after: v ?? NaN } }))} />
+              )}
+            </Row>
+          </Group>
+        </>
+      );
+
+    case "access":
+      return (
+        <>
+          <Group title="Cookies">
+            <Row
+              label="Cookies sent with every request"
+              stacked
+              help="Sent only to this crawl's own site. Paste the Cookie line from a signed-in browser to crawl as that user."
+              issues={at("access.cookies")}
+            >
+              {() => (
+                <CookiesEditor
+                  cookies={config.access.cookies}
+                  defaultDomain={hostOf(setup.startUrl)}
+                  onChange={(cookies) => set((c) => ({ ...c, access: { ...c.access, cookies } }))}
+                />
+              )}
+            </Row>
+            <Row
+              label="Cookies the site sets"
+              help={
+                config.access.cookie_policy === "keep"
+                  ? "Sent back for the rest of the crawl, like a browser. They are recorded in the Cookies report either way."
+                  : "Recorded in the Cookies report but not sent back, so every page is seen as a first visit."
+              }
+              issues={at("access.cookie_policy")}
+            >
+              {() => (
+                <Segmented
+                  label="Cookies the site sets"
+                  value={config.access.cookie_policy}
+                  options={[
+                    { value: "ignore", label: "Ignore" },
+                    { value: "keep", label: "Keep" },
+                  ]}
+                  onChange={(cookie_policy) => set((c) => ({ ...c, access: { ...c.access, cookie_policy } }))}
+                />
               )}
             </Row>
           </Group>

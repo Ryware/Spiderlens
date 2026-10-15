@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use serde::Serialize;
 use spiderlens_config::SitemapGenerateOptions;
 use spiderlens_results::{
-    ExportError, Features, FilterCounts, ListKind, ListPage, Reader, Refresh, RowPage, TabCounts, TabDef,
-    UrlDetail, UrlScope, ViewQuery, export_file, tabs,
+    CookieFilter, CookiePage, CookieUrlPage, ExportError, Features, FilterCounts, ListKind, ListPage,
+    PageHtml, Reader, Refresh, RowPage, TabCounts, TabDef, UrlDetail, UrlScope, ViewQuery, export_file, tabs,
 };
 use spiderlens_results::{GenerateError, GenerateReport, SitemapFiles, SitemapOutput, generate_sitemaps};
 use tauri::{AppHandle, Emitter};
@@ -104,6 +104,15 @@ impl State {
             .map_err(|_| "The results reader stopped.".to_string())?
     }
 
+    /// The crawl the results window reads, if any.
+    pub fn open_path(&self) -> Option<PathBuf> {
+        self.actor
+            .lock()
+            .expect("results lock")
+            .as_ref()
+            .map(|a| a.path.clone())
+    }
+
     /// Lets go of `path` (before it is deleted or moved by Save As).
     pub fn close(&self, path: &Path) {
         let mut actor = self.actor.lock().expect("results lock");
@@ -143,7 +152,7 @@ pub async fn results_open(state: tauri::State<'_, State>, path: PathBuf) -> Cmd<
     state
         .with(&path, |r| {
             Ok(Opened {
-                features: r.features().clone(),
+                features: r.refresh_features().map_err(err)?.clone(),
             })
         })
         .await
@@ -260,6 +269,64 @@ pub async fn url_list(
     state
         .with(&path, move |r| r.list(id, kind, from, count).map_err(err))
         .await
+}
+
+/// Distinct cookies the crawl saw, without values (spec 025 FR-027).
+#[tauri::command]
+pub async fn cookies_list(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    filter: CookieFilter,
+    sort: Option<String>,
+    descending: bool,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookiePage> {
+    state
+        .with(&path, move |r| {
+            r.cookies(filter, sort.as_deref(), descending, offset, limit)
+                .map_err(err)
+        })
+        .await
+}
+
+/// The URLs that set one cookie (spec 025 FR-028).
+#[tauri::command]
+pub async fn cookie_urls(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    name: String,
+    domain: String,
+    cookie_path: String,
+    offset: u32,
+    limit: u32,
+) -> Cmd<CookieUrlPage> {
+    state
+        .with(&path, move |r| {
+            r.cookie_urls(&name, &domain, &cookie_path, offset, limit)
+                .map_err(err)
+        })
+        .await
+}
+
+/// A page's stored HTML for the source viewer (T029).
+#[tauri::command]
+pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageHtml> {
+    state.with(&path, move |r| r.page_html(id).map_err(err)).await
+}
+
+/// The tabs that list URL `id` unfiltered, for "show in table".
+#[tauri::command]
+pub async fn url_tabs(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<Vec<&'static str>> {
+    state.with(&path, move |r| r.tabs_of(id).map_err(err)).await
+}
+
+/// Puts one value (an inspector row's URL) on the clipboard.
+#[tauri::command]
+pub fn copy_text(app: AppHandle, text: String) -> Cmd<()> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| format!("Could not copy: {e}"))
 }
 
 /// Puts the selected rows on the clipboard as TSV with a header (FR-026)

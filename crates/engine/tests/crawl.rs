@@ -1131,3 +1131,68 @@ async fn spec007_active_time_and_failures_by_class() {
     let again = run(Crawler::open(&path).unwrap().with_resolve(resolve)).await;
     assert!(again.active_ms >= first, "{} < {first}", again.active_ms);
 }
+
+/// Spec 015 FR-010: each internal host's AI site files are fetched once,
+/// after the pages, never for external hosts, and not where robots.txt
+/// blocks SpiderLens.
+#[tokio::test]
+async fn ai_site_files_once_per_internal_host() {
+    let site = SiteBuilder::new()
+        .robots(E, "User-agent: *\nDisallow: /.well-known/\n")
+        .page(E, "/", "", &["/a", "{base:other.test}/x"])
+        .page(E, "/a", "", &[])
+        .page("other.test", "/x", "", &[])
+        .raw(E, "/llms.txt", 200, "text/plain", b"# Example\n")
+        .start();
+    let d = crawl(&site, "/", fast).await;
+    assert_eq!(site.count(E, "/llms.txt"), 1);
+    assert_eq!(site.count(E, "/llms-full.txt"), 1);
+    assert_eq!(site.count(E, "/.well-known/tdmrep.json"), 0);
+    assert_eq!(site.count("other.test", "/llms.txt"), 0);
+    let last_page = site
+        .page_hits()
+        .iter()
+        .filter(|h| h.host == E)
+        .map(|h| h.at)
+        .max()
+        .unwrap();
+    let first_file = site
+        .hits()
+        .iter()
+        .filter(|h| h.path == "/llms.txt")
+        .map(|h| h.at)
+        .min()
+        .unwrap();
+    assert!(first_file >= last_page);
+    let conn = rusqlite::Connection::open(&d.path).unwrap();
+    let rows: Vec<(String, String, Option<i64>)> = conn
+        .prepare("SELECT path, outcome, size FROM site_files ORDER BY path")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (
+                "/.well-known/tdmrep.json".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            ("/llms-full.txt".into(), "not_found".into(), None),
+            ("/llms.txt".into(), "ok".into(), Some(10)),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn ai_site_files_can_be_turned_off() {
+    let site = SiteBuilder::new().page(E, "/", "", &[]).start();
+    crawl(&site, "/", |c| {
+        fast(c);
+        c.ai_checks.site_files = false;
+    })
+    .await;
+    assert_eq!(site.count(E, "/llms.txt"), 0);
+}

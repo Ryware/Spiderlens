@@ -343,6 +343,24 @@ async fn us3_detail_redirects_inlinks_and_failure() {
     assert_eq!(imgs.total, 1);
     // Anchor text comes with each link.
     assert!(out.rows.iter().any(|l| l.text.as_deref() == Some("x")));
+
+    // "Show in table": the tabs that list a URL, in display order.
+    assert_eq!(
+        &r.tabs_of(home).unwrap()[..4],
+        ["internal", "response-codes", "url", "page-titles"]
+    );
+    assert_eq!(r.tabs_of(missing).unwrap(), ["internal", "response-codes", "url"]);
+    let private = out
+        .rows
+        .iter()
+        .find(|l| l.final_state == "Blocked by robots.txt")
+        .unwrap();
+    assert_eq!(r.tabs_of(private.id).unwrap(), ["response-codes"]);
+    let other = out.rows.iter().find(|l| !l.internal).unwrap();
+    assert_eq!(&r.tabs_of(other.id).unwrap()[..2], ["external", "response-codes"]);
+    let img = imgs.rows[0].id;
+    assert!(r.tabs_of(img).unwrap().contains(&"images"));
+    assert!(r.tabs_of(i64::MAX).unwrap().is_empty(), "not in the crawl");
 }
 
 #[tokio::test]

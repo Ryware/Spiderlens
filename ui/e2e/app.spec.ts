@@ -279,6 +279,36 @@ test("sitemap_files_tree_opens_from_the_sidebar_and_works_by_keyboard", async ({
   await expect(page.getByRole("region", { name: "Selected sitemap file" })).toContainText("unexpected end (line 3)");
 });
 
+test("crawl_speed_popover_explains_the_limit_and_fits_the_window", async ({ page }) => {
+  // Spec 008 FR-028, FR-029: the reason in the status bar, every site's pace on click.
+  await page.keyboard.type("example.com");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() =>
+    window.spiderlens.crawls.progress({
+      crawled: 1200,
+      queued: 3800,
+      limit: { kind: "site_overload", host: "https://example.com:443", seconds_left: null, message: "https://example.com:443 answered 429 or 503 (overloaded), so it gets 4 at once." },
+      sites: [
+        { host: "https://example.com:443", state: "slowed_down", allowance: 4, max: 32, in_flight: 4, response_ms: 240, crawled: 1100, waiting: 3700, waiting_more: false, reason: "Answered 429 or 503 (overloaded), so cut to 4 at once.", seconds_left: null },
+        { host: "https://cdn.example.com:443", state: "speeding_up", allowance: 6, max: 32, in_flight: 6, response_ms: 35, crawled: 100, waiting: 100, waiting_more: false, reason: "6 of 32 at once, one more each time a round of answers comes back steady.", seconds_left: null },
+      ],
+      sites_total: 2,
+    }),
+  );
+  const trigger = page.getByRole("contentinfo", { name: "Crawl status" }).locator('[data-figure="speed"]');
+  await expect(trigger).toHaveText("Site overloaded · example.com");
+  await trigger.click();
+  const table = page.getByRole("table", { name: "Sites" });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  const box = (await page.getByRole("dialog").boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(1400);
+  await page.keyboard.press("Escape");
+  await expect(table).toBeHidden();
+});
+
 test("columns_reorder_from_the_keyboard_in_the_columns_menu", async ({ page }) => {
   const grid = await openInternal(page);
   const headers = () => grid.getByRole("columnheader").allTextContents();
@@ -322,4 +352,145 @@ test("mod_digit_switches_tabs_and_enter_opens_the_inspector", async ({ page }) =
   await expect(page.getByRole("region", { name: "Response codes" })).toBeVisible();
   await page.keyboard.press("Control+1");
   await expect(page.getByRole("region", { name: "Internal" })).toBeVisible();
+});
+
+test("pasted_cookies_reach_the_crawl_and_the_cookie_audit_fits_the_window", async ({ page }) => {
+  // Spec 025 US3 and US5: cookies from a signed-in browser, then the audit.
+  await page.getByLabel("Start URL").fill("example.com");
+  await page.keyboard.press("Control+Comma");
+  const nav = page.getByRole("navigation", { name: "Settings categories" });
+  await nav.getByRole("tab", { name: /^Sign-in and cookies/ }).click();
+  await page.getByRole("button", { name: "Paste a Cookie line" }).click();
+  await page.getByLabel("Cookie line").fill("Cookie: sid=abc; theme=dark");
+  await page.getByRole("button", { name: "Add cookies" }).click();
+  await expect(page.getByLabel("Cookie 1 value")).toHaveAttribute("type", "password");
+  await expect(page.getByLabel("Cookie 2 domain")).toHaveValue("example.com");
+  await page.getByRole("radiogroup", { name: "Cookies the site sets" }).getByRole("radio", { name: "Keep" }).click();
+  await page.keyboard.press("Escape");
+  await expect(nav).toBeHidden();
+
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features = ["base", "extraction", "cookies"];
+    s.results.cookies = [
+      s.fakeCookie("sid", Array.from({ length: 300 }, (_, i) => i + 1)),
+      s.fakeCookie("ad_id", [7], { domain: "ads.example.net", third_party: true, same_site: "none" }),
+    ];
+  });
+  await page.getByLabel("Start URL").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  const config = await page.evaluate(() => window.spiderlens.crawls.started[0].config.access);
+  expect(config.cookie_policy).toBe("keep");
+  expect(config.cookies.map((c) => [c.name, c.value])).toEqual([
+    ["sid", { secret: true, value: "abc" }],
+    ["theme", { secret: true, value: "dark" }],
+  ]);
+  await page.evaluate(() => window.spiderlens.crawls.finish({ report: window.spiderlens.fakeReport("completed", 5000) }));
+  await expect(page.getByRole("status").filter({ hasText: "Completed" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cookies" }).click();
+  const table = page.getByRole("table", { name: /^Cookies/ });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await table.getByRole("row").nth(1).focus();
+  await page.keyboard.press("Enter");
+  const urls = page.getByRole("region", { name: "URLs that set sid" });
+  await expect(urls).toContainText("(300)");
+  // The URL list scrolls inside its pane; the window itself never scrolls.
+  const vp = page.viewportSize()!;
+  const box = (await urls.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(await page.evaluate(() => document.scrollingElement!.scrollHeight <= window.innerHeight)).toBe(true);
+  await urls.getByText("https://example.com/page-6", { exact: true }).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-6");
+  await expect(details.getByRole("list", { name: "Cookies set" })).toContainText("sid");
+});
+
+test("page_html_viewer_windows_searches_and_copies", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => {
+    window.spiderlens.results.features = ["base", "extraction", "timing", "raw_html"];
+  });
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(2).click();
+  await page.getByRole("complementary", { name: "Details" }).getByRole("button", { name: "View source" }).click();
+  const dialog = page.getByRole("dialog");
+  const source = dialog.getByRole("region", { name: "Page source" });
+  await expect(source).toContainText("<!doctype html>");
+  await expect(dialog.getByLabel("Find in source")).toBeFocused();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  // 2,008 lines, but only those on screen exist in the page.
+  expect(await source.locator("[data-row]").count()).toBeLessThan(80);
+  await page.keyboard.type("paragraph 1999");
+  await expect(dialog.getByTestId("match-count")).toHaveText("1 of 1");
+  await expect(source.locator("mark[data-current]")).toBeInViewport();
+  await dialog.getByRole("button", { name: "Copy" }).click();
+  await expect(dialog.getByText("Copied.")).toBeVisible();
+  // The Windows clipboard hands text back with CRLF line ends.
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  expect(copied.startsWith("<!doctype html>\n")).toBe(true);
+  expect(copied.split("\n").length).toBe(2009);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+test("inspector_rows_copy_and_show_in_table", async ({ page }) => {
+  const grid = await openInternal(page);
+  await grid.getByRole("row").nth(1).click();
+  await page.keyboard.press("End");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/page-4999");
+  // The actions show on hover and on keyboard focus.
+  const show = details.getByRole("button", { name: "Show https://example.com/ in table" });
+  const shown = show.locator("..");
+  await expect(shown).toHaveCSS("opacity", "0");
+  await show.locator("xpath=ancestor::li").hover();
+  await expect(shown).toHaveCSS("opacity", "1");
+  const copy = details.getByRole("button", { name: "Copy https://example.com/" });
+  await copy.focus();
+  await page.keyboard.press("Enter");
+  await expect(details.getByRole("status")).toHaveText("Copied.");
+  expect(await page.evaluate(() => window.spiderlens.results.copied)).toEqual(["https://example.com/"]);
+  // Right-click offers the same; Show in table scrolls back to the top row.
+  await copy.locator("xpath=ancestor::li").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Show in table" }).click();
+  const selected = grid.locator('[role="row"][aria-selected="true"]');
+  await expect(selected).toHaveAttribute("data-id", "1");
+  await expect(selected).toBeInViewport();
+  await expect(grid).toBeFocused();
+  await expect(details.getByRole("heading", { level: 2 })).toHaveText("https://example.com/");
+});
+
+test("create_a_schedule_see_its_next_run_open_history_and_turn_it_off", async ({ page }) => {
+  await page.keyboard.type("example.com");
+  await page.keyboard.press("Control+K");
+  await runInPalette(page, "Schedule this crawl");
+  const sheet = page.getByRole("dialog", { name: "New schedule" });
+  await expect(sheet.getByLabel("Name")).toBeFocused();
+  // The sheet fits the window, footer included.
+  const box = (await sheet.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(860);
+  await sheet.getByRole("radio", { name: "Daily" }).click();
+  await sheet.getByLabel("At", { exact: true }).fill("07:30");
+  await expect(sheet.getByText("Every day at 07:30")).toBeVisible();
+  await expect(sheet.getByRole("list", { name: "Next runs" }).getByRole("listitem")).toHaveCount(5);
+  await sheet.getByRole("button", { name: "Create schedule" }).click();
+  await expect(sheet).toBeHidden();
+
+  const list = page.getByRole("list", { name: "Schedules" });
+  await expect(list.getByText("example.com weekly")).toBeVisible();
+  await expect(list.getByText("Every day at 07:30")).toBeVisible();
+  await expect(list.getByText(/^Next: /)).toBeVisible();
+
+  const detail = page.getByRole("region", { name: "example.com weekly" });
+  await expect(detail.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(detail.getByText("No runs yet.")).toBeVisible();
+
+  await detail.getByRole("switch", { name: "Enabled" }).click();
+  await expect(list.getByText("Off")).toBeVisible();
+  await expect(list.getByText("No upcoming runs")).toBeVisible();
 });
