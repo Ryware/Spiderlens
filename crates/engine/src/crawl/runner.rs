@@ -52,7 +52,7 @@ const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 const COMMIT_EVERY: Duration = Duration::from_millis(200);
 const COMMIT_WRITES: u32 = 500;
 /// How often the crawl lets the write-ahead log start over.
-const CATCH_UP_EVERY: Duration = Duration::from_secs(1);
+const CATCH_UP_EVERY: Duration = Duration::from_millis(250);
 /// At most this much HTML (in KiB) is being extracted at once, which bounds
 /// the memory parsed documents take (spec 005 plan D3).
 const EXTRACT_BUDGET_KIB: usize = 64 * 1024;
@@ -851,6 +851,12 @@ impl Crawler {
         Ok(self)
     }
 
+    /// Stores a key in the crawl file's `meta` table, for callers that add
+    /// their own context, such as the schedule that started a run (spec 021).
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CrawlError> {
+        Ok(self.store.set_meta(key, value)?)
+    }
+
     /// Runs until the queue is empty or `control` asks to pause or stop.
     pub async fn run(
         self,
@@ -1479,8 +1485,7 @@ impl Run {
         if self.write_tx.take().is_some() {
             let t = Instant::now();
             self.c.store.commit()?;
-            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY {
-                self.c.store.catch_up_checkpoint();
+            if self.last_catch_up.elapsed() >= CATCH_UP_EVERY && self.c.store.catch_up_checkpoint() {
                 self.last_catch_up = Instant::now();
             }
             self.load.saving(t.elapsed());
