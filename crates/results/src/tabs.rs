@@ -1294,7 +1294,7 @@ mod tests {
                 assert!(t.column(s).is_some(), "{} searches unknown column {s}", t.id);
             }
         }
-        assert_eq!(tab_ids.len(), 12);
+        assert_eq!(tab_ids.len(), 13);
     }
 
     #[test]
