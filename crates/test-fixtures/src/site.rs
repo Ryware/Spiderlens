@@ -51,6 +51,8 @@ pub struct Hit {
     pub path: String,
     pub at: Instant,
     pub user_agent: String,
+    /// The `Cookie` header, if sent (spec 025).
+    pub cookie: Option<String>,
     /// Every request header, names lowercase.
     pub headers: Vec<(String, String)>,
 }
@@ -337,6 +339,11 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
     let headers = req
         .headers()
         .iter()
@@ -352,6 +359,7 @@ async fn serve(State(state): State<Arc<Shared>>, req: Request) -> Response {
         path: path.clone(),
         at: Instant::now(),
         user_agent,
+        cookie,
         headers,
     });
     if state.down.lock().expect("down lock").contains(&host) {
