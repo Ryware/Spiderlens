@@ -23,6 +23,7 @@ import type { UrlDetail } from "./generated/UrlDetail";
 import type { UrlScope } from "./generated/UrlScope";
 import type { ViewQuery } from "./generated/ViewQuery";
 import type { Scene } from "./generated/Scene";
+import type { TermLinks } from "./generated/TermLinks";
 import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
@@ -628,6 +629,8 @@ export interface Transport {
   exportCancel(job: number): Promise<void>;
   /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
   vizScene(path: string, view: ViewState): Promise<Scene>;
+  /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
+  vizTermLinks(path: string, view: ViewState, term: string, limit?: number): Promise<TermLinks>;
   /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
   analysisRun(path: string): Promise<AnalysisRun>;
   /** Starts Crawl Analysis in the background: progress and done arrive as events. */
@@ -774,6 +777,7 @@ export const tauriTransport: Transport = {
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
   vizScene: (path, view) => invoke("viz_scene", { path, view }),
+  vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
   analysisRun: (path) => invoke("analysis_run", { path }),
   analysisStart: (path) => invoke("analysis_start", { path }),
   analysisCancel: () => invoke("analysis_cancel"),

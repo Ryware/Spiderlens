@@ -129,6 +129,7 @@ fn main() {
             results::url_detail,
             results::url_list,
             results::viz_scene,
+            results::viz_term_links,
             results::cookies_list,
             results::cookie_urls,
             results::url_html,

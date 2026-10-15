@@ -44,8 +44,9 @@ export class HitGrid {
   constructor(private nodes: SceneNode[], cell = 24) {
     this.size = cell;
     nodes.forEach((n, i) => {
+      const rx = n.width === null ? n.r : n.width / 2;
       const r = n.r;
-      for (let gx = Math.floor((n.x - r) / cell); gx <= Math.floor((n.x + r) / cell); gx++)
+      for (let gx = Math.floor((n.x - rx) / cell); gx <= Math.floor((n.x + rx) / cell); gx++)
         for (let gy = Math.floor((n.y - r) / cell); gy <= Math.floor((n.y + r) / cell); gy++) {
           const k = `${gx},${gy}`;
           const list = this.cells.get(k);
@@ -65,7 +66,9 @@ export class HitGrid {
         for (const i of this.cells.get(`${gx},${gy}`) ?? []) {
           const n = this.nodes[i];
           const d = Math.hypot(n.x - x, n.y - y);
-          if (d <= n.r + slop && (d < bestD || (d === bestD && i > (best ?? -1)))) {
+          // Terms are boxes; everything else a circle.
+          const inside = n.width === null ? d <= n.r + slop : Math.abs(n.x - x) <= n.width / 2 + slop && Math.abs(n.y - y) <= n.r + slop;
+          if (inside && (d < bestD || (d === bestD && i > (best ?? -1)))) {
             best = i;
             bestD = d;
           }

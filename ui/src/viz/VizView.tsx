@@ -2,25 +2,28 @@
 // legend, what was left out, and a tooltip. Rust builds every scene; this
 // only asks for the next one and draws it.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, Globe, Maximize2, Minus, Plus, RefreshCw, RotateCcw } from "lucide-react";
+import { Crosshair, Globe, Maximize2, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
 import type { ColourBy } from "../generated/ColourBy";
 import type { Layout } from "../generated/Layout";
 import type { Scene } from "../generated/Scene";
 import type { SceneNode } from "../generated/SceneNode";
 import type { SizeBy } from "../generated/SizeBy";
+import type { TermLinks } from "../generated/TermLinks";
+import type { Terms } from "../generated/Terms";
 import type { ViewKind } from "../generated/ViewKind";
 import type { ViewState } from "../generated/ViewState";
 import type { Transport } from "../transport";
-import { Button, cn, Input, Notice, Segmented, Select } from "../components/ui";
+import { Button, cn, Input, Notice, Segmented, Select, Switch } from "../components/ui";
 import { categoryShape, categoryToken, VizCanvas, type VizCanvasHandle } from "./VizCanvas";
 
 export const vizViews: { id: string; view: ViewKind; title: string }[] = [
   { id: "crawl-tree", view: "crawl_tree", title: "Crawl tree" },
   { id: "directory-tree", view: "directory_tree", title: "Directory tree" },
   { id: "link-graph", view: "link_graph", title: "Link graph" },
+  { id: "anchor-text", view: "anchors", title: "Anchor text" },
 ];
 
-const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--fg-2", "--bg", "--font-ui"];
+const TOKENS = [...new Set(Object.values(categoryToken)), "--viz-line", "--accent", "--accent-text", "--fg-2", "--fg-3", "--bg", "--font-ui"];
 
 /** The token values the canvas draws with, read again when the theme changes. */
 function useTokenColours(): Record<string, string> {
@@ -80,11 +83,16 @@ export function VizView({
   onFocusId: (id: number | null) => void;
 }) {
   const graph = view === "link_graph";
-  const [layout, setLayout] = useState<Layout>(graph ? "force" : "tree");
+  const cloud = view === "anchors";
+  const [layout, setLayout] = useState<Layout>(graph ? "force" : cloud ? "cloud" : "tree");
   const [colour, setColour] = useState<ColourBy>("status");
   // The graph sizes pages by Link Score unless asked otherwise.
   const [size, setSize] = useState<SizeBy>(graph ? "score" : "uniform");
-  const [focus, setFocus] = useState<string | null>(null);
+  // The anchor text cloud opens on the selected page, else the whole site.
+  const [focus, setFocus] = useState<string | null>(cloud && focusId !== null ? `u:${focusId}` : null);
+  const [terms, setTerms] = useState<Terms>("words");
+  const [stopWords, setStopWords] = useState(true);
+  const [followedOnly, setFollowedOnly] = useState(false);
   const [distance, setDistance] = useState(1);
   const [pinned, setPinned] = useState<Record<string, [number, number]>>({});
   const [expanded, setExpanded] = useState<string[] | null>(null);
@@ -101,8 +109,8 @@ export function VizView({
   const colours = useTokenColours();
 
   const state: ViewState = useMemo(
-    () => ({ view, layout, colour, size, expanded, pages, budget: null, focus, distance, pinned }),
-    [view, layout, colour, size, expanded, pages, focus, distance, pinned],
+    () => ({ view, layout, colour, size, expanded, pages, budget: null, focus, distance, pinned, terms, stop_words: stopWords, followed_only: followedOnly }),
+    [view, layout, colour, size, expanded, pages, focus, distance, pinned, terms, stopWords, followedOnly],
   );
   useEffect(() => {
     let off = false;
@@ -135,7 +143,7 @@ export function VizView({
     [scene, onFocusId],
   );
   useEffect(() => {
-    if (!scene || focusId === null) return;
+    if (!scene || focusId === null || cloud) return;
     const n = scene.nodes.find((x) => x.url_id === focusId);
     if (n) setSelected(n.key);
   }, [scene, focusId]);
@@ -154,6 +162,7 @@ export function VizView({
       if (key.startsWith("u:")) centre(key);
       return;
     }
+    if (cloud) return;
     setAnchor({ key, ...at });
     if (key.startsWith("m:")) {
       // "+N more": the next page of the parent's children.
@@ -180,7 +189,43 @@ export function VizView({
   return (
     <section aria-label={title} className="flex h-full flex-col">
       <div role="toolbar" aria-label={`${title} options`} className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-2">
-        {graph ? (
+        {cloud ? (
+          <>
+            <Segmented
+              label="Anchor text of"
+              size="sm"
+              value={focus ? "page" : "site"}
+              onChange={(v) => (setSelected(null), setFocus(v === "page" && focusId !== null ? `u:${focusId}` : null))}
+              options={[
+                { value: "page", label: "Links to this page", disabled: focusId === null && focus === null },
+                { value: "site", label: "Whole site" },
+              ]}
+            />
+            {focus && focusId !== null && focus !== `u:${focusId}` && (
+              <Button variant="quiet" size="sm" onClick={() => (setSelected(null), setFocus(`u:${focusId}`))}>
+                <Crosshair className="size-3.5" /> Use selected page
+              </Button>
+            )}
+            <Segmented
+              label="Terms"
+              size="sm"
+              value={terms}
+              onChange={(v) => (setSelected(null), setTerms(v))}
+              options={[
+                { value: "words", label: "Words" },
+                { value: "whole", label: "Whole anchors" },
+              ]}
+            />
+            <label className="flex items-center gap-1.5 text-sm text-fg-2">
+              <Switch checked={stopWords} onChange={(v) => (setSelected(null), setStopWords(v))} label="Leave out stop words" disabled={terms === "whole"} />
+              Leave out stop words
+            </label>
+            <label className="flex items-center gap-1.5 text-sm text-fg-2">
+              <Switch checked={followedOnly} onChange={(v) => (setSelected(null), setFollowedOnly(v))} label="Followed links only" />
+              Followed only
+            </label>
+          </>
+        ) : graph ? (
           <>
             {focus ? (
               <>
@@ -225,16 +270,20 @@ export function VizView({
           ]}
         />
         )}
+        {!cloud && (
         <Select aria-label="Colour" className="w-36" value={colour} onChange={(e) => setColour(e.target.value as ColourBy)}>
           <option value="status">Colour: status</option>
           <option value="depth">Colour: depth</option>
         </Select>
+        )}
+        {!cloud && (
         <Select aria-label="Size" className="w-40" value={size} onChange={(e) => setSize(e.target.value as SizeBy)}>
           {!graph && <option value="uniform">Size: same</option>}
           <option value="score">Size: Link Score</option>
           <option value="inlinks">Size: inlinks</option>
           {graph && <option value="uniform">Size: same</option>}
         </Select>
+        )}
         <form
           className="flex min-w-40 flex-1"
           onSubmit={(e) => {
@@ -242,7 +291,7 @@ export function VizView({
             find(search);
           }}
         >
-          <Input aria-label="Find in view" placeholder="Find a URL or folder" className="w-full max-w-72" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input aria-label="Find in view" placeholder={cloud ? "Find a term" : "Find a URL or folder"} className="w-full max-w-72" value={search} onChange={(e) => setSearch(e.target.value)} />
         </form>
         <div className="ml-auto flex items-center gap-1">
           {loading && <span className="text-xs text-fg-3">Working…</span>}
@@ -261,13 +310,14 @@ export function VizView({
           </Button>
         </div>
       </div>
-      <div className="relative min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1">
+      <div className="relative min-w-0 flex-1">
         {error && (
           <div className="p-3">
             <Notice kind="bad">{error}</Notice>
           </div>
         )}
-        {scene && scene.nodes.length === 0 && <div className="p-6 text-sm text-fg-3">No URLs to show yet.</div>}
+        {scene && scene.nodes.length === 0 && <div className="p-6 text-sm text-fg-3">{scene.note ?? "No URLs to show yet."}</div>}
         {scene && scene.nodes.length > 0 && (
           <VizCanvas
             ref={canvas}
@@ -289,7 +339,7 @@ export function VizView({
             }
           />
         )}
-        {tip && (
+        {tip && !cloud && (
           <div role="tooltip" className="pointer-events-none absolute z-10 max-w-80 rounded-md border border-line bg-surface px-2 py-1 text-xs shadow-raised" style={{ left: tip.x + 14, top: tip.y + 10 }}>
             <div className="truncate font-medium text-fg">{tip.node.url ?? tip.node.label}</div>
             <div className="text-fg-3">
@@ -303,7 +353,12 @@ export function VizView({
         )}
         {scene && scene.nodes.length > 0 && (
           <div aria-label="Legend" role="group" className="absolute bottom-3 left-3 flex max-w-72 flex-col gap-1 rounded-md border border-line bg-surface/95 px-2.5 py-2 text-xs shadow-raised">
-            {colour === "status" ? (
+            {cloud ? (
+              <div className="text-fg-2">
+                {focus ? "Words other pages use when they link here" : "Words used in internal links"}
+                {scene.language && ` · stop words: ${scene.language}`}
+              </div>
+            ) : colour === "status" ? (
               scene.legend.map((l) => (
                 <div key={l.category} className="flex items-center gap-2">
                   <Swatch category={l.category} colour={colours[categoryToken[l.category]]} />
@@ -319,10 +374,93 @@ export function VizView({
         )}
         {scene?.omitted && (
           <div role="note" className={cn("absolute right-3 bottom-3 max-w-80 rounded-md border border-line bg-surface/95 px-2.5 py-2 text-xs text-fg-2 shadow-raised")}>
-            Showing {(scene.total - scene.omitted.count).toLocaleString()} of {scene.total.toLocaleString()} URLs. {scene.omitted.reason}
+            {cloud
+              ? `Showing ${scene.nodes.length.toLocaleString()} of ${(scene.nodes.length + scene.omitted.count).toLocaleString()} terms. `
+              : `Showing ${(scene.total - scene.omitted.count).toLocaleString()} of ${scene.total.toLocaleString()} URLs. `}
+            {scene.omitted.reason}
           </div>
         )}
       </div>
+        {cloud && selected?.startsWith("t:") && (
+          <TermList transport={transport} path={path} state={state} term={selected.slice(2)} onFocusId={onFocusId} onClose={() => setSelected(null)} />
+        )}
+      </div>
     </section>
+  );
+}
+
+/** The links behind one term (FR-018): source page, full anchor text, rel. */
+function TermList({
+  transport,
+  path,
+  state,
+  term,
+  onFocusId,
+  onClose,
+}: {
+  transport: Transport;
+  path: string;
+  state: ViewState;
+  term: string;
+  onFocusId: (id: number | null) => void;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<TermLinks | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let off = false;
+    setLinks(null);
+    setError(null);
+    transport.vizTermLinks(path, state, term).then(
+      (l) => !off && setLinks(l),
+      (e) => !off && setError(String(e)),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, state, term]);
+  return (
+    <div role="region" aria-label={`Links using ${term}`} className="flex w-80 max-w-2/5 shrink-0 flex-col border-l border-line bg-surface">
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+        <div className="min-w-0 flex-1 truncate text-sm font-medium text-fg" dir="auto">
+          “{term}”
+        </div>
+        {links && <span className="text-xs text-fg-3 tabular">{links.total.toLocaleString()} links</span>}
+        <Button variant="quiet" icon size="sm" aria-label="Close" onClick={onClose}>
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-1">
+        {error && <Notice kind="bad">{error}</Notice>}
+        {!links && !error && <div className="py-1 text-sm text-fg-3">Loading…</div>}
+        {links && (
+          <ul className="m-0 flex list-none flex-col p-0" data-selectable>
+            {links.links.map((l, i) => (
+              <li key={`${l.from_id}-${i}`} className="border-b border-line py-1.5 text-sm last:border-b-0">
+                <button type="button" className="block w-full truncate text-left text-fg hover:text-accent-text" title={l.from_url} onClick={() => onFocusId(l.from_id)}>
+                  {l.from_url}
+                </button>
+                <div className="flex items-baseline gap-2 text-xs text-fg-3">
+                  <span className="min-w-0 flex-1 truncate text-fg-2" dir="auto" title={l.text}>
+                    {l.image ? `Image alt: ${l.text}` : l.text}
+                  </span>
+                  {state.focus === null && (
+                    <span className="max-w-2/5 shrink-0 truncate" title={l.to_url}>
+                      to {new URL(l.to_url).pathname}
+                    </span>
+                  )}
+                  {l.rel && <span className="shrink-0">{l.rel}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {links && links.links.length < links.total && (
+          <div className="py-1.5 text-xs text-fg-3">
+            The first {links.links.length.toLocaleString()} of {links.total.toLocaleString()} are listed.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

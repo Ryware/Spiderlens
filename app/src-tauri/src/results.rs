@@ -425,6 +425,22 @@ pub async fn viz_scene(
     state.with(&path, move |r| r.viz_scene(&view).map_err(err)).await
 }
 
+/// The links behind one term of an anchor text cloud (spec 022 FR-018):
+/// `total` of them, the first `limit` listed.
+#[tauri::command]
+pub async fn viz_term_links(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    view: spiderlens_results::viz::ViewState,
+    term: String,
+    limit: Option<usize>,
+) -> Cmd<spiderlens_results::viz::anchors::TermLinks> {
+    let limit = limit.unwrap_or(500).min(5_000);
+    state
+        .with(&path, move |r| r.viz_term_links(&view, &term, limit).map_err(err))
+        .await
+}
+
 /// The URLs that set one cookie (spec 025 FR-028).
 #[tauri::command]
 pub async fn cookie_urls(

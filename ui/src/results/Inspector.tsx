@@ -258,12 +258,15 @@ export function Inspector({
   transport,
   path,
   id,
+  onAnchorCloud,
   onShowInTable,
   aiChecks = false,
 }: {
   transport: Transport;
   path: string | null;
   id: number | null;
+  /** Opens the anchor text cloud of this URL's inlinks (spec 022 US4). */
+  onAnchorCloud?: () => void;
   /** Selects the URL in a results tab; false when no tab lists it. */
   onShowInTable?: (id: number) => Promise<boolean>;
   aiChecks?: boolean;
@@ -431,6 +434,11 @@ export function Inspector({
         }
       >
         <LinkList key={`${path}|${d.id}|${list}`} transport={transport} path={path} id={d.id} kind={list} total={counts[list]} actions={actions} />
+        {list === "inlinks" && d.inlinks > 0 && onAnchorCloud && (
+          <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={onAnchorCloud}>
+            Anchor text cloud
+          </Button>
+        )}
       </Section>
 
       {d.headers.length > 0 && (

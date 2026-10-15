@@ -6,10 +6,10 @@ import { VizView } from "./VizView";
 
 const PATH = "/crawls/example.com.spiderlens";
 
-function setup(view: "crawl_tree" | "directory_tree" | "link_graph" = "crawl_tree", live = false) {
+function setup(view: "crawl_tree" | "directory_tree" | "link_graph" | "anchors" = "crawl_tree", live = false, focusId: number | null = null) {
   const t = fakeTransport();
   const onFocusId = vi.fn();
-  const utils = render(<VizView transport={t} path={PATH} view={view} live={live} focusId={null} onFocusId={onFocusId} />);
+  const utils = render(<VizView transport={t} path={PATH} view={view} live={live} focusId={focusId} onFocusId={onFocusId} />);
   return { t, onFocusId, ...utils };
 }
 
@@ -19,7 +19,7 @@ const last = (t: ReturnType<typeof fakeTransport>) => t.results.viz[t.results.vi
 test("first_scene_is_the_default_state", async () => {
   const { t } = setup();
   await screen.findByRole("application");
-  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "uniform", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {} });
+  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "uniform", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {}, terms: "words", stop_words: true, followed_only: false });
   expect(canvas().getAttribute("aria-label")).toMatch(/^Crawl tree: \d+ nodes/);
 });
 
@@ -166,4 +166,57 @@ test("dragging_a_page_pins_it_and_reset_layout_clears", async () => {
   expect(py).toBeCloseTo(n.y + 30 / k, 3);
   fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
   await waitFor(() => expect(last(t).pinned).toEqual({}));
+});
+
+test("anchor_cloud_opens_on_the_selected_page_and_switches_terms", async () => {
+  const { t } = setup("anchors", false, 2);
+  const c = await screen.findByRole("application");
+  expect(t.results.viz[0]).toMatchObject({ view: "anchors", layout: "cloud", focus: "u:2", terms: "words", stop_words: true, followed_only: false });
+  expect(c.getAttribute("aria-label")).toMatch(/^Anchor text: 8 nodes\. .*Enter lists the links using a term/);
+  expect(screen.getByRole("group", { name: "Legend" }).textContent).toMatch(/Words other pages use when they link here · stop words: en/);
+  // No colour or size here.
+  expect(screen.queryByRole("combobox", { name: "Colour" })).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "Whole anchors" }));
+  await waitFor(() => expect(last(t).terms).toBe("whole"));
+  expect((screen.getByRole("switch", { name: "Leave out stop words" }) as HTMLElement).getAttribute("data-disabled")).not.toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "Words" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Leave out stop words" }));
+  await waitFor(() => expect(last(t).stop_words).toBe(false));
+  fireEvent.click(screen.getByRole("switch", { name: "Followed links only" }));
+  await waitFor(() => expect(last(t).followed_only).toBe(true));
+  fireEvent.click(screen.getByRole("radio", { name: "Whole site" }));
+  await waitFor(() => expect(last(t).focus).toBeNull());
+  expect(await screen.findByText(/^Words used in internal links/)).toBeTruthy();
+});
+
+test("anchor_cloud_without_a_selection_is_site_wide", async () => {
+  const { t } = setup("anchors");
+  await screen.findByRole("application");
+  expect(t.results.viz[0].focus).toBeNull();
+  expect((screen.getByRole("radio", { name: "Links to this page" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("a_page_without_inlinks_says_so", async () => {
+  setup("anchors", false, 1);
+  expect(await screen.findByText("No internal links point to this page.")).toBeTruthy();
+  expect(screen.queryByRole("application")).toBeNull();
+});
+
+test("a_term_lists_its_links_and_a_source_drives_the_details", async () => {
+  const { onFocusId } = setup("anchors", false, 2);
+  const c = await screen.findByRole("application");
+  // The first arrow selects the most used term; its links open beside the cloud.
+  fireEvent.keyDown(c, { key: "ArrowRight" });
+  const list = await screen.findByRole("region", { name: "Links using running" });
+  expect(within(list).getByText("9 links")).toBeTruthy();
+  const rows = await within(list).findAllByRole("listitem");
+  expect(rows).toHaveLength(9);
+  expect(within(rows[1]).getByText("Best running")).toBeTruthy();
+  expect(within(rows[2]).getByText("nofollow")).toBeTruthy();
+  // Selecting a term is not selecting a URL.
+  expect(onFocusId).not.toHaveBeenCalled();
+  fireEvent.click(within(rows[0]).getByRole("button"));
+  expect(onFocusId).toHaveBeenCalledWith(1);
+  fireEvent.click(within(list).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("region", { name: /^Links using/ })).toBeNull();
 });

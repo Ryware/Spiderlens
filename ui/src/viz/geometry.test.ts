@@ -10,6 +10,7 @@ const node = (key: string, x: number, y: number, r = 5, depth = 1): SceneNode =>
   x,
   y,
   r,
+  width: null,
   category: "ok",
   depth,
   score: null,
@@ -77,4 +78,13 @@ test("labels_need_room_and_stay_within_the_budget", () => {
   expect(all[0]).toBe(7);
   const inView = labelled(nodes, 2, 300, 4, { x0: 0, y0: -10, x1: 100, y1: 10 });
   expect(inView.sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
+});
+
+test("hit_grid_uses_the_text_box_of_a_term", () => {
+  // A wide, short term: hits along its width, misses just above it.
+  const t = { ...node("t:running", 0, 0, 10), width: 120 };
+  const g = new HitGrid([t]);
+  expect(g.at(55, 0)).toBe(0);
+  expect(g.at(0, 12)).toBe(null);
+  expect(g.at(65, 0)).toBe(null);
 });

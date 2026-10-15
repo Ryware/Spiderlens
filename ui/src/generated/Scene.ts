@@ -37,4 +37,12 @@ total: number,
  * When the data was read (ms since epoch): views do not follow a
  * running crawl on their own (FR-006).
  */
-snapshot_at: number, };
+snapshot_at: number, 
+/**
+ * Said instead of an empty picture (anchor text with nothing to show).
+ */
+note: string | null, 
+/**
+ * Anchor text: the language whose stop words apply.
+ */
+language: string | null, };

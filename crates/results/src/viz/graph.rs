@@ -271,6 +271,7 @@ pub fn scene(conn: &Connection, state: &ViewState, scores: bool) -> Result<Scene
                 _ => 5.0,
             };
             SceneNode {
+                width: None,
                 key: format!("u:{}", p.id),
                 label: path_label(&p.url),
                 url: Some(p.url),
@@ -328,6 +329,8 @@ pub fn scene(conn: &Connection, state: &ViewState, scores: bool) -> Result<Scene
         SizeBy::Uniform => None,
     };
     Ok(Scene {
+        note: None,
+        language: None,
         view: state.view,
         layout: super::Layout::Force,
         bounds: bounds(&nodes),

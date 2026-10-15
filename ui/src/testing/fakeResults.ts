@@ -9,7 +9,7 @@ import type { Need } from "../generated/Need";
 import type { TabDef } from "../generated/TabDef";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { ViewState } from "../generated/ViewState";
-import { fakeScene } from "./fakeViz";
+import { fakeScene, fakeTermLinks } from "./fakeViz";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { AnalysisRun } from "../generated/AnalysisRun";
@@ -147,6 +147,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "urlDetail"
   | "urlList"
   | "vizScene"
+  | "vizTermLinks"
   | "cookiesList"
   | "cookieUrls"
   | "urlHtml"
@@ -281,6 +282,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       results.viz.push(state);
       return fakeScene(results.urls, state);
     },
+    vizTermLinks: async (_p, state, term, limit) => fakeTermLinks(results.urls, state, term, limit ?? 500),
     urlDetail: async (_p, id) => {
       const u = results.urls.find((x) => x.id === id)!;
       const d: UrlDetail = {

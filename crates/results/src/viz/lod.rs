@@ -315,7 +315,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
     let parents: Vec<u32> = order.iter().map(|o| o.1).collect();
     let levels: Vec<u32> = order.iter().map(|o| o.2).collect();
     let pos = match state.layout {
-        Layout::Tree | Layout::Force => layout::tidy(&parents, &levels),
+        Layout::Tree | Layout::Force | Layout::Cloud => layout::tidy(&parents, &levels),
         Layout::Radial => layout::radial(&parents, &levels),
     };
 
@@ -353,6 +353,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
                 };
                 let open = vis.open.contains(&i);
                 nodes.push(SceneNode {
+                    width: None,
                     key: n.key.text(),
                     label,
                     url,
@@ -374,6 +375,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
             Shown::More { parent: p, hidden } => {
                 let pk = tree.nodes[p as usize].key.text();
                 nodes.push(SceneNode {
+                    width: None,
                     key: format!("m:{pk}"),
                     label: format!("+{hidden} more"),
                     url: None,
@@ -413,6 +415,8 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
         SizeBy::Uniform => None,
     };
     Ok(Scene {
+        note: None,
+        language: None,
         view: state.view,
         layout: state.layout,
         bounds: bounds(&nodes),

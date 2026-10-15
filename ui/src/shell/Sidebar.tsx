@@ -1,4 +1,4 @@
-import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, CalendarClock, Cookie, type LucideIcon } from "lucide-react";
+import { Activity, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Network, Waypoints, TextQuote, CalendarClock, Cookie, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import { formatCompact } from "../results/format";
 
@@ -30,6 +30,7 @@ export const vizTabs: NavItem[] = [
   { id: "crawl-tree", title: "Crawl tree", icon: GitFork },
   { id: "directory-tree", title: "Directory tree", icon: FolderTree },
   { id: "link-graph", title: "Link graph", icon: Waypoints },
+  { id: "anchor-text", title: "Anchor text", icon: TextQuote },
 ];
 /** Reports with their own view rather than a results table (spec 025). */
 export const reportTabs: NavItem[] = [{ id: "cookies", title: "Cookies", icon: Cookie }];

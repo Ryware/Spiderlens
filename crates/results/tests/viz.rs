@@ -7,7 +7,7 @@ use std::time::Duration;
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control, Crawler};
 use spiderlens_results::Reader;
-use spiderlens_results::viz::{Category, Layout, Scene, SceneNode, ViewKind, ViewState};
+use spiderlens_results::viz::{Category, Layout, Scene, SceneNode, Terms, ViewKind, ViewState};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
 
@@ -382,5 +382,179 @@ async fn link_graph_clusters_focus_and_determinism() {
             ..ViewState::default()
         })
         .is_err()
+    );
+}
+
+/// Known anchor texts (spec 022 US4): English and Hebrew pages, image links
+/// with and without alt text, a nofollow link.
+fn anchors_site() -> Site {
+    let page = |lang: &str, body: &str| {
+        format!(
+            "<!doctype html><html lang=\"{lang}\"><head><title>t</title></head><body>{body}</body></html>"
+        )
+    };
+    SiteBuilder::new()
+        .html(
+            E,
+            "/",
+            &page(
+                "en",
+                r#"<a href="/shoes">Running shoes</a> <a href="/shoes">Click here</a> <a href="/he">חנות</a>
+                   <a href="/a">a</a> <a href="/b">b</a>"#,
+            ),
+        )
+        .html(
+            E,
+            "/a",
+            &page(
+                "en",
+                r#"<a href="/shoes">Best  running
+                   shoes</a> <a href="/shoes"><img src="/x.png" alt="Shoe photo"></a>
+                   <a href="/shoes" rel="nofollow">running SHOES</a>"#,
+            ),
+        )
+        .html(
+            E,
+            "/b",
+            &page(
+                "en",
+                r#"<a href="/shoes"><img src="/y.png"></a> <a href="/he">נעלי ריצה של החנות</a> <a href="/noalt"><img src="/z.png"></a>"#,
+            ),
+        )
+        .html(E, "/shoes", &page("en-GB", "shoes"))
+        .html(E, "/he", &page("he", "חנות"))
+        .html(E, "/noalt", &page("en", "nothing"))
+        .start()
+}
+
+fn cloud(
+    r: &mut Reader,
+    s: &Crawled,
+    path: Option<&str>,
+    f: impl FnOnce(&mut ViewState),
+) -> (ViewState, Scene) {
+    let focus = path.map(|p| {
+        let db = rusqlite::Connection::open(&s.path).unwrap();
+        let id: i64 = db
+            .query_row("SELECT id FROM urls WHERE url = ?1", [s.site.url(E, p)], |r| {
+                r.get(0)
+            })
+            .unwrap_or_else(|e| panic!("{p} not crawled: {e}"));
+        format!("u:{id}")
+    });
+    let mut state = ViewState {
+        view: ViewKind::Anchors,
+        focus,
+        ..ViewState::default()
+    };
+    f(&mut state);
+    let scene = r.viz_scene(&state).unwrap();
+    (state, scene)
+}
+
+fn counts(s: &Scene) -> Vec<(&str, u32)> {
+    s.nodes.iter().map(|n| (n.label.as_str(), n.count)).collect()
+}
+
+#[tokio::test]
+async fn anchor_clouds_count_terms_and_list_their_links() {
+    let s = crawl_site(anchors_site()).await;
+    let mut r = Reader::open(&s.path).unwrap();
+
+    let (state, shoes) = cloud(&mut r, &s, Some("/shoes"), |_| {});
+    assert_eq!(shoes.layout, Layout::Cloud);
+    assert_eq!(shoes.total, 6, "every anchor link to the page");
+    assert_eq!(shoes.language.as_deref(), Some("en"));
+    // Most used first, then by term; "here" is a stop word; alt text counts.
+    assert_eq!(
+        counts(&shoes),
+        [
+            ("running", 3),
+            ("shoes", 3),
+            ("best", 1),
+            ("click", 1),
+            ("photo", 1),
+            ("shoe", 1)
+        ]
+    );
+    assert!(
+        shoes.nodes[0].width.unwrap() > shoes.nodes[5].width.unwrap(),
+        "bigger terms are wider"
+    );
+    assert!(shoes.note.is_none() && shoes.omitted.is_none());
+
+    // The list behind a term has as many links as its count (FR-018).
+    let running = r.viz_term_links(&state, "running", 100).unwrap();
+    assert_eq!(running.total, 3);
+    let from: Vec<_> = running.links.iter().map(|l| l.from_url.clone()).collect();
+    assert_eq!(
+        from,
+        [s.site.url(E, "/"), s.site.url(E, "/a"), s.site.url(E, "/a")]
+    );
+    assert_eq!(running.links[1].text, "Best running shoes");
+    assert_eq!(running.links[2].rel.as_deref(), Some("nofollow"));
+    assert!(running.links[2].nofollow && !running.links[1].nofollow);
+    let photo = r.viz_term_links(&state, "photo", 100).unwrap();
+    assert_eq!(
+        (photo.total, photo.links[0].image, photo.links[0].text.as_str()),
+        (1, true, "Shoe photo")
+    );
+    assert_eq!(r.viz_term_links(&state, "running", 1).unwrap().links.len(), 1);
+
+    // Whole anchors, followed only, stop words kept.
+    let (_, whole) = cloud(&mut r, &s, Some("/shoes"), |v| v.terms = Terms::Whole);
+    assert_eq!(
+        counts(&whole),
+        [
+            ("running shoes", 2),
+            ("best running shoes", 1),
+            ("click here", 1),
+            ("shoe photo", 1)
+        ]
+    );
+    let (_, followed) = cloud(&mut r, &s, Some("/shoes"), |v| v.followed_only = true);
+    assert_eq!(followed.total, 5);
+    assert_eq!(
+        followed
+            .nodes
+            .iter()
+            .find(|n| n.label == "running")
+            .unwrap()
+            .count,
+        2
+    );
+    let (_, all_words) = cloud(&mut r, &s, Some("/shoes"), |v| v.stop_words = false);
+    assert!(all_words.nodes.iter().any(|n| n.label == "here"));
+
+    // Hebrew stop words for a Hebrew page.
+    let (_, he) = cloud(&mut r, &s, Some("/he"), |_| {});
+    assert_eq!(he.language.as_deref(), Some("he"));
+    assert_eq!(counts(&he), [("החנות", 1), ("חנות", 1), ("נעלי", 1), ("ריצה", 1)]);
+
+    // Empty clouds say why (US4 scenario 4).
+    let (_, home) = cloud(&mut r, &s, Some("/"), |_| {});
+    assert!(home.nodes.is_empty());
+    assert_eq!(
+        home.note.as_deref(),
+        Some("No internal links point to this page.")
+    );
+    let (_, noalt) = cloud(&mut r, &s, Some("/noalt"), |_| {});
+    assert!(
+        noalt
+            .note
+            .unwrap()
+            .starts_with("None of these links has anchor text")
+    );
+
+    // Site-wide: every internal anchor link, the most common language.
+    let (_, site) = cloud(&mut r, &s, None, |_| {});
+    assert_eq!(site.total, 11);
+    assert_eq!(site.language.as_deref(), Some("en"));
+    assert_eq!(site.nodes[0].label, "running");
+    // The same state gives the same cloud.
+    let (_, again) = cloud(&mut r, &s, None, |_| {});
+    assert_eq!(
+        site.nodes.iter().map(|n| (n.x, n.y)).collect::<Vec<_>>(),
+        again.nodes.iter().map(|n| (n.x, n.y)).collect::<Vec<_>>()
     );
 }
