@@ -658,6 +658,7 @@ mod tests {
             truncated: false,
             robots_token: "SpiderLens",
             a11y,
+            hook: None,
         })
     }
 
