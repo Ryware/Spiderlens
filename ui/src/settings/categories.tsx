@@ -465,6 +465,12 @@ export function CategoryBody({
             >
               {(_, l) => <Switch labelledBy={l} checked={config.extraction.store_html} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, store_html: v } }))} />}
             </Row>
+            <Row
+              label="Check AMP"
+              help="Follows amphtml links and checks pages marked as AMP against a core subset of AMP's rules. The results are in the AMP tab."
+            >
+              {(_, l) => <Switch labelledBy={l} checked={config.extraction.check_amp} onChange={(v) => set((c) => ({ ...c, extraction: { ...c.extraction, check_amp: v } }))} />}
+            </Row>
           </Group>
           <Group title="PDFs">
             <Row

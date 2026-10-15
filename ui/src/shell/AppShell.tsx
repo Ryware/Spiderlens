@@ -486,7 +486,13 @@ export function AppShell({ transport }: { transport: Transport }) {
               session={results.session(resultTab.id)}
               onSession={onSession}
               onFocusId={onFocusId}
-              toolbar={resultTab.id === "spelling" ? <SpellingBar spelling={spelling} live={crawl.running} /> : undefined}
+              toolbar={
+                resultTab.id === "spelling" ? (
+                  <SpellingBar spelling={spelling} live={crawl.running} />
+                ) : resultTab.id === "amp" ? (
+                  <p className="m-0 text-sm text-fg-3">These checks are a core subset of AMP's rules, not the official AMP validator.</p>
+                ) : undefined
+              }
               issue={issueId ? (issues.byId.get(issueId) ?? null) : null}
               onIssueSettings={() => openSettings("issues")}
               customRun={isCustomTab(resultTab.id) ? customRun : undefined}

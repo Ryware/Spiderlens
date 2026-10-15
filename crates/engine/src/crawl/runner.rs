@@ -803,6 +803,9 @@ impl Crawler {
         if config.extraction.pdf.crawl {
             features.push_str(",pdf");
         }
+        if config.extraction.check_amp {
+            features.push_str(",amp");
+        }
         store.set_meta("data_features", &features)?;
 
         store.begin()?;
@@ -2902,6 +2905,9 @@ impl Run {
                     .iter()
                     .map(|r| (r, &base))
                     .chain(o.header_facts.refs.iter().map(|r| (r, &url)))
+                    // amphtml links are followed only with AMP checks on
+                    // (spec 027 FR-E01); otherwise the crawl is unchanged.
+                    .filter(|(r, _)| r.kind != LinkKind::AmpHtml || self.c.config.extraction.check_amp)
                     .collect();
 
                 let canonicals: Vec<String> = refs
@@ -2983,6 +2989,11 @@ impl Run {
                             html: p.html.as_ref().map(|(b, n)| (b.as_slice(), *n)),
                         },
                     )?;
+                    if self.c.config.extraction.check_amp
+                        && let Some(amp) = p.data.as_ref().ok().and_then(|d| d.amp.as_ref())
+                    {
+                        store.record_amp(entry.id, amp)?;
+                    }
                     if let Some(c) = &p.custom {
                         store.record_custom(entry.id, c)?;
                     }

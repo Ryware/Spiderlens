@@ -1213,6 +1213,25 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// What the AMP checks found on a page (spec 027 part E).
+    pub fn record_amp(&self, url_id: i64, report: &crate::extract::amp::AmpReport) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO amp_pages (url_id, format, failures, style_bytes) VALUES (?1, ?2, ?3, ?4)",
+            )?
+            .execute(params![url_id, report.format.as_str(), report.failures.len() as i64, report.style_bytes])?;
+        self.conn
+            .prepare_cached("DELETE FROM amp_checks WHERE url_id = ?1")?
+            .execute([url_id])?;
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO amp_checks (url_id, check_id, pos, detail) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for f in &report.failures {
+            stmt.execute(params![url_id, f.check, f.pos, f.detail])?;
+        }
+        Ok(())
+    }
+
     /// The stored raw HTML of a page, byte-identical to the received body
     /// (FR-030). None when the crawl did not keep it.
     pub fn page_html(&self, url_id: i64) -> Result<Option<Vec<u8>>> {

@@ -237,6 +237,24 @@ pub const STEPS: &[Step] = &[
     CREATE INDEX spell_findings_url ON spell_findings(url_id);
     CREATE INDEX spell_findings_word ON spell_findings(word);",
     },
+    // Spec 027 part E: AMP pages and their failed checks.
+    Step {
+        version: 14,
+        additive: true,
+        sql: "CREATE TABLE amp_pages (
+        url_id INTEGER PRIMARY KEY,
+        format TEXT NOT NULL,
+        failures INTEGER NOT NULL,
+        style_bytes INTEGER
+    );
+    CREATE TABLE amp_checks (
+        url_id INTEGER NOT NULL,
+        check_id TEXT NOT NULL,
+        pos INTEGER,
+        detail TEXT NOT NULL
+    );
+    CREATE INDEX amp_checks_url ON amp_checks(url_id, check_id);",
+    },
 ];
 
 const AEO_TABLES: &str = r#"

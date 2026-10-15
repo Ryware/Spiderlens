@@ -11,6 +11,10 @@ export type ExtractionSettings = {
  */
 store_html: boolean, 
 /**
+ * Follow `amphtml` links and check AMP pages (spec 027 part E).
+ */
+check_amp: boolean, 
+/**
  * PDF documents (spec 027 part C).
  */
 pdf: PdfSettings, };

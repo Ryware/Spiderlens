@@ -21,6 +21,28 @@ pub struct RedirectHop {
     pub final_state: String,
 }
 
+/// One failed AMP check (spec 027 part E).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct AmpFailure {
+    pub check: String,
+    pub detail: String,
+    /// The element's position among the page's elements, from 1.
+    pub pos: Option<u32>,
+}
+
+/// What the AMP checks found on the page.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct AmpDetail {
+    /// website | email
+    pub format: String,
+    pub failures: Vec<AmpFailure>,
+    /// Whether the canonical page links back with `amphtml`; None when the
+    /// canonical is the page itself or missing.
+    pub paired: Option<bool>,
+}
+
 /// One misspelt word on the page (spec 027 part D).
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -131,6 +153,8 @@ pub struct UrlDetail {
     pub error_reason: Option<String>,
     /// The result came from "Retry failed URLs" (US5.3).
     pub manual_retry: bool,
+    /// AMP checks, for AMP pages of a crawl that checked AMP.
+    pub amp: Option<AmpDetail>,
     /// What was read from the document, for a PDF the crawl read.
     pub pdf: Option<PdfDetail>,
     /// Title and meta description as served, for the search preview (spec
@@ -509,6 +533,11 @@ impl Reader {
         } else {
             None
         };
+        let amp = if self.features.has(Need::Amp) {
+            self.amp(id)?
+        } else {
+            None
+        };
         let reason_label = reason.as_deref().and_then(|r| {
             spiderlens_engine::crawl::NotCrawledReason::parse(r).map(|r| r.label().to_string())
         });
@@ -553,11 +582,51 @@ impl Reader {
             attempts,
             error_reason,
             manual_retry,
+            amp,
             pdf,
             snippet,
             spelling,
             unavailable,
         })
+    }
+
+    fn amp(&self, id: i64) -> Result<Option<AmpDetail>> {
+        let Some(format) = self
+            .conn
+            .query_row("SELECT format FROM amp_pages WHERE url_id = ?1", [id], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let failures = self
+            .conn
+            .prepare_cached("SELECT check_id, detail, pos FROM amp_checks WHERE url_id = ?1 ORDER BY rowid")?
+            .query_map([id], |r| {
+                Ok(AmpFailure {
+                    check: r.get(0)?,
+                    detail: r.get(1)?,
+                    pos: r.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let paired = self
+            .conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM urls c JOIN links l ON l.from_id = c.id
+                     WHERE c.url = u.canonical AND l.kind = 'amphtml' AND l.to_id = u.id)
+                 FROM urls u WHERE u.id = ?1 AND u.canonical IS NOT NULL AND u.canonical <> u.url",
+                [id],
+                |r| r.get::<_, bool>(0),
+            )
+            .optional()?;
+        let paired = if format == "website" { paired } else { None };
+        Ok(Some(AmpDetail {
+            format,
+            failures,
+            paired,
+        }))
     }
 
     fn spelling(&self, id: i64) -> Result<Option<SpellDetail>> {

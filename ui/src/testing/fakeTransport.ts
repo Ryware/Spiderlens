@@ -99,7 +99,7 @@ export function defaultConfig(): CrawlConfig {
       host_pause_max_secs: 600,
       host_give_up_after: 5,
     },
-    extraction: { store_html: true, pdf: { crawl: false, follow_links: true, max_mb: 20, time_limit_secs: 5 } },
+    extraction: { store_html: true, check_amp: false, pdf: { crawl: false, follow_links: true, max_mb: 20, time_limit_secs: 5 } },
     issues: { rules: {} },
     custom: { extractors: [], searches: [] },
     sitemap_generate: defaultGenerateOptions(),

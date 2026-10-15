@@ -33,6 +33,8 @@ export interface FakeUrl {
   attempts?: number;
   /** The result came from "Retry failed URLs". */
   manual_retry?: boolean;
+  /** Failed AMP checks, for AMP pages. */
+  ampFailures?: number;
   /** What was read, for a PDF (spec 027 part C). */
   pdf?: PdfDetail;
   /** Meta description, for the search preview. */
@@ -134,6 +136,17 @@ export const fakeTabs: TabDef[] = [
     search_column: null,
     scoped: false,
   },
+  {
+    id: "amp",
+    title: "AMP",
+    columns: [col("address", "Address", "url", 420, "amp"), col("amp_failures", "Failed checks", "int", 110, "amp")],
+    filters: [
+      { id: "all", label: "All", need: "amp" },
+      { id: "failing", label: "Failing a check", need: "amp" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
 ];
 
 /**
@@ -177,7 +190,7 @@ export function fakeSegmentOf(segments: Segment[], u: FakeUrl): Segment | null {
 /** A made-up Link Score: the start URL is the strongest page. */
 const fakeScore = (u: FakeUrl) => (u.id === 1 ? 100 : ((u.id * 37) % 1000) / 10);
 const cell = (u: FakeUrl, c: string, segments: Segment[] = []) =>
-  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null })[c] ?? null;
+  ({ address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null, amp_failures: u.ampFailures ?? null })[c] ?? null;
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
 export interface FakeCookie extends Omit<CookieRow, "urls"> {
@@ -340,6 +353,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.tab === "pdfs") us = us.filter((u) => u.pdf);
     if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "errors") us = us.filter((u) => (u.spellErrors ?? 0) > 0);
+    if (q.tab === "amp") us = us.filter((u) => u.ampFailures !== undefined);
+    if (q.tab === "amp" && q.filter === "failing") us = us.filter((u) => (u.ampFailures ?? 0) > 0);
     if (q.filter === "html") us = us.filter((u) => u.title !== null);
     if (q.filter === "missing_h1") us = us.filter((u) => u.title !== null && !u.h1);
     if (q.filter === "depth_4") us = us.filter((u) => u.depth >= 4);
@@ -488,6 +503,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
         link_metrics: null,
         spelling: null,
+        amp: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

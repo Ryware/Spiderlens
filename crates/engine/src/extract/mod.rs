@@ -3,6 +3,7 @@
 //! headers in, data out, no I/O and no crawl state (plan D2, FR-032).
 
 pub mod a11y;
+pub mod amp;
 pub mod body;
 pub mod directives;
 mod link_header;
@@ -170,6 +171,8 @@ pub struct PageData {
     pub refs: Vec<Ref>,
     pub meta_refresh: Option<MetaRefresh>,
     pub structured: Vec<StructuredBlock>,
+    /// AMP checks, for pages marked as AMP (spec 027 part E).
+    pub amp: Option<amp::AmpReport>,
     /// Custom rule outcomes; `None` when the crawl has no rules (spec 013).
     pub custom: Option<crate::custom::PageRules>,
     /// Static accessibility checks (spec 026), when asked for.
@@ -249,6 +252,7 @@ impl PageData {
             refs: Vec::new(),
             meta_refresh: None,
             structured: Vec::new(),
+            amp: None,
             custom: None,
             a11y: None,
             facts: None,

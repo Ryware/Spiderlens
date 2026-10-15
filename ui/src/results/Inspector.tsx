@@ -9,6 +9,7 @@ import type { LinkMetrics } from "../generated/LinkMetrics";
 
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
+import type { AmpDetail } from "../generated/AmpDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
@@ -47,6 +48,39 @@ const fieldLabels: Record<string, string> = {
   cookies: "Cookies",
   spelling: "Spelling",
 };
+
+const ampCheck: Record<string, string> = {
+  runtime: "Runtime script",
+  boilerplate: "Boilerplate style",
+  viewport: "Viewport",
+  canonical: "Canonical",
+  author_script: "Author script",
+  style_size: "Custom CSS size",
+  disallowed: "Disallowed element",
+};
+
+/** What the AMP checks found (spec 027 part E). */
+function AmpSection({ amp }: { amp: AmpDetail }) {
+  const title = amp.format === "email" ? "AMP for email" : "AMP";
+  return (
+    <Section title={`${title} (${amp.failures.length === 0 ? "passes" : `${amp.failures.length} failed`})`}>
+      {amp.paired === false && <Notice kind="warn">The canonical page has no amphtml link back to this page.</Notice>}
+      {amp.failures.length === 0 && amp.paired !== false && <p className="m-0 text-sm text-fg-3">Passes every check SpiderLens runs.</p>}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm" data-selectable>
+        {amp.failures.map((f, i) => (
+          <li key={`${f.check}-${i}`} className="flex flex-col">
+            <span>
+              <span className="font-medium text-bad">{ampCheck[f.check] ?? f.check}</span>
+              {f.pos !== null && <span className="text-xs text-fg-3"> · element {f.pos.toLocaleString()}</span>}
+            </span>
+            <span className="text-xs text-fg-2">{f.detail}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="m-0 text-xs text-fg-3">A core subset of AMP's rules, not the official AMP validator.</p>
+    </Section>
+  );
+}
 
 /** What was read from a PDF (spec 027 part C). */
 function PdfSection({ pdf }: { pdf: PdfDetail }) {
@@ -695,6 +729,7 @@ export function Inspector({
         )}
       </Section>
 
+      {d.amp && <AmpSection amp={d.amp} />}
       <CustomSection transport={transport} path={path} id={d.id} epoch={epoch} rules={rules} htmlStored={d.html_stored} />
       {d.spelling && <SpellingSection spell={d.spelling} ignored={ignored} onIgnore={onIgnoreWord} />}
 

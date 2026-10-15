@@ -139,6 +139,7 @@ pub(super) fn walk_doc(
     };
     w.data.no_content = false;
     w.data.partial = cut;
+    w.data.amp = super::amp::check(&doc);
     w.data.lang = doc
         .root_element()
         .value()

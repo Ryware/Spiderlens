@@ -234,6 +234,7 @@ test("store_html_setting_reaches_the_crawl", async () => {
   fireEvent.click(start());
   await waitFor(() => expect(t.crawls.started).toHaveLength(1));
   expect(t.crawls.started[0].config.extraction.store_html).toBe(false);
+  expect(t.crawls.started[0].config.extraction.check_amp).toBe(false);
 });
 
 // Spec 027 part C: the PDF settings.
