@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
+members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures", "app/src-tauri"]
 # `cargo test` without --workspace skips the desktop app, which needs
 # webview system libraries. CI always uses --workspace.
-default-members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/cli", "crates/test-fixtures"]
+default-members = ["crates/config", "crates/engine", "crates/results", "crates/integrations", "crates/aeo", "crates/schedule", "crates/cli", "crates/test-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,9 +17,13 @@ authors = ["Ryware"]
 spiderlens-config = { path = "crates/config" }
 spiderlens-engine = { path = "crates/engine" }
 spiderlens-results = { path = "crates/results" }
+spiderlens-aeo = { path = "crates/aeo" }
+spiderlens-schedule = { path = "crates/schedule" }
 spiderlens-test-fixtures = { path = "crates/test-fixtures" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "cookies"] }
+cookie_store = { version = "0.22", default-features = false }
+cookie = "0.18"
 url = { version = "2", features = ["serde"] }
 scraper = "0.24"
 html5ever = "0.35"
@@ -45,6 +49,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 ts-rs = { version = "12", features = ["serde-json-impl"] }
 jiff = { version = "0.2", features = ["serde"] }
 fastrand = "2"
+dirs = "7"
 proptest = "1"
 tempfile = "3"
 axum = "0.8"
@@ -53,8 +58,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = "0.13"
 assert_cmd = "2"
 predicates = "3"
+unicode-segmentation = "1"
+resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 jsonschema = { version = "0.33", default-features = false }
-dirs = "7"
 keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
 sha2 = "0.10"
 base64 = "0.22"

@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+use spiderlens_engine::extract::body;
 use ts_rs::TS;
 
 use crate::reader::Reader;
-use crate::tabs::Need;
+use crate::tabs::{Derived, Need};
 use crate::{Error, Result, sql};
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -18,6 +19,23 @@ pub struct RedirectHop {
     pub url: String,
     pub status: Option<u16>,
     pub final_state: String,
+}
+
+/// One URL's spec 023 values (FR-008).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct LinkMetrics {
+    /// 0-100, unrounded.
+    pub score: f64,
+    pub rank: u32,
+    /// Number of scored URLs, for "rank 12 of 4,812".
+    pub of: u32,
+    pub unique_inlinks: u32,
+    pub followed_inlinks: u32,
+    pub all_inlinks: u32,
+    pub unique_outlinks: u32,
+    pub external_outlinks: u32,
+    pub pct_linking: f64,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -72,6 +90,11 @@ pub struct UrlDetail {
     pub headings: u64,
     /// The page's HTML is stored in the crawl file.
     pub html_stored: bool,
+    /// Link Score and link counts (spec 023); None for external URLs and
+    /// while the crawl runs.
+    pub link_metrics: Option<LinkMetrics>,
+    /// Cookies this URL's response set, without values (spec 025 FR-027).
+    pub cookies: Vec<crate::CookieRow>,
     /// Requests made for this URL across the crawl, retries included
     /// (spec 004 FR-020).
     pub attempts: Option<u32>,
@@ -115,6 +138,10 @@ pub struct LinkRow {
     pub text: Option<String>,
     pub sponsored: bool,
     pub ugc: bool,
+    /// Where the anchor sits on its page (spec 023 US4): a `Position` or
+    /// "unknown" (HTML not stored). Null when not worked out yet, or not
+    /// an anchor.
+    pub position: Option<String>,
 }
 
 /// One heading of a page, in document order (FR-023).
@@ -136,6 +163,33 @@ pub struct ListPage {
     pub headings: Vec<HeadingRow>,
     /// Set when this file cannot list this section.
     pub unavailable: Option<String>,
+}
+
+/// Why a page has no HTML to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HtmlMissing {
+    /// The crawl ran with "Store page HTML" off.
+    NotStored,
+    /// Not an HTML page, or no body was received.
+    NoBody,
+}
+
+/// A page's stored HTML, for the source viewer (T029, spec 005 FR-030).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct PageHtml {
+    /// The source as text; null when `missing` says why there is none.
+    pub html: Option<String>,
+    pub missing: Option<HtmlMissing>,
+    /// Size of the stored body, in bytes.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The encoding the text was decoded with.
+    pub encoding: Option<String>,
+    /// Some bytes were not valid in that encoding and show as U+FFFD.
+    pub encoding_errors: bool,
 }
 
 const FINAL_STATE: &str =
@@ -258,6 +312,32 @@ impl Reader {
                 [id],
                 |r| r.get(0),
             )?;
+        let link_metrics = if internal && self.features.has(Need::Analysis) {
+            self.ensure_derived([crate::tabs::Derived::LinkMetrics])?;
+            self.conn
+                .query_row(
+                    "SELECT score, rank, (SELECT COUNT(*) FROM link_metrics), unique_inlinks, followed_inlinks,
+                            all_inlinks, unique_outlinks, external_outlinks, pct_linking
+                     FROM link_metrics WHERE url_id = ?1",
+                    [id],
+                    |r| {
+                        Ok(LinkMetrics {
+                            score: r.get(0)?,
+                            rank: r.get(1)?,
+                            of: r.get(2)?,
+                            unique_inlinks: r.get(3)?,
+                            followed_inlinks: r.get(4)?,
+                            all_inlinks: r.get(5)?,
+                            unique_outlinks: r.get(6)?,
+                            external_outlinks: r.get(7)?,
+                            pct_linking: r.get(8)?,
+                        })
+                    },
+                )
+                .optional()?
+        } else {
+            None
+        };
         let mut unavailable = BTreeMap::new();
         for (field, need) in [
             ("indexability", Need::Extraction),
@@ -268,6 +348,8 @@ impl Reader {
             ("response_time", Need::Timing),
             ("attempts", Need::Attempts),
             ("raw_html", Need::RawHtml),
+            ("link_metrics", Need::Analysis),
+            ("cookies", Need::Cookies),
         ] {
             if !self.features.has(need) {
                 unavailable.insert(field.to_string(), need.unavailable_reason().to_string());
@@ -312,10 +394,63 @@ impl Reader {
             headers,
             headings,
             html_stored,
+            link_metrics,
+            cookies: self.url_cookies(id)?,
             attempts,
             error_reason,
             manual_retry,
             unavailable,
+        })
+    }
+
+    /// The stored HTML of one page, decoded as extraction read it. Errors
+    /// when the URL is not in the file or the stored bytes are damaged.
+    pub fn page_html(&mut self, id: i64) -> Result<PageHtml> {
+        let exists: bool =
+            self.conn
+                .query_row("SELECT EXISTS (SELECT 1 FROM urls WHERE id = ?1)", [id], |r| {
+                    r.get(0)
+                })?;
+        if !exists {
+            return Err(Error::invalid(format!("URL {id} is not in this crawl")));
+        }
+        let none = |missing| PageHtml {
+            html: None,
+            missing: Some(missing),
+            bytes: 0,
+            encoding: None,
+            encoding_errors: false,
+        };
+        if !self.features.has(Need::RawHtml) {
+            return Ok(none(HtmlMissing::NotStored));
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT b.codec, b.size, b.body, p.encoding
+                 FROM bodies b LEFT JOIN pages p ON p.url_id = b.url_id WHERE b.url_id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((codec, size, packed, encoding)) = row else {
+            return Ok(none(HtmlMissing::NoBody));
+        };
+        let raw = body::unpack(&codec, size, &packed).map_err(Error::Unavailable)?;
+        let (text, used, encoding_errors) = body::to_text(&raw, encoding.as_deref());
+        Ok(PageHtml {
+            html: Some(text),
+            missing: None,
+            bytes: raw.len() as u64,
+            encoding: Some(used.to_string()),
+            encoding_errors,
         })
     }
 
@@ -364,18 +499,52 @@ impl Reader {
 
     /// A page of one of the URL's lists (FR-022, FR-023, FR-025).
     pub fn list(&mut self, id: i64, kind: ListKind, from: u32, count: u32) -> Result<ListPage> {
+        self.list_at(id, kind, None, from, count)
+    }
+
+    /// [`Reader::list`] keeping only the links at one position (spec 023
+    /// FR-024): a `Position` name or "unknown". Needs the positions worked
+    /// out, and applies to the Inlinks and Outlinks lists only.
+    pub fn list_at(
+        &mut self,
+        id: i64,
+        kind: ListKind,
+        position: Option<&str>,
+        from: u32,
+        count: u32,
+    ) -> Result<ListPage> {
         let count = count.min(1000);
+        if let Some(p) = position {
+            if p != "unknown" && !spiderlens_config::Position::ALL.iter().any(|x| x.as_str() == p) {
+                return Err(Error::invalid(format!("unknown position {p}")));
+            }
+            if !matches!(kind, ListKind::Inlinks | ListKind::Outlinks) {
+                return Err(Error::invalid("only inlinks and outlinks have positions"));
+            }
+            if !self.has_derived(Derived::LinkPositions)? {
+                return Err(Error::Unavailable(
+                    "Link positions are not worked out yet.".into(),
+                ));
+            }
+        }
         let (cond, join) = match kind {
             ListKind::Inlinks => ("l.to_id = ?1", "l.from_id"),
             ListKind::Outlinks => ("l.from_id = ?1", "l.to_id"),
             ListKind::Images => ("l.from_id = ?1 AND l.kind = 'image'", "l.to_id"),
             ListKind::Headings => return self.headings(id, from, count),
         };
-        let total: i64 =
-            self.conn
-                .query_row(&format!("SELECT COUNT(*) FROM links l WHERE {cond}"), [id], |r| {
-                    r.get(0)
-                })?;
+        let position_of = "CASE WHEN l.kind = 'anchor' THEN COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' \
+             WHEN 2 THEN 'header' WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
+             FROM link_positions p WHERE p.from_id = l.from_id AND p.pos = l.pos), 'unknown') END";
+        let cond = match position {
+            Some(_) => format!("{cond} AND {position_of} = ?4"),
+            None => format!("{cond} AND ?4 IS NULL"),
+        };
+        let total: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM links l WHERE {cond}"),
+            rusqlite::params![id, None::<i64>, None::<i64>, position],
+            |r| r.get(0),
+        )?;
         let text = if !self.features.has(Need::Extraction) {
             "NULL, 0, 0"
         } else if kind == ListKind::Images {
@@ -383,14 +552,20 @@ impl Reader {
         } else {
             "COALESCE(NULLIF(l.text, ''), l.alt), l.sponsored, l.ugc"
         };
+        let position_col = if kind != ListKind::Images && self.has_derived(Derived::LinkPositions)? {
+            position_of
+        } else {
+            "NULL"
+        };
         let sql = format!(
-            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text}
+            "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text},
+                    {position_col}
              FROM links l JOIN urls x ON x.id = {join}
              WHERE {cond} ORDER BY l.rowid LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(rusqlite::params![id, count, from], |r| {
+            .query_map(rusqlite::params![id, count, from, position], |r| {
                 Ok(LinkRow {
                     id: r.get(0)?,
                     url: r.get(1)?,
@@ -404,6 +579,7 @@ impl Reader {
                     text: r.get(9)?,
                     sponsored: r.get(10)?,
                     ugc: r.get(11)?,
+                    position: r.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

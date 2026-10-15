@@ -46,9 +46,11 @@ export function formatCell(kind: ValueKind, v: JsonValue): string {
       return typeof v === "number" ? `${v.toLocaleString()} ms` : String(v);
     case "bool":
       return v ? "Yes" : "No";
+    case "score":
+      // Whole numbers in the table; the detail pane and exports keep one decimal (spec 023 FR-004).
+      return typeof v === "number" ? String(Math.round(v)) : String(v);
     case "percent":
-      // Stored as a fraction (Search Console CTR).
-      return typeof v === "number" ? `${(v * 100).toFixed(1)}%` : String(v);
+      return typeof v === "number" ? `${v.toFixed(1)}%` : String(v);
     case "decimal":
       return typeof v === "number" ? v.toFixed(1) : String(v);
     default:
@@ -76,7 +78,7 @@ export function cellTone(kind: ValueKind, v: JsonValue): CellTone {
 
 export const toneText = { ok: "text-ok", info: "text-info", warn: "text-warn", bad: "text-bad" } as const;
 
-export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status" || kind === "percent" || kind === "decimal";
+export const numeric = (kind: ValueKind) => kind === "int" || kind === "bytes" || kind === "ms" || kind === "status" || kind === "score" || kind === "percent" || kind === "decimal";
 
 /** Why a column or filter has no data in this file. */
 export const needReason: Record<Need, string> = {
@@ -86,4 +88,8 @@ export const needReason: Record<Need, string> = {
   timing: "Not collected: this crawl file was made before SpiderLens recorded response size and time.",
   raw_html: "This crawl did not keep page HTML.",
   search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
+  sitemap_entries: "Not recorded: this crawl file was made before SpiderLens kept sitemap entries.",
+  analysis: "Calculated when the crawl ends.",
+  cookies: "This crawl was made before SpiderLens recorded the cookies each page sets.",
+  ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
 };

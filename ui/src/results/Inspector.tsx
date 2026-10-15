@@ -1,13 +1,17 @@
 // The detail pane for the selected URL (US3, FR-019..FR-025).
 
-import { useEffect, useState, type ReactNode } from "react";
-import { CornerDownRight, MousePointerClick } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import type { LinkMetrics } from "../generated/LinkMetrics";
 import type { ListKind } from "../generated/ListKind";
 import type { ListPage } from "../generated/ListPage";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { Transport } from "../transport";
-import { Badge, Button, cn, EmptyState, Notice, Segmented, type Tone } from "../components/ui";
+import { Badge, Bar, Button, cn, ContextMenu, EmptyState, Notice, Segmented, Select, type Tone } from "../components/ui";
+import { AiPageSection } from "./AiPageSection";
+import { CookieFlags, expiresText } from "./CookiesView";
 import { cellTone, formatBytes, toneText } from "./format";
+import { HtmlViewer } from "./HtmlViewer";
 
 const LIST_PAGE = 100;
 
@@ -27,6 +31,8 @@ const fieldLabels: Record<string, string> = {
   response_time: "Response time",
   attempts: "Retry attempts",
   raw_html: "Page HTML",
+  link_metrics: "Link Score",
+  cookies: "Cookies",
 };
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
@@ -41,6 +47,34 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
   );
 }
 
+/** Link Score and link counts (spec 023 FR-008). */
+function LinkScoreSection({ m }: { m: LinkMetrics }) {
+  const n = (v: number) => v.toLocaleString();
+  return (
+    <Section title="Link Score">
+      <div className="flex items-center gap-3">
+        <span className="text-xl font-semibold tabular text-fg">{m.score.toFixed(1)}</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <Bar value={m.score / 100} tone="accent" label="Link Score" className="w-full" />
+          <span className="text-xs text-fg-3">
+            Rank {n(m.rank)} of {n(m.of)} internal URLs
+          </span>
+        </div>
+      </div>
+      <Facts
+        rows={[
+          ["Unique inlinks", n(m.unique_inlinks)],
+          ["Followed inlinks", n(m.followed_inlinks)],
+          ["All inlinks", n(m.all_inlinks)],
+          ["Unique outlinks", n(m.unique_outlinks)],
+          ["External outlinks", n(m.external_outlinks)],
+          ["Pages linking", `${m.pct_linking.toFixed(1)}%`],
+        ]}
+      />
+    </Section>
+  );
+}
+
 function Facts({ rows }: { rows: [string, ReactNode][] }) {
   return (
     <dl className="m-0 grid grid-cols-3 gap-x-3 gap-y-1 text-sm" data-selectable>
@@ -51,6 +85,43 @@ function Facts({ rows }: { rows: [string, ReactNode][] }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+/** What a URL row in the inspector's lists can do (T027). */
+interface RowActions {
+  copy: (url: string) => void;
+  /** Absent when there is no table to show the URL in. */
+  show?: (id: number) => void;
+}
+
+/**
+ * A list row naming one URL, with Copy URL and Show in table: buttons that
+ * appear on hover or keyboard focus, and the same actions on right-click.
+ */
+function UrlRow({ actions, id, url, className, children }: { actions: RowActions; id: number; url: string; className?: string; children: ReactNode }) {
+  const { copy, show } = actions;
+  return (
+    <ContextMenu
+      items={[
+        { label: "Copy URL", onSelect: () => copy(url) },
+        ...(show ? [{ label: "Show in table", onSelect: () => show(id) }] : []),
+      ]}
+    >
+      <li className={cn("group", className)}>
+        {children}
+        <span className="-my-1 flex shrink-0 gap-0.5 self-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+          <Button size="sm" variant="quiet" icon aria-label={`Copy ${url}`} title="Copy URL" onClick={() => copy(url)}>
+            <Copy aria-hidden className="size-3.5" />
+          </Button>
+          {show && (
+            <Button size="sm" variant="quiet" icon aria-label={`Show ${url} in table`} title="Show in table" onClick={() => show(id)}>
+              <TableProperties aria-hidden className="size-3.5" />
+            </Button>
+          )}
+        </span>
+      </li>
+    </ContextMenu>
   );
 }
 
@@ -68,34 +139,77 @@ function LinkText({ kind, text }: { kind: ListKind; text: string | null }) {
   );
 }
 
-function LinkList({ transport, path, id, kind, total }: { transport: Transport; path: string; id: number; kind: ListKind; total: number }) {
+/** Link positions (spec 023 US4), as the lists show them. */
+const positionLabel: Record<string, string> = {
+  navigation: "Navigation",
+  header: "Header",
+  content: "Content",
+  sidebar: "Sidebar",
+  footer: "Footer",
+  unknown: "Position unknown",
+};
+
+/** Filter by position on the Inlinks and Outlinks lists (FR-024). */
+function PositionFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <Select aria-label="Link position" className="mb-1 w-44 self-start" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">All positions</option>
+      {Object.entries(positionLabel).map(([v, label]) => (
+        <option key={v} value={v}>
+          {v === "unknown" ? "Unknown" : label}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+function LinkList({ transport, path, id, kind, total, actions }: { transport: Transport; path: string; id: number; kind: ListKind; total: number; actions: RowActions }) {
   const [page, setPage] = useState<ListPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [position, setPosition] = useState("");
+  // Positions exist once Crawl Analysis has worked them out; the filter
+  // shows from then on, even when it leaves the list empty.
+  // Keyed by URL and list, so both reset when either changes.
+  const [positioned, setPositioned] = useState(false);
   useEffect(() => {
     let off = false;
     setPage(null);
     setError(null);
-    transport.urlList(path, id, kind, 0, LIST_PAGE).then(
-      (p) => !off && setPage(p),
+    transport.urlList(path, id, kind, 0, LIST_PAGE, position || null).then(
+      (p) => {
+        if (off) return;
+        setPage(p);
+        if (p.rows.some((r) => r.position !== null)) setPositioned(true);
+      },
       (e) => !off && setError(String(e)),
     );
     return () => {
       off = true;
     };
-  }, [transport, path, id, kind]);
+  }, [transport, path, id, kind, position]);
   const more = () =>
     page &&
-    transport.urlList(path, id, kind, page.rows.length, LIST_PAGE).then(
+    transport.urlList(path, id, kind, page.rows.length, LIST_PAGE, position || null).then(
       (p) => setPage({ ...p, from: 0, rows: [...page.rows, ...p.rows], headings: [...page.headings, ...p.headings] }),
       (e) => setError(String(e)),
     );
+  const filter = positioned && (kind === "inlinks" || kind === "outlinks") && <PositionFilter value={position} onChange={setPosition} />;
   if (error) return <Notice kind="bad">{error}</Notice>;
   if (!page) return <div className="text-sm text-fg-3">Loading…</div>;
   if (page.unavailable) return <div className="text-sm text-fg-3">{page.unavailable}</div>;
   const shown = kind === "headings" ? page.headings.length : page.rows.length;
-  if (shown === 0) return <div className="text-sm text-fg-3">None.</div>;
+  // With a position chosen, the list's own total is the filtered count.
+  const all = position ? page.total : total;
+  if (shown === 0)
+    return (
+      <div className="flex flex-col">
+        {filter}
+        <div className="text-sm text-fg-3">{position ? "No links at this position." : "None."}</div>
+      </div>
+    );
   return (
     <div className="flex flex-col">
+      {filter}
       {kind === "headings" ? (
         <ol className="m-0 flex list-none flex-col p-0" data-selectable>
           {page.headings.map((h, i) => (
@@ -110,35 +224,79 @@ function LinkList({ transport, path, id, kind, total }: { transport: Transport; 
         {page.rows.map((r, i) => {
           const tone = cellTone("status", r.status);
           return (
-            <li key={`${r.id}-${i}`} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
+            <UrlRow key={`${r.id}-${i}`} actions={actions} id={r.id} url={r.url} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
               <span className={cn("w-8 shrink-0 text-right tabular", tone ? toneText[tone] : "text-fg-3")}>{r.status ?? "–"}</span>
               <span className="min-w-0 flex-1 truncate" title={r.url}>
                 {r.url}
               </span>
               <LinkText kind={kind} text={r.text} />
+              {r.position && (
+                <span className="shrink-0 text-xs text-fg-3" title="Where the link sits on its page">
+                  {positionLabel[r.position] ?? r.position}
+                </span>
+              )}
               {(r.nofollow || !r.followed || r.sponsored || r.ugc) && (
                 <span className="shrink-0 text-xs text-fg-3">
                   {[r.nofollow ? "nofollow" : !r.followed ? "not followed" : null, r.sponsored && "sponsored", r.ugc && "ugc"].filter(Boolean).join(", ")}
                 </span>
               )}
-            </li>
+            </UrlRow>
           );
         })}
       </ul>
       )}
-      {shown < total && (
+      {shown < all && (
         <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={() => void more()}>
-          Show more ({(total - shown).toLocaleString()} left)
+          Show more ({(all - shown).toLocaleString()} left)
         </Button>
       )}
     </div>
   );
 }
 
-export function Inspector({ transport, path, id }: { transport: Transport; path: string | null; id: number | null }) {
+export function Inspector({
+  transport,
+  path,
+  id,
+  onAnchorCloud,
+  onShowInTable,
+  aiChecks = false,
+}: {
+  transport: Transport;
+  path: string | null;
+  id: number | null;
+  /** Opens the anchor text cloud of this URL's inlinks (spec 022 US4). */
+  onAnchorCloud?: () => void;
+  /** Selects the URL in a results tab; false when no tab lists it. */
+  onShowInTable?: (id: number) => Promise<boolean>;
+  aiChecks?: boolean;
+}) {
   const [detail, setDetail] = useState<UrlDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [list, setList] = useState<ListKind>("inlinks");
+  const [htmlOpen, setHtmlOpen] = useState(false);
+  const [status, setStatus] = useState<{ kind: "info" | "warn" | "bad"; text: string } | null>(null);
+  const statusTimer = useRef<ReturnType<typeof setTimeout>>();
+  const say = (kind: "info" | "warn" | "bad", text: string) => {
+    clearTimeout(statusTimer.current);
+    setStatus({ kind, text });
+    statusTimer.current = setTimeout(() => setStatus(null), 4000);
+  };
+  useEffect(() => () => clearTimeout(statusTimer.current), []);
+  const actions: RowActions = {
+    copy: (url) =>
+      void transport.copyText(url).then(
+        () => say("info", "Copied."),
+        (e) => say("bad", String(e)),
+      ),
+    show: onShowInTable
+      ? (target) =>
+          void onShowInTable(target).then(
+            (found) => !found && say("warn", "That URL is not in any results table of this crawl."),
+            (e) => say("bad", String(e)),
+          )
+      : undefined,
+  };
 
   useEffect(() => {
     if (!path || id === null) {
@@ -195,9 +353,10 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
   }
   if (d.fetched_at !== null) facts.push(["Fetched", new Date(d.fetched_at).toLocaleString()]);
   const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings };
-  // Fields the file has no data for, grouped by why.
+  // Fields the file has no data for, grouped by why. Page HTML has its own
+  // section, which says how to get it.
   const missing = new Map<string, string[]>();
-  for (const [k, why] of Object.entries(d.unavailable)) missing.set(why, [...(missing.get(why) ?? []), fieldLabels[k] ?? k]);
+  for (const [k, why] of Object.entries(d.unavailable)) if (k !== "raw_html") missing.set(why, [...(missing.get(why) ?? []), fieldLabels[k] ?? k]);
 
   return (
     <aside aria-label="Details" className="flex h-full flex-col overflow-y-auto bg-surface">
@@ -227,6 +386,17 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
         <Facts rows={facts} />
       </Section>
 
+      {d.link_metrics && <LinkScoreSection m={d.link_metrics} />}
+
+      {aiChecks && d.internal && (
+        <AiPageSection
+          transport={transport}
+          path={path}
+          id={d.id}
+          section={(title, body) => <Section title={title}>{body}</Section>}
+        />
+      )}
+
       {d.redirects.length > 0 && (
         <Section title={`Redirects (${d.redirects.length - 1} ${d.redirects.length === 2 ? "hop" : "hops"})`}>
           {d.redirect_loop && <Notice kind="bad">The chain loops back on itself.</Notice>}
@@ -235,11 +405,11 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
             {d.redirects.map((h, i) => {
               const t = cellTone("status", h.status);
               return (
-                <li key={`${h.id}-${i}`} className="flex items-baseline gap-1.5">
+                <UrlRow key={`${h.id}-${i}`} actions={actions} id={h.id} url={h.url} className="flex items-baseline gap-1.5">
                   {i > 0 ? <CornerDownRight aria-hidden className="size-3 shrink-0 text-fg-3" /> : <span className="w-3 shrink-0" />}
                   <span className={cn("w-8 shrink-0 tabular", t ? toneText[t] : "text-fg-3")}>{h.status ?? "–"}</span>
-                  <span className="min-w-0 break-all">{h.url}</span>
-                </li>
+                  <span className="min-w-0 flex-1 break-all">{h.url}</span>
+                </UrlRow>
               );
             })}
           </ol>
@@ -263,7 +433,12 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
           />
         }
       >
-        <LinkList transport={transport} path={path} id={d.id} kind={list} total={counts[list]} />
+        <LinkList key={`${path}|${d.id}|${list}`} transport={transport} path={path} id={d.id} kind={list} total={counts[list]} actions={actions} />
+        {list === "inlinks" && d.inlinks > 0 && onAnchorCloud && (
+          <Button size="sm" variant="quiet" className="mt-1 self-start" onClick={onAnchorCloud}>
+            Anchor text cloud
+          </Button>
+        )}
       </Section>
 
       {d.headers.length > 0 && (
@@ -279,6 +454,45 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
         </Section>
       )}
 
+      <Section
+        title="Page HTML"
+        aside={
+          d.html_stored && (
+            <Button size="sm" onClick={() => setHtmlOpen(true)}>
+              <FileCode className="size-3.5" /> View source
+            </Button>
+          )
+        }
+      >
+        <p className="m-0 text-sm text-fg-3">
+          {d.html_stored
+            ? "The page's source as received, searchable and ready to copy."
+            : d.unavailable.raw_html
+              ? "Not stored in this crawl. Turn on Settings › Page data › Store page HTML and crawl again to keep each page's source."
+              : "None stored for this URL: it is not an HTML page or no body was received."}
+        </p>
+        <HtmlViewer transport={transport} path={path} id={d.id} url={d.url} open={htmlOpen} onOpenChange={setHtmlOpen} />
+      </Section>
+      {d.cookies.length > 0 && (
+        <Section title={`Cookies set (${d.cookies.length})`}>
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="Cookies set" data-selectable>
+            {d.cookies.map((c) => (
+              <li key={`${c.name}\n${c.domain}\n${c.path}`} className="flex flex-col gap-0.5">
+                <div className="flex min-w-0 items-baseline gap-2 text-sm">
+                  <span className="min-w-0 truncate font-mono text-fg">{c.name}</span>
+                  <span className="min-w-0 truncate text-fg-3">
+                    {c.domain}
+                    {c.path !== "/" && c.path}
+                  </span>
+                  <span className="ml-auto shrink-0 text-xs text-fg-3">{expiresText(c)}</span>
+                </div>
+                <CookieFlags c={c} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {missing.size > 0 && (
         <Section title="Not collected">
           {[...missing].map(([why, fields]) => (
@@ -288,6 +502,15 @@ export function Inspector({ transport, path, id }: { transport: Transport; path:
           ))}
         </Section>
       )}
+
+      {/* Copy and show-in-table results, announced as they happen. */}
+      <div role="status" aria-live="polite" className="sticky bottom-0 mt-auto">
+        {status && (
+          <Notice kind={status.kind} className="m-2 rounded-md border border-line bg-surface px-2 py-1.5 shadow-popover">
+            {status.text}
+          </Notice>
+        )}
+      </div>
     </aside>
   );
 }

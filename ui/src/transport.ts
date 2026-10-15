@@ -6,11 +6,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { CookieFilter } from "./generated/CookieFilter";
+import type { CookiePage } from "./generated/CookiePage";
+import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
+import type { PageHtml } from "./generated/PageHtml";
 import type { Refresh } from "./generated/Refresh";
 import type { RowPage } from "./generated/RowPage";
 import type { TabCounts } from "./generated/TabCounts";
@@ -28,6 +32,12 @@ import type { ProviderStatus } from "./generated/ProviderStatus";
 import type { QueryRow } from "./generated/QueryRow";
 import type { RunProgress } from "./generated/RunProgress";
 import type { Status as IntegrationStatus } from "./generated/Status";
+import type { Scene } from "./generated/Scene";
+import type { TermLinks } from "./generated/TermLinks";
+import type { ExportDone } from "./generated/ExportDone";
+import type { ExportFormat } from "./generated/ExportFormat";
+import type { ExportOptions } from "./generated/ExportOptions";
+import type { ViewState } from "./generated/ViewState";
 import type { InvalidLine } from "./generated/InvalidLine";
 import type { Issue } from "./generated/Issue";
 import type { PatternTest } from "./generated/PatternTest";
@@ -35,7 +45,27 @@ import type { ProfileEntry } from "./generated/ProfileEntry";
 import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
+import type { GenerateReport } from "./generated/GenerateReport";
+import type { SitemapFiles } from "./generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "./generated/SitemapGenerateOptions";
+import type { AnalysisProgress } from "./generated/AnalysisProgress";
+import type { AnalysisRun } from "./generated/AnalysisRun";
+import type { LinkAnalysisSettings } from "./generated/LinkAnalysisSettings";
+import type { PositionRule } from "./generated/PositionRule";
+import type { TestedLink } from "./generated/TestedLink";
 import type { RetrySettings } from "./generated/RetrySettings";
+import type { AeoRule } from "./generated/AeoRule";
+import type { AiBot } from "./generated/AiBot";
+import type { AiPageResult } from "./generated/AiPageResult";
+import type { AiProgress } from "./generated/AiProgress";
+import type { AiSummary } from "./generated/AiSummary";
+import type { Frequency } from "./generated/Frequency";
+import type { Preview } from "./generated/Preview";
+import type { RepairReport } from "./generated/RepairReport";
+import type { Run } from "./generated/Run";
+import type { Schedule } from "./generated/Schedule";
+import type { ScheduleDetail } from "./generated/ScheduleDetail";
+import type { ScheduleRow } from "./generated/ScheduleRow";
 
 export interface BuildInfo {
   product: string;
@@ -121,6 +151,41 @@ export interface CrawlProgress {
   paused_hosts: PausedHost[];
   /** Every remaining URL's site is paused: nothing can be requested (US4.4). */
   waiting_for_host: boolean;
+  /** What keeps the crawl from going faster, if anything (spec 008 FR-028). */
+  limit: SpeedLimit | null;
+  /** Sites with work in progress, busiest first; at most 50 (FR-029). */
+  sites: SitePace[];
+  /** Sites with work in progress in all. */
+  sites_total: number;
+}
+
+/** The main limit on the crawl's speed (spec 008 FR-028). */
+export interface SpeedLimit {
+  kind: "concurrency" | "rate" | "per_site" | "site_slowdown" | "site_overload" | "requested_wait" | "crawl_delay" | "site_paused" | "starting_up" | "connection" | "computer" | "saving";
+  /** The engine's host key, when it is about one site. */
+  host: string | null;
+  /** For a requested wait or a pause: seconds until it ends. */
+  seconds_left: number | null;
+  /** In plain language. */
+  message: string;
+}
+
+/** One row of the per-site speed breakdown (spec 008 FR-029). */
+export interface SitePace {
+  host: string;
+  state: "speeding_up" | "steady" | "slowed_down" | "waiting" | "paused";
+  /** Requests it may have open now, and the most it ever gets. */
+  allowance: number;
+  max: number;
+  in_flight: number;
+  /** Recent average response time. */
+  response_ms: number | null;
+  crawled: number;
+  /** URLs waiting for it, counted in the part of the queue held in memory; more on disk when `waiting_more`. */
+  waiting: number;
+  waiting_more: boolean;
+  reason: string;
+  seconds_left: number | null;
 }
 
 /** A site the crawl has paused (spec 004 FR-028). `host` is the engine's host key. */
@@ -196,6 +261,8 @@ export interface CrawlSummary {
   manual_retries: number;
   /** Why the crawl paused itself, if it did: "network" or "local". */
   pause_reason: string | null;
+  /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
+  speed_events?: { host: string; summary: string }[];
 }
 
 export interface CrawlReport {
@@ -308,6 +375,99 @@ export interface StorageStatus {
   low: boolean;
 }
 
+// Crawl data management (spec 019, contracts/desktop-commands.md).
+
+export interface CrawlBackup {
+  path: string;
+  format_version: number;
+  modified: string | null;
+  size_bytes: number;
+}
+
+/** One crawl in Manage crawls: file metadata only; the stored-HTML size comes from htmlSize. */
+export interface ManagedCrawl {
+  path: string;
+  name: string;
+  start_url: string | null;
+  status: string | null;
+  urls: number | null;
+  /** The crawl file and its helper files. */
+  size_bytes: number;
+  created: string | null;
+  last_used: string | null;
+  available: boolean;
+  /** Written by a newer SpiderLens. */
+  view_only: boolean;
+  backups: CrawlBackup[];
+  unsaved: boolean;
+  running: boolean;
+  in_recent: boolean;
+}
+
+export interface ManageList {
+  crawls: ManagedCrawl[];
+  /** Files in the unsaved-crawls folder that are not crawls; never removed automatically. */
+  other_files: { path: string; size_bytes: number }[];
+  totals: { all: number; unsaved: number; leftovers: number };
+  free_bytes: number | null;
+  unsaved_dir: string;
+}
+
+export interface HtmlSize {
+  bytes: number;
+  pages: number;
+}
+
+export interface DeleteReport {
+  deleted: string[];
+  skipped: { path: string; reason: string }[];
+  /** Not deleted: no trash there. Ask again before deleting permanently. */
+  trash_unavailable: string[];
+  freed_bytes: number;
+}
+
+export interface PurgeCheck {
+  html_bytes: number;
+  html_pages: number;
+  file_bytes: number;
+  new_size: number;
+  free_bytes: number | null;
+  can_compact: boolean;
+}
+
+export interface PurgeReport {
+  html_pages: number;
+  html_bytes: number;
+  freed_bytes: number;
+  compacted: boolean;
+}
+
+export interface StoragePrefs {
+  version: number;
+  /** null: unsaved crawls are never removed automatically. */
+  cleanup_days: number | null;
+  reserve_bytes: number;
+  first_cleanup_announced: string | null;
+  last_cleanup: string | null;
+}
+
+export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge";
+
+export interface CleanupRecord {
+  at: string;
+  path: string;
+  bytes: number;
+  reason: CleanupReason;
+}
+
+export interface CleanupReport {
+  removed: string[];
+  leftovers: number;
+  freed_bytes: number;
+  /** Named by the one-time notice: removed at a later start. */
+  announced: string[];
+}
+
 /** Speed and URL-limit changes allowed on resume (FR-011). */
 export interface ResumeChanges {
   speed?: SpeedSettings;
@@ -348,6 +508,31 @@ export interface ExportProgress {
   path: string;
 }
 
+// AI checks (spec 015, contracts/desktop-commands.md).
+
+export type AeoProgress = AiProgress & { run_id: number; path: string };
+
+export interface AeoFinished {
+  run_id: number;
+  path: string;
+  /** Null when the run was cancelled or failed; earlier results stay. */
+  summary: AiSummary | null;
+  error: string | null;
+}
+
+export interface AiBotList {
+  version: number;
+  date: string;
+  bots: AiBot[];
+}
+
+/** A saved schedule (spec 021): its detail, warnings, and why the OS refused the registration. */
+export interface ScheduleSaved {
+  detail: ScheduleDetail;
+  warnings: Issue[];
+  refused: string | null;
+}
+
 /** Positions [from, to) in a view: a selection. */
 export type Range = [number, number];
 
@@ -362,6 +547,7 @@ export interface Transport {
   parseListFile(path: string): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
+  pickSitemapFile(): Promise<string | null>;
   pickProfileFile(): Promise<string | null>;
   pickExportPath(name: string): Promise<string | null>;
   profiles(): Promise<ProfileEntry[]>;
@@ -413,6 +599,22 @@ export interface Transport {
   onCrawlMoved(cb: (m: CrawlMoved) => void): Promise<() => void>;
   onAppQuitting(cb: (q: { pausing: boolean }) => void): Promise<() => void>;
   onCrawlsRecovered(cb: (entries: RecentEntry[]) => void): Promise<() => void>;
+  // Crawl data management (spec 019).
+  manageList(): Promise<ManageList>;
+  htmlSize(path: string): Promise<HtmlSize>;
+  revealPath(path: string): Promise<void>;
+  /** Moves crawls and their helper files to the trash. Never deletes permanently. */
+  crawlsDelete(paths: string[]): Promise<DeleteReport>;
+  /** Only after a second confirmation, for paths the trash refused. */
+  crawlsDeletePermanently(paths: string[]): Promise<DeleteReport>;
+  purgeHtmlCheck(path: string): Promise<PurgeCheck>;
+  purgeHtml(path: string, compact: boolean): Promise<PurgeReport>;
+  storagePrefs(): Promise<StoragePrefs>;
+  /** Rejects with a JSON array of Issue when a value is out of range. */
+  setStoragePrefs(prefs: StoragePrefs): Promise<StoragePrefs>;
+  cleanupHistory(): Promise<CleanupRecord[]>;
+  onCleanupDone(cb: (r: CleanupReport) => void): Promise<() => void>;
+  onCrawlsChanged(cb: () => void): Promise<() => void>;
   // Results (spec 007, contracts/desktop-commands.md).
   resultsTabs(): Promise<TabDef[]>;
   resultsOpen(path: string): Promise<{ features: Features }>;
@@ -425,11 +627,46 @@ export interface Transport {
   tabCounts(path: string): Promise<TabCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  // Cookie audit (spec 025, contracts/desktop-commands.md).
+  /** Distinct cookies the crawl saw, without values; sort is a column name, default URLs descending. */
+  cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
+  /** The URLs that set one cookie, in crawl order. */
+  cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
+  /** The page's stored HTML, or why there is none. */
+  urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The tabs that list the URL unfiltered, in display order; empty when none does. */
+  urlTabs(path: string, id: number): Promise<string[]>;
+  /** Puts one value on the clipboard. */
+  copyText(text: string): Promise<void>;
   /** Puts the rows on the clipboard as TSV with a header and returns that text. */
   copyRows(path: string, view: number, ranges: Range[], columns: string[]): Promise<string>;
   exportStart(path: string, query: ViewQuery, columns: string[], ranges: Range[] | null, dest: string): Promise<number>;
   exportCancel(job: number): Promise<void>;
+  // Sitemap generation (spec 011, contracts/desktop-commands.md).
+  sitemapFiles(path: string): Promise<SitemapFiles>;
+  sitemapPreview(path: string, options: SitemapGenerateOptions, folder: string | null): Promise<GenerateReport>;
+  sitemapGenerate(path: string, options: SitemapGenerateOptions, folder: string, replace: boolean): Promise<GenerateReport>;
+  /** A visualisation scene (spec 022): the crawl or directory tree as `view` asks. */
+  vizScene(path: string, view: ViewState): Promise<Scene>;
+  /** The links behind one anchor text term (spec 022 FR-018); the first `limit` (default 500). */
+  vizTermLinks(path: string, view: ViewState, term: string, limit?: number): Promise<TermLinks>;
+  /** Writes the view to `file` as SVG, PNG or CSV (spec 022 FR-024). */
+  vizExport(path: string, view: ViewState, options: ExportOptions, file: string): Promise<ExportDone>;
+  pickVizPath(name: string, format: ExportFormat): Promise<string | null>;
+  /** Runs Crawl Analysis (link positions, Link Score) on the open file now. */
+  analysisRun(path: string): Promise<AnalysisRun>;
+  /** Starts Crawl Analysis in the background: progress and done arrive as events. */
+  analysisStart(path: string): Promise<void>;
+  /** Cancels the running Crawl Analysis; earlier results stay. */
+  analysisCancel(): Promise<void>;
+  onAnalysisProgress(cb: (p: AnalysisProgressEvent) => void): Promise<() => void>;
+  onAnalysisDone(cb: (d: AnalysisDone) => void): Promise<() => void>;
+  /** Uses these link analysis settings for the open file from now on. */
+  analysisSettings(path: string, settings: LinkAnalysisSettings): Promise<void>;
+  /** The rules tester: null when the URL is not in the crawl or its HTML was not stored. */
+  positionsTest(path: string, url: string, rules: PositionRule[]): Promise<TestedLink[] | null>;
   onViewReady(cb: (r: ViewReady) => void): Promise<() => void>;
   onExportProgress(cb: (p: ExportProgress) => void): Promise<() => void>;
   // External data (spec 024, contracts/desktop-commands.md).
@@ -457,7 +694,42 @@ export interface Transport {
   integrationsCacheClear(provider: string | null): Promise<number>;
   integrationsOpenTerms(provider: string): Promise<void>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
+  // AI checks (spec 015).
+  /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
+  aeoRun(path: string): Promise<{ run_id: number }>;
+  aeoCancel(runId: number): Promise<void>;
+  /** Null when the checks have not run on this file. */
+  aeoSummary(path: string): Promise<AiSummary | null>;
+  aeoPage(path: string, urlId: number): Promise<AiPageResult | null>;
+  aeoLlmsTxtDraft(path: string, maxLinks: number): Promise<{ text: string }>;
+  aeoRules(): Promise<AeoRule[]>;
+  aiBotsList(): Promise<AiBotList>;
+  onAeoProgress(cb: (p: AeoProgress) => void): Promise<() => void>;
+  onAeoFinished(cb: (f: AeoFinished) => void): Promise<() => void>;
+  // Scheduled crawls (spec 021, contracts/desktop-commands.md).
+  schedulesList(): Promise<ScheduleRow[]>;
+  scheduleGet(id: string): Promise<ScheduleDetail>;
+  schedulePreview(frequency: Frequency): Promise<Preview>;
+  scheduleValidate(draft: Schedule): Promise<Issue[]>;
+  /** Rejects with the errors' messages when the draft is invalid. */
+  scheduleSave(draft: Schedule): Promise<ScheduleSaved>;
+  scheduleSetEnabled(id: string, enabled: boolean): Promise<ScheduleSaved>;
+  scheduleDuplicate(id: string, name: string): Promise<Schedule>;
+  scheduleDelete(id: string): Promise<void>;
+  scheduleRunNow(id: string): Promise<void>;
+  scheduleStop(id: string): Promise<void>;
+  scheduleHistory(id: string, limit: number): Promise<Run[]>;
+  scheduleUpdateFromProfile(id: string): Promise<ScheduleSaved>;
+  schedulesRepair(): Promise<RepairReport>;
+  schedulesRemoveAll(): Promise<number>;
+  scheduleDefaultOutput(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
 }
+
+/** `analysis-progress` (spec 023 FR-013). */
+export type AnalysisProgressEvent = AnalysisProgress & { path: string };
+/** `analysis-done`: `run` is null when cancelled or failed. */
+export type AnalysisDone = { path: string; run: AnalysisRun | null; cancelled: boolean; error: string | null };
 
 const asPath = (p: string | string[] | null) => (Array.isArray(p) ? (p[0] ?? null) : p);
 
@@ -473,10 +745,13 @@ export const tauriTransport: Transport = {
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
+  pickSitemapFile: async () =>
+    asPath(await open({ filters: [{ name: "XML sitemaps", extensions: ["xml", "gz"] }] })),
   pickProfileFile: async () =>
     asPath(await open({ filters: [{ name: "SpiderLens profile", extensions: ["json"] }] })),
   pickExportPath: (name) =>
     save({ defaultPath: `${name}.spiderlens-profile.json`, filters: [{ name: "SpiderLens profile", extensions: ["json"] }] }),
+  pickFolder: async () => asPath(await open({ directory: true })),
   profiles: () => invoke("profiles_list"),
   loadProfile: (name) => invoke("profile_load", { name }),
   saveProfile: (name, config, startUrl, overwrite) => invoke("profile_save", { name, config, startUrl, overwrite }),
@@ -522,6 +797,18 @@ export const tauriTransport: Transport = {
   onCrawlMoved: (cb) => listen<CrawlMoved>("crawl-moved", (e) => cb(e.payload)),
   onAppQuitting: (cb) => listen<{ pausing: boolean }>("app-quitting", (e) => cb(e.payload)),
   onCrawlsRecovered: (cb) => listen<RecentEntry[]>("crawls-recovered", (e) => cb(e.payload)),
+  manageList: () => invoke("crawls_manage_list"),
+  htmlSize: (path) => invoke("crawls_html_size", { path }),
+  revealPath: (path) => invoke("reveal_path", { path }),
+  crawlsDelete: (paths) => invoke("crawls_delete", { paths }),
+  crawlsDeletePermanently: (paths) => invoke("crawls_delete_permanently", { paths }),
+  purgeHtmlCheck: (path) => invoke("crawls_purge_html_check", { path }),
+  purgeHtml: (path, compact) => invoke("crawls_purge_html", { path, compact }),
+  storagePrefs: () => invoke("storage_prefs_get"),
+  setStoragePrefs: (prefs) => invoke("storage_prefs_set", { prefs }),
+  cleanupHistory: () => invoke("cleanup_history"),
+  onCleanupDone: (cb) => listen<CleanupReport>("cleanup-done", (e) => cb(e.payload)),
+  onCrawlsChanged: (cb) => listen("crawls-changed", () => cb()),
   resultsTabs: () => invoke("results_tabs"),
   resultsOpen: (path) => invoke("results_open", { path }),
   viewOpen: (path, query, count) => invoke("view_open", { path, query, count }),
@@ -532,10 +819,33 @@ export const tauriTransport: Transport = {
   tabCounts: (path) => invoke("tab_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count) => invoke("url_list", { path, id, kind, from, count }),
+  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
+  cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
+  urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlTabs: (path, id) => invoke("url_tabs", { path, id }),
+  copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
   exportStart: (path, query, columns, ranges, dest) => invoke("export_start", { path, query, columns, ranges, dest }),
   exportCancel: (job) => invoke("export_cancel", { job }),
+  sitemapFiles: (path) => invoke("sitemap_files", { path }),
+  sitemapPreview: (path, options, folder) => invoke("sitemap_preview", { path, options, folder }),
+  sitemapGenerate: (path, options, folder, replace) => invoke("sitemap_generate", { path, options, folder, replace }),
+  vizScene: (path, view) => invoke("viz_scene", { path, view }),
+  vizTermLinks: (path, view, term, limit) => invoke("viz_term_links", { path, view, term, limit: limit ?? null }),
+  vizExport: (path, view, options, file) => invoke("viz_export", { path, view, options, file }),
+  pickVizPath: (name, format) =>
+    save({
+      defaultPath: `${name}.${format}`,
+      filters: [{ name: format === "csv" ? "CSV" : `${format.toUpperCase()} image`, extensions: [format] }],
+    }),
+  analysisRun: (path) => invoke("analysis_run", { path }),
+  analysisStart: (path) => invoke("analysis_start", { path }),
+  analysisCancel: () => invoke("analysis_cancel"),
+  onAnalysisProgress: (cb) => listen<AnalysisProgressEvent>("analysis-progress", (e) => cb(e.payload)),
+  onAnalysisDone: (cb) => listen<AnalysisDone>("analysis-done", (e) => cb(e.payload)),
+  analysisSettings: (path, settings) => invoke("analysis_settings", { path, settings }),
+  positionsTest: (path, url, rules) => invoke("positions_test", { path, url, rules }),
   onViewReady: (cb) => listen<ViewReady>("view-ready", (e) => cb(e.payload)),
   onExportProgress: (cb) => listen<ExportProgress>("export-progress", (e) => cb(e.payload)),
   integrationsStatus: () => invoke("integrations_status"),
@@ -559,4 +869,28 @@ export const tauriTransport: Transport = {
   integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
   integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
+  aeoRun: (path) => invoke("aeo_run", { path }),
+  aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
+  aeoSummary: (path) => invoke("aeo_summary", { path }),
+  aeoPage: (path, urlId) => invoke("aeo_page", { path, urlId }),
+  aeoLlmsTxtDraft: (path, maxLinks) => invoke("aeo_llms_txt_draft", { path, maxLinks }),
+  aeoRules: () => invoke("aeo_rules"),
+  aiBotsList: () => invoke("ai_bots_list"),
+  onAeoProgress: (cb) => listen<AeoProgress>("aeo-progress", (e) => cb(e.payload)),
+  onAeoFinished: (cb) => listen<AeoFinished>("aeo-finished", (e) => cb(e.payload)),
+  schedulesList: () => invoke("schedules_list"),
+  scheduleGet: (id) => invoke("schedule_get", { id }),
+  schedulePreview: (frequency) => invoke("schedule_preview", { frequency }),
+  scheduleValidate: (draft) => invoke("schedule_validate", { draft }),
+  scheduleSave: (draft) => invoke("schedule_save", { draft }),
+  scheduleSetEnabled: (id, enabled) => invoke("schedule_set_enabled", { id, enabled }),
+  scheduleDuplicate: (id, name) => invoke("schedule_duplicate", { id, name }),
+  scheduleDelete: (id) => invoke("schedule_delete", { id }),
+  scheduleRunNow: (id) => invoke("schedule_run_now", { id }),
+  scheduleStop: (id) => invoke("schedule_stop", { id }),
+  scheduleHistory: (id, limit) => invoke("schedule_history", { id, limit }),
+  scheduleUpdateFromProfile: (id) => invoke("schedule_update_from_profile", { id }),
+  schedulesRepair: () => invoke("schedules_repair"),
+  schedulesRemoveAll: () => invoke("schedules_remove_all"),
+  scheduleDefaultOutput: () => invoke("schedule_default_output"),
 };

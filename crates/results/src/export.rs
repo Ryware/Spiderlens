@@ -39,7 +39,7 @@ fn neutralise(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
+pub(crate) fn csv_field(out: &mut impl Write, s: &str) -> std::io::Result<()> {
     let s = neutralise(s);
     if s.contains([',', '"', '\r', '\n']) {
         write!(out, "\"{}\"", s.replace('"', "\"\""))
@@ -148,8 +148,12 @@ pub fn write_csv(
     let (conn, features) = connect(crawl)?;
     let c = compile(q, &features)?;
     let cols = pick_columns(c.tab, columns)?;
+    let links = &features.link_settings;
     for d in &c.derived {
-        crate::tabs::build_derived(&conn, *d)?;
+        if *d == crate::tabs::Derived::LinkMetrics && links.weighting.is_some() {
+            crate::tabs::build_derived(&conn, crate::tabs::Derived::LinkPositions, &features)?;
+        }
+        crate::tabs::build_derived(&conn, *d, &features)?;
     }
     let mut out = BufWriter::with_capacity(1 << 16, out);
     out.write_all(b"\xEF\xBB\xBF")?;
@@ -168,7 +172,7 @@ pub fn write_csv(
         None => vec![],
     };
     let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM urls u NOT INDEXED WHERE {}", c.where_sql),
+        &format!("SELECT COUNT(*) {}", c.source_where()),
         params.as_slice(),
         |r| r.get(0),
     )?;
@@ -184,8 +188,8 @@ pub fn write_csv(
     progress(0, total);
     for (a, b) in ranges {
         let sql = format!(
-            "SELECT {select} FROM urls u NOT INDEXED WHERE {} ORDER BY {} LIMIT {} OFFSET {a}",
-            c.where_sql,
+            "SELECT {select} {} ORDER BY {} LIMIT {} OFFSET {a}",
+            c.source_where(),
             c.order_sql,
             b.saturating_sub(a)
         );

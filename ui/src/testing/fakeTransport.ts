@@ -3,10 +3,16 @@
 
 import type { CrawlConfig } from "../generated/CrawlConfig";
 import type { Issue } from "../generated/Issue";
+import type { GenerateReport } from "../generated/GenerateReport";
+import type { SitemapFileRow } from "../generated/SitemapFileRow";
+import type { SitemapFiles } from "../generated/SitemapFiles";
+import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
+import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
+import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import type {
   CrawlFinished,
   CrawlInfo,
@@ -19,15 +25,41 @@ import type {
   LocalError,
   OpenFailure,
   Presets,
+  CleanupRecord,
+  CleanupReport,
+  CrawlBackup,
+  HtmlSize,
+  ManagedCrawl,
   RetryPreview,
   RecentEntry,
   ResumeOptions,
+  StoragePrefs,
   StorageStatus,
   Transport,
 } from "../transport";
 
 const polite: SpeedSettings = { max_concurrent: 8, max_per_host: 4, max_urls_per_sec: 5, adaptive: true };
 const fast: SpeedSettings = { max_concurrent: 64, max_per_host: 32, max_urls_per_sec: null, adaptive: true };
+
+/** The engine's defaults for sitemap generation (spec 011 Assumptions). */
+export function defaultGenerateOptions(): SitemapGenerateOptions {
+  return {
+    include_noindex: false,
+    include_canonicalised: false,
+    include: [],
+    exclude: [],
+    lastmod: { kind: "last_modified_header" },
+    changefreq: null,
+    priority: { kind: "off" },
+    images: "off",
+    image_hosts: [],
+    hreflang: false,
+    max_urls_per_file: 50000,
+    gzip: false,
+    base_url: "",
+    file_prefix: "sitemap",
+  };
+}
 
 export function defaultConfig(): CrawlConfig {
   return {
@@ -43,7 +75,7 @@ export function defaultConfig(): CrawlConfig {
       follow_external_nofollow: false,
       query_params: { mode: "keep", names: [], sort: false },
       max_url_length: 2000,
-      use_sitemaps: false,
+      sitemaps: { read: true, crawl_sitemap_only: true, urls: [], files: [] },
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
@@ -61,6 +93,10 @@ export function defaultConfig(): CrawlConfig {
       host_give_up_after: 5,
     },
     extraction: { store_html: true },
+    sitemap_generate: defaultGenerateOptions(),
+    links: { auto_analyse: true, position_rules: [], weighting: null },
+    access: { cookies: [], cookie_policy: "ignore" },
+    ai_checks: { auto: true, site_files: true },
   };
 }
 
@@ -134,9 +170,92 @@ export interface FakeCrawls {
   finish(f: Partial<CrawlFinished>): void;
 }
 
+/** What the fake file pickers return; tests set these before clicking. */
+export interface FakePicks {
+  sitemapFile: string | null;
+  folder: string | null;
+}
+
+/** A sitemap file row with defaults, for tests. */
+export function fakeSitemapFile(id: number, location: string, patch: Partial<SitemapFileRow> = {}): SitemapFileRow {
+  return {
+    id,
+    location,
+    source: "robots",
+    parent_id: null,
+    level: 0,
+    kind: "urlset",
+    http_status: 200,
+    final_url: location,
+    redirected: false,
+    compressed: false,
+    bytes: 1200,
+    entries: 10,
+    over_limit: false,
+    error_class: null,
+    error: null,
+    error_line: null,
+    invalid_entries: 0,
+    children: 0,
+    base_url: null,
+    ...patch,
+  };
+}
+
+/** Sitemap generation and files as the tests see them. */
+export interface FakeSitemaps {
+  /** What the Sitemap files view reads. */
+  files: SitemapFiles;
+  /** File names already in each folder. */
+  existing: Map<string, string[]>;
+  generated: { folder: string; options: SitemapGenerateOptions; replace: boolean }[];
+  previews: number;
+  /** When set, the next generate fails with this message. */
+  fail: string | null;
+}
+
+/** A stand-in for the engine's report: internal 200 pages, split by the URL limit. */
+function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: string[]): GenerateReport {
+  const re = (p: string) => {
+    try {
+      return new RegExp(p);
+    } catch {
+      return null;
+    }
+  };
+  const kept = urls.filter((u) => u.internal && u.status === 200);
+  const pages = kept.filter(
+    (u) => (o.include.length === 0 || o.include.some((p) => re(p)?.test(u.url))) && !o.exclude.some((p) => re(p)?.test(u.url)),
+  );
+  const ext = o.gzip ? ".xml.gz" : ".xml";
+  const n = Math.ceil(pages.length / Math.max(1, o.max_urls_per_file));
+  const files =
+    pages.length === 0
+      ? []
+      : n === 1
+        ? [{ name: `${o.file_prefix}${ext}`, kind: "pages" as const, urls: pages.length, images: 0, bytes: pages.length * 80 }]
+        : [
+            { name: `${o.file_prefix}_index${ext}`, kind: "index" as const, urls: n, images: 0, bytes: n * 90 },
+            ...Array.from({ length: n }, (_, i) => {
+              const c = Math.min(o.max_urls_per_file, pages.length - i * o.max_urls_per_file);
+              return { name: `${o.file_prefix}-${i + 1}${ext}`, kind: "pages" as const, urls: c, images: 0, bytes: c * 80 };
+            }),
+          ];
+  return {
+    files,
+    pages: pages.length,
+    images: 0,
+    skipped_by_pattern: kept.length - pages.length,
+    existing: files.map((f) => f.name).filter((name) => existingIn.includes(name)),
+    base_url: o.base_url || "https://example.com/",
+  };
+}
+
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; integrations: FakeIntegrations } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; picks: FakePicks; sitemaps: FakeSitemaps; aeo: FakeAeo; schedules: FakeSchedules; integrations: FakeIntegrations } {
+  const picks: FakePicks = { sitemapFile: null, folder: null };
+  const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, existing: new Map(), generated: [], previews: 0, fail: null };
   const saved = new Map<string, LoadedProfile>();
   let listCount = 0;
   let nextId = 1;
@@ -173,6 +292,9 @@ export function fakeTransport(
           waiting: 0,
           paused_hosts: [],
           waiting_for_host: false,
+          limit: null,
+          sites: [],
+          sites_total: 0,
           ...p,
         }),
       ),
@@ -183,14 +305,39 @@ export function fakeTransport(
   };
   const resultsApi = fakeResultsTransport(urls);
   const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
+  const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
+  const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   return {
     ...resultsApi,
     ...integrationsApi,
     integrations,
+    ...aeoApi,
+    ...schedulesApi,
+    schedules,
     saved,
     crawls,
+    picks,
+    sitemaps,
+    pickFolder: async () => picks.folder,
+    sitemapFiles: async () => structuredClone(sitemaps.files),
+    sitemapPreview: async (_path, options, folder) => {
+      sitemaps.previews += 1;
+      const r = fakeReport_(resultsApi.results.urls, options, folder ? (sitemaps.existing.get(folder) ?? []) : []);
+      if (r.pages === 0) throw "No page matches these options.";
+      return r;
+    },
+    sitemapGenerate: async (_path, options, folder, replace) => {
+      if (sitemaps.fail) throw sitemaps.fail;
+      const r = fakeReport_(resultsApi.results.urls, options, sitemaps.existing.get(folder) ?? []);
+      if (r.pages === 0) throw "No page matches these options.";
+      if (r.existing.length > 0 && !replace) throw `These files already exist: ${r.existing.join(", ")}`;
+      sitemaps.generated.push({ folder, options, replace });
+      sitemaps.existing.set(folder, [...new Set([...(sitemaps.existing.get(folder) ?? []), ...r.files.map((f) => f.name)])]);
+      return { ...r, existing: [] };
+    },
     pickCsvPath: async (name) => `/exports/${name}.csv`,
+    pickVizPath: async (name, format) => `/exports/${name}.${format}`,
     buildInfo: async () => ({
       product: "SpiderLens",
       product_version: "0.1.0",
@@ -222,6 +369,11 @@ export function fakeTransport(
       if (config.robots.mode !== "respect") {
         issues.push({ path: "robots.mode", severity: "warning", code: "robots_ignored", message: "Pages disallowed by robots.txt will be crawled." });
       }
+      config.links.position_rules.forEach((r, i) => {
+        // Stand-in for the CSS parser: an unclosed bracket is invalid.
+        if (r.selector.trim() === "" || r.selector.split("[").length !== r.selector.split("]").length)
+          issues.push({ path: `links.position_rules[${i}].selector`, severity: "error", code: "selector_syntax", message: "Not a valid CSS selector." });
+      });
       const r = config.retry;
       if (!(r.base_wait_secs >= 0.1 && r.base_wait_secs <= 60)) {
         issues.push({ path: "retry.base_wait_secs", severity: "error", code: "out_of_range", message: "The first wait must be between 0.1 and 60 seconds." });
@@ -276,6 +428,7 @@ export function fakeTransport(
     },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
+    pickSitemapFile: async () => picks.sitemapFile,
     pickProfileFile: async () => null,
     pickExportPath: async () => null,
     profiles: async () => [...saved.keys()].map((name) => ({ name, is_default: false, error: null })),
@@ -401,6 +554,28 @@ export interface FakeFiles {
   moved(m: Partial<CrawlMoved> & { to: string }): void;
   quitting(pausing?: boolean): void;
   recovered(entries: RecentEntry[]): void;
+  // Crawl data management (spec 019).
+  /** File sizes by path; default 10 MB. */
+  sizes: Map<string, number>;
+  /** Stored HTML by path; default none. */
+  html: Map<string, HtmlSize>;
+  backups: Map<string, CrawlBackup[]>;
+  /** Paths whose drive has no trash. */
+  noTrash: Set<string>;
+  /** Paths in use elsewhere, with the reason shown. */
+  inUse: Map<string, string>;
+  /** Paths without room to compact. */
+  noCompactRoom: Set<string>;
+  running: string | null;
+  trashed: string[];
+  deletedPermanently: string[];
+  purged: { path: string; compact: boolean }[];
+  revealed: string[];
+  prefs: StoragePrefs;
+  history: CleanupRecord[];
+  leftoverBytes: number;
+  cleanupDone(r: Partial<CleanupReport>): void;
+  crawlsChanged(): void;
 }
 
 type FilesApi = Pick<
@@ -425,7 +600,26 @@ type FilesApi = Pick<
   | "onCrawlMoved"
   | "onAppQuitting"
   | "onCrawlsRecovered"
+  | "manageList"
+  | "htmlSize"
+  | "revealPath"
+  | "crawlsDelete"
+  | "crawlsDeletePermanently"
+  | "purgeHtmlCheck"
+  | "purgeHtml"
+  | "storagePrefs"
+  | "setStoragePrefs"
+  | "cleanupHistory"
+  | "onCleanupDone"
+  | "onCrawlsChanged"
 >;
+
+const MB = 1024 ** 2;
+
+/** Storage settings as a fresh install has them. */
+export function defaultStoragePrefs(): StoragePrefs {
+  return { version: 1, cleanup_days: 30, reserve_bytes: 1024 * MB, first_cleanup_announced: null, last_cleanup: null };
+}
 
 function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
   const openFile: Listeners<string> = new Set();
@@ -433,6 +627,8 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
   const moved: Listeners<CrawlMoved> = new Set();
   const quitting: Listeners<{ pausing: boolean }> = new Set();
   const recovered: Listeners<RecentEntry[]> = new Set();
+  const cleanupDone: Listeners<CleanupReport> = new Set();
+  const crawlsChanged: Listeners<void> = new Set();
   const on = async <T>(set: Listeners<T>, cb: (v: T) => void) => {
     set.add(cb);
     return () => void set.delete(cb);
@@ -484,6 +680,68 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     moved: (m) => moved.forEach((cb) => cb({ id: 0, from: "", ...m })),
     quitting: (pausing = true) => quitting.forEach((cb) => cb({ pausing })),
     recovered: (entries) => recovered.forEach((cb) => cb(entries)),
+    sizes: new Map(),
+    html: new Map(),
+    backups: new Map(),
+    noTrash: new Set(),
+    inUse: new Map(),
+    noCompactRoom: new Set(),
+    running: null,
+    trashed: [],
+    deletedPermanently: [],
+    purged: [],
+    revealed: [],
+    prefs: defaultStoragePrefs(),
+    history: [],
+    leftoverBytes: 0,
+    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
+    crawlsChanged: () => crawlsChanged.forEach((cb) => cb()),
+  };
+
+  const sizeOf = (path: string) => files.sizes.get(path) ?? files.unsaved.find((u) => u.entry.path === path)?.size ?? 10 * MB;
+  const managed = (): ManagedCrawl[] => {
+    const paths = [...files.unsaved.map((u) => u.entry.path), ...files.recent.map((r) => r.path)].filter((p, i, a) => a.indexOf(p) === i);
+    return paths.map((path) => {
+      const r = files.recent.find((e) => e.path === path) ?? files.unsaved.find((u) => u.entry.path === path)!.entry;
+      return {
+        path,
+        name: r.name,
+        start_url: r.start_url,
+        status: files.running === path ? "running" : r.status,
+        urls: r.urls,
+        size_bytes: sizeOf(path),
+        created: r.last_used,
+        last_used: r.last_used,
+        available: r.available,
+        view_only: info(path).access.kind === "view_only",
+        backups: files.backups.get(path) ?? [],
+        unsaved: r.unsaved,
+        running: files.running === path,
+        in_recent: files.recent.some((e) => e.path === path),
+      };
+    });
+  };
+  const forget = (path: string) => {
+    files.unsaved = files.unsaved.filter((u) => u.entry.path !== path);
+    files.recent = files.recent.filter((r) => r.path !== path);
+    for (const [k, b] of files.backups) files.backups.set(k, b.filter((x) => x.path !== path));
+  };
+  const remove = (paths: string[], permanently: boolean) => {
+    const report = { deleted: [] as string[], skipped: [] as { path: string; reason: string }[], trash_unavailable: [] as string[], freed_bytes: 0 };
+    for (const path of paths) {
+      if (files.running === path) report.skipped.push({ path, reason: "Stop the crawl before deleting it." });
+      else if (files.inUse.has(path)) report.skipped.push({ path, reason: files.inUse.get(path)! });
+      else if (!permanently && files.noTrash.has(path)) report.trash_unavailable.push(path);
+      else {
+        const backup = [...files.backups.values()].flat().find((b) => b.path === path);
+        report.freed_bytes += backup ? backup.size_bytes : sizeOf(path);
+        report.deleted.push(path);
+        (permanently ? files.deletedPermanently : files.trashed).push(path);
+        files.history.unshift({ at: new Date().toISOString(), path, bytes: sizeOf(path), reason: permanently ? "manual_delete_permanent" : "manual_delete" });
+        forget(path);
+      }
+    }
+    return report;
   };
 
   const api: FilesApi = {
@@ -527,6 +785,7 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     }),
     unsavedDelete: async (path) => {
       files.deleted.push(path);
+      files.trashed.push(path);
       files.unsaved = files.unsaved.filter((u) => u.entry.path !== path);
       files.recent = files.recent.filter((r) => r.path !== path);
     },
@@ -546,6 +805,60 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     onCrawlMoved: (cb) => on(moved, cb),
     onAppQuitting: (cb) => on(quitting, cb),
     onCrawlsRecovered: (cb) => on(recovered, cb),
+    manageList: async () => {
+      const crawls = managed();
+      return {
+        crawls,
+        other_files: [],
+        totals: {
+          all: crawls.reduce((n, c) => n + c.size_bytes + c.backups.reduce((m, b) => m + b.size_bytes, 0), 0),
+          unsaved: crawls.filter((c) => c.unsaved).reduce((n, c) => n + c.size_bytes, 0),
+          leftovers: files.leftoverBytes,
+        },
+        free_bytes: files.storage.free_bytes,
+        unsaved_dir: files.storage.unsaved_dir,
+      };
+    },
+    htmlSize: async (path) => files.html.get(path) ?? { bytes: 0, pages: 0 },
+    revealPath: async (path) => void files.revealed.push(path),
+    crawlsDelete: async (paths) => remove(paths, false),
+    crawlsDeletePermanently: async (paths) => remove(paths, true),
+    purgeHtmlCheck: async (path) => {
+      const h = files.html.get(path) ?? { bytes: 0, pages: 0 };
+      const size = sizeOf(path);
+      return {
+        html_bytes: h.bytes,
+        html_pages: h.pages,
+        file_bytes: size,
+        new_size: size - h.bytes,
+        free_bytes: files.noCompactRoom.has(path) ? 1 * MB : files.storage.free_bytes,
+        can_compact: !files.noCompactRoom.has(path),
+      };
+    },
+    purgeHtml: async (path, compact) => {
+      if (files.running === path) throw "Pause or stop the crawl before removing its stored HTML.";
+      const h = files.html.get(path) ?? { bytes: 0, pages: 0 };
+      files.purged.push({ path, compact });
+      files.html.set(path, { bytes: 0, pages: 0 });
+      const freed = compact ? h.bytes : 0;
+      files.sizes.set(path, sizeOf(path) - freed);
+      return { html_pages: h.pages, html_bytes: h.bytes, freed_bytes: freed, compacted: compact };
+    },
+    storagePrefs: async () => ({ ...files.prefs }),
+    setStoragePrefs: async (prefs) => {
+      const issues = [];
+      if (prefs.reserve_bytes < 256 * MB || prefs.reserve_bytes > 50 * 1024 * MB)
+        issues.push({ path: "storage.reserve_bytes", code: "reserve_range", message: "The safety reserve must be between 256 MB and 50 GB.", severity: "error" });
+      if (prefs.cleanup_days !== null && ![7, 14, 30, 90].includes(prefs.cleanup_days))
+        issues.push({ path: "storage.cleanup_days", code: "cleanup_days", message: "Choose 7, 14, 30 or 90 days, or turn automatic cleanup off.", severity: "error" });
+      if (issues.length) throw JSON.stringify(issues);
+      files.prefs = { ...files.prefs, cleanup_days: prefs.cleanup_days, reserve_bytes: prefs.reserve_bytes };
+      files.storage = { ...files.storage, reserve_bytes: prefs.reserve_bytes };
+      return { ...files.prefs };
+    },
+    cleanupHistory: async () => structuredClone(files.history),
+    onCleanupDone: (cb) => on(cleanupDone, cb),
+    onCrawlsChanged: (cb) => on(crawlsChanged, () => cb()),
   };
   return { files, api };
 }

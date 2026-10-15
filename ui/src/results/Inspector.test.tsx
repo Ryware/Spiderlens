@@ -32,6 +32,7 @@ const link = (i: number, kind = "a"): LinkRow => ({
   text: null,
   sponsored: false,
   ugc: false,
+  position: null,
 });
 
 test("nothing_selected_shows_an_empty_state", () => {
@@ -153,6 +154,18 @@ test("link_list_switches_between_in_out_and_images", async () => {
   expect(within(switcher).getByRole("radio", { name: "Images 1" }).getAttribute("aria-checked")).toBe("true");
 });
 
+test("inlinks_offer_the_anchor_text_cloud", async () => {
+  const t = withDetail({ inlinks: 1, outlinks: 2, images: 0 });
+  const open = vi.fn();
+  render(<Inspector transport={t} path={PATH} id={2} onAnchorCloud={open} />);
+  await loaded();
+  fireEvent.click(await within(details()).findByRole("button", { name: "Anchor text cloud" }));
+  expect(open).toHaveBeenCalledTimes(1);
+  // Only beside the inlinks.
+  fireEvent.click(within(details()).getByRole("radio", { name: "Out 2" }));
+  expect(within(details()).queryByRole("button", { name: "Anchor text cloud" })).toBeNull();
+});
+
 test("empty_link_list_says_none", async () => {
   const t = withDetail({ inlinks: 1, outlinks: 0 });
   render(<Inspector transport={t} path={PATH} id={2} />);
@@ -168,6 +181,56 @@ test("nofollow_links_are_marked", async () => {
   await loaded();
   expect(await within(details()).findByText("nofollow")).toBeTruthy();
   expect(within(details()).getByText("not followed")).toBeTruthy();
+});
+
+test("link_positions_show_once_worked_out", async () => {
+  const t = withDetail({ inlinks: 3 });
+  t.urlList = async (_p, _id, _kind, from) => ({
+    total: 3,
+    from,
+    rows: [{ ...link(0), position: "footer" }, { ...link(1), position: "unknown" }, link(2)],
+    headings: [],
+    unavailable: null,
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const rows = await within(details()).findAllByRole("listitem");
+  expect(rows[0].textContent).toContain("Footer");
+  expect(rows[1].textContent).toContain("Position unknown");
+  // Not worked out yet: nothing is shown rather than a guess.
+  expect(rows[2].textContent).not.toMatch(/Content|Position/);
+});
+
+test("link_lists_filter_by_position", async () => {
+  const t = withDetail({ inlinks: 3 });
+  const asked: (string | null | undefined)[] = [];
+  const all = [{ ...link(0), position: "footer" }, { ...link(1), position: "content" }, { ...link(2), position: "footer" }];
+  t.urlList = async (_p, _id, _kind, from, _count, position) => {
+    asked.push(position);
+    const rows = all.filter((r) => !position || r.position === position);
+    return { total: rows.length, from, rows, headings: [], unavailable: null };
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const filter = await within(details()).findByRole("combobox", { name: "Link position" });
+  fireEvent.change(filter, { target: { value: "footer" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(2));
+  expect(within(details()).queryByText("https://example.com/linked-1")).toBeNull();
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "sidebar" } });
+  expect(await within(details()).findByText("No links at this position.")).toBeTruthy();
+  // The filter stays, so the choice can be undone.
+  fireEvent.change(within(details()).getByRole("combobox", { name: "Link position" }), { target: { value: "" } });
+  await waitFor(() => expect(within(details()).getAllByRole("listitem")).toHaveLength(3));
+  expect(asked).toEqual([null, "footer", "sidebar", null]);
+});
+
+test("no_position_filter_before_positions_are_worked_out", async () => {
+  const t = withDetail({ inlinks: 2 });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [link(0), link(1)], headings: [], unavailable: null });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  await within(details()).findAllByRole("listitem");
+  expect(within(details()).queryByRole("combobox", { name: "Link position" })).toBeNull();
 });
 
 test("show_more_pages_in_the_rest_of_the_list", async () => {
@@ -232,8 +295,40 @@ test("not_collected_group_lists_unavailable_fields", async () => {
   await loaded();
   expect(within(details()).getByRole("heading", { name: "Not collected" })).toBeTruthy();
   expect(within(details()).getByText("Headings, Anchor and alt text.")).toBeTruthy();
-  expect(within(details()).getByText("Page HTML.")).toBeTruthy();
-  expect(within(details()).getByText(/This crawl did not keep page HTML\./, { selector: "p" })).toBeTruthy();
+  // Page HTML is explained in its own section instead.
+  expect(within(details()).queryByText("Page HTML.")).toBeNull();
+  expect(within(details()).queryByText(/This crawl did not keep page HTML\./)).toBeNull();
+});
+
+test("page_html_not_stored_says_how_to_turn_it_on", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).getByRole("heading", { name: "Page HTML" })).toBeTruthy();
+  expect(within(details()).getByText(/Turn on Settings › Page data › Store page HTML and crawl again/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("page_html_missing_for_a_url_without_a_body", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={10} />);
+  await loaded();
+  expect(within(details()).getByText(/None stored for this URL: it is not an HTML page/)).toBeTruthy();
+  expect(within(details()).queryByRole("button", { name: "View source" })).toBeNull();
+});
+
+test("view_source_opens_the_page_html_viewer", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "extraction", "raw_html"];
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  fireEvent.click(within(details()).getByRole("button", { name: "View source" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText("<!doctype html>")).toBeTruthy();
+  expect(within(dialog).getByText("https://example.com/page-1", { selector: "p" })).toBeTruthy();
+  expect(within(dialog).getByTestId("html-facts").textContent).toMatch(/^\d+ KB · 2,008 lines · UTF-8$/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 test("nothing_missing_hides_the_not_collected_group", async () => {
@@ -249,4 +344,98 @@ test("changing_the_selected_url_loads_its_details", async () => {
   expect((await loaded()).textContent).toBe("https://example.com/page-1");
   rerender(<Inspector transport={t} path={PATH} id={5} />);
   await waitFor(() => expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("https://example.com/page-4"));
+});
+
+// --- Link Score (spec 023 FR-008) -------------------------------------------
+
+test("link_score_section_shows_score_rank_and_counts", async () => {
+  const t = withDetail({
+    link_metrics: { score: 72.44, rank: 12, of: 4812, unique_inlinks: 40, followed_inlinks: 38, all_inlinks: 95, unique_outlinks: 17, external_outlinks: 3, pct_linking: 0.83 },
+  });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  const section = within(details()).getByRole("heading", { name: "Link Score" }).closest("section")!;
+  expect(within(section).getByText("72.4")).toBeTruthy();
+  expect(within(section).getByText(`Rank 12 of ${(4812).toLocaleString()} internal URLs`)).toBeTruthy();
+  expect(within(section).getByRole("meter", { name: "Link Score" }).getAttribute("aria-valuenow")).toBe("72");
+  expect(within(section).getByText("38")).toBeTruthy();
+  expect(within(section).getByText("0.8%")).toBeTruthy();
+});
+
+test("link_score_while_the_crawl_runs_says_when_it_comes", async () => {
+  const t = withDetail({ link_metrics: null, unavailable: { link_metrics: "Calculated when the crawl ends." } });
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  await loaded();
+  expect(within(details()).queryByRole("heading", { name: "Link Score" })).toBeNull();
+  expect(within(details()).getByText("Link Score.")).toBeTruthy();
+  expect(within(details()).getByText(/Calculated when the crawl ends/)).toBeTruthy();
+});
+
+// Copy URL and Show in table on list rows (T027).
+
+test("copy_url_puts_the_row_url_on_the_clipboard_and_says_so", async () => {
+  const t = fakeTransport();
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
+  expect(within(details()).getByRole("status").textContent).toBe("Copied.");
+});
+
+test("copy_failure_shows_the_error", async () => {
+  const t = fakeTransport();
+  t.copyText = async () => {
+    throw "Could not copy: no clipboard";
+  };
+  render(<Inspector transport={t} path={PATH} id={2} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Copy https://example.com/" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("Could not copy: no clipboard"));
+});
+
+test("show_in_table_hands_over_the_row_url_id", async () => {
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  expect(within(details()).getByRole("status").textContent).toBe("");
+});
+
+test("show_in_table_says_when_the_url_is_in_no_table", async () => {
+  const show = vi.fn(async () => false);
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/ in table" }));
+  await waitFor(() => expect(within(details()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
+});
+
+test("show_in_table_is_left_out_without_a_table", async () => {
+  render(<Inspector transport={fakeTransport()} path={PATH} id={2} />);
+  await within(details()).findByRole("button", { name: "Copy https://example.com/" });
+  expect(within(details()).queryByRole("button", { name: /in table$/ })).toBeNull();
+});
+
+test("redirect_hops_have_the_same_actions", async () => {
+  const t = withDetail({
+    redirects: [
+      { id: 2, url: "http://example.com/a", status: 301, final_state: "Redirected" },
+      { id: 4, url: "https://example.com/b", status: 200, final_state: "Crawled" },
+    ],
+  });
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  fireEvent.click(await within(details()).findByRole("button", { name: "Show https://example.com/b in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(4));
+  fireEvent.click(within(details()).getByRole("button", { name: "Copy http://example.com/a" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["http://example.com/a"]));
+});
+
+test("right_click_on_a_row_offers_the_same_actions", async () => {
+  const t = fakeTransport();
+  const show = vi.fn(async () => true);
+  render(<Inspector transport={t} path={PATH} id={2} onShowInTable={show} />);
+  const row = (await within(details()).findByRole("button", { name: "Copy https://example.com/" })).closest("li")!;
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Show in table" }));
+  await waitFor(() => expect(show).toHaveBeenCalledWith(1));
+  fireEvent.contextMenu(row);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy URL" }));
+  await waitFor(() => expect(t.results.copied).toEqual(["https://example.com/"]));
 });

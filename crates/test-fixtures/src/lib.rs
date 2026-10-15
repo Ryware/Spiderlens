@@ -5,6 +5,7 @@
 //! runtime, so both async engine tests and sync CLI tests can use it.
 
 pub mod providers;
+pub mod a11y_site;
 mod site;
 
 pub use site::{Hit, Site, SiteBuilder};

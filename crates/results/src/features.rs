@@ -26,6 +26,11 @@ pub struct Features {
     #[serde(skip)]
     #[ts(skip)]
     pub robots_token: String,
+    /// Link analysis settings the crawl was made with (spec 023); the app
+    /// can replace them with `Reader::set_link_settings`.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub link_settings: spiderlens_config::LinkAnalysisSettings,
 }
 
 impl Features {
@@ -54,7 +59,13 @@ impl Features {
         // by the integrations crate, not by the crawl.
         let integrations = meta("integration_features")?.unwrap_or_default();
         let mut available = vec![Need::Base];
-        for need in [Need::Extraction, Need::Attempts, Need::Timing, Need::RawHtml] {
+        for need in [
+            Need::Extraction,
+            Need::Attempts,
+            Need::Timing,
+            Need::RawHtml,
+            Need::SitemapEntries,
+        ] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
             }
@@ -64,10 +75,32 @@ impl Features {
                 available.push(need);
             }
         }
+        // Crawl Analysis runs once fetching has ended (spec 023 FR-029).
+        if meta("status")?.as_deref() != Some("running") {
+            available.push(Need::Analysis);
+        }
+        // Spec 015: the AI checks record their run in the meta table.
+        if meta("aeo_analysis")?.is_some() {
+            available.push(Need::AiChecks);
+        }
+        // The cookie audit arrived with a crawl file format step, so the
+        // table says it all, also for older crawls resumed after upgrading.
+        let cookies: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cookies')",
+            [],
+            |r| r.get(0),
+        )?;
+        if cookies {
+            available.push(Need::Cookies);
+        }
         let redirect_limit = config
             .as_ref()
             .and_then(|v| find_u64(v, "max_redirects"))
             .map_or(10, |n| n as u32);
+        let link_settings = stored
+            .as_ref()
+            .map(|s| s.config.links.clone())
+            .unwrap_or_default();
         let robots_token = stored
             .and_then(|s| s.config.identity.user_agent.token())
             .unwrap_or_else(|| "SpiderLens".into())
@@ -76,6 +109,7 @@ impl Features {
             available,
             redirect_limit,
             robots_token,
+            link_settings,
         })
     }
 }

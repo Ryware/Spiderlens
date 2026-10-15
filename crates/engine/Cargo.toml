@@ -27,9 +27,12 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
+cookie_store.workspace = true
+cookie.workspace = true
 fastrand.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 tempfile.workspace = true
 spiderlens-test-fixtures.workspace = true
 

@@ -22,6 +22,7 @@ jiff.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
+scraper.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

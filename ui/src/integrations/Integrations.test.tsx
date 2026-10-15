@@ -124,7 +124,7 @@ test("fr_011_remove_data_and_fr_017_forget_the_account", async () => {
 });
 
 test("search_console_values_read_as_percent_and_position", () => {
-  expect(formatCell("percent", 0.0345)).toBe("3.5%");
+  expect(formatCell("percent", 3.45)).toBe("3.5%");
   expect(formatCell("decimal", 4.25)).toBe("4.3");
   expect(formatCell("percent", null)).toBe("");
 });

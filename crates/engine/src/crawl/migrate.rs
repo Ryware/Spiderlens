@@ -81,13 +81,211 @@ pub const STEPS: &[Step] = &[
     )
     WHERE headers.headers LIKE '%set-cookie%';",
     },
+    // Spec 015 (data-model.md): per-host site files fetched by the crawl and
+    // the AI checks' results, written by `spiderlens_aeo::analyze`.
+    Step {
+        version: 6,
+        additive: true,
+        sql: AEO_TABLES,
+    },
+    // The cookie audit (spec 025 data-model.md): attributes of each cookie a
+    // response set, never its value.
+    Step {
+        version: 7,
+        additive: true,
+        sql: "CREATE TABLE cookies (
+        url_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        host_only INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        expires INTEGER,
+        max_age INTEGER,
+        secure INTEGER NOT NULL,
+        http_only INTEGER NOT NULL,
+        same_site TEXT,
+        size INTEGER NOT NULL,
+        party TEXT NOT NULL,
+        source TEXT NOT NULL,
+        extra TEXT
+    );
+    CREATE INDEX cookies_url ON cookies(url_id);
+    CREATE INDEX cookies_key ON cookies(name, domain, path);",
+    },
+    // Spec 011: every sitemap file and entry the crawl read
+    // (specs/011-sitemaps-orphan-pages/data-model.md).
+    Step {
+        version: 8,
+        additive: true,
+        sql: "CREATE TABLE sitemap_files (
+        id INTEGER PRIMARY KEY,
+        location TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER NOT NULL,
+        base_url TEXT,
+        kind TEXT,
+        http_status INTEGER,
+        final_url TEXT,
+        redirected INTEGER,
+        compressed INTEGER,
+        bytes INTEGER,
+        entry_count INTEGER NOT NULL DEFAULT 0,
+        over_limit INTEGER,
+        error_class TEXT,
+        error TEXT,
+        error_line INTEGER,
+        read_at INTEGER
+    );
+    CREATE TABLE sitemap_entries (
+        id INTEGER PRIMARY KEY,
+        file_id INTEGER NOT NULL,
+        pos INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        loc TEXT NOT NULL,
+        url_id INTEGER,
+        invalid TEXT,
+        lastmod_raw TEXT,
+        lastmod INTEGER,
+        changefreq TEXT,
+        priority TEXT
+    );
+    CREATE INDEX sitemap_entries_url ON sitemap_entries(url_id);
+    CREATE INDEX sitemap_entries_file ON sitemap_entries(file_id, pos);
+    CREATE TABLE sitemap_refs (
+        entry_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        raw TEXT NOT NULL,
+        url TEXT,
+        url_id INTEGER,
+        lang TEXT
+    );
+    CREATE INDEX sitemap_refs_entry ON sitemap_refs(entry_id);",
+    },
     Step {
         // External integrations (spec 024, data-model.md). Tables only.
-        version: 6,
+        version: 9,
         additive: true,
         sql: INTEGRATIONS,
     },
 ];
+
+const AEO_TABLES: &str = r#"
+-- Facts a page hook read while the crawl had the page parsed (spec 015
+-- reads its content facts here instead of parsing stored HTML again).
+CREATE TABLE page_facts (
+    url_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (url_id, kind)
+);
+CREATE TABLE site_files (
+    host_key TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status INTEGER,
+    final_url TEXT,
+    content_type TEXT,
+    size INTEGER,
+    body BLOB,
+    outcome TEXT NOT NULL,
+    error TEXT,
+    fetched_at INTEGER,
+    PRIMARY KEY (host_key, path)
+);
+CREATE TABLE aeo_hosts (
+    host_key TEXT PRIMARY KEY,
+    robots TEXT NOT NULL,
+    signals TEXT,
+    llms_txt TEXT,
+    llms_full_txt TEXT,
+    tdmrep TEXT
+);
+CREATE TABLE aeo_bot_access (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    home_verdict TEXT NOT NULL,
+    matched_group TEXT,
+    urls_total INTEGER NOT NULL,
+    urls_blocked INTEGER NOT NULL,
+    rules TEXT,
+    PRIMARY KEY (host_key, bot)
+);
+CREATE TABLE aeo_pages (
+    url_id INTEGER PRIMARY KEY,
+    page_type TEXT NOT NULL,
+    page_type_reason TEXT,
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    checks_used INTEGER NOT NULL,
+    checks_total INTEGER NOT NULL,
+    provisional INTEGER NOT NULL,
+    blocked_bots INTEGER NOT NULL,
+    flags INTEGER NOT NULL,
+    version_used TEXT NOT NULL,
+    js_dependence REAL,
+    published TEXT,
+    modified TEXT,
+    dates_agree INTEGER,
+    author TEXT,
+    author_url_id INTEGER,
+    question_headings INTEGER,
+    direct_answers INTEGER,
+    figures INTEGER,
+    quotations INTEGER,
+    citations INTEGER,
+    lists INTEGER,
+    tables INTEGER,
+    longest_paragraph INTEGER,
+    snippet_limits TEXT
+);
+CREATE TABLE aeo_findings (
+    url_id INTEGER,
+    rule_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    points_lost INTEGER NOT NULL,
+    evidence TEXT
+);
+CREATE INDEX aeo_findings_rule ON aeo_findings(rule_id, url_id);
+CREATE INDEX aeo_findings_url ON aeo_findings(url_id);
+CREATE TABLE aeo_site (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    score INTEGER,
+    access INTEGER,
+    readable INTEGER,
+    answer INTEGER,
+    trust INTEGER,
+    structured INTEGER,
+    site_checks INTEGER,
+    distribution TEXT,
+    entity TEXT,
+    pages_found TEXT,
+    coverage TEXT,
+    top_fixes TEXT,
+    site_outcomes TEXT,
+    profile TEXT,
+    versions TEXT,
+    ran_at INTEGER,
+    pages_analyzed INTEGER,
+    duration_ms INTEGER
+);
+CREATE TABLE aeo_probe (
+    host_key TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    url_id INTEGER NOT NULL,
+    status INTEGER,
+    size INTEGER,
+    content_type TEXT,
+    outcome TEXT NOT NULL,
+    detail TEXT,
+    probed_at INTEGER,
+    PRIMARY KEY (host_key, bot, url_id)
+);
+"#;
 
 const INTEGRATIONS: &str = "
 CREATE TABLE integration_runs (
