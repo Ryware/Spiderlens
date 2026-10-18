@@ -1602,6 +1602,80 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// The static results of a page as it is first written during a crawl
+    /// (spec 026): no full results exist yet, so the counts come from `rows`
+    /// and the page costs a few statements instead of a recount.
+    pub fn record_static_a11y(&self, url_id: i64, rows: &[A11yRow<'_>], mobile: &MobileRow<'_>) -> Result<()> {
+        if !rows.is_empty() {
+            self.conn
+                .prepare_cached(
+                    "DELETE FROM a11y_nodes WHERE result_id IN \
+                     (SELECT id FROM a11y_results WHERE url_id = ?1 AND source = 'static')",
+                )?
+                .execute([url_id])?;
+            self.conn
+                .prepare_cached("DELETE FROM a11y_results WHERE url_id = ?1 AND source = 'static'")?
+                .execute([url_id])?;
+        }
+        let mut counts = [0i64; 4];
+        let mut elements = 0i64;
+        let mut used = 0i64;
+        {
+            let mut insert_result = self.conn.prepare_cached(
+                "INSERT INTO a11y_results (url_id, check_id, kind, source, impact, wcag, nodes_total) \
+                 VALUES (?1, ?2, ?3, 'static', ?4, ?5, ?6)",
+            )?;
+            let mut insert_node = self.conn.prepare_cached(
+                "INSERT INTO a11y_nodes (result_id, pos, selector, excerpt) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for row in rows {
+                insert_result.execute(params![
+                    url_id,
+                    row.check_id.as_ref(),
+                    row.kind,
+                    row.impact,
+                    row.wcag.as_ref(),
+                    row.nodes_total
+                ])?;
+                let result_id = self.conn.last_insert_rowid();
+                match row.impact {
+                    Some("critical") => counts[0] += 1,
+                    Some("serious") => counts[1] += 1,
+                    Some("moderate") => counts[2] += 1,
+                    Some("minor") => counts[3] += 1,
+                    _ => {}
+                }
+                elements += i64::from(row.nodes_total);
+                for (pos, node) in row.nodes.iter().take(A11Y_NODES_PER_RESULT).enumerate() {
+                    if used >= A11Y_NODES_PER_PAGE {
+                        break;
+                    }
+                    insert_node.execute(params![result_id, pos as i64, node.selector.as_ref(), node.excerpt.as_ref()])?;
+                    used += 1;
+                }
+            }
+        }
+        let wcags: Vec<String> = rows.iter().map(|r| r.wcag.to_string()).collect();
+        self.conn
+            .prepare_cached(
+                "INSERT INTO a11y_audits (url_id, static_state, critical, serious, moderate, minor, needs_review, \
+                 checks_failed, elements, lowest_level) VALUES (?1, 'checked', ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8) \
+                 ON CONFLICT(url_id) DO UPDATE SET static_state = 'checked', critical = ?2, serious = ?3, \
+                 moderate = ?4, minor = ?5, checks_failed = ?6, elements = ?7, lowest_level = ?8",
+            )?
+            .execute(params![
+                url_id,
+                counts[0],
+                counts[1],
+                counts[2],
+                counts[3],
+                rows.len() as i64,
+                elements,
+                lowest_a11y_level(&wcags)
+            ])?;
+        self.record_mobile(url_id, mobile)
+    }
+
     /// Sets the page's `static_state` or `full_state` (with the reason and
     /// probe time for the full checks), creating its `a11y_audits` row.
     pub fn set_a11y_state(

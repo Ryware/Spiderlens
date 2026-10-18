@@ -722,16 +722,15 @@ fn record_static_a11y(
                 .collect(),
         })
         .collect();
-    store.record_a11y(url_id, "static", &rows)?;
-    store.set_a11y_state(url_id, "static", "checked", None, None)?;
     let viewport_state = match &a.viewport {
         None => "missing",
         Some(v) if v.zoom_disabled => "zoom_disabled",
         Some(v) if !v.device_width => "not_device_width",
         Some(_) => "ok",
     };
-    store.record_mobile(
+    store.record_static_a11y(
         url_id,
+        &rows,
         &MobileRow {
             viewport: a.viewport.as_ref().map(|v| v.content.as_str()),
             viewport_state: Some(viewport_state),
