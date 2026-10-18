@@ -470,6 +470,20 @@ pub struct CrawlStore {
     checkpointer: Option<Checkpointer>,
     /// Next render queue number; read from the file on first use.
     render_seq: Cell<Option<i64>>,
+    /// Accessibility checks done in this run, for live progress (spec 026).
+    a11y_live: Cell<A11yLive>,
+}
+
+/// Pages checked and the full checks' total time, kept as results are
+/// written so progress never queries for them.
+#[derive(Debug, Clone, Copy, Default)]
+struct A11yLive {
+    checked: u64,
+    /// A static result was written in this run, so a page's full state does
+    /// not count it a second time.
+    static_seen: bool,
+    full_pages: u64,
+    full_ms: u64,
 }
 
 /// Copies the write-ahead log into the database file on its own thread, so
@@ -598,6 +612,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
@@ -637,6 +652,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -691,6 +707,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -810,6 +827,14 @@ impl CrawlStore {
     /// URLs per state right now, without touching the file.
     pub fn live_counts(&self) -> StateCounts {
         self.live.get()
+    }
+
+    /// Pages whose accessibility was checked in this run, and the average
+    /// time of their full checks in milliseconds (spec 026).
+    pub fn a11y_live(&self) -> (u64, Option<u32>) {
+        let l = self.a11y_live.get();
+        let avg = (l.full_pages > 0).then(|| (l.full_ms / l.full_pages).min(u64::from(u32::MAX)) as u32);
+        (l.checked, avg)
     }
 
     /// `n` rows moved from `from` (None for new rows) to `to`.
@@ -1656,6 +1681,10 @@ impl CrawlStore {
             }
         }
         let wcags: Vec<String> = rows.iter().map(|r| r.wcag.to_string()).collect();
+        let mut live = self.a11y_live.get();
+        live.checked += 1;
+        live.static_seen = true;
+        self.a11y_live.set(live);
         self.conn
             .prepare_cached(
                 "INSERT INTO a11y_audits (url_id, static_state, critical, serious, moderate, minor, needs_review, \
@@ -1687,6 +1716,15 @@ impl CrawlStore {
         check_ms: Option<i64>,
     ) -> Result<()> {
         if source == "full" {
+            let mut live = self.a11y_live.get();
+            if !live.static_seen {
+                live.checked += 1;
+            }
+            if let Some(ms) = check_ms {
+                live.full_pages += 1;
+                live.full_ms += ms.max(0) as u64;
+            }
+            self.a11y_live.set(live);
             self.conn
                 .prepare_cached(
                     "INSERT INTO a11y_audits (url_id, full_state, full_reason, check_ms) VALUES (?1, ?2, ?3, ?4) \

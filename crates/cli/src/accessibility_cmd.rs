@@ -6,18 +6,22 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Args, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use rusqlite::types::ValueRef;
 use serde_json::{Value, json};
-use spiderlens_config::{A11yLevel, WcagLevel, WcagTarget, WcagVersion};
+use spiderlens_config::{A11yLevel, AccessibilitySettings, WcagLevel, WcagTarget, WcagVersion};
 use spiderlens_results::{A11Y_DISCLAIMER, Need, Reader};
 
 use crate::exit;
 
 #[derive(Args)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub struct AccessibilityArgs {
+    #[command(subcommand)]
+    command: Option<AccessibilityCommand>,
     /// Crawl file.
-    file: PathBuf,
+    #[arg(required = true)]
+    file: Option<PathBuf>,
     /// Count against another target without checking again, such as
     /// 2.1-aa (2.0, 2.1 or 2.2, then a, aa or aaa).
     #[arg(long, value_name = "TARGET", value_parser = parse_wcag)]
@@ -34,6 +38,29 @@ pub struct AccessibilityArgs {
     /// Output format.
     #[arg(long, value_enum, default_value = "text")]
     format: FormatArg,
+}
+
+#[derive(Subcommand)]
+enum AccessibilityCommand {
+    /// Run the accessibility checks on a finished crawl from its stored HTML.
+    /// Nothing is fetched.
+    Run(RunArgs),
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// Static checks, from the stored HTML (the default).
+    #[arg(long = "static", conflicts_with = "full")]
+    static_checks: bool,
+    /// Full checks in a browser. Needs the render-later path, which is not
+    /// built yet.
+    #[arg(long)]
+    full: bool,
+    /// Replace existing results without asking.
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -139,7 +166,14 @@ fn cell(v: &Value) -> String {
 }
 
 pub fn run_accessibility(args: AccessibilityArgs) -> ExitCode {
-    let mut reader = match Reader::open(&args.file) {
+    if let Some(AccessibilityCommand::Run(run)) = &args.command {
+        return run_checks(run);
+    }
+    let Some(file) = args.file.clone() else {
+        eprintln!("error: give a crawl file");
+        return ExitCode::from(exit::USAGE);
+    };
+    let mut reader = match Reader::open(&file) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
@@ -233,6 +267,53 @@ fn print_json_table(out: &mut impl Write, t: &Table) {
         .collect();
     let v = json!({ "disclaimer": A11Y_DISCLAIMER, "rows": rows });
     let _ = writeln!(out, "{}", serde_json::to_string_pretty(&v).expect("rows serialize"));
+}
+
+/// `spiderlens accessibility run <file> [--static | --full]` (spec 026 FR-031).
+fn run_checks(args: &RunArgs) -> ExitCode {
+    use std::io::{BufRead, IsTerminal};
+    if args.full {
+        eprintln!("error: Full checks on an existing crawl need the render-later path, which is not built yet");
+        return ExitCode::from(exit::USAGE);
+    }
+    let has_results = Reader::open(&args.file)
+        .map(|r| r.features().has(Need::AccessibilityStatic) || r.features().has(Need::AccessibilityFull))
+        .unwrap_or(false);
+    if has_results && !args.yes {
+        if !std::io::stdin().is_terminal() {
+            eprintln!("error: this crawl already has accessibility results; add --yes to replace them");
+            return ExitCode::from(exit::USAGE);
+        }
+        eprint!("This crawl already has accessibility results. Replace the static ones? [y/N] ");
+        let mut answer = String::new();
+        let _ = std::io::stdin().lock().read_line(&mut answer);
+        if !matches!(answer.trim(), "y" | "Y" | "yes") {
+            eprintln!("nothing changed");
+            return ExitCode::from(exit::USAGE);
+        }
+    }
+    let result = spiderlens_engine::accessibility::rerun_static(&args.file, &AccessibilitySettings::default(), |done, total| {
+        eprint!("\r{done} of {total} pages   ");
+    });
+    eprintln!();
+    match result {
+        Ok(s) => {
+            println!(
+                "accessibility: {} pages checked, {} with findings, {} without stored HTML",
+                s.pages, s.with_findings, s.skipped_no_html
+            );
+            println!("{A11Y_DISCLAIMER}");
+            ExitCode::from(exit::FETCHED)
+        }
+        Err(spiderlens_engine::accessibility::AccessibilityError::NotPossible(m)) => {
+            eprintln!("error: {m}");
+            ExitCode::from(exit::USAGE)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The short block after a crawl (spec 026 FR-033): pages checked, pages with

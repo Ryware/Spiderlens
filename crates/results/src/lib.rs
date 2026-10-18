@@ -42,7 +42,7 @@ pub use detail::{
     PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
-    COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv,
+    A11Y_EXPORTS, A11yFormat, COPY_LIMIT, export_a11y_file, write_a11y, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv,
     write_csv_in, write_csv_with, write_tsv_row,
 };
 pub use features::Features;

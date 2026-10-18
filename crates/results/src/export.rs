@@ -372,6 +372,202 @@ fn part_path(dest: &Path) -> PathBuf {
     dest.with_file_name(name)
 }
 
+// ---------------------------------------------------------------------------
+// Accessibility exports (spec 026 FR-026, T064)
+
+/// The accessibility exports, as `(id, title)`. Each starts with the
+/// disclaimer of FR-025 (CSV: a first line `# <text>`; JSON: a `disclaimer`
+/// field).
+pub const A11Y_EXPORTS: [(&str, &str); 4] = [
+    ("a11y_violations", "Accessibility violations"),
+    ("a11y_violations_level", "Accessibility violations in the WCAG target"),
+    ("a11y_needs_review", "Accessibility results that need review"),
+    ("a11y_summary", "Accessibility summary by check"),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum A11yFormat {
+    Csv,
+    Json,
+}
+
+/// One export's columns and query. `check` and `title` are the positions of
+/// the check id and of the column the readable title goes into.
+struct A11yQuery {
+    headers: &'static [&'static str],
+    /// `{impact}` stands for the impact ordering expression.
+    sql: &'static str,
+    check: usize,
+    title: usize,
+}
+
+/// Critical first, then serious, moderate, minor, none.
+const A11Y_IMPACT_ORDER: &str = "CASE r.impact WHEN 'critical' THEN 0 WHEN 'serious' THEN 1 \
+     WHEN 'moderate' THEN 2 WHEN 'minor' THEN 3 ELSE 4 END";
+
+const A11Y_ROW_HEADERS: &[&str] = &["address", "check_id", "title", "kind", "source", "impact", "wcag", "elements"];
+
+fn a11y_query(id: &str) -> Option<A11yQuery> {
+    Some(match id {
+        "a11y_violations" => A11yQuery {
+            headers: A11Y_ROW_HEADERS,
+            sql: "SELECT u.url, r.check_id, '', r.kind, r.source, COALESCE(r.impact, ''), COALESCE(r.wcag, ''), \
+                  COALESCE(r.nodes_total, 0) FROM a11y_results r JOIN urls u ON u.id = r.url_id \
+                  WHERE r.kind = 'violation' ORDER BY u.url, {impact}, r.check_id",
+            check: 1,
+            title: 2,
+        },
+        "a11y_violations_level" => A11yQuery {
+            headers: A11Y_ROW_HEADERS,
+            sql: "SELECT u.url, r.check_id, '', r.kind, r.source, COALESCE(r.impact, ''), COALESCE(r.wcag, ''), \
+                  COALESCE(r.nodes_total, 0) FROM a11y_results r JOIN urls u ON u.id = r.url_id \
+                  WHERE r.kind = 'violation' AND wcag_in_target(r.wcag) ORDER BY u.url, {impact}, r.check_id",
+            check: 1,
+            title: 2,
+        },
+        "a11y_needs_review" => A11yQuery {
+            headers: A11Y_ROW_HEADERS,
+            sql: "SELECT u.url, r.check_id, '', r.kind, r.source, COALESCE(r.impact, ''), COALESCE(r.wcag, ''), \
+                  COALESCE(r.nodes_total, 0) FROM a11y_results r JOIN urls u ON u.id = r.url_id \
+                  WHERE r.kind = 'needs_review' ORDER BY u.url, {impact}, r.check_id",
+            check: 1,
+            title: 2,
+        },
+        "a11y_summary" => A11yQuery {
+            headers: &["check_id", "title", "impact", "pages", "elements"],
+            sql: "SELECT r.check_id, '', COALESCE(r.impact, ''), COUNT(DISTINCT r.url_id), \
+                  COALESCE(SUM(r.nodes_total), 0) FROM a11y_results r \
+                  WHERE r.kind = 'violation' AND wcag_in_target(r.wcag) \
+                  GROUP BY r.check_id, r.impact ORDER BY {impact}, 4 DESC, r.check_id",
+            check: 0,
+            title: 1,
+        },
+        _ => return None,
+    })
+}
+
+/// Writes the accessibility export `id` (one of [`A11Y_EXPORTS`]) of a crawl
+/// file. `target` counts against another WCAG target than the crawl's own
+/// (the `_level` and summary exports). Returns the number of rows.
+pub fn write_a11y(
+    crawl: &Path,
+    id: &str,
+    format: A11yFormat,
+    target: Option<spiderlens_config::WcagTarget>,
+    out: impl Write,
+) -> Result<u64, ExportError> {
+    let q = a11y_query(id).ok_or_else(|| {
+        Error::invalid(format!(
+            "unknown export {id:?}; use {}",
+            A11Y_EXPORTS.iter().map(|e| e.0).collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+    let (conn, mut features, _) = connect(crawl, &ResolvedSettings::default())?;
+    if !features.has(crate::tabs::Need::AccessibilityStatic) && !features.has(crate::tabs::Need::AccessibilityFull) {
+        return Err(Error::invalid(crate::tabs::Need::AccessibilityStatic.unavailable_reason()).into());
+    }
+    if let Some(t) = target {
+        features.a11y.wcag = t;
+        crate::sql::register_a11y(&conn, &features.a11y)?;
+    }
+    let sql = q.sql.replace("{impact}", A11Y_IMPACT_ORDER);
+    let mut stmt = conn.prepare(&sql)?;
+    let n = q.headers.len();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut cursor = stmt.query([])?;
+    while let Some(r) = cursor.next()? {
+        let mut row: Vec<Value> = (0..n).map(|i| r.get(i)).collect::<rusqlite::Result<_>>()?;
+        let title = match &row[q.check] {
+            Value::Text(check) => Some(crate::detail::a11y_title(check)),
+            _ => None,
+        };
+        if let Some(t) = title {
+            row[q.title] = Value::Text(t);
+        }
+        rows.push(row);
+    }
+    let mut out = BufWriter::with_capacity(1 << 16, out);
+    match format {
+        A11yFormat::Csv => {
+            write!(out, "# {}\r\n", crate::detail::A11Y_DISCLAIMER)?;
+            for (i, h) in q.headers.iter().enumerate() {
+                if i > 0 {
+                    out.write_all(b",")?;
+                }
+                csv_field(&mut out, h)?;
+            }
+            out.write_all(b"\r\n")?;
+            for row in &rows {
+                for (i, v) in row.iter().enumerate() {
+                    if i > 0 {
+                        out.write_all(b",")?;
+                    }
+                    match v {
+                        Value::Text(t) => csv_field(&mut out, t)?,
+                        Value::Integer(n) => write!(out, "{n}")?,
+                        Value::Real(f) => write!(out, "{f}")?,
+                        Value::Null | Value::Blob(_) => {}
+                    }
+                }
+                out.write_all(b"\r\n")?;
+            }
+        }
+        A11yFormat::Json => {
+            let json_rows: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|row| {
+                    serde_json::Value::Object(
+                        q.headers
+                            .iter()
+                            .zip(row)
+                            .map(|(h, v)| {
+                                let j = match v {
+                                    Value::Text(t) => serde_json::Value::String(t.clone()),
+                                    Value::Integer(n) => serde_json::json!(n),
+                                    Value::Real(f) => serde_json::json!(f),
+                                    Value::Null | Value::Blob(_) => serde_json::Value::Null,
+                                };
+                                ((*h).to_string(), j)
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            let doc = serde_json::json!({
+                "disclaimer": crate::detail::A11Y_DISCLAIMER,
+                "rows": json_rows,
+            });
+            serde_json::to_writer_pretty(&mut out, &doc).map_err(std::io::Error::from)?;
+            out.write_all(b"\n")?;
+        }
+    }
+    out.flush()?;
+    Ok(rows.len() as u64)
+}
+
+/// [`write_a11y`] to `dest` through `<dest>.part`, as [`export_file`] does.
+pub fn export_a11y_file(
+    crawl: &Path,
+    id: &str,
+    format: A11yFormat,
+    target: Option<spiderlens_config::WcagTarget>,
+    dest: &Path,
+) -> Result<u64, ExportError> {
+    let part = part_path(dest);
+    let result = (|| {
+        let file = std::fs::File::create(&part)?;
+        let n = write_a11y(crawl, id, format, target, &file)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&part, dest)?;
+        Ok(n)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
+}
+
 impl crate::Reader {
     /// The rows at `ranges` as tab-separated text with a header row of
     /// `columns`, full values (FR-026). Over `COPY_LIMIT` rows is refused
