@@ -119,6 +119,8 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [pair, setPair] = useState<Pair | null>(null);
   const comparison = useComparison(transport);
   const comparing = comparison.state.phase !== "idle";
+  // The open comparison of the open crawl adds its section to the report (spec 012 FR-033).
+  const reportComparison = comparison.state.phase === "ready" && comparison.state.summary.current.path === crawl.path ? comparison.state.id : null;
   const [sitemapOpen, setSitemapOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
@@ -545,6 +547,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onOpenOnFinish={(v) => updateUi({ openReportOnFinish: v })}
               reportFile={ui.reportFile}
               onReportFile={(f) => updateUi({ reportFile: f })}
+              comparison={reportComparison}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />

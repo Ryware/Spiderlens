@@ -240,6 +240,7 @@ async fn us1_running_reports_are_provisional() {
         .report(&ReportOptions {
             running: true,
             profile: None,
+            ..Default::default()
         })
         .unwrap();
     assert!(report.provisional);
@@ -311,6 +312,7 @@ async fn us3_report_file_is_self_contained_and_escaped() {
             &ReportOptions {
                 running: true,
                 profile: None,
+                ..Default::default()
             },
             &FileOptions::default(),
         )

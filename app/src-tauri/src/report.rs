@@ -13,10 +13,10 @@ use serde::Serialize;
 use spiderlens_results::ExportError;
 use spiderlens_results::bulk::{self, BulkOptions, BulkProgress, BulkResult};
 use spiderlens_results::report::html::FileOptions;
-use spiderlens_results::report::{Report, ReportOptions};
+use spiderlens_results::report::{Report, ReportOptions, Section};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::results;
+use crate::{compare, results};
 
 type Cmd<T> = Result<T, String>;
 
@@ -34,26 +34,53 @@ pub struct Written {
     bytes: u64,
 }
 
-/// The report of the open crawl file (FR-001).
+/// The open comparison's section, when the report is asked to carry one
+/// (FR-033). The UI passes the comparison only for the report of its
+/// current crawl.
+async fn extra_sections(compare: &compare::State, comparison: Option<u32>) -> Cmd<Vec<Section>> {
+    match comparison {
+        Some(id) => Ok(vec![compare.report_section(id).await?]),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The report of the open crawl file (FR-001), with the comparison section
+/// when `comparison` names an open comparison.
 #[tauri::command]
 pub async fn report(
     results: tauri::State<'_, results::State>,
+    compare: tauri::State<'_, compare::State>,
     path: PathBuf,
     running: bool,
     profile: Option<String>,
+    comparison: Option<u32>,
 ) -> Cmd<Report> {
-    let opts = ReportOptions { running, profile };
+    let extra_sections = extra_sections(&compare, comparison).await?;
+    let opts = ReportOptions {
+        running,
+        profile,
+        extra_sections,
+    };
     results
         .with(&path, move |r| r.report(&opts).map_err(|e| e.to_string()))
         .await
 }
 
-async fn html(results: &results::State, path: &Path, file: FileOptions) -> Cmd<String> {
+async fn html(
+    results: &results::State,
+    compare: &compare::State,
+    path: &Path,
+    file: FileOptions,
+    comparison: Option<u32>,
+) -> Cmd<String> {
     file.validate()?;
+    let opts = ReportOptions {
+        extra_sections: extra_sections(compare, comparison).await?,
+        ..ReportOptions::default()
+    };
     results
         .with(path, move |r| {
-            r.report_html(&ReportOptions::default(), &file)
-                .map_err(|e| e.to_string())
+            r.report_html(&opts, &file).map_err(|e| e.to_string())
         })
         .await
 }
@@ -62,15 +89,17 @@ async fn html(results: &results::State, path: &Path, file: FileOptions) -> Cmd<S
 #[tauri::command]
 pub async fn export_report_html(
     results: tauri::State<'_, results::State>,
+    compare: tauri::State<'_, compare::State>,
     path: PathBuf,
     dest: PathBuf,
     file: FileOptions,
     overwrite: bool,
+    comparison: Option<u32>,
 ) -> Cmd<Written> {
     if dest.exists() && !overwrite {
         return Err(EXISTS.into());
     }
-    let html = html(&results, &path, file).await?;
+    let html = html(&results, &compare, &path, file, comparison).await?;
     write_atomic(&dest, html.as_bytes()).map_err(|e| format!("Could not write the report: {e}"))?;
     Ok(Written {
         bytes: html.len() as u64,
@@ -98,10 +127,12 @@ fn write_atomic(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
 pub async fn print_report(
     app: AppHandle,
     results: tauri::State<'_, results::State>,
+    compare: tauri::State<'_, compare::State>,
     path: PathBuf,
     file: FileOptions,
+    comparison: Option<u32>,
 ) -> Cmd<()> {
-    let html = html(&results, &path, file).await?;
+    let html = html(&results, &compare, &path, file, comparison).await?;
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let page = dir.join("report-print.html");

@@ -1,6 +1,6 @@
-// The comparison in the main area (spec 012 stories 1, 2, 5): the overview
-// of every filter's change, change detection, and the URL lists behind each
-// number.
+// The comparison in the main area (spec 012 stories 1, 2, 3, 5): the overview
+// of every filter's change, change detection, issue changes, and the URL
+// lists behind each number.
 
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Download, X } from "lucide-react";
@@ -10,6 +10,9 @@ import type { FilterDelta } from "../generated/FilterDelta";
 import type { Group } from "../generated/Group";
 import type { GroupPage } from "../generated/GroupPage";
 import type { GroupRow } from "../generated/GroupRow";
+import type { IssueChange } from "../generated/IssueChange";
+import type { IssueDelta } from "../generated/IssueDelta";
+import type { IssuePriority } from "../generated/IssuePriority";
 import type { Summary } from "../generated/Summary";
 import type { Transport } from "../transport";
 import { Badge, Bar, Button, cn, EmptyState, Input, Notice, NumberInput, Segmented, Switch } from "../components/ui";
@@ -29,6 +32,10 @@ const signed = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : n.toLocaleStri
 function groupTitle(g: Group, s: Summary): string {
   if (g.kind === "urls") return { new: "New URLs", missing: "Missing URLs", not_reached: "Not reached", collisions: "Mapping collisions" }[g.which];
   if (g.kind === "element") return `Changed: ${s.elements.find((e) => e.element === g.element)?.label ?? g.element}`;
+  if (g.kind === "issue") {
+    const change = { newly_affected: "Newly affected", fixed: "Fixed", gone: "Gone" }[g.change];
+    return `${s.issues.find((i) => i.rule === g.rule)?.name ?? g.rule} · ${change}`;
+  }
   const f = s.filters.find((x) => x.tab === g.tab && x.filter === g.filter);
   const change = { new: "New", added: "Added", removed: "Removed", missing: "Missing", not_reached: "Not reached" }[g.change];
   return `${f?.tab_title ?? g.tab}: ${f?.filter_label ?? g.filter} · ${change}`;
@@ -207,6 +214,86 @@ function ChangeDetection({ elements, onChange, onOpen }: { elements: ElementDelt
   );
 }
 
+const PRIORITIES: { id: IssuePriority; label: string }[] = [
+  { id: "high", label: "High" },
+  { id: "medium", label: "Medium" },
+  { id: "low", label: "Low" },
+  { id: "opportunity", label: "Opportunity" },
+];
+
+const settingsOwner = { current: "the current crawl's", previous: "the previous crawl's", app: "the app's" } as const;
+
+/** Change of an issue's affected URLs; null when it cannot be compared. */
+export const issueChange = (i: IssueDelta) => (i.previous === null || i.current === null ? null : i.current - i.previous);
+
+function Issues({ summary, onOpen }: { summary: Summary; onOpen: (g: Group) => void }) {
+  const [show, setShow] = useState<"all" | "regressions" | "improvements">("all");
+  const basis = summary.issue_basis;
+  const open = (i: IssueDelta, change: IssueChange) => () => onOpen({ kind: "issue", rule: i.rule, change });
+  const shown = summary.issues.filter((i) => show === "all" || !i.comparable || (show === "regressions" ? i.newly_affected > 0 : i.fixed > 0));
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <p className="m-0 text-sm text-fg-2">
+        Both crawls evaluated with rule set v{basis.rules_version} and {settingsOwner[basis.settings]} issue settings{basis.custom ? " (customised)" : ""}.
+      </p>
+      <Segmented
+        size="sm"
+        label="Show issues"
+        value={show}
+        onChange={setShow}
+        options={[
+          { value: "all", label: "All" },
+          { value: "regressions", label: "Only regressions" },
+          { value: "improvements", label: "Only improvements" },
+        ]}
+      />
+      <table aria-label="Issue changes" className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-line text-left text-xs text-fg-3">
+            <th className="py-1 pr-2 font-semibold">Issue</th>
+            {["Previous", "Current", "Change", "Newly affected", "Fixed", "Gone"].map((h) => (
+              <th key={h} className="py-1 pr-2 text-right font-semibold">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        {PRIORITIES.map((p) => {
+          const rows = shown.filter((i) => i.priority === p.id);
+          if (rows.length === 0) return null;
+          return (
+            <tbody key={p.id} aria-label={`${p.label} priority`}>
+              <tr>
+                <th colSpan={7} scope="colgroup" className="pt-3 pb-1 text-left text-xs font-semibold text-fg-2">
+                  {p.label}
+                </th>
+              </tr>
+              {rows.map((i) => {
+                const d = issueChange(i);
+                return (
+                  <tr key={i.rule} className={cn("border-b border-line/60", !i.comparable && "text-fg-3")}>
+                    <td className="py-1 pr-2">
+                      {i.name}
+                      {!i.comparable && i.reason && <div className="text-xs">{i.reason}</div>}
+                    </td>
+                    <td className="py-1 pr-2 text-right tabular">{i.previous?.toLocaleString() ?? "–"}</td>
+                    <td className="py-1 pr-2 text-right tabular">{i.current?.toLocaleString() ?? "–"}</td>
+                    <td className={cn("py-1 pr-2 text-right font-semibold tabular", d !== null && d > 0 && "text-warn", d !== null && d < 0 && "text-ok")}>{d === null ? "–" : signed(d)}</td>
+                    <td className="py-1 pr-2 text-right">{i.comparable && <Count n={i.newly_affected} label={`${i.name}: newly affected`} onOpen={open(i, "newly_affected")} />}</td>
+                    <td className="py-1 pr-2 text-right">{i.comparable && <Count n={i.fixed} label={`${i.name}: fixed`} onOpen={open(i, "fixed")} />}</td>
+                    <td className="py-1 pr-2 text-right">{i.comparable && <Count n={i.gone} label={`${i.name}: gone`} onOpen={open(i, "gone")} />}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          );
+        })}
+      </table>
+      {shown.length === 0 && <p className="m-0 text-sm text-fg-3">{show === "all" ? "No issue rules were evaluated." : "No issue matches."}</p>}
+    </div>
+  );
+}
+
 function GroupList({
   transport,
   id,
@@ -360,7 +447,7 @@ export function CompareView({
   onNew: () => void;
 }) {
   const s = comparison.state;
-  const [tab, setTab] = useState<"overview" | "elements">("overview");
+  const [tab, setTab] = useState<"overview" | "elements" | "issues">("overview");
   const [group, setGroup] = useState<Group | null>(null);
   const openGroup = (g: Group) => {
     onSelect(null);
@@ -424,6 +511,7 @@ export function CompareView({
               options={[
                 { value: "overview", label: "Overview" },
                 { value: "elements", label: "Change detection" },
+                { value: "issues", label: "Issues" },
               ]}
             />
           )}
@@ -451,6 +539,8 @@ export function CompareView({
           />
         ) : tab === "overview" ? (
           <Overview summary={summary} onOpen={openGroup} />
+        ) : tab === "issues" ? (
+          <Issues summary={summary} onOpen={openGroup} />
         ) : (
           <ChangeDetection
             elements={summary.elements}

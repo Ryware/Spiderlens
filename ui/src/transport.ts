@@ -640,7 +640,7 @@ export interface McpSelfTest {
 /** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
 export interface CompareProgress {
   comparison: number;
-  phase: "open" | "previous" | "current" | "match" | "counts" | "done" | "failed" | "cancelled";
+  phase: "open" | "previous" | "current" | "issues" | "match" | "counts" | "done" | "failed" | "cancelled";
   done: number;
   total: number;
   error: string | null;
@@ -1024,9 +1024,10 @@ export interface Transport {
   pickFolder(): Promise<string | null>;
 
   // Report and exports (spec 010, contracts/desktop-commands.md).
-  report(path: string, running: boolean, profile: string | null): Promise<Report>;
-  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean): Promise<Written>;
-  printReport(path: string, file: FileOptions): Promise<void>;
+  /** `comparison` is an open comparison whose current crawl is `path`: its section is added (spec 012 FR-033). */
+  report(path: string, running: boolean, profile: string | null, comparison: number | null): Promise<Report>;
+  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean, comparison: number | null): Promise<Written>;
+  printReport(path: string, file: FileOptions, comparison: number | null): Promise<void>;
   bulkExport(path: string, options: BulkOptions): Promise<BulkResult>;
   bulkExportCancel(): Promise<void>;
   onBulkProgress(cb: (p: BulkProgress) => void): Promise<() => void>;
@@ -1282,9 +1283,9 @@ export const tauriTransport: Transport = {
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
 
-  report: (path, running, profile) => invoke("report", { path, running, profile }),
-  exportReportHtml: (path, dest, file, overwrite) => invoke("export_report_html", { path, dest, file, overwrite }),
-  printReport: (path, file) => invoke("print_report", { path, file }),
+  report: (path, running, profile, comparison) => invoke("report", { path, running, profile, comparison }),
+  exportReportHtml: (path, dest, file, overwrite, comparison) => invoke("export_report_html", { path, dest, file, overwrite, comparison }),
+  printReport: (path, file, comparison) => invoke("print_report", { path, file, comparison }),
   bulkExport: (path, options) => invoke("bulk_export", { path, options }),
   bulkExportCancel: () => invoke("bulk_export_cancel"),
   onBulkProgress: (cb) => listen<BulkProgress>("bulk-export-progress", (e) => cb(e.payload)),

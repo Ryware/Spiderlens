@@ -456,13 +456,7 @@ impl Reader {
     /// recorded, else the profile's when the crawl started. A value this
     /// version cannot read counts as none.
     pub fn stored_issue_settings(&self) -> Result<Option<spiderlens_config::IssueSettings>> {
-        if let Some(t) = self.meta("issue_settings")? {
-            return Ok(serde_json::from_str(&t).ok());
-        }
-        Ok(self
-            .meta("config")?
-            .and_then(|t| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&t).ok())
-            .map(|c| c.config.issues))
+        stored_issue_settings_on(&self.conn)
     }
 
     /// The rule set version the file's issues were last recorded with, if
@@ -548,6 +542,87 @@ pub fn record_issue_settings(path: &std::path::Path, s: &spiderlens_config::Issu
     set.execute(("rules_version", super::RULES_VERSION.to_string()))?;
     set.execute(("issue_settings", json))?;
     Ok(())
+}
+
+/// [`Reader::stored_issue_settings`] for a bare connection to a crawl file
+/// (spec 012 resolves the settings before it opens its sides).
+pub fn stored_issue_settings_on(conn: &Connection) -> Result<Option<spiderlens_config::IssueSettings>> {
+    use rusqlite::OptionalExtension;
+    let meta = |key: &str| -> Result<Option<String>> {
+        Ok(conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    };
+    if let Some(t) = meta("issue_settings")? {
+        return Ok(serde_json::from_str(&t).ok());
+    }
+    Ok(meta("config")?
+        .and_then(|t| serde_json::from_str::<spiderlens_config::StoredCrawlConfig>(&t).ok())
+        .map(|c| c.config.issues))
+}
+
+/// One catalogue rule as a comparison needs to know it: who it is, how it is
+/// configured and whether it can run on a file (FR-025).
+#[derive(Debug, Clone)]
+pub struct RuleRun {
+    /// Position in the catalogue: the rule's id in `temp.issue_hits`.
+    pub index: usize,
+    /// The stable rule id.
+    pub id: &'static str,
+    /// The name with the threshold in force.
+    pub name: String,
+    pub category: Category,
+    pub priority: Priority,
+    pub enabled: bool,
+    /// Why the file lacks the data the rule reads, if it does.
+    pub unavailable: Option<&'static str>,
+}
+
+impl RuleRun {
+    /// Evaluated into `temp.issue_hits` on this file.
+    pub fn runnable(&self) -> bool {
+        self.enabled && self.unavailable.is_none()
+    }
+}
+
+/// Every rule in catalogue order with `settings` applied, for a file with
+/// `features`.
+pub fn rule_runs(features: &Features, settings: &ResolvedSettings) -> Vec<RuleRun> {
+    catalogue()
+        .iter()
+        .enumerate()
+        .map(|(index, r)| {
+            let s = settings.rules[index];
+            RuleRun {
+                index,
+                id: r.id,
+                name: display_name(r, s.threshold),
+                category: r.category,
+                priority: s.priority,
+                enabled: s.enabled,
+                unavailable: (!features.has(r.need)).then(|| r.need.unavailable_reason()),
+            }
+        })
+        .collect()
+}
+
+/// Evaluates the catalogue into `temp.issue_hits(rule, url_id)` on a
+/// connection that has no [`Reader`] (spec 012): the derived tables the
+/// runnable rules read are built first, except those in `built`, which the
+/// caller already built on `conn`. `conn` is a crawl opened read-only, so
+/// the hits live in its temp schema and never in the file (FR-024).
+pub fn evaluate_on(
+    conn: &Connection,
+    features: &Features,
+    settings: &ResolvedSettings,
+    built: &[Derived],
+) -> Result<()> {
+    for d in dependencies(features, settings) {
+        if !built.contains(&d) {
+            crate::tabs::build_derived(conn, d, features)?;
+        }
+    }
+    build_hits(conn, features, settings, &mut |_| {}, &[])
 }
 
 /// Builds `derived` on a connection that has no [`Reader`] (CSV export).

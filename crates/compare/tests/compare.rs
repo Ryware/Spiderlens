@@ -7,8 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use spiderlens_compare::{Comparison, FilterChange, Group, UrlGroup};
-use spiderlens_config::{CompareSettings, CrawlConfig, ElementSetting, MapRule, ModeInput, SpeedSettings};
+use spiderlens_compare::{Comparison, FilterChange, Group, IssueChange, UrlGroup};
+use spiderlens_config::{
+    CompareSettings, CrawlConfig, ElementSetting, IssueSettings, IssueSettingsChoice, MapRule, ModeInput,
+    RuleOverride, SpeedSettings,
+};
 use spiderlens_engine::crawl::{Control, Crawler};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -188,7 +191,15 @@ async fn same_site_pair() -> Pair {
 }
 
 fn run(p: &Pair, settings: CompareSettings) -> Comparison {
-    Comparison::run(&p.prev, &p.cur, settings, &AtomicBool::new(false), &mut |_| {}).unwrap()
+    Comparison::run(
+        &p.prev,
+        &p.cur,
+        settings,
+        None,
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap()
 }
 
 /// Paths of a group, from the current address or else the previous one.
@@ -424,6 +435,7 @@ async fn us6_files_are_never_written_and_cancel_stops() {
         &p.prev,
         &p.cur,
         CompareSettings::default(),
+        None,
         &AtomicBool::new(true),
         &mut |_| {},
     );
@@ -456,6 +468,7 @@ async fn us4_mapping_matches_a_migrated_site() {
         &prev,
         &cur,
         CompareSettings::default(),
+        None,
         &AtomicBool::new(false),
         &mut |_| {},
     )
@@ -485,7 +498,7 @@ async fn us4_mapping_matches_a_migrated_site() {
         mapping: vec![collide, rule],
         ..CompareSettings::default()
     };
-    let mut c = Comparison::run(&prev, &cur, settings, &AtomicBool::new(false), &mut |_| {}).unwrap();
+    let mut c = Comparison::run(&prev, &cur, settings, None, &AtomicBool::new(false), &mut |_| {}).unwrap();
     let s = c.summary().clone();
     assert!(!s.low_overlap);
     let base = new.url("new.test", "");
@@ -522,6 +535,7 @@ async fn fr015_urls_an_incomplete_crawl_did_not_reach_are_not_missing() {
         &prev,
         &cur,
         CompareSettings::default(),
+        None,
         &AtomicBool::new(false),
         &mut |_| {},
     )
@@ -539,4 +553,145 @@ async fn fr015_urls_an_incomplete_crawl_did_not_reach_are_not_missing() {
     assert_eq!(titles.missing, 0);
     assert_eq!(titles.removed, 0);
     assert!(titles.not_reached >= 8);
+}
+
+/// A small site for issue deltas. Untitled pages in the first version: /a,
+/// /b, /c and /gone. In the second, /a and /c get a title (fixed), /gone is
+/// removed (gone), /b stays untitled, and /ok and the new /new1 are
+/// untitled (newly affected).
+fn titles(host: &str, second: bool) -> SiteBuilder {
+    let long = Some("A title long enough to be fine");
+    let other = Some("Another title long enough to be fine");
+    if second {
+        SiteBuilder::new()
+            .html(
+                host,
+                "/",
+                &page(long, "", "", &["/a", "/b", "/c", "/ok", "/new1", "/new2"]),
+            )
+            .html(host, "/a", &page(long, "", "", &[]))
+            .html(host, "/b", &page(None, "", "", &[]))
+            .html(host, "/c", &page(other, "", "", &[]))
+            .html(host, "/ok", &page(None, "", "", &[]))
+            .html(host, "/new1", &page(None, "", "", &[]))
+            .html(
+                host,
+                "/new2",
+                &page(Some("A third title that is fine"), "", "", &[]),
+            )
+    } else {
+        SiteBuilder::new()
+            .html(
+                host,
+                "/",
+                &page(long, "", "", &["/a", "/b", "/c", "/gone", "/ok"]),
+            )
+            .html(host, "/a", &page(None, "", "", &[]))
+            .html(host, "/b", &page(None, "", "", &[]))
+            .html(host, "/c", &page(None, "", "", &[]))
+            .html(host, "/gone", &page(None, "", "", &[]))
+            .html(host, "/ok", &page(other, "", "", &[]))
+    }
+}
+
+#[tokio::test]
+async fn us3_issue_deltas_add_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let (prev, cur) = (dir.path().join("i1.spiderlens"), dir.path().join("i2.spiderlens"));
+    let mut site = titles(E, false).start();
+    crawl(&site, E, &prev).await;
+    site.replace(titles(E, true));
+    crawl(&site, E, &cur).await;
+    let p = Pair {
+        base: site.url(E, ""),
+        _dir: dir,
+        prev,
+        cur,
+    };
+    let before = (fingerprint(&p.prev), fingerprint(&p.cur));
+    let mut c = run(&p, CompareSettings::default());
+    let s = c.summary().clone();
+
+    // The basis is stated: this rule set, the current crawl's settings.
+    assert_eq!(
+        s.issue_basis.rules_version,
+        spiderlens_results::issues::RULES_VERSION
+    );
+    assert_eq!(s.issue_basis.settings, IssueSettingsChoice::Current);
+    assert!(!s.issue_basis.custom);
+
+    let d = s.issues.iter().find(|i| i.rule == "title.missing").unwrap();
+    assert!(d.comparable);
+    assert_eq!((d.previous, d.current), (Some(4), Some(3)));
+    assert_eq!((d.newly_affected, d.fixed, d.gone), (2, 2, 1));
+    let issue = |change| Group::Issue {
+        rule: "title.missing".into(),
+        change,
+    };
+    assert_eq!(
+        paths(&mut c, &p.base, issue(IssueChange::NewlyAffected)),
+        set(&["/new1", "/ok"])
+    );
+    assert_eq!(
+        paths(&mut c, &p.base, issue(IssueChange::Fixed)),
+        set(&["/a", "/c"])
+    );
+    assert_eq!(paths(&mut c, &p.base, issue(IssueChange::Gone)), set(&["/gone"]));
+
+    // For every rule: previous - fixed - gone + newly affected = current.
+    for i in s.issues.iter().filter(|i| i.comparable) {
+        assert_eq!(
+            i.previous.unwrap() + i.newly_affected,
+            i.current.unwrap() + i.fixed + i.gone,
+            "{}",
+            i.rule
+        );
+    }
+    // Most important first.
+    assert!(s.issues.windows(2).all(|w| w[0].priority <= w[1].priority));
+
+    // The report carries the changed issues and renders as a section.
+    let report = c.report().unwrap();
+    assert!(report.issues_available);
+    assert!(report.issues.iter().any(|i| i.rule == "title.missing"));
+    let section = report.section();
+    assert_eq!(section.id, "comparison");
+    assert!(section.blocks.iter().any(|b| matches!(
+        b,
+        spiderlens_results::report::Block::Table { columns, .. } if columns[0] == "Priority"
+    )));
+    drop(c);
+
+    // The app's settings with the rule switched off: it is not compared.
+    let app = IssueSettings {
+        rules: [(
+            "title.missing".to_string(),
+            RuleOverride {
+                enabled: Some(false),
+                ..RuleOverride::default()
+            },
+        )]
+        .into(),
+    };
+    let off = CompareSettings {
+        issue_settings: IssueSettingsChoice::App,
+        ..CompareSettings::default()
+    };
+    let c = Comparison::run(
+        &p.prev,
+        &p.cur,
+        off,
+        Some(&app),
+        &AtomicBool::new(false),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert!(c.summary().issue_basis.custom);
+    assert!(c.summary().issues.iter().all(|i| i.rule != "title.missing"));
+    drop(c);
+    assert_eq!(
+        (fingerprint(&p.prev), fingerprint(&p.cur)),
+        before,
+        "neither file is written"
+    );
 }

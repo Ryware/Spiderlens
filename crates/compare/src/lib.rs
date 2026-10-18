@@ -13,6 +13,7 @@
 mod elements;
 mod groups;
 mod info;
+mod issues;
 mod registry;
 mod report;
 mod side;
@@ -25,13 +26,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::Connection;
 use serde::Serialize;
-use spiderlens_config::{CompareSettings, CompareSettingsError, MapRule};
+use spiderlens_config::{CompareSettings, CompareSettingsError, IssueSettings, MapRule};
 use spiderlens_results::Reader;
 use ts_rs::TS;
 
 pub use elements::ElementKind;
 pub use groups::{FilterChange, Group, GroupColumn, GroupPage, GroupRow, GroupSort, UrlGroup, Which};
 pub use info::{ConfigDiff, CrawlInfo};
+pub use issues::{IssueBasis, IssueChange, IssueDelta};
 pub use report::{ComparisonReport, ElementReport};
 pub use summary::{ElementDelta, FilterDelta, StateDelta, Summary};
 
@@ -71,6 +73,7 @@ pub enum Phase {
     Open,
     Previous,
     Current,
+    Issues,
     Match,
     Counts,
     Done,
@@ -226,12 +229,15 @@ fn check_distinct(previous: &Path, current: &Path) -> Result<()> {
 }
 
 impl Comparison {
-    /// Compares `previous` with `current`. `cancel` is checked between
-    /// batches; a cancelled run leaves no workspace behind.
+    /// Compares `previous` with `current`. `app_issues` are the app's issue
+    /// settings, used when `settings.issue_settings` asks for them. `cancel`
+    /// is checked between batches; a cancelled run leaves no workspace
+    /// behind.
     pub fn run(
         previous: &Path,
         current: &Path,
         settings: CompareSettings,
+        app_issues: Option<&IssueSettings>,
         cancel: &AtomicBool,
         progress: &mut dyn FnMut(Progress),
     ) -> Result<Self> {
@@ -240,6 +246,8 @@ impl Comparison {
         let mapping = Mapping::new(&settings.mapping)?;
         let elements = elements::resolve(&settings.elements)?;
         let layout = Layout::new();
+        let issue_settings =
+            issues::resolve_settings(previous, current, settings.issue_settings, app_issues)?;
         progress(Progress {
             phase: Phase::Open,
             done: 0,
@@ -263,13 +271,13 @@ impl Comparison {
                 return Err(Error::Cancelled);
             }
             let phase = if n == 0 { Phase::Previous } else { Phase::Current };
-            let (conn, features) = spiderlens_results::connect_attachable(path)?;
+            let (conn, features) = spiderlens_results::connect_attachable_with(path, &issue_settings)?;
             sqlfns::register_common(&conn)?;
             if n == 0 {
                 sqlfns::register_mapping(&conn, mapping.clone())?;
             }
             let info = CrawlInfo::read(&conn, path)?;
-            side::fill(
+            let derived = side::fill(
                 &conn,
                 &ws_file,
                 n as u8,
@@ -286,10 +294,24 @@ impl Comparison {
                 features,
                 conn,
                 reader: None,
-                derived: Vec::new(),
+                derived,
             });
         }
         let sides: [Side; 2] = sides.try_into().map_err(|_| Error::invalid("two sides"))?;
+
+        // Both crawls are evaluated into their temp schemas and the hits
+        // copied to the workspace (FR-024, FR-024a).
+        for (n, side) in sides.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Cancelled);
+            }
+            progress(Progress {
+                phase: Phase::Issues,
+                done: n as u64,
+                total: 2,
+            });
+            issues::collect(side, &ws_file, n as u8, &issue_settings)?;
+        }
 
         progress(Progress {
             phase: Phase::Match,
@@ -302,7 +324,8 @@ impl Comparison {
             done: 0,
             total: 1,
         });
-        let summary = summary::summary(&ws, &sides, &layout, &elements)?;
+        let issue_basis = issues::basis(settings.issue_settings, &issue_settings);
+        let summary = summary::summary(&ws, &sides, &layout, &elements, &issue_settings, issue_basis)?;
         progress(Progress {
             phase: Phase::Done,
             done: 1,
