@@ -354,6 +354,14 @@ pub async fn crawl_resume(
     launch(app.clone(), &state, path, Open::Resume(Box::new(crawler)))
 }
 
+/// Runs a crawler another command opened and prepared (rendering an
+/// existing crawl, spec 014 T073) on the crawl thread, with the usual
+/// progress and finish events.
+pub fn launch_prepared(app: AppHandle, path: PathBuf, crawler: Crawler) -> Cmd<Started> {
+    let state = app.state::<State>();
+    launch(app.clone(), &state, path, Open::Resume(Box::new(crawler)))
+}
+
 /// The browser a rendering crawl uses, found before anything starts (spec
 /// 014 FR-045, plan D12): a downloaded one, or the one the person chose.
 /// Raw crawls need none. Errors carry the `browser_unavailable` code the

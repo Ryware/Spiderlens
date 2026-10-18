@@ -17,6 +17,7 @@ mod integrations_cmd;
 mod issues_cmd;
 mod links_cmd;
 mod options;
+mod render_cmd;
 mod report_cmd;
 mod rules_cmd;
 mod schedule_cmd;
@@ -146,6 +147,9 @@ enum Command {
     /// The browser JavaScript rendering uses: status, download, removal.
     #[command(subcommand)]
     Browser(browser::BrowserCommand),
+    /// Render the pages of a finished crawl file with a browser, from their
+    /// stored HTML (spec 014).
+    Render(Box<render_cmd::RenderArgs>),
     /// Generate XML sitemaps from a crawl file.
     #[command(subcommand)]
     Sitemap(sitemap_cmd::SitemapCommand),
@@ -292,6 +296,7 @@ fn main() -> ExitCode {
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::CustomRules(cmd) => rules_cmd::run(cmd),
         Command::Browser(cmd) => browser::run(cmd),
+        Command::Render(args) => render_cmd::run_render(*args),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Orphans(args) => sitemap_cmd::run_orphans(&args),
