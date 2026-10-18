@@ -28,7 +28,7 @@ use chromiumoxide::cdp::browser_protocol::inspector::{EnableParams as InspectorE
 use chromiumoxide::cdp::browser_protocol::network::{CookieParam, ErrorReason, ResourceType, TimeSinceEpoch};
 use chromiumoxide::cdp::browser_protocol::page::{
     AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat, CaptureScreenshotParams,
-    EventJavascriptDialogOpening, EventLoadEventFired, HandleJavaScriptDialogParams, NavigateParams,
+    CreateIsolatedWorldParams, EventJavascriptDialogOpening, EventLoadEventFired, HandleJavaScriptDialogParams, NavigateParams,
     Viewport,
 };
 use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
@@ -37,7 +37,7 @@ use chromiumoxide::cdp::browser_protocol::target::{
 };
 use chromiumoxide::cdp::js_protocol::runtime::{
     AddBindingParams, ConsoleApiCalledType, EventBindingCalled, EventConsoleApiCalled, EventExceptionThrown,
-    GetHeapUsageParams, RemoteObject,
+    EvaluateParams, GetHeapUsageParams, RemoteObject,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -536,6 +536,9 @@ async fn render_in(
         Some(opts) => screenshot(&page, window, opts).await,
         None => None,
     };
+    // Probes run last, so they can never change `html` or `screenshot`, and
+    // while the page is still open.
+    let probes = run_probes(&page, job).await;
     tasks.abort_all();
     let _ = started;
     RenderOutcome {
@@ -552,18 +555,70 @@ async fn render_in(
         render_ms: 0,
         window,
         screenshot,
-        // Probes are a plugin hook for specs 025 and 026; this build does not
-        // run them yet.
-        probes: job
-            .probes
-            .iter()
-            .map(|p| {
-                (
-                    p.name.clone(),
-                    ProbeOutcome::Failed("probes are not run by this build".into()),
-                )
-            })
-            .collect(),
+        probes,
+    }
+}
+
+/// Runs the job's probes in order, each in its own isolated world on the main
+/// frame. Each probe is bounded by its own budget and by what is left of
+/// `probes_max_total`; once that is spent the rest report `TimedOut { spent: 0 }`.
+async fn run_probes(page: &Page, job: &RenderJob) -> Vec<(String, ProbeOutcome)> {
+    let mut out = Vec::with_capacity(job.probes.len());
+    if job.probes.is_empty() {
+        return out;
+    }
+    let begun = Instant::now();
+    for probe in &job.probes {
+        let remaining = job.probes_max_total.saturating_sub(begun.elapsed());
+        if remaining.is_zero() {
+            out.push((probe.name.clone(), ProbeOutcome::TimedOut { spent: Duration::ZERO }));
+            continue;
+        }
+        let budget = probe.budget.min(remaining);
+        let started = Instant::now();
+        let outcome = match tokio::time::timeout(budget, run_probe(page, probe)).await {
+            Ok(outcome) => outcome,
+            Err(_) => ProbeOutcome::TimedOut { spent: started.elapsed() },
+        };
+        out.push((probe.name.clone(), outcome));
+    }
+    out
+}
+
+async fn run_probe(page: &Page, probe: &PageProbe) -> ProbeOutcome {
+    let Some(frame) = page.mainframe().await.ok().flatten() else {
+        return ProbeOutcome::Failed("no main frame".into());
+    };
+    let mut world = CreateIsolatedWorldParams::new(frame);
+    world.world_name = Some(format!("spiderlens-probe-{}", probe.name));
+    let context_id = match page.execute(world).await {
+        Ok(r) => r.result.execution_context_id.clone(),
+        Err(e) => return ProbeOutcome::Failed(format!("isolated world: {e}")),
+    };
+    let expression = format!(
+        "(async () => JSON.stringify(await ({})({})))()",
+        probe.script, probe.args_json
+    );
+    let mut eval = EvaluateParams::new(expression);
+    eval.context_id = Some(context_id);
+    eval.await_promise = Some(true);
+    eval.return_by_value = Some(true);
+    let r = match page.execute(eval).await {
+        Ok(r) => r,
+        Err(e) => return ProbeOutcome::Failed(e.to_string()),
+    };
+    if let Some(d) = &r.result.exception_details {
+        let message = d
+            .exception
+            .as_ref()
+            .and_then(|e| e.description.clone())
+            .unwrap_or_else(|| d.text.clone());
+        return ProbeOutcome::Failed(message);
+    }
+    match r.result.result.value.as_ref().and_then(|v| v.as_str()) {
+        Some(json) if json.len() > PROBE_RESULT_MAX_BYTES => ProbeOutcome::TooLarge,
+        Some(json) => ProbeOutcome::Ok(json.to_owned()),
+        None => ProbeOutcome::Failed("result is not JSON".into()),
     }
 }
 
