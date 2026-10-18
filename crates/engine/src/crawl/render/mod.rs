@@ -7,4 +7,5 @@ pub(crate) mod a11y_probe;
 pub mod cache;
 pub(crate) mod guard;
 pub mod net;
+pub mod progress;
 pub(crate) mod stage;

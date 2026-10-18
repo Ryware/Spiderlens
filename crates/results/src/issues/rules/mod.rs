@@ -2,6 +2,7 @@
 //! category.
 
 pub mod accessibility;
+pub mod agents;
 pub mod amp;
 pub mod canonicals;
 pub mod content;

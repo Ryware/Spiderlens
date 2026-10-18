@@ -474,6 +474,20 @@ pub struct CrawlStore {
     checkpointer: Option<Checkpointer>,
     /// Next render queue number; read from the file on first use.
     render_seq: Cell<Option<i64>>,
+    /// Accessibility checks done in this run, for live progress (spec 026).
+    a11y_live: Cell<A11yLive>,
+}
+
+/// Pages checked and the full checks' total time, kept as results are
+/// written so progress never queries for them.
+#[derive(Debug, Clone, Copy, Default)]
+struct A11yLive {
+    checked: u64,
+    /// A static result was written in this run, so a page's full state does
+    /// not count it a second time.
+    static_seen: bool,
+    full_pages: u64,
+    full_ms: u64,
 }
 
 /// Copies the write-ahead log into the database file on its own thread, so
@@ -583,6 +597,9 @@ pub struct Counts {
     pub external_blocked: u64,
 }
 
+/// Prepared statements kept per connection (rusqlite's default is 16).
+const STATEMENT_CACHE: usize = 128;
+
 impl CrawlStore {
     /// Creates a new crawl file. An existing file is never overwritten.
     pub fn create(path: &Path) -> Result<Self> {
@@ -602,6 +619,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
@@ -641,6 +659,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -695,6 +714,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -816,6 +836,14 @@ impl CrawlStore {
         self.live.get()
     }
 
+    /// Pages whose accessibility was checked in this run, and the average
+    /// time of their full checks in milliseconds (spec 026).
+    pub fn a11y_live(&self) -> (u64, Option<u32>) {
+        let l = self.a11y_live.get();
+        let avg = (l.full_pages > 0).then(|| (l.full_ms / l.full_pages).min(u64::from(u32::MAX)) as u32);
+        (l.checked, avg)
+    }
+
     /// `n` rows moved from `from` (None for new rows) to `to`.
     fn shift(&self, from: Option<UrlState>, to: UrlState, n: usize) {
         let mut live = self.live.get();
@@ -836,6 +864,10 @@ impl CrawlStore {
             conn.pragma_update(None, "cache_size", v.as_str())?;
         }
         conn.pragma_update(None, "foreign_keys", "OFF")?;
+        // The page path alone uses more statements than rusqlite's default
+        // cache of 16, so each page re-prepared the ones the cache had
+        // dropped; the render queue's two inserts made that cost visible.
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         Ok(())
     }
 
@@ -1674,6 +1706,10 @@ impl CrawlStore {
             }
         }
         let wcags: Vec<String> = rows.iter().map(|r| r.wcag.to_string()).collect();
+        let mut live = self.a11y_live.get();
+        live.checked += 1;
+        live.static_seen = true;
+        self.a11y_live.set(live);
         self.conn
             .prepare_cached(
                 "INSERT INTO a11y_audits (url_id, static_state, critical, serious, moderate, minor, needs_review, \
@@ -1705,6 +1741,15 @@ impl CrawlStore {
         check_ms: Option<i64>,
     ) -> Result<()> {
         if source == "full" {
+            let mut live = self.a11y_live.get();
+            if !live.static_seen {
+                live.checked += 1;
+            }
+            if let Some(ms) = check_ms {
+                live.full_pages += 1;
+                live.full_ms += ms.max(0) as u64;
+            }
+            self.a11y_live.set(live);
             self.conn
                 .prepare_cached(
                     "INSERT INTO a11y_audits (url_id, full_state, full_reason, check_ms) VALUES (?1, ?2, ?3, ?4) \
@@ -3199,15 +3244,18 @@ impl CrawlStore {
 
     /// Queues a page for rendering. `input` is the compressed raw body and
     /// its size, kept only until the render is final, when the crawl does
-    /// not store page HTML (research R8).
-    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<()> {
+    /// not store page HTML (research R8). Returns whether the page was added
+    /// (a page already in the table is left as it is).
+    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<bool> {
         let seq = self.take_render_seq()?;
-        self.conn
+        let added = self
+            .conn
             .prepare_cached(
                 "INSERT INTO renders (url_id, state, queue_seq) VALUES (?1, 'queued', ?2)
                  ON CONFLICT(url_id) DO NOTHING",
             )?
-            .execute(params![url_id, seq])?;
+            .execute(params![url_id, seq])?
+            == 1;
         if let Some((packed, size)) = input {
             self.conn
                 .prepare_cached(
@@ -3215,7 +3263,7 @@ impl CrawlStore {
                 )?
                 .execute(params![url_id, body::CODEC, size as i64, packed])?;
         }
-        Ok(())
+        Ok(added)
     }
 
     /// Records a page that is not rendered at all (`outside_rules`,

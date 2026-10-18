@@ -205,6 +205,35 @@ impl JsSiteBuilder {
         self
     }
 
+    /// A slow-render page set (spec 014 T031): `/` links to `/slow/0` ..
+    /// `/slow/{pages-1}`, and each of those loads `/api/slow.json`, which
+    /// the server answers only after `settle`, so the page cannot settle
+    /// sooner. The script then sets the title `Slow N`. The JSON is not
+    /// cacheable, so every page waits for its own answer.
+    pub fn slow_pages(mut self, pages: u64, settle: Duration) -> Self {
+        let links: String = (0..pages)
+            .map(|n| format!("<a href=\"/slow/{n}\">Slow {n}</a>"))
+            .collect();
+        self = self.page(
+            "/",
+            &format!(
+                "<!doctype html><html><head><title>Slow pages</title></head><body>{links}</body></html>"
+            ),
+        );
+        for n in 0..pages {
+            self = self.page(
+                &format!("/slow/{n}"),
+                "<!doctype html><html><head><title>Loading</title></head><body><p>Waiting for the server.</p>\
+                 <script>fetch('/api/slow.json').then(function(r){return r.json()}).then(function(d){\
+                 document.title='Slow '+location.pathname.split('/').pop()+' '+d.ok;\
+                 document.body.setAttribute('data-ready','1')})</script></body></html>",
+            );
+        }
+        self.json(JS_HOST, "/api/slow.json", "{\"ok\":true}")
+            .cache_control(JS_HOST, "/api/slow.json", "no-store")
+            .delay(JS_HOST, "/api/slow.json", settle)
+    }
+
     /// The pages of spec 014 user story 1 (task T020), linked from `/`:
     ///
     /// - `/title-changed`: raw title `Loading`; a script sets

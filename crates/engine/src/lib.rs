@@ -3,6 +3,7 @@
 //! This crate must never depend on Tauri or any UI code (constitution,
 //! principle III). The CLI and the desktop app are thin layers on top of it.
 
+pub mod accessibility;
 mod build_info;
 mod check;
 mod config;
