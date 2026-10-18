@@ -1212,3 +1212,128 @@ async fn ai_site_files_can_be_turned_off() {
     .await;
     assert_eq!(site.count(E, "/llms.txt"), 0);
 }
+
+// Spec 002 follow-up (FR-043..FR-045).
+
+#[tokio::test]
+async fn spec_002_custom_robots_replaces_the_site_file() {
+    let site = SiteBuilder::new()
+        .robots(E, "User-agent: *\nDisallow: /ok\n")
+        .page(E, "/", "", &["/private/x", "/ok"])
+        .page(E, "/ok", "", &[])
+        .page(E, "/private/x", "", &[])
+        .start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.robots.custom = vec![spiderlens_config::CustomRobots {
+            host: E.into(),
+            text: "User-agent: *\nDisallow: /private/\n".into(),
+        }];
+    })
+    .await;
+    assert_eq!(
+        site.count(E, "/robots.txt"),
+        0,
+        "the site's file is not requested"
+    );
+    let private = site.url(E, "/private/x");
+    assert_eq!(d.reason(&private), Some(NotCrawledReason::BlockedByRobots));
+    assert_eq!(site.count(E, "/private/x"), 0);
+    assert_eq!(d.row(&site.url(E, "/ok")).state, UrlState::Crawled);
+}
+
+#[tokio::test]
+async fn spec_002_rewrite_rules_change_links_but_not_the_start_url() {
+    let site = SiteBuilder::new()
+        .page(E, "/old/", "", &["/old/a"])
+        .page(E, "/new/a", "", &[])
+        .start();
+    let d = crawl(&site, "/old/", |c| {
+        fast(c);
+        c.scope.rewrite = vec![spiderlens_config::RewriteRule {
+            pattern: "/old/(.+)$".into(),
+            replace: "/new/$1".into(),
+        }];
+    })
+    .await;
+    assert_eq!(d.row(&site.url(E, "/old/")).state, UrlState::Crawled);
+    assert_eq!(d.row(&site.url(E, "/new/a")).state, UrlState::Crawled);
+    assert!(!d.rows.contains_key(&site.url(E, "/old/a")));
+    assert_eq!(site.count(E, "/old/a"), 0);
+}
+
+#[tokio::test]
+async fn spec_002_folder_depth_and_query_limits() {
+    let site = SiteBuilder::new()
+        .page(E, "/", "", &["/a/page", "/a/b/page", "/q?x=1", "/q?x=1&amp;y=2"])
+        .page(E, "/a/page", "", &[])
+        .page(E, "/q", "", &[])
+        .start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.limits.max_folder_depth = Some(1);
+        c.limits.max_query_params = Some(1);
+    })
+    .await;
+    assert_eq!(d.row(&site.url(E, "/a/page")).state, UrlState::Crawled);
+    let deep = site.url(E, "/a/b/page");
+    assert_eq!(d.reason(&deep), Some(NotCrawledReason::OverFolderDepth));
+    assert_eq!(d.row(&deep).reason_detail.as_deref(), Some("1"));
+    assert_eq!(site.count(E, "/a/b/page"), 0);
+    assert_eq!(d.row(&site.url(E, "/q?x=1")).state, UrlState::Crawled);
+    assert_eq!(
+        d.reason(&site.url(E, "/q?x=1&y=2")),
+        Some(NotCrawledReason::OverQueryLimit)
+    );
+}
+
+#[tokio::test]
+async fn spec_002_urls_per_depth_limit() {
+    let links: Vec<String> = (0..5).map(|i| format!("/p{i}")).collect();
+    let refs: Vec<&str> = links.iter().map(String::as_str).collect();
+    let mut b = SiteBuilder::new().page(E, "/", "", &refs);
+    for l in &links {
+        b = b.page(E, l, "", &[]);
+    }
+    let site = b.start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.limits.max_urls_per_depth = Some(2);
+    })
+    .await;
+    // The start page is alone at depth 0; depth 1 gets 2 of its 5 links.
+    assert_eq!(d.summary.crawled, 3);
+    assert_eq!(
+        d.summary.by_reason.get(&NotCrawledReason::OverDepthUrlLimit),
+        Some(&3)
+    );
+    assert_eq!(site.page_hits().len(), 3);
+}
+
+#[tokio::test]
+async fn spec_002_urls_per_subdomain_limit() {
+    let links: Vec<String> = (0..5).map(|i| format!("/p{i}")).collect();
+    let refs: Vec<&str> = links.iter().map(String::as_str).collect();
+    let mut b = SiteBuilder::new().page(E, "/", "", &refs);
+    for l in &links {
+        b = b.page(E, l, "", &[]);
+    }
+    let site = b.start();
+    let d = crawl(&site, "/", |c| {
+        fast(c);
+        c.limits.max_urls_per_subdomain = Some(4);
+    })
+    .await;
+    // The start page counts: 6 pages on one host, 4 crawled, 2 over.
+    assert_eq!(d.summary.crawled, 4);
+    assert_eq!(
+        d.summary.by_reason.get(&NotCrawledReason::OverSubdomainLimit),
+        Some(&2)
+    );
+    let over = d
+        .rows
+        .values()
+        .find(|r| r.reason == Some(NotCrawledReason::OverSubdomainLimit))
+        .unwrap();
+    assert_eq!(over.reason_detail.as_deref(), Some("4"));
+}

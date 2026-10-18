@@ -12,7 +12,7 @@
     "queued": { "type": "integer", "minimum": 0 },
     "by_reason": {
       "type": "object",
-      "propertyNames": { "enum": ["malformed_url", "unsupported_scheme", "external", "outside_start_folder", "excluded", "not_included", "over_depth_limit", "nofollow", "blocked_by_robots", "robots_unavailable", "over_url_limit", "crawl_stopped"] },
+      "propertyNames": { "enum": ["malformed_url", "unsupported_scheme", "external", "outside_start_folder", "excluded", "not_included", "over_folder_depth", "over_query_limit", "over_depth_limit", "nofollow", "redirect_limit", "blocked_by_robots", "robots_unavailable", "session_guard", "over_subdomain_limit", "over_depth_url_limit", "over_url_limit", "sitemap_only", "crawl_stopped"] },
       "additionalProperties": { "type": "integer", "minimum": 1 }
     },
     "external_checked": { "type": "integer", "minimum": 0 },
