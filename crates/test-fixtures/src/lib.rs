@@ -9,6 +9,7 @@ pub mod google_apis;
 pub mod js_site;
 pub mod near_dup;
 pub mod pdf;
+pub mod perf_providers;
 pub mod providers;
 pub mod report;
 mod site;

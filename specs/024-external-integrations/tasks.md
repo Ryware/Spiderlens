@@ -57,11 +57,11 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Slice 3: US3 Field data and lab tests (P2)
 
-- [ ] T032 Fakes for CrUX (404 for low-traffic URLs) and PageSpeed (slow responses, categories).
-- [ ] T033 Tests then code: `crux` per URL and form factor, origin fallback cached per origin, ratings, period (US3.1, US3.2).
-- [ ] T034 Tests then code: `psi` strategy choice, stored score, metrics, opportunities, audits for 026 (US3.3).
-- [ ] T035 Rate log test: no run exceeds limits; 1,000 URLs × 2 devices estimate under 15 min (US3.4, SC-003).
-- [ ] T036 `results` Page experience tab and filters (Poor LCP, Poor INP, Poor CLS, origin data only); Vitest + Playwright; CLI providers `field-data`, `lab-tests`.
+- [x] T032 Fakes for CrUX (404 for low-traffic URLs) and PageSpeed (slow responses, categories).
+- [x] T033 Tests then code: `crux` per URL and form factor, origin fallback cached per origin, ratings, period (US3.1, US3.2).
+- [x] T034 Tests then code: `psi` strategy choice, stored score, metrics, opportunities, audits for 026 (US3.3).
+- [x] T035 Rate log test: no run exceeds limits; 1,000 URLs × 2 devices estimate under 15 min (US3.4, SC-003).
+- [x] T036 `results` Page experience tab and filters (Poor LCP, Poor INP, Poor CLS, origin data only); Vitest + Playwright; CLI providers `field-data`, `lab-tests`.
 
 ## Slice 4: US4 Analytics (P2)
 

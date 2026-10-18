@@ -15,11 +15,13 @@
 //! - `gsc`: Search Console (D10).
 //! - `inspect`: URL Inspection (D10).
 //! - `ga4`: Google Analytics 4 landing pages (D10).
+//! - `perf`, `crux`, `psi`: field data and lab tests (D10).
 //! - `hub`: the one entry point the app and the CLI share.
 
 pub mod browser;
 pub mod cache;
 pub mod credentials;
+pub mod crux;
 mod error;
 mod gcall;
 pub mod ga4;
@@ -30,7 +32,9 @@ pub mod inspect;
 pub mod limits;
 pub mod matching;
 pub mod oauth;
+pub mod perf;
 mod provider;
+pub mod psi;
 pub mod run;
 pub mod settings;
 pub mod store;

@@ -37,6 +37,9 @@ import type { ViewQuery } from "./generated/ViewQuery";
 import type { Values } from "./generated/Values";
 import type { CacheInfo } from "./generated/CacheInfo";
 import type { Connection } from "./generated/Connection";
+import type { FieldRequest } from "./generated/FieldRequest";
+import type { LabRequest } from "./generated/LabRequest";
+import type { PerfEstimate } from "./generated/PerfEstimate";
 import type { OrphanPage } from "./generated/OrphanPage";
 import type { Ga4Request } from "./generated/Ga4Request";
 import type { Ga4Stream } from "./generated/Ga4Stream";
@@ -1004,6 +1007,13 @@ export interface Transport {
   integrationsDefaultAnalyticsRequest(property: string, stream: string): Promise<Ga4Request>;
   integrationsRunAnalytics(path: string, account: string | null, request: Ga4Request): Promise<RunProgress>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
+  // Field data and lab tests (spec 024 US3).
+  /** Saves one Google API key in the keychain for field data and lab tests. */
+  integrationsSaveGoogleKey(label: string, key: string): Promise<Connection[]>;
+  integrationsEstimateFieldData(path: string, request: FieldRequest): Promise<PerfEstimate>;
+  integrationsEstimateLabTests(path: string, request: LabRequest): Promise<PerfEstimate>;
+  integrationsRunFieldData(path: string, keyLabel: string | null, request: FieldRequest): Promise<RunProgress>;
+  integrationsRunLabTests(path: string, keyLabel: string | null, request: LabRequest): Promise<RunProgress>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
   aeoRun(path: string): Promise<{ run_id: number }>;
@@ -1275,6 +1285,11 @@ export const tauriTransport: Transport = {
   integrationsDefaultAnalyticsRequest: (property, stream) => invoke("integrations_default_analytics_request", { property, stream }),
   integrationsRunAnalytics: (path, account, request) => invoke("integrations_run_analytics", { path, account, request }),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
+  integrationsSaveGoogleKey: (label, key) => invoke("integrations_save_google_key", { label, key }),
+  integrationsEstimateFieldData: (path, request) => invoke("integrations_estimate_field_data", { path, request }),
+  integrationsEstimateLabTests: (path, request) => invoke("integrations_estimate_lab_tests", { path, request }),
+  integrationsRunFieldData: (path, keyLabel, request) => invoke("integrations_run_field_data", { path, keyLabel, request }),
+  integrationsRunLabTests: (path, keyLabel, request) => invoke("integrations_run_lab_tests", { path, keyLabel, request }),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
   aeoSummary: (path) => invoke("aeo_summary", { path }),

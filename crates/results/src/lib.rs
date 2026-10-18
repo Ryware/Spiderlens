@@ -20,6 +20,7 @@ mod features;
 mod google_tabs;
 pub mod issues;
 pub mod near_dup;
+mod page_experience;
 mod reader;
 pub mod report;
 mod segments;

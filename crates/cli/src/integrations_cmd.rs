@@ -20,6 +20,7 @@ use crate::exit;
 // and 4) live in their own file.
 #[path = "integrations_google_cmd.rs"]
 mod google;
+mod perf;
 
 /// A run stopped at the provider's daily allowance; `resume` continues it
 /// after the reset time (contracts/cli.md).
@@ -153,7 +154,8 @@ pub enum GoogleFeature {
 
 #[derive(Args)]
 pub struct ConnectArgs {
-    /// `google`, or a key provider: field-data, lab-tests, ahrefs, majestic, moz.
+    /// `google`, `google-key` (one Google API key for field-data and lab-tests), or a key provider:
+    /// field-data, lab-tests, ahrefs, majestic, moz.
     target: String,
     /// Google: what to allow. Repeatable; default search-console.
     #[arg(long, value_enum)]
@@ -209,6 +211,9 @@ pub struct FetchArgs {
     /// Print the final run as JSON.
     #[arg(long)]
     json: bool,
+    /// Field data and lab tests: devices, pages and strategy.
+    #[command(flatten)]
+    perf: perf::PerfArgs,
 }
 
 fn hub() -> Result<Hub, Error> {
@@ -424,6 +429,9 @@ fn connect(h: &Hub, a: ConnectArgs) -> Result<ExitCode, Error> {
         println!("Connected {} ({}).", c.label, c.scopes.join(", "));
         return Ok(ExitCode::from(exit::FETCHED));
     }
+    if a.target == "google-key" {
+        return perf::connect_key(h, a.label.as_deref());
+    }
     let p = Provider::from_id(&a.target.replace('-', "_"))
         .filter(|p| !p.uses_google_account())
         .ok_or_else(|| Error::Invalid(format!("unknown provider {}", a.target)))?;
@@ -448,6 +456,7 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
         Provider::SearchConsole => {}
         Provider::UrlInspection => return google::fetch_inspection(h, a),
         Provider::Analytics => return google::fetch_analytics(h, a),
+        Provider::FieldData | Provider::LabTests => return perf::fetch(h, p, &a),
         _ => {
             return Err(Error::Invalid(format!(
                 "{} is not available in this build yet",
@@ -587,6 +596,7 @@ mod test_hooks {
     use spiderlens_integrations::inspect::InspectApi;
     use spiderlens_integrations::oauth::{Client, Endpoints};
     use spiderlens_integrations::settings::Folder;
+    use spiderlens_integrations::{crux, psi};
 
     struct FileStore(PathBuf);
 
@@ -646,6 +656,18 @@ mod test_hooks {
             };
         }
         let h = h.with_google_apis(apis);
+        // Field data and lab tests have their own fake (SPIDERLENS_TEST_PERF).
+        let h = match std::env::var("SPIDERLENS_TEST_PERF") {
+            Ok(base) => h.with_perf(
+                crux::Api {
+                    base: format!("{base}/crux/v1"),
+                },
+                psi::Api {
+                    base: format!("{base}/psi/v5"),
+                },
+            ),
+            Err(_) => h,
+        };
         match std::env::var("SPIDERLENS_TEST_GOOGLE") {
             Ok(base) => h.with_google(
                 Endpoints {

@@ -16,6 +16,7 @@ import type { Status } from "../generated/Status";
 import type { Transport } from "../transport";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { InspectionPanel } from "./InspectionPanel";
+import { PageExperiencePanel } from "./PageExperiencePanel";
 
 const STATE_LABEL: Record<RunState, string> = {
   queued: "Queued",
@@ -112,6 +113,16 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
               crawlRunning={crawlRunning}
               onDataChanged={onDataChanged}
               onConnected={() => void reload()}
+            />
+            <PageExperiencePanel
+              transport={transport}
+              path={path}
+              field={status.providers.find((p) => p.provider === "field_data")!}
+              lab={status.providers.find((p) => p.provider === "lab_tests")!}
+              keys={status.connections}
+              crawlRunning={crawlRunning}
+              onChanged={reload}
+              onDataChanged={onDataChanged}
             />
           </>
         )}

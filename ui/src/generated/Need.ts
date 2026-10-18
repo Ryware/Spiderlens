@@ -3,4 +3,4 @@
 /**
  * Data a column or filter needs from the crawl file.
  */
-export type Need = "base" | "extraction" | "attempts" | "timing" | "raw_html" | "rendering" | "rendered_html" | "screenshots" | "agents" | "amp" | "pdf" | "readability" | "search_console" | "url_inspection" | "analytics" | "sitemap_entries" | "sitemap_audit" | "orphans" | "analysis" | "cookies" | "ai_checks" | "spelling" | "near_dup";
+export type Need = "base" | "extraction" | "attempts" | "timing" | "raw_html" | "rendering" | "rendered_html" | "screenshots" | "agents" | "amp" | "pdf" | "readability" | "search_console" | "url_inspection" | "analytics" | "sitemap_entries" | "sitemap_audit" | "orphans" | "analysis" | "cookies" | "ai_checks" | "spelling" | "near_dup" | "field_data" | "lab_tests";

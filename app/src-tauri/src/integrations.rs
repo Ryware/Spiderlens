@@ -17,6 +17,8 @@ use spiderlens_integrations::store::RunProgress;
 use spiderlens_integrations::{Provider, browser};
 use tauri::{AppHandle, Emitter, Manager};
 
+pub(crate) mod perf;
+
 type Cmd<T> = Result<T, String>;
 
 // URL Inspection and Analytics commands (spec 024 slices 2 and 4).

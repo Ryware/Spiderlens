@@ -687,6 +687,19 @@ test("integrations_inspect_index_status_and_fetch_analytics_for_the_open_crawl",
   expect(scrollH).toBeLessThanOrEqual(innerH);
 });
 
+test("integrations_page_experience_estimate_run_and_finish", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await page.getByLabel("API key").fill("AIza-test");
+  await page.getByRole("button", { name: "Save key to keychain" }).click();
+  await page.locator('[data-provider="field_data"]').getByRole("switch").click();
+  await expect(page.getByRole("status", { name: "Field data estimate" })).toContainText("requests for");
+  await page.getByRole("button", { name: "Fetch field data" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Page experience runs" })).toContainText("Finished");
+});
+
 test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
   await crawl(page);
   await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));
