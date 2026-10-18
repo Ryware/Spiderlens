@@ -110,6 +110,8 @@ export const needReason: Record<Need, string> = {
   pdf: "This crawl did not read PDFs. Turn on Crawl PDFs in the crawl settings to read them.",
   readability: "Not collected: this crawl file was made before SpiderLens counted sentences and syllables.",
   search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
+  url_inspection: "No URL Inspection results yet. Connect Search Console in Integrations and choose Inspect index status for this crawl.",
+  analytics: "No Analytics data yet. Allow Google Analytics access in Integrations and fetch data for this crawl.",
   sitemap_entries: "Not recorded: this crawl file was made before SpiderLens kept sitemap entries.",
   sitemap_audit: "Checked when the crawl ends.",
   orphans: "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps.",

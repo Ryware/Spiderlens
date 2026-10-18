@@ -17,6 +17,7 @@ mod custom;
 mod detail;
 mod export;
 mod features;
+mod google_tabs;
 pub mod issues;
 pub mod near_dup;
 mod reader;

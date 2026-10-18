@@ -19,6 +19,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 type Cmd<T> = Result<T, String>;
 
+// URL Inspection and Analytics commands (spec 024 slices 2 and 4).
+#[path = "integrations_google.rs"]
+pub(crate) mod google;
+
 /// The progress event, at most every 200 ms and once at the end.
 pub const PROGRESS: &str = "integrations://progress";
 

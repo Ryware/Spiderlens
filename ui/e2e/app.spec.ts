@@ -652,6 +652,41 @@ test("integrations_fetch_search_console_for_the_open_crawl", async ({ page }) =>
   expect(scrollH).toBeLessThanOrEqual(innerH);
 });
 
+test("integrations_inspect_index_status_and_fetch_analytics_for_the_open_crawl", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  await page.getByRole("button", { name: "Connect Google account" }).click();
+  await expect(page.getByRole("list", { name: "Google accounts" })).toContainText("ana@example.com");
+
+  // URL Inspection: the count against today's allowance is shown before the run.
+  await page.locator('[data-provider="url_inspection"]').getByRole("switch").click();
+  await expect(page.getByRole("status", { name: "Inspection allowance" })).toContainText("2,000 left of 2,000");
+  await page.getByRole("button", { name: "Inspect index status" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Inspection runs" })).toContainText("Finished");
+
+  // Analytics: asks for its own access, then offers the stream matching the site.
+  await page.locator('[data-provider="analytics"]').getByRole("switch").click();
+  await page.getByRole("button", { name: "Allow Google Analytics access" }).click();
+  await expect(page.getByLabel("Data stream")).toHaveValue("properties/123/456");
+  await page.getByRole("button", { name: "Fetch Analytics data" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Analytics runs" })).toContainText("Finished");
+
+  // The screen scrolls inside the main pane, never the window.
+  const { scrollW, innerW, scrollH, innerH } = await page.evaluate(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    innerW: window.innerWidth,
+    scrollH: document.documentElement.scrollHeight,
+    innerH: window.innerHeight,
+  }));
+  expect(scrollW).toBeLessThanOrEqual(innerW);
+  expect(scrollH).toBeLessThanOrEqual(innerH);
+});
+
 test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
   await crawl(page);
   await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));
