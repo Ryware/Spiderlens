@@ -699,6 +699,53 @@ test("list_file_shows_reading_progress", async () => {
   expect((await screen.findByTestId("list-summary")).textContent).toContain("25,000 URLs to crawl");
 });
 
+test("reading_a_sitemap_address_shows_the_count", async () => {
+  // Spec 011 FR-005: a sitemap is a source for the list.
+  const t = fakeTransport();
+  const load = vi.fn(t.listLoadSitemap);
+  t.listLoadSitemap = load;
+  await setup(t);
+  await openList();
+  const read = screen.getByRole("button", { name: "Read sitemap" }) as HTMLButtonElement;
+  expect(read.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Sitemap address"), { target: { value: "https://example.com/sitemap.xml" } });
+  expect(read.disabled).toBe(false);
+  fireEvent.click(read);
+  const s = await screen.findByTestId("list-summary");
+  expect(load).toHaveBeenCalledWith("https://example.com/sitemap.xml", null, expect.anything());
+  expect(s.textContent).toContain("3 URLs to crawl");
+  expect(s.textContent).toContain("Read 1 sitemap file.");
+});
+
+test("sitemap_read_failure_shows_an_alert", async () => {
+  const t = fakeTransport();
+  await setup(t);
+  await openList();
+  fireEvent.change(screen.getByLabelText("Sitemap address"), { target: { value: "https://example.com/fail.xml" } });
+  fireEvent.click(screen.getByRole("button", { name: "Read sitemap" }));
+  await waitFor(() => expect(screen.getAllByRole("alert").some((a) => a.textContent?.includes("the server answered 404"))).toBe(true));
+  expect(screen.queryByTestId("list-summary")).toBeNull();
+});
+
+test("choosing_a_sitemap_file_asks_for_its_base_address", async () => {
+  const t = fakeTransport();
+  t.picks.sitemapFile = "/sites/sitemap.xml";
+  const load = vi.fn(t.listLoadSitemap);
+  t.listLoadSitemap = load;
+  await setup(t);
+  await openList();
+  expect(screen.queryByLabelText("Sitemap base address")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Choose sitemap file/ }));
+  expect((await screen.findByLabelText("Sitemap file") as HTMLInputElement).value).toBe("/sites/sitemap.xml");
+  fireEvent.change(screen.getByLabelText("Sitemap base address"), { target: { value: "https://example.com/" } });
+  fireEvent.click(screen.getByRole("button", { name: "Read sitemap" }));
+  await screen.findByTestId("list-summary");
+  expect(load).toHaveBeenCalledWith("/sites/sitemap.xml", "https://example.com/", expect.anything());
+  fireEvent.click(screen.getByRole("button", { name: "Use a sitemap address instead" }));
+  expect(screen.queryByLabelText("Sitemap base address")).toBeNull();
+  expect(screen.getByLabelText("Sitemap address")).toBeTruthy();
+});
+
 test("duplicate_content_settings_reach_the_crawl", async () => {
   const t = await setup();
   await openSettings("Duplicate content");
