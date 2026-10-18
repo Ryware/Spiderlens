@@ -2841,15 +2841,18 @@ impl CrawlStore {
 
     /// Queues a page for rendering. `input` is the compressed raw body and
     /// its size, kept only until the render is final, when the crawl does
-    /// not store page HTML (research R8).
-    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<()> {
+    /// not store page HTML (research R8). Returns whether the page was added
+    /// (a page already in the table is left as it is).
+    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<bool> {
         let seq = self.take_render_seq()?;
-        self.conn
+        let added = self
+            .conn
             .prepare_cached(
                 "INSERT INTO renders (url_id, state, queue_seq) VALUES (?1, 'queued', ?2)
                  ON CONFLICT(url_id) DO NOTHING",
             )?
-            .execute(params![url_id, seq])?;
+            .execute(params![url_id, seq])?
+            == 1;
         if let Some((packed, size)) = input {
             self.conn
                 .prepare_cached(
@@ -2857,7 +2860,7 @@ impl CrawlStore {
                 )?
                 .execute(params![url_id, body::CODEC, size as i64, packed])?;
         }
-        Ok(())
+        Ok(added)
     }
 
     /// Records a page that is not rendered at all (`outside_rules`,

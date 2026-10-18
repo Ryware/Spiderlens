@@ -5,4 +5,5 @@
 
 pub mod cache;
 pub mod net;
+pub mod progress;
 pub(crate) mod stage;
