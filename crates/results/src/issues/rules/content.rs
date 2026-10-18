@@ -34,6 +34,28 @@ pub const RULES: &[Rule] = &[
         "Several URLs show exactly the same text. Search engines pick one to show and may pick the wrong one; the others compete for nothing.",
         "Keep one URL for the content. Redirect or canonicalise the copies to it, or make each page's text distinct.",
     ),
+    // Spec 020. A page in a cluster has another page at or above the near
+    // duplicate threshold; clusters of exact copies are left to
+    // `content.duplicate`.
+    rule(
+        "content.near_duplicate",
+        "Near duplicate content",
+        C,
+        Medium,
+        Scope::Pages,
+        "EXISTS (SELECT 1 FROM near_dup_pages n JOIN near_dup_clusters k ON k.id = n.cluster \
+         WHERE n.url_id = u.id AND k.exact = 0)",
+    )
+    .site_wide()
+    .needs(Need::NearDup)
+    .evidence(
+        "(SELECT n.closest_sim || '% similar to ' || COALESCE((SELECT c.url FROM urls c WHERE c.id = n.closest_id), 'another page') \
+         FROM near_dup_pages n WHERE n.url_id = u.id)",
+    )
+    .explain(
+        "Several pages have almost the same text. Search engines may treat them as duplicates, split ranking signals between them and spend crawl budget on copies.",
+        "Merge the pages, make each one clearly different, or canonicalise the copies to the main page. Open the Content tab to compare the pages side by side.",
+    ),
     rule(
         "content.thin",
         "Thin content (below {n} words)",

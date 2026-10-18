@@ -52,9 +52,9 @@ The last two columns show why the default floor matters: at a 50% floor nearly e
 
 ## R4. Large groups
 
-**Decision**: buckets larger than 256 pages merge their members into dense groups via union-find; each dense group is scored all-pairs once, in parallel; above 50,000 members a deterministic sample of 2,000 members is used for counts, shown as lower bounds.
+**Decision**: buckets larger than 256 pages merge their members into dense groups via union-find; each dense group is scored all-pairs once, in parallel; above 4,000 members a deterministic sample of 1,000 members is used for counts, shown as lower bounds.
 
-**Rationale**: per-band pair expansion of a 20,000-page bucket is 2 × 10⁸ pairs per band and up to 53 bands; scoring the group once is 2 × 10⁸ comparisons of 480 `u16`, about 10 s on 4 cores. Above 50,000 the quadratic cost exceeds the time budget (a 200,000-page group is 2 × 10¹⁰), hence amendment 2.
+**Rationale**: per-band pair expansion of a 20,000-page bucket is 2 × 10⁸ pairs per band and up to 53 bands; scoring the group once is 2 × 10⁸ comparisons of 480 `u16`, about 10 s on 4 cores. Above 4,000 the quadratic cost exceeds the time budget (a 200,000-page group is 2 × 10¹⁰), hence amendment 2.
 
 ## R5. Main content rules
 

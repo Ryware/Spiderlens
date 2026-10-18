@@ -96,6 +96,7 @@ pub enum CleanupReason {
     AutoAge,
     Leftover,
     HtmlPurge,
+    ScheduleRetention,
 }
 
 /// One removal in the cleanup history.

@@ -130,7 +130,7 @@ export function CategoryBody({
       return (
         <Group>
           <Row label="URLs to crawl" stacked issues={at("input.urls")}>
-            {() => <ListInputPanel transport={transport} summary={setup.list} onParsed={setup.setList} />}
+            {() => <ListInputPanel transport={transport} config={config} summary={setup.list} onParsed={setup.setList} />}
           </Row>
         </Group>
       );
