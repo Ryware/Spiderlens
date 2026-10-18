@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accessibility;
 mod aeo;
 mod assistants;
 mod compare;
@@ -14,6 +15,7 @@ mod integrations;
 mod login;
 mod manage;
 mod near_dup;
+mod render;
 mod report;
 mod results;
 mod schedules;
@@ -91,6 +93,7 @@ fn main() {
                 app.manage(s);
             }
             app.manage(report::State::default());
+            app.manage(render::State::default());
             app.manage(login::State::default());
             Ok(())
         })
@@ -115,6 +118,11 @@ fn main() {
             settings::profile_import,
             crawl::crawl_start,
             crawl::crawl_resume,
+            render::render_browser_status,
+            render::render_browser_install,
+            render::render_browser_cancel,
+            render::render_browser_set_path,
+            render::render_browser_network_watch,
             crawl::crawl_pause,
             crawl::crawl_stop,
             crawl::crawl_summary,
@@ -200,6 +208,7 @@ fn main() {
             near_dup::run_near_dup,
             near_dup::cancel_near_dup,
             near_dup::export_near_dup,
+            accessibility::accessibility_run,
             spelling::spell_dictionaries,
             spelling::spell_download,
             spelling::spell_add,

@@ -385,6 +385,14 @@ fn total_memory() -> u64 {
     sys.total_memory()
 }
 
+/// Total and available memory of this machine in bytes, for the memory
+/// guard (plan D10). Zeros when unknown.
+pub fn system_memory() -> (u64, u64) {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    (sys.total_memory(), sys.available_memory())
+}
+
 /// Default number of pages rendered at once: total memory in GB divided by
 /// 4, between 1 and 16 (spec 014 plan D10).
 pub fn default_concurrency() -> u32 {

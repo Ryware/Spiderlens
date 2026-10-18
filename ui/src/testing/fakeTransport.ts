@@ -12,6 +12,7 @@ import type { SitemapFiles } from "../generated/SitemapFiles";
 import type { SitemapGenerateOptions } from "../generated/SitemapGenerateOptions";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
+import type { RerunSummary } from "../generated/RerunSummary";
 import { fakeAgentsTransport, type FakeAssistants } from "./fakeAgents";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
@@ -23,6 +24,7 @@ import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSpellingTransport, type FakeSpelling } from "./fakeSpelling";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import { fakeLoginTransport, type FakeLogin } from "./fakeLogin";
+import { fakeRenderTransport, type FakeRender } from "./fakeRender";
 
 import type {
   CrawlFinished,
@@ -202,6 +204,10 @@ export interface FakeCrawls {
   applied: { id: number; speed: SpeedSettings | null; retry: RetrySettings | null }[];
   /** Files "Retry failed URLs" ran on. */
   retried: string[];
+  /** Files "Run accessibility checks" ran on. */
+  a11yRuns: string[];
+  /** What accessibility_run answers; tests replace it. */
+  a11ySummary: RerunSummary;
   /** What retry_preview answers; tests replace it. */
   preview: RetryPreview;
   progress(p: Partial<CrawlProgress>): void;
@@ -300,7 +306,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, orphans: fakeOrphanSummary(), entries: new Map(), existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -323,6 +329,8 @@ export function fakeTransport(
     resumedHosts: [],
     applied: [],
     retried: [],
+    a11yRuns: [],
+    a11ySummary: { pages: 0, with_findings: 0, skipped_no_html: 0 },
     preview: { total: 0, by_class: [], available: false, reason: "No URL failed for a reason that could change." },
     progress: (p) =>
       onProgress.forEach((cb) =>
@@ -337,6 +345,8 @@ export function fakeTransport(
           urls_per_sec: 0,
           avg_urls_per_sec: 0,
           eta_secs: null,
+          a11y_checked: 0,
+          a11y_avg_ms: null,
           active_ms: 0,
           waiting: 0,
           paused_hosts: [],
@@ -365,9 +375,12 @@ export function fakeTransport(
   );
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   const { login, api: loginApi } = fakeLoginTransport();
+  const { render, api: renderApi } = fakeRenderTransport();
   return {
     ...loginApi,
     login,
+    ...renderApi,
+    render,
     ...resultsApi,
     ...agentsApi,
     ...compareApi,
@@ -555,6 +568,9 @@ export function fakeTransport(
       throw new Error("not in tests");
     },
     crawlStart: async (config, startUrl) => {
+      if (config.rendering.mode === "javascript" && render.requireBrowser && !render.status.usable) {
+        throw `browser_unavailable: ${render.status.problem}`;
+      }
       crawls.started.push({ config, startUrl });
       return { id: nextId++, path: "/crawls/example.com.spiderlens" };
     },
@@ -571,6 +587,10 @@ export function fakeTransport(
     onCrawlNotice: (cb) => subscribe(onNotice, cb),
     crawlResumeHost: async (id, host) => void crawls.resumedHosts.push(`${id} ${host}`),
     crawlApplySettings: async (id, speed, retry) => void crawls.applied.push({ id, speed, retry }),
+    accessibilityRun: async (path) => {
+      crawls.a11yRuns.push(path);
+      return structuredClone(crawls.a11ySummary);
+    },
     retryPreview: async () => structuredClone(crawls.preview),
     retryStart: async (path) => {
       crawls.retried.push(path);

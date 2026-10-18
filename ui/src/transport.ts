@@ -97,6 +97,7 @@ import type { Dictionaries } from "./generated/Dictionaries";
 import type { Installed } from "./generated/Installed";
 import type { SpellingSettings } from "./generated/SpellingSettings";
 import type { SpellSummary } from "./generated/SpellSummary";
+import type { RerunSummary } from "./generated/RerunSummary";
 
 /** A spelling check's progress, then its end (spec 027 part D). */
 export interface SpellProgress {
@@ -203,6 +204,10 @@ export interface CrawlProgress {
   /** Requests finished per second over the last 5 seconds (spec 008). */
   urls_per_sec: number;
   avg_urls_per_sec: number;
+  /** Pages with an accessibility check result so far (spec 026). */
+  a11y_checked: number;
+  /** Average full-check time per page in milliseconds, when full checks ran. */
+  a11y_avg_ms: number | null;
   /** Seconds left for the URLs queued now; rises while discovery outpaces crawling. */
   eta_secs: number | null;
   /** Time spent crawling, pauses excluded, across every run of this file (spec 007). */
@@ -383,6 +388,23 @@ export interface CrawlSummary {
   pause_reason: string | null;
   /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
   speed_events?: { host: string; summary: string }[];
+  /** Rendering completeness (spec 014 FR-041); absent for raw crawls. */
+  render?: RenderSummary;
+}
+
+/**
+ * The summary's Rendering block: the final states add up to the pages
+ * eligible for rendering.
+ */
+export interface RenderSummary {
+  by_state: Record<string, number>;
+  by_reason: Record<string, number>;
+  avg_render_ms: number | null;
+  max_render_ms: number | null;
+  js_errors: number;
+  failed_resources: number;
+  blocked_resources: number;
+  renderer: { name: string; version: string; source: string } | null;
 }
 
 export interface CrawlReport {
@@ -392,6 +414,8 @@ export interface CrawlReport {
   reasons: { reason: string; label: string; count: number }[];
   /** Crawled URLs that got no response, per error class, with labels. */
   failures?: { class: string; label: string; count: number }[];
+  /** Render failure and skip reasons with the engine's labels (spec 014); absent for raw crawls. */
+  render_reasons?: { reason: string; label: string; count: number }[];
 }
 
 export interface CrawlFinished {
@@ -671,6 +695,39 @@ export interface McpSelfTest {
 }
 
 /** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
+/** The browser JavaScript rendering would use (spec 014 FR-045). */
+export interface BrowserView {
+  name: string;
+  version: string;
+  source: "downloaded" | "installed" | "user_path";
+  path: string;
+}
+
+export interface BrowserStatus {
+  usable: BrowserView | null;
+  /** Why nothing is usable, in the window's words. */
+  problem: string | null;
+  /** The pinned download on offer; null where this platform has none. */
+  download: { version: string; bytes: number } | null;
+  /** The path the person chose with "Change browser". */
+  user_path: string | null;
+}
+
+export interface BrowserProgress {
+  job: number;
+  bytes_done: number;
+  bytes_total: number;
+  stage: "download" | "verify" | "unpack";
+  /** The connection was lost; the download resumes when it returns. */
+  waiting: boolean;
+}
+
+export interface BrowserFinished {
+  job: number;
+  status: BrowserStatus;
+  error: string | null;
+}
+
 export interface CompareProgress {
   comparison: number;
   phase: "open" | "previous" | "current" | "issues" | "match" | "counts" | "done" | "failed" | "cancelled";
@@ -885,6 +942,19 @@ export interface Transport {
   onLoginNavigated(cb: (url: string) => void): Promise<() => void>;
   onLoginClosed(cb: () => void): Promise<() => void>;
   pickCookiesFile(): Promise<string | null>;
+  /** Spec 014 browser dialog (contracts/desktop-commands.md "Browser"). */
+  renderBrowserStatus(): Promise<BrowserStatus>;
+  /** Starts the pinned download; the person agreed first. Returns the job. */
+  renderBrowserInstall(): Promise<number>;
+  renderBrowserCancel(job: number): Promise<void>;
+  /** Saves a browser the person chose; null returns to detection. An unusable path is explained in `problem`. */
+  renderBrowserSetPath(path: string | null): Promise<BrowserStatus>;
+  /** Starts or ends the 5 s reachability check of the download host while the dialog is open. */
+  renderBrowserNetworkWatch(on: boolean): Promise<void>;
+  pickBrowserFile(): Promise<string | null>;
+  onRenderBrowserProgress(cb: (p: BrowserProgress) => void): Promise<() => void>;
+  onRenderBrowserFinished(cb: (f: BrowserFinished) => void): Promise<() => void>;
+  onRenderBrowserNetwork(cb: (online: boolean) => void): Promise<() => void>;
   cookiesImport(path: string, internalHosts: string[]): Promise<CookiesImported>;
   /** Adds a sign-in to a running crawl and re-queues the origin's 401 URLs; resolves to how many. */
   crawlAddSignIn(id: number, origin: string, user: string, password: string, method: AuthMethod | null): Promise<number>;
@@ -959,6 +1029,8 @@ export interface Transport {
   assistantsActivity(limit: number): Promise<ActivityEntry[]>;
   assistantsActivityClear(): Promise<void>;
 
+  /** Re-runs the static accessibility checks on a crawl's stored HTML (spec 026). */
+  accessibilityRun(path: string): Promise<RerunSummary>;
   // Spelling (spec 027 part D)
   spellDictionaries(): Promise<Dictionaries>;
   /** Downloads a listed dictionary, checked against its published checksum. */
@@ -1189,6 +1261,15 @@ export const tauriTransport: Transport = {
   onLoginNavigated: (cb) => listen<{ url: string }>("login://navigated", (e) => cb(e.payload.url)),
   onLoginClosed: (cb) => listen("login://closed", () => cb()),
   pickCookiesFile: async () => asPath(await open({ filters: [{ name: "cookies.txt", extensions: ["txt"] }] })),
+  renderBrowserStatus: () => invoke("render_browser_status"),
+  renderBrowserInstall: () => invoke("render_browser_install"),
+  renderBrowserCancel: (job) => invoke("render_browser_cancel", { job }),
+  renderBrowserSetPath: (path) => invoke("render_browser_set_path", { path }),
+  renderBrowserNetworkWatch: (on) => invoke("render_browser_network_watch", { on }),
+  pickBrowserFile: async () => asPath(await open({})),
+  onRenderBrowserProgress: (cb) => listen<BrowserProgress>("render-browser-progress", (e) => cb(e.payload)),
+  onRenderBrowserFinished: (cb) => listen<BrowserFinished>("render-browser-finished", (e) => cb(e.payload)),
+  onRenderBrowserNetwork: (cb) => listen<{ online: boolean }>("render-browser-network", (e) => cb(e.payload.online)),
   cookiesImport: (path, internalHosts) => invoke("cookies_import", { path, internalHosts }),
   crawlAddSignIn: (id, origin, user, password, method) => invoke("crawl_add_sign_in", { id, origin, user, password, method }),
   proxyTest: (proxy, probeUrl) => invoke("proxy_test", { proxy, probeUrl }),
@@ -1240,6 +1321,7 @@ export const tauriTransport: Transport = {
   assistantsTest: () => invoke("assistants_test"),
   assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
   assistantsActivityClear: () => invoke("assistants_activity_clear"),
+  accessibilityRun: (path) => invoke("accessibility_run", { path }),
   spellDictionaries: () => invoke("spell_dictionaries"),
   spellDownload: (lang) => invoke("spell_download", { lang }),
   pickDictionaryFiles: async () => {

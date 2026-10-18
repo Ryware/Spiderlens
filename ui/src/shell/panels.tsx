@@ -92,6 +92,12 @@ export function StatusBar({ setup, run, analysis }: { setup: CrawlSetup; run: Cr
           <span className="font-medium text-fg-2">{n}</span> {label}
         </span>
       ))}
+      {setup.config && setup.config.accessibility.level !== "off" && p && (
+        <span data-figure="accessibility">
+          Accessibility: <span className="font-medium text-fg-2">{count(p.a11y_checked)}</span> checked
+          {p.a11y_avg_ms != null && <> · avg {Math.round(p.a11y_avg_ms).toLocaleString()} ms</>}
+        </span>
+      )}
       {analysis && <AnalysisStatus analysis={analysis} />}
       <PausedSites run={run} />
       <CrawlSpeed run={run} />
@@ -279,6 +285,45 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs, onReport }: { r
                 <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
               </tr>
             ))}
+          </Table>
+        )}
+        {s?.render && (
+          <Table title="Rendering" head={["Result", "Pages"]} aside={s.render.renderer ? `${s.render.renderer.name} ${s.render.renderer.version}` : undefined}>
+            {(
+              [
+                ["rendered", "Rendered"],
+                ["timed_out", "Timed out"],
+                ["failed", "Failed"],
+                ["not_rendered", "Not rendered"],
+              ] as const
+            ).map(([state, label]) => (
+              <tr key={state} data-render-state={state}>
+                <td className="px-3 py-1.5">{label}</td>
+                <td className="px-3 py-1.5 text-right tabular">{count(s.render?.by_state[state] ?? 0)}</td>
+              </tr>
+            ))}
+            {(run.report?.render_reasons ?? []).map((r) => (
+              <tr key={r.reason} data-render-reason={r.reason}>
+                <td className="py-1.5 pr-3 pl-6 text-fg-2">{r.label}</td>
+                <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
+              </tr>
+            ))}
+            <tr data-render-figure="time">
+              <td className="px-3 py-1.5">Render time</td>
+              <td className="px-3 py-1.5 text-right tabular">
+                {s.render.avg_render_ms === null ? "none" : `${count(s.render.avg_render_ms)} ms average, ${count(s.render.max_render_ms ?? 0)} ms slowest`}
+              </td>
+            </tr>
+            <tr data-render-figure="js_errors">
+              <td className="px-3 py-1.5">JavaScript errors</td>
+              <td className="px-3 py-1.5 text-right tabular">{count(s.render.js_errors)}</td>
+            </tr>
+            <tr data-render-figure="resources">
+              <td className="px-3 py-1.5">Resources</td>
+              <td className="px-3 py-1.5 text-right tabular">
+                {count(s.render.failed_resources)} failed, {count(s.render.blocked_resources)} blocked
+              </td>
+            </tr>
           </Table>
         )}
         {byClass.length > 0 && (
