@@ -191,8 +191,14 @@ impl Page {
     }
 }
 
-/// Builds `temp.link_positions` (data model) for every internal HTML page.
-pub fn build(conn: &Connection, rules: &[PositionRule], watch: &mut Watch<'_>) -> rusqlite::Result<Stats> {
+/// Builds `{schema}.link_positions` (data model) for every internal HTML
+/// page: `temp` for the reader's on-demand copy, `main` for the pass.
+pub fn build(
+    conn: &Connection,
+    schema: &str,
+    rules: &[PositionRule],
+    watch: &mut Watch<'_>,
+) -> rusqlite::Result<Stats> {
     let rules = Rules::compile(rules);
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM urls u WHERE {}", crate::tabs::HTML_OK),
@@ -200,12 +206,13 @@ pub fn build(conn: &Connection, rules: &[PositionRule], watch: &mut Watch<'_>) -
         |r| r.get(0),
     )?;
     watch.tick("positions", 0, total as u64)?;
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS temp.link_positions;
-         CREATE TEMP TABLE link_positions (
+    // Emptied, not dropped: the file's copy keeps its table across runs.
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {schema}.link_positions (
            from_id INTEGER NOT NULL, pos INTEGER NOT NULL, position INTEGER NOT NULL, rule INTEGER,
-           PRIMARY KEY (from_id, pos)) WITHOUT ROWID;",
-    )?;
+           PRIMARY KEY (from_id, pos)) WITHOUT ROWID;
+         DELETE FROM {schema}.link_positions;"
+    ))?;
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
     let mut stats = Stats::default();
     // NOT INDEXED: walk by id; the state index would rescan every batch.
@@ -233,7 +240,7 @@ pub fn build(conn: &Connection, rules: &[PositionRule], watch: &mut Watch<'_>) -
                 .map(|part| s.spawn(|| part.iter().map(|p| page_positions(p, &rules)).collect::<Vec<_>>()))
                 .collect();
             if let Some((pages, results)) = done.take() {
-                write(conn, &pages, &results, &mut stats)?;
+                write(conn, schema, &pages, &results, &mut stats)?;
                 watch.tick("positions", stats.pages, total as u64)?;
             }
             Ok(handles
@@ -251,6 +258,7 @@ pub fn build(conn: &Connection, rules: &[PositionRule], watch: &mut Watch<'_>) -
 
 fn write(
     conn: &Connection,
+    schema: &str,
     pages: &[Page],
     results: &[Vec<Classified>],
     stats: &mut Stats,
@@ -258,7 +266,7 @@ fn write(
     // A savepoint, not a transaction, so it nests inside a whole run's.
     Watch::savepoint(conn, "positions", || {
         let mut ins =
-            conn.prepare_cached("INSERT OR IGNORE INTO temp.link_positions VALUES (?1, ?2, ?3, ?4)")?;
+            conn.prepare_cached(&format!("INSERT OR IGNORE INTO {schema}.link_positions VALUES (?1, ?2, ?3, ?4)"))?;
         for (page, links) in pages.iter().zip(results) {
             stats.pages += 1;
             if page.body.is_none() {

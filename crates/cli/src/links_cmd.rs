@@ -64,7 +64,37 @@ fn open(file: &std::path::Path) -> Result<Reader, ExitCode> {
     })
 }
 
+/// Works out positions and Link Score into the file through the Crawl
+/// Analysis runner, so later opens read them as they are (spec 023 T024).
+/// False when the file cannot be written; the caller then works in memory.
+fn analyse_into_file(a: &AnalyseArgs) -> bool {
+    use spiderlens_results::analysis::{LINK_PASSES, PASSES, PassProgress, analyse_file_with};
+    let others: Vec<&str> = PASSES
+        .iter()
+        .map(|p| p.id())
+        .filter(|id| !LINK_PASSES.contains(id))
+        .collect();
+    // Progress on stderr in steps of 10% (contracts/cli.md).
+    let mut shown: Option<(String, u64)> = None;
+    let mut on = |p: PassProgress| {
+        if a.quiet || a.json || p.total == 0 {
+            return;
+        }
+        let pct = p.done * 100 / p.total / 10 * 10;
+        if shown.as_ref().is_some_and(|(l, n)| *l == p.label && *n == pct) {
+            return;
+        }
+        eprintln!("Analysing: {} {pct}% ({} of {})", p.label, p.done, p.total);
+        shown = Some((p.label, pct));
+    };
+    let never = std::sync::atomic::AtomicBool::new(false);
+    analyse_file_with(&a.file, &others, &mut on, &never).is_ok()
+}
+
 fn analyse(a: AnalyseArgs) -> ExitCode {
+    // Saved in the file when it can be written; the reader below then finds
+    // the stored run and prints its summary.
+    analyse_into_file(&a);
     let mut r = match open(&a.file) {
         Ok(r) => r,
         Err(code) => return code,
