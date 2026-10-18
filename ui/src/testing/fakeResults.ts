@@ -7,8 +7,10 @@ import type { Comparison } from "../generated/Comparison";
 import type { NearDupStatus } from "../generated/NearDupStatus";
 import type { CookieFilter } from "../generated/CookieFilter";
 import type { CookieRow } from "../generated/CookieRow";
+import type { HtmlDiff } from "../generated/HtmlDiff";
 import type { Need } from "../generated/Need";
 import type { PdfDetail } from "../generated/PdfDetail";
+import type { RenderDetail } from "../generated/RenderDetail";
 import type { Segment } from "../generated/Segment";
 import type { SegmentCounts } from "../generated/SegmentCounts";
 import type { TabDef } from "../generated/TabDef";
@@ -17,6 +19,8 @@ import type { ViewState } from "../generated/ViewState";
 import type { ExportOptions } from "../generated/ExportOptions";
 import { fakeScene, fakeTermLinks } from "./fakeViz";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
+import type { A11yDetail } from "../generated/A11yDetail";
+import type { MobileDetail } from "../generated/MobileDetail";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { AnalysisRun } from "../generated/AnalysisRun";
 import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, NearDupFinished, NearDupProgress, Range, Transport, ViewReady } from "../transport";
@@ -43,7 +47,78 @@ export interface FakeUrl {
   description?: string | null;
   /** Spelling errors, once spelling was checked. */
   spellErrors?: number;
+  /** Accessibility detail, once the checks ran (spec 026). */
+  a11y?: A11yDetail;
+  /** Mobile detail, once the mobile checks ran (spec 026). */
+  mobile?: MobileDetail;
 }
+
+/** The disclaimer the accessibility section ends with. */
+export const FAKE_A11Y_DISCLAIMER = "Automated checks find only part of the accessibility problems. A page without violations is not necessarily accessible.";
+
+/** An accessibility detail with one critical contrast check, one minor check and one needing review. */
+export const fakeA11y = (over: Partial<A11yDetail> = {}): A11yDetail => ({
+  static_state: "checked",
+  full_state: null,
+  full_reason: null,
+  capped: false,
+  disclaimer: FAKE_A11Y_DISCLAIMER,
+  checks: [
+    {
+      check_id: "color-contrast",
+      title: "Text has too little contrast",
+      kind: "violation",
+      source: "full",
+      impact: "critical",
+      wcag: "wcag2aa wcag143",
+      nodes_total: 2,
+      help_url: "https://dequeuniversity.com/rules/axe/4.14/color-contrast",
+      nodes: [
+        { selector: "main > p.lead", excerpt: "<p class=\"lead\">Welcome</p>", data: null, bbox: [10, 20, 200, 40] },
+        { selector: "footer a", excerpt: "<a href=\"/x\">More</a>", data: null, bbox: null },
+      ],
+    },
+    {
+      check_id: "static.image_alt_missing",
+      title: "Image has no alt text",
+      kind: "violation",
+      source: "static",
+      impact: "minor",
+      wcag: null,
+      nodes_total: 1,
+      help_url: null,
+      nodes: [{ selector: "img.hero", excerpt: "<img class=\"hero\">", data: null, bbox: null }],
+    },
+    {
+      check_id: "aria-allowed-attr",
+      title: "ARIA attribute may not be allowed",
+      kind: "needs_review",
+      source: "full",
+      impact: "moderate",
+      wcag: "wcag2a",
+      nodes_total: 1,
+      help_url: "https://dequeuniversity.com/rules/axe/4.14/aria-allowed-attr",
+      nodes: [{ selector: "div[role=button]", excerpt: "<div role=\"button\"></div>", data: null, bbox: null }],
+    },
+  ],
+  ...over,
+});
+
+/** A mobile detail with a missing viewport and some small tap targets. */
+export const fakeMobile = (over: Partial<MobileDetail> = {}): MobileDetail => ({
+  viewport: "width=device-width, initial-scale=1",
+  viewport_state: "ok",
+  plugins: 0,
+  window: "390 x 844",
+  measured: "Rendered",
+  content_px: 480,
+  window_px: 390,
+  widest: "table.prices",
+  small_text_share: 55,
+  small_targets: 3,
+  examples: [{ selector: "nav a.tiny", w: 18, h: 14 }],
+  ...over,
+});
 
 /** A PDF's detail with sensible defaults. */
 export const fakePdf = (p: Partial<PdfDetail> = {}): PdfDetail => ({
@@ -157,6 +232,18 @@ export const fakeTabs: TabDef[] = [
     scoped: false,
   },
   {
+    id: "accessibility",
+    title: "Accessibility",
+    columns: [col("address", "Address", "url", 420, "accessibility_static"), col("a11y_critical", "Critical", "int", 80, "accessibility_static")],
+    filters: [
+      { id: "all", label: "All", need: "accessibility_static" },
+      { id: "critical", label: "Critical", need: "accessibility_static" },
+      { id: "needs_review", label: "Needs review", need: "accessibility_static" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
+  {
     id: "amp",
     title: "AMP",
     columns: [col("address", "Address", "url", 420, "amp"), col("amp_failures", "Failed checks", "int", 110, "amp")],
@@ -164,6 +251,14 @@ export const fakeTabs: TabDef[] = [
       { id: "all", label: "All", need: "amp" },
       { id: "failing", label: "Failing a check", need: "amp" },
     ],
+    search_column: null,
+    scoped: false,
+  },
+  {
+    id: "agents",
+    title: "Agents",
+    columns: [col("address", "Address", "url", 420)],
+    filters: [{ id: "all", label: "All", need: "base" }],
     search_column: null,
     scoped: false,
   },
@@ -253,9 +348,74 @@ const cell = (u: FakeUrl, c: string, segments: Segment[] = [], urls: FakeUrl[] =
       closest_url: closest?.url ?? null,
       near_count: d ? d.others.length : 0,
       cluster: d?.cluster ?? null,
-      address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null, amp_failures: u.ampFailures ?? null,
+      address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null, amp_failures: u.ampFailures ?? null, a11y_critical: u.a11y ? u.a11y.checks.filter((k) => k.kind === "violation" && k.impact === "critical").length : null,
     } as Record<string, string | number | null>
   )[c] ?? null;
+};
+
+/** The JavaScript tab (spec 014). Not in `fakeTabs`: the fake lists it only for rendered crawls, or when a test asks (`results.javascriptTab`). */
+export const fakeJavascriptTab: TabDef = {
+  id: "javascript",
+  title: "JavaScript",
+  columns: [col("address", "Address", "url", 420), col("render_status", "Rendering status", "text", 190, "rendering"), col("words_change", "Word count change", "int", 140, "rendering")],
+  filters: [
+    { id: "all", label: "All", need: "rendering" },
+    { id: "js_content", label: "Contains JavaScript content (over 20% and 50 words)", need: "rendering" },
+  ],
+  search_column: null,
+  scoped: false,
+};
+
+/** A rendered page's detail with a comparison in which nothing changed. */
+export const fakeRender = (patch: Partial<RenderDetail> = {}): RenderDetail => {
+  const same = { diff: "same", raw: null, rendered: null };
+  return {
+    state: "rendered",
+    reason: null,
+    reason_label: null,
+    reason_detail: null,
+    attempts: 1,
+    render_ms: 420,
+    window_w: 1024,
+    window_h: 768,
+    js_redirect: null,
+    js_redirect_id: null,
+    console_errors: 0,
+    console_warnings: 0,
+    resources_failed: 0,
+    resources_blocked: 0,
+    bot_challenge: false,
+    comparison: {
+      words_raw: 50,
+      words_rendered: 50,
+      words_change: 0,
+      links_raw: 3,
+      links_rendered: 3,
+      links_rendered_only: 0,
+      links_raw_only: 0,
+      title: same,
+      description: same,
+      h1: same,
+      canonical: same,
+      noindex: same,
+      nofollow: same,
+      hreflang: same,
+      structured_rendered_only: 0,
+      dependence: 0,
+      dep_text: 0,
+      dep_headings: null,
+      dep_internal_links: 0,
+      dep_structured: null,
+      dep_images: null,
+      raw_has_title: true,
+      raw_has_description: true,
+      raw_has_canonical: true,
+      raw_has_directives: false,
+    },
+    rendered_html_stored: true,
+    screenshot_stored: false,
+    ...patch,
+  };
 };
 
 /** A cookie the fake crawl saw, and the URLs that set it. */
@@ -308,6 +468,12 @@ export interface FakeResults {
   nearDup: NearDupStatus["state"];
   /** Whether the file keeps HTML for the comparison view. */
   htmlStored: boolean;
+  /** List the JavaScript tab even when the crawl was not rendered (spec 014 FR-034). */
+  javascriptTab: boolean;
+  /** Rendering detail by URL id (spec 014); pages without an entry were not rendered. */
+  renders: Map<number, RenderDetail>;
+  /** What `urlHtmlDiff` answers (spec 014 FR-028); null rejects, as when a version is not stored. */
+  htmlDiff: HtmlDiff | null;
   analysisRuns: number;
   nearDupExports: { kind: string; cluster: number | null; dest: string }[];
   /** Ends a running analysis, as the engine would. */
@@ -350,6 +516,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "cookiesList"
   | "cookieUrls"
   | "urlHtml"
+  | "urlHtmlDiff"
   | "urlTabs"
   | "copyText"
   | "copyRows"
@@ -423,6 +590,9 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     },
     nearDup: "not_run",
     htmlStored: true,
+    javascriptTab: false,
+    renders: new Map(),
+    htmlDiff: null,
     analysisRuns: 0,
     nearDupExports: [],
     finishAnalysis: (f) => {
@@ -439,7 +609,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   };
   const issuesApi = fakeIssuesTransport(() => results.urls);
   const isCustom = (tab: string) => results.customTabs.some((t) => t.id === tab);
-  const tabOf = (id: string) => [...fakeTabs, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
+  const tabOf = (id: string) => [...fakeTabs, fakeJavascriptTab, ...fakeIssueTabs].find((t) => t.id === id) ?? results.customTabs.find((t) => t.id === id)!;
   const valueOf = (u: FakeUrl, c: string) => (results.customCells.get(u.id)?.[c] ?? cell(u, c, results.segments, results.urls)) as ReturnType<typeof cell>;
   const queries = new Map<number, Parameters<Transport["viewOpen"]>[1]>();
   const select = (q: Parameters<Transport["viewOpen"]>[1]) => {
@@ -456,6 +626,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.tab === "pdfs") us = us.filter((u) => u.pdf);
     if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "errors") us = us.filter((u) => (u.spellErrors ?? 0) > 0);
+    if (q.tab === "javascript") us = us.filter((u) => results.renders.has(u.id));
+    if (q.tab === "accessibility") us = us.filter((u) => u.a11y !== undefined);
+    if (q.tab === "accessibility" && q.filter === "critical") us = us.filter((u) => u.a11y?.checks.some((k) => k.kind === "violation" && k.impact === "critical"));
+    if (q.tab === "accessibility" && q.filter === "needs_review") us = us.filter((u) => u.a11y?.checks.some((k) => k.kind === "needs_review"));
     if (q.tab === "amp") us = us.filter((u) => u.ampFailures !== undefined);
     if (q.tab === "sitemaps") us = us.filter((u) => u.internal);
     if (q.tab === "sitemaps" && q.filter === "orphans") us = us.filter((u) => u.id % 50 === 7);
@@ -592,7 +766,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       return () => void nearDupFinishedCbs.delete(cb);
     },
     ...issuesApi,
-    resultsTabs: async (path) => (path ? [...fakeTabs, ...fakeIssueTabs, ...results.customTabs] : [...fakeTabs, ...fakeIssueTabs]),
+    resultsTabs: async (path) => {
+      const js = results.javascriptTab || results.features.includes("rendering") ? [fakeJavascriptTab] : [];
+      return path ? [...fakeTabs, ...js, ...fakeIssueTabs, ...results.customTabs] : [...fakeTabs, ...js, ...fakeIssueTabs];
+    },
     resultsOpen: async () => ({ features: { available: [...results.features], redirect_limit: 10 } }),
     viewOpen: async (_p, q, count) => {
       const view = ++next;
@@ -698,7 +875,10 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         snippet: u.status === 200 ? { title: u.title, description: u.description ?? null } : null,
         link_metrics: null,
         spelling: null,
+        render: results.renders.get(id) ?? null,
         amp: null,
+        accessibility: u.a11y ?? null,
+        mobile: u.mobile ?? null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,
@@ -715,25 +895,35 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
       kind === "inlinks"
         ? (() => {
             const rows = [
-              { id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation" },
-              { id: 2, url: results.urls[1 % results.urls.length].url, raw: "/story", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Read on", sponsored: false, ugc: false, position: "content" },
+              { id: 1, url: results.urls[0].url, raw: "/", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Home", sponsored: false, ugc: false, position: "navigation", origin: null },
+              { id: 2, url: results.urls[1 % results.urls.length].url, raw: "/story", kind: "a", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text: "Read on", sponsored: false, ugc: false, position: "content", origin: null },
             ].filter((r) => id !== -1 && (!position || r.position === position));
-            return { total: rows.length, from, rows, headings: [], unavailable: null };
+            return { total: rows.length, from, rows, headings: [], resources: [], console: [], unavailable: null };
           })()
         : kind === "headings"
-          ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}` }, { level: 2, text: "Section one" }], unavailable: null }
+          ? { total: 2, from, rows: [], headings: [{ level: 1, text: `Heading for ${id}`, origin: null }, { level: 2, text: "Section one", origin: null }], resources: [], console: [], unavailable: null }
           : kind === "images"
             ? {
                 total: 2,
                 from,
-                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false, position: null })),
+                rows: [null, ""].map((text, i) => ({ id: 100 + i, url: `https://example.com/img-${i}.png`, raw: `/img-${i}.png`, kind: "image", nofollow: false, followed: true, internal: true, status: 200, final_state: "Crawled", text, sponsored: false, ugc: false, position: null, origin: null })),
                 headings: [],
+                resources: [],
+                console: [],
                 unavailable: null,
               }
-            : { total: 0, from, rows: [], headings: [], unavailable: null },
-    urlHtml: async (_p, id) => {
+            : { total: 0, from, rows: [], headings: [], resources: [], console: [], unavailable: null },
+    urlHtmlDiff: async (_p, _id, fromHunk, maxHunks) => {
+      if (!results.htmlDiff) throw new Error("The rendered HTML of this page is not stored in this crawl.");
+      return { ...results.htmlDiff, hunks: results.htmlDiff.hunks.slice(fromHunk, fromHunk + maxHunks) };
+    },
+    urlHtml: async (_p, id, version) => {
       const u = results.urls.find((x) => x.id === id)!;
       const none = { html: null, bytes: 0, encoding: null, encoding_errors: false };
+      if (version === "rendered") {
+        const html = `<!doctype html><html><head><title>Rendered ${id}</title></head><body></body></html>`;
+        return results.renders.get(id)?.rendered_html_stored ? { html, missing: null, bytes: html.length, encoding: "utf-8", encoding_errors: false } : { ...none, missing: "not_stored" };
+      }
       if (!results.features.includes("raw_html")) return { ...none, missing: "not_stored" };
       if (u.title === null) return { ...none, missing: "no_body" };
       const html = fakePageHtml(u);

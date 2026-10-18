@@ -68,6 +68,8 @@ impl Calls {
             "query_pages" => self.with_reader(&target.path, |o| query_pages(o, &target.id, args))?,
             "page_details" => self.with_reader(&target.path, |o| page_details(o, args))?,
             "page_agent_findings" => self.with_reader(&target.path, |o| page_agent_findings(o, args))?,
+            "agents_summary" => self.with_reader(&target.path, |o| agents_summary(o))?,
+            "host_entry_points" => self.with_reader(&target.path, |o| host_entry_points(o, args))?,
             "page_html" => page_html(&target.path, args)?,
             "export_rows" => export_rows(&target.path, args)?,
             other => return Err(ToolError::invalid(format!("Unknown tool {other}."))),
@@ -620,6 +622,74 @@ fn page_agent_findings(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
         serde_json::to_value(&findings).expect("findings serialize"),
         &["unavailable_reason"],
     )))
+}
+
+/// The crawl's agent score. Every string in it is SpiderLens's own text (rule
+/// names, reasons, and the `access` list of user-fetch agents from the bot
+/// registry), so nothing goes under `crawled`.
+fn agents_summary(o: &mut Open) -> Result<Value, ToolError> {
+    let summary = o.reader.agents_summary().map_err(ToolError::from_results)?;
+    let mut v = serde_json::to_value(&summary).expect("summary serializes");
+    let entry_points = o.reader.agent_entry_points().map_err(ToolError::from_results)?;
+    // Outcomes per host and kind; the host name is crawled text.
+    let mut hosts: Map<String, Value> = Map::new();
+    for e in &entry_points {
+        hosts
+            .entry(e.host_key.clone())
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("array")
+            .push(json!({"kind": e.kind, "outcome": e.outcome}));
+    }
+    v["entry_point_hosts"] = hosts.len().into();
+    v["crawled"] = json!({"entry_points": envelope::cut_strings(Value::Object(hosts))});
+    Ok(envelope::fit(v))
+}
+
+fn host_entry_points(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
+    let host = str_arg(args, "host")?;
+    let rows = o.reader.agent_entry_points().map_err(ToolError::from_results)?;
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|r| host.is_none_or(|h| r.host_key.eq_ignore_ascii_case(h)))
+        .collect();
+    let total = rows.len();
+    let mut rows: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            let problems: Vec<Value> = r
+                .problems
+                .iter()
+                .map(|p| json!({"code": p.code, "message": p.message}))
+                .collect();
+            let mut row = json!({
+                "id": r.id,
+                "kind": r.kind,
+                "found_via": r.found_via,
+                "found_on": r.found_on,
+                "status": r.status,
+                "outcome": r.outcome,
+                "size": r.size,
+                "convention_version": r.convention_version,
+                "crawled": {
+                    "host": r.host_key,
+                    "url": r.url,
+                    "content_type": r.content_type,
+                    "summary": r.summary,
+                    "problems": problems,
+                },
+            });
+            row["crawled"] = envelope::cut_strings(row["crawled"].take());
+            row
+        })
+        .collect();
+    // Rows carry their crawled text inside, so fit them to the answer cap here.
+    let mut v = json!({"total": total, "rows": &rows});
+    while envelope::size(&v) > MAX_ANSWER && rows.len() > 1 {
+        rows.truncate(rows.len() / 2);
+        v = json!({"total": total, "returned": rows.len(), "rows": &rows});
+    }
+    Ok(v)
 }
 
 fn page_html(path: &Path, args: &Args) -> Result<Value, ToolError> {

@@ -13,6 +13,7 @@ use spiderlens_results::{ColumnDef, Derived, ValueKind, build_derived, csv_field
 use ts_rs::TS;
 
 use crate::elements::{Element, ElementKind};
+use crate::issues::IssueChange;
 use crate::registry::Layout;
 use crate::summary::{PAIRS, grp};
 use crate::{Comparison, Error, Result};
@@ -54,6 +55,12 @@ pub enum Group {
     },
     Urls {
         which: UrlGroup,
+    },
+    // The URLs behind an issue delta (story 3). The enum's tag is `kind`, so
+    // the change is called `change`, as for filters.
+    Issue {
+        rule: String,
+        change: IssueChange,
     },
 }
 
@@ -199,6 +206,7 @@ impl Comparison {
                      GROUP BY cur_id HAVING COUNT(*) > 1)"
                     .into(),
             },
+            Group::Issue { rule, change } => crate::issues::group_sql(rule, *change)?,
         })
     }
 
@@ -294,7 +302,7 @@ impl Comparison {
                     }
                 }
             }
-            Group::Urls { .. } => {
+            Group::Urls { .. } | Group::Issue { .. } => {
                 for id in ["final_state", "status_code", "title"] {
                     let e = self.element(id)?;
                     pair(&mut cols, &mut src, e, e.label);

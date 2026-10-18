@@ -22,8 +22,9 @@ import { DictionaryManager } from "../spelling/DictionaryManager";
 import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
+import { AccessibilitySettings } from "../accessibility/AccessibilitySettings";
 
-export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "content" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "rendering" | "appearance" | "assistants";
+export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "content" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "rendering" | "accessibility" | "appearance" | "assistants";
 
 export interface Category {
   id: CategoryId;
@@ -76,6 +77,12 @@ export const categories: Category[] = [
     prefixes: ["rendering"],
   },
   {
+    id: "accessibility",
+    title: "Accessibility",
+    description: "Check pages against WCAG and for mobile friendliness. Static checks read the stored HTML; full checks run in the rendered page.",
+    prefixes: ["accessibility"],
+  },
+  {
     id: "appearance",
     title: "Appearance",
     description: "Brightness and accent colour. Saved on this computer, not in the crawl profile.",
@@ -109,7 +116,7 @@ export function CategoryBody({
   live,
   crawlPath = null,
   crawlRunning = false,
-
+  onCategory,
 }: {
   id: CategoryId;
   setup: CrawlSetup;
@@ -118,7 +125,8 @@ export function CategoryBody({
   /** The open crawl, which custom rules can run on again (spec 013 US3). */
   crawlPath?: string | null;
   crawlRunning?: boolean;
-
+  /** Switches the open settings category (used by the Accessibility notice). */
+  onCategory?: (c: CategoryId) => void;
 }): ReactNode {
   if (id === "storage") return <StorageSettings transport={transport} />;
   const { config, presets, set, issues } = setup;
@@ -130,7 +138,7 @@ export function CategoryBody({
       return (
         <Group>
           <Row label="URLs to crawl" stacked issues={at("input.urls")}>
-            {() => <ListInputPanel transport={transport} summary={setup.list} onParsed={setup.setList} />}
+            {() => <ListInputPanel transport={transport} config={config} summary={setup.list} onParsed={setup.setList} />}
           </Row>
         </Group>
       );
@@ -539,6 +547,8 @@ export function CategoryBody({
           </Row>
         </Group>
       );
+    case "accessibility":
+      return <AccessibilitySettings config={config} set={set} at={at} onOpenRendering={onCategory ? () => onCategory("rendering") : undefined} />;
     case "extraction": {
       const pdf = config.extraction.pdf;
       const setPdf = (p: Partial<typeof pdf>) => set((c) => ({ ...c, extraction: { ...c.extraction, pdf: { ...c.extraction.pdf, ...p } } }));

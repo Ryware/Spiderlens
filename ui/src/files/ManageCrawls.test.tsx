@@ -245,3 +245,8 @@ test("the_manager_reloads_when_crawls_change_elsewhere", async () => {
   act(() => t.files.crawlsChanged());
   await waitFor(() => expect(names()).toContain("new"));
 });
+
+test("us1_palette_command_opens_manage_crawls", async () => {
+  await openManager();
+  expect(await screen.findByRole("dialog", { name: "Manage crawls" })).toBeTruthy();
+});

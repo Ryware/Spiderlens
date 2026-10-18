@@ -24,6 +24,8 @@ import type { NearDupStatus } from "./generated/NearDupStatus";
 import type { PairsPage } from "./generated/PairsPage";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
+import type { HtmlDiff } from "./generated/HtmlDiff";
+import type { HtmlVersion } from "./generated/HtmlVersion";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
 import type { PageHtml } from "./generated/PageHtml";
@@ -78,8 +80,11 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantProfile } from "./generated/AssistantProfile";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
+import type { AgentsSummary } from "./generated/AgentsSummary";
+import type { EntryPointRow } from "./generated/EntryPointRow";
 import type { PageAgentFindings } from "./generated/PageAgentFindings";
 import type { CompareSettings } from "./generated/CompareSettings";
 import type { ComparisonReport } from "./generated/ComparisonReport";
@@ -108,6 +113,7 @@ import type { Dictionaries } from "./generated/Dictionaries";
 import type { Installed } from "./generated/Installed";
 import type { SpellingSettings } from "./generated/SpellingSettings";
 import type { SpellSummary } from "./generated/SpellSummary";
+import type { RerunSummary } from "./generated/RerunSummary";
 
 /** A spelling check's progress, then its end (spec 027 part D). */
 export interface SpellProgress {
@@ -214,6 +220,10 @@ export interface CrawlProgress {
   /** Requests finished per second over the last 5 seconds (spec 008). */
   urls_per_sec: number;
   avg_urls_per_sec: number;
+  /** Pages with an accessibility check result so far (spec 026). */
+  a11y_checked: number;
+  /** Average full-check time per page in milliseconds, when full checks ran. */
+  a11y_avg_ms: number | null;
   /** Seconds left for the URLs queued now; rises while discovery outpaces crawling. */
   eta_secs: number | null;
   /** Time spent crawling, pauses excluded, across every run of this file (spec 007). */
@@ -230,6 +240,28 @@ export interface CrawlProgress {
   sites: SitePace[];
   /** Sites with work in progress in all. */
   sites_total: number;
+  /** Rendering progress (spec 014 FR-040); absent when the crawl does not render. */
+  render?: RenderProgress | null;
+}
+
+/** Why rendering is the slower stage (spec 014 plan D13). */
+export type RenderLimiting = "concurrency" | "memory_guard" | "slow_pages" | "site_limits" | "queue_full";
+
+/** Rendering progress next to the crawl's own figures (spec 014 plan D13). */
+export interface RenderProgress {
+  /** Pages whose rendering ended (rendered, timed out or failed), over every run of this file. */
+  rendered: number;
+  /** Pages waiting to be rendered. */
+  queued: number;
+  /** Pages being rendered now. */
+  rendering: number;
+  pages_per_sec: number;
+  avg_pages_per_sec: number;
+  /** Pages that may be rendered at once now. */
+  limit: number;
+  limiting: RenderLimiting | null;
+  /** Nothing is left to fetch; renders go on. */
+  fetching_done: boolean;
 }
 
 /** The main limit on the crawl's speed (spec 008 FR-028). */
@@ -372,6 +404,23 @@ export interface CrawlSummary {
   pause_reason: string | null;
   /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
   speed_events?: { host: string; summary: string }[];
+  /** Rendering completeness (spec 014 FR-041); absent for raw crawls. */
+  render?: RenderSummary;
+}
+
+/**
+ * The summary's Rendering block: the final states add up to the pages
+ * eligible for rendering.
+ */
+export interface RenderSummary {
+  by_state: Record<string, number>;
+  by_reason: Record<string, number>;
+  avg_render_ms: number | null;
+  max_render_ms: number | null;
+  js_errors: number;
+  failed_resources: number;
+  blocked_resources: number;
+  renderer: { name: string; version: string; source: string } | null;
 }
 
 export interface CrawlReport {
@@ -381,6 +430,8 @@ export interface CrawlReport {
   reasons: { reason: string; label: string; count: number }[];
   /** Crawled URLs that got no response, per error class, with labels. */
   failures?: { class: string; label: string; count: number }[];
+  /** Render failure and skip reasons with the engine's labels (spec 014); absent for raw crawls. */
+  render_reasons?: { reason: string; label: string; count: number }[];
 }
 
 export interface CrawlFinished {
@@ -443,6 +494,8 @@ export interface CrawlInfo {
   status: CrawlStatus;
   pause_reason: string | null;
   recovered: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
   mode: "spider" | "list";
   start_url: string | null;
   /** The stored configuration; null when the file has none it can read. */
@@ -469,6 +522,8 @@ export interface RecentEntry {
   last_used: string;
   available: boolean;
   unsaved: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
 }
 
 export interface UnsavedCrawls {
@@ -560,7 +615,7 @@ export interface StoragePrefs {
   last_cleanup: string | null;
 }
 
-export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge";
+export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge" | "schedule_retention";
 
 export interface CleanupRecord {
   at: string;
@@ -571,6 +626,8 @@ export interface CleanupRecord {
 
 export interface CleanupReport {
   removed: string[];
+  /** Older runs of schedules that keep only their last N runs. */
+  schedule_removed: string[];
   leftovers: number;
   freed_bytes: number;
   /** Named by the one-time notice: removed at a later start. */
@@ -639,6 +696,8 @@ export interface AssistantsView {
   settings: AssistantSettings;
   executable: string;
   snippets: AssistantSnippet[];
+  /** Saved profiles, with whether an assistant may crawl with each. */
+  profiles: AssistantProfile[];
 }
 
 /** What `<app> mcp --self-test` printed: the tools an assistant would see. */
@@ -652,12 +711,52 @@ export interface McpSelfTest {
 }
 
 /** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
+/** The browser JavaScript rendering would use (spec 014 FR-045). */
+export interface BrowserView {
+  name: string;
+  version: string;
+  source: "downloaded" | "installed" | "user_path";
+  path: string;
+}
+
+export interface BrowserStatus {
+  usable: BrowserView | null;
+  /** Why nothing is usable, in the window's words. */
+  problem: string | null;
+  /** The pinned download on offer; null where this platform has none. */
+  download: { version: string; bytes: number } | null;
+  /** The path the person chose with "Change browser". */
+  user_path: string | null;
+}
+
+export interface BrowserProgress {
+  job: number;
+  bytes_done: number;
+  bytes_total: number;
+  stage: "download" | "verify" | "unpack";
+  /** The connection was lost; the download resumes when it returns. */
+  waiting: boolean;
+}
+
+export interface BrowserFinished {
+  job: number;
+  status: BrowserStatus;
+  error: string | null;
+}
+
 export interface CompareProgress {
   comparison: number;
-  phase: "open" | "previous" | "current" | "match" | "counts" | "done" | "failed" | "cancelled";
+  phase: "open" | "previous" | "current" | "issues" | "match" | "counts" | "done" | "failed" | "cancelled";
   done: number;
   total: number;
   error: string | null;
+}
+
+/** The earlier run of a schedule that a scheduled crawl is compared with (spec 012 FR-002a). */
+export interface ScheduleBaseline {
+  path: string;
+  schedule: string;
+  run: number;
 }
 
 // Custom extraction and search (spec 013, contracts/desktop-commands.md).
@@ -757,6 +856,8 @@ export interface Transport {
   scopeTest(config: CrawlConfig, startUrl: string, urls: string[], fetchRobots: boolean): Promise<ScopeVerdict[]>;
   parseListText(text: string): Promise<ListSummary>;
   parseListFile(path: string): Promise<ListSummary>;
+  /** Reads a sitemap (address or file, with the address a file will have) into the list (spec 011 FR-005). */
+  listLoadSitemap(location: string, baseUrl: string | null, config: CrawlConfig): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
   pickSitemapFile(): Promise<string | null>;
@@ -849,8 +950,8 @@ export interface Transport {
   segmentsCounts(path: string): Promise<SegmentCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  /** `position` keeps only links at that position (spec 023 FR-024). */
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). `values`: raw or rendered lists of a rendered crawl (spec 014); omitted means rendered when the crawl has rendering. */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null, values?: Values): Promise<ListPage>;
   // Site login and proxy (spec 025, contracts/desktop-commands.md).
   /** Opens the login page in a private window; its addresses arrive through onLoginNavigated. */
   loginOpen(loginUrl: string, internalHosts: string[], userAgent: string | null): Promise<void>;
@@ -863,6 +964,19 @@ export interface Transport {
   onLoginNavigated(cb: (url: string) => void): Promise<() => void>;
   onLoginClosed(cb: () => void): Promise<() => void>;
   pickCookiesFile(): Promise<string | null>;
+  /** Spec 014 browser dialog (contracts/desktop-commands.md "Browser"). */
+  renderBrowserStatus(): Promise<BrowserStatus>;
+  /** Starts the pinned download; the person agreed first. Returns the job. */
+  renderBrowserInstall(): Promise<number>;
+  renderBrowserCancel(job: number): Promise<void>;
+  /** Saves a browser the person chose; null returns to detection. An unusable path is explained in `problem`. */
+  renderBrowserSetPath(path: string | null): Promise<BrowserStatus>;
+  /** Starts or ends the 5 s reachability check of the download host while the dialog is open. */
+  renderBrowserNetworkWatch(on: boolean): Promise<void>;
+  pickBrowserFile(): Promise<string | null>;
+  onRenderBrowserProgress(cb: (p: BrowserProgress) => void): Promise<() => void>;
+  onRenderBrowserFinished(cb: (f: BrowserFinished) => void): Promise<() => void>;
+  onRenderBrowserNetwork(cb: (online: boolean) => void): Promise<() => void>;
   cookiesImport(path: string, internalHosts: string[]): Promise<CookiesImported>;
   /** Adds a sign-in to a running crawl and re-queues the origin's 401 URLs; resolves to how many. */
   crawlAddSignIn(id: number, origin: string, user: string, password: string, method: AuthMethod | null): Promise<number>;
@@ -872,8 +986,10 @@ export interface Transport {
   cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
   /** The URLs that set one cookie, in crawl order. */
   cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
-  /** The page's stored HTML, or why there is none. */
-  urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The page's stored HTML, or why there is none. `version`: the HTML as received (default) or as rendered (spec 014 FR-032). */
+  urlHtml(path: string, id: number, version?: HtmlVersion): Promise<PageHtml>;
+  /** The normalised raw and rendered HTML compared: `maxHunks` differences from number `fromHunk` (spec 014 FR-028). Rejects when either version is not stored. */
+  urlHtmlDiff(path: string, id: number, fromHunk: number, maxHunks: number): Promise<HtmlDiff>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
   urlTabs(path: string, id: number): Promise<string[]>;
   /** Puts one value on the clipboard. */
@@ -926,6 +1042,9 @@ export interface Transport {
   onNearDupFinished(cb: (f: NearDupFinished) => void): Promise<() => void>;
   // AI agents (spec 016, contracts/desktop-commands.md).
   agentsPage(path: string, id: number): Promise<PageAgentFindings>;
+  /** The crawl's agent score; `available` is false with a reason when it was not evaluated. */
+  agentsSummary(path: string): Promise<AgentsSummary>;
+  agentsEntryPoints(path: string): Promise<EntryPointRow[]>;
   assistantsGet(): Promise<AssistantsView>;
   /** Rejects with a sentence when a folder does not exist. */
   assistantsSet(settings: AssistantSettings): Promise<AssistantSettings>;
@@ -934,6 +1053,8 @@ export interface Transport {
   assistantsActivity(limit: number): Promise<ActivityEntry[]>;
   assistantsActivityClear(): Promise<void>;
 
+  /** Re-runs the static accessibility checks on a crawl's stored HTML (spec 026). */
+  accessibilityRun(path: string): Promise<RerunSummary>;
   // Spelling (spec 027 part D)
   spellDictionaries(): Promise<Dictionaries>;
   /** Downloads a listed dictionary, checked against its published checksum. */
@@ -949,6 +1070,8 @@ export interface Transport {
   onSpellProgress(cb: (p: SpellProgress) => void): Promise<() => void>;
   // Crawl comparison (spec 012, contracts/desktop-commands.md).
   compareSuggest(current: string): Promise<string | null>;
+  /** The previous finished run of the schedule the crawl belongs to; null when it is not a scheduled run, an error when there is none. */
+  compareScheduleBaseline(current: string): Promise<ScheduleBaseline | null>;
   compareSetup(previous: string, current: string): Promise<Setup>;
   compareTestMapping(previous: string, current: string, rules: MapRule[], samples: string[], fromPrevious: number): Promise<MappingTest[]>;
   compareStart(previous: string, current: string, settings: CompareSettings): Promise<number>;
@@ -1069,9 +1192,10 @@ export interface Transport {
   pickFolder(): Promise<string | null>;
 
   // Report and exports (spec 010, contracts/desktop-commands.md).
-  report(path: string, running: boolean, profile: string | null): Promise<Report>;
-  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean): Promise<Written>;
-  printReport(path: string, file: FileOptions): Promise<void>;
+  /** `comparison` is an open comparison whose current crawl is `path`: its section is added (spec 012 FR-033). */
+  report(path: string, running: boolean, profile: string | null, comparison: number | null): Promise<Report>;
+  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean, comparison: number | null): Promise<Written>;
+  printReport(path: string, file: FileOptions, comparison: number | null): Promise<void>;
   bulkExport(path: string, options: BulkOptions): Promise<BulkResult>;
   bulkExportCancel(): Promise<void>;
   onBulkProgress(cb: (p: BulkProgress) => void): Promise<() => void>;
@@ -1095,6 +1219,7 @@ export const tauriTransport: Transport = {
   scopeTest: (config, startUrl, urls, fetchRobots) => invoke("scope_test", { config, startUrl, urls, fetchRobots }),
   parseListText: (text) => invoke("list_parse_text", { text }),
   parseListFile: (path) => invoke("list_parse_file", { path }),
+  listLoadSitemap: (location, baseUrl, config) => invoke("list_load_sitemap", { location, baseUrl, config }),
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
@@ -1176,7 +1301,7 @@ export const tauriTransport: Transport = {
   segmentsCounts: (path) => invoke("segments_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  urlList: (path, id, kind, from, count, position, values) => invoke("url_list", { path, id, kind, from, count, position: position ?? null, values: values ?? null }),
   loginOpen: (loginUrl, internalHosts, userAgent) => invoke("login_open", { loginUrl, internalHosts, userAgent }),
   loginDone: () => invoke("login_done"),
   loginCancel: () => invoke("login_cancel"),
@@ -1185,12 +1310,22 @@ export const tauriTransport: Transport = {
   onLoginNavigated: (cb) => listen<{ url: string }>("login://navigated", (e) => cb(e.payload.url)),
   onLoginClosed: (cb) => listen("login://closed", () => cb()),
   pickCookiesFile: async () => asPath(await open({ filters: [{ name: "cookies.txt", extensions: ["txt"] }] })),
+  renderBrowserStatus: () => invoke("render_browser_status"),
+  renderBrowserInstall: () => invoke("render_browser_install"),
+  renderBrowserCancel: (job) => invoke("render_browser_cancel", { job }),
+  renderBrowserSetPath: (path) => invoke("render_browser_set_path", { path }),
+  renderBrowserNetworkWatch: (on) => invoke("render_browser_network_watch", { on }),
+  pickBrowserFile: async () => asPath(await open({})),
+  onRenderBrowserProgress: (cb) => listen<BrowserProgress>("render-browser-progress", (e) => cb(e.payload)),
+  onRenderBrowserFinished: (cb) => listen<BrowserFinished>("render-browser-finished", (e) => cb(e.payload)),
+  onRenderBrowserNetwork: (cb) => listen<{ online: boolean }>("render-browser-network", (e) => cb(e.payload.online)),
   cookiesImport: (path, internalHosts) => invoke("cookies_import", { path, internalHosts }),
   crawlAddSignIn: (id, origin, user, password, method) => invoke("crawl_add_sign_in", { id, origin, user, password, method }),
   proxyTest: (proxy, probeUrl) => invoke("proxy_test", { proxy, probeUrl }),
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
-  urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlHtml: (path, id, version) => invoke("url_html", { path, id, version: version ?? null }),
+  urlHtmlDiff: (path, id, fromHunk, maxHunks) => invoke("url_html_diff", { path, id, fromHunk, maxHunks }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
@@ -1229,11 +1364,14 @@ export const tauriTransport: Transport = {
   onNearDupProgress: (cb) => listen<NearDupProgress>("near-dup-progress", (e) => cb(e.payload)),
   onNearDupFinished: (cb) => listen<NearDupFinished>("near-dup-finished", (e) => cb(e.payload)),
   agentsPage: (path, id) => invoke("agents_page", { path, id }),
+  agentsSummary: (path) => invoke("agents_summary", { path }),
+  agentsEntryPoints: (path) => invoke("agents_entry_points", { path }),
   assistantsGet: () => invoke("assistants_get"),
   assistantsSet: (settings) => invoke("assistants_set", { settings }),
   assistantsTest: () => invoke("assistants_test"),
   assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
   assistantsActivityClear: () => invoke("assistants_activity_clear"),
+  accessibilityRun: (path) => invoke("accessibility_run", { path }),
   spellDictionaries: () => invoke("spell_dictionaries"),
   spellDownload: (lang) => invoke("spell_download", { lang }),
   pickDictionaryFiles: async () => {
@@ -1249,6 +1387,7 @@ export const tauriTransport: Transport = {
   spellSummary: (path) => invoke("spell_summary", { path }),
   onSpellProgress: (cb) => listen<SpellProgress>("spell-progress", (e) => cb(e.payload)),
   compareSuggest: (current) => invoke("compare_suggest", { current }),
+  compareScheduleBaseline: (current) => invoke("compare_schedule_baseline", { current }),
   compareSetup: (previous, current) => invoke("compare_setup", { previous, current }),
   compareTestMapping: (previous, current, rules, samples, fromPrevious) =>
     invoke("compare_test_mapping", { previous, current, rules, samples, fromPrevious }),
@@ -1347,9 +1486,9 @@ export const tauriTransport: Transport = {
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
 
-  report: (path, running, profile) => invoke("report", { path, running, profile }),
-  exportReportHtml: (path, dest, file, overwrite) => invoke("export_report_html", { path, dest, file, overwrite }),
-  printReport: (path, file) => invoke("print_report", { path, file }),
+  report: (path, running, profile, comparison) => invoke("report", { path, running, profile, comparison }),
+  exportReportHtml: (path, dest, file, overwrite, comparison) => invoke("export_report_html", { path, dest, file, overwrite, comparison }),
+  printReport: (path, file, comparison) => invoke("print_report", { path, file, comparison }),
   bulkExport: (path, options) => invoke("bulk_export", { path, options }),
   bulkExportCancel: () => invoke("bulk_export_cancel"),
   onBulkProgress: (cb) => listen<BulkProgress>("bulk-export-progress", (e) => cb(e.payload)),

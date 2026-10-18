@@ -65,6 +65,12 @@ pub(crate) fn connect(
 /// through a `mode=ro` URI, so SQLite refuses any write to it, while a
 /// scratch file attached later stays writable.
 pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
+    connect_attachable_with(path, &ResolvedSettings::default())
+}
+
+/// [`connect_attachable`] with `thr()` reading `settings`' thresholds, so a
+/// filter and an issue rule that share a threshold agree (spec 012 FR-023).
+pub fn connect_attachable_with(path: &Path, settings: &ResolvedSettings) -> Result<(Connection, Features)> {
     if !path.exists() {
         return Err(Error::invalid(format!("{} does not exist", path.display())));
     }
@@ -75,8 +81,7 @@ pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
             | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    // The comparison reads filters with the default issue thresholds.
-    let (conn, features, _) = setup(conn, path, &ResolvedSettings::default())?;
+    let (conn, features, _) = setup(conn, path, settings)?;
     Ok((conn, features))
 }
 
@@ -123,6 +128,8 @@ fn setup(
     let thresholds = Arc::new(RwLock::new(settings.thresholds()));
     sql::register_thresholds(&conn, thresholds.clone())?;
     let features = Features::detect(&conn)?;
+    stub_render_tables(&conn)?;
+    sql::register_a11y(&conn, &features.a11y)?;
     let limit = features.redirect_limit;
     conn.create_scalar_function(
         "redirect_limit",
@@ -130,6 +137,20 @@ fn setup(
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         move |_| Ok(limit),
     )?;
+    // The JavaScript tab's thresholds, as the crawl was configured (spec 014).
+    let render = features.render_thresholds;
+    for (name, value) in [
+        ("js_content_percent", render.js_content_percent),
+        ("js_content_words", render.js_content_words),
+        ("hidden_content_percent", render.hidden_percent),
+    ] {
+        conn.create_scalar_function(
+            name,
+            0,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+            move |_| Ok(value),
+        )?;
+    }
     let token = features.robots_token.clone();
     conn.create_scalar_function(
         "robots_token",
@@ -138,6 +159,38 @@ fn setup(
         move |_| Ok(token.clone()),
     )?;
     Ok((conn, features, thresholds))
+}
+
+/// A crawl file made before rendering (migrate step 16) has no `renders`
+/// or `render_comparisons` table. The JavaScript tab's row condition reads
+/// `renders` for every file, so a file without it gets empty `temp` tables
+/// of the same name: the tab lists nothing and the file keeps opening (spec
+/// 014 FR-034). Temporary tables work on the read-only connection.
+fn stub_render_tables(conn: &Connection) -> rusqlite::Result<()> {
+    let has: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'renders')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS renders (
+            url_id INTEGER PRIMARY KEY, state TEXT NOT NULL, reason TEXT, reason_detail TEXT,
+            queue_seq INTEGER, attempts INTEGER NOT NULL DEFAULT 0, render_ms INTEGER,
+            window_w INTEGER, window_h INTEGER, js_redirect TEXT, js_redirect_id INTEGER,
+            console_errors INTEGER, console_warnings INTEGER, resources_failed INTEGER,
+            resources_blocked INTEGER, bot_challenge INTEGER, rendered_at INTEGER);
+         CREATE TEMP TABLE IF NOT EXISTS render_comparisons (
+            url_id INTEGER PRIMARY KEY, words_raw INTEGER, words_rendered INTEGER, words_change INTEGER,
+            links_raw INTEGER, links_rendered INTEGER, links_rendered_only INTEGER, links_raw_only INTEGER,
+            title_diff TEXT, description_diff TEXT, h1_diff TEXT, canonical_diff TEXT, noindex_diff TEXT,
+            nofollow_diff TEXT, hreflang_diff TEXT, structured_rendered_only INTEGER,
+            dep_text REAL, dep_headings REAL, dep_internal_links REAL, dep_structured REAL,
+            dep_images REAL, raw_has_title INTEGER, raw_has_description INTEGER,
+            raw_has_canonical INTEGER, raw_has_directives INTEGER, dependence REAL);",
+    )
 }
 
 /// Opens a crawl file to record results in it (issue settings, analysis
@@ -280,6 +333,10 @@ impl Reader {
                 self.ensure_derived([Derived::LinkPositions])?;
             }
             if self.derived.get(&d) != Some(&g) {
+                if matches!(d, Derived::LinkPositions | Derived::LinkMetrics) && self.use_stored_links()? {
+                    self.derived.insert(d, g);
+                    continue;
+                }
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
                 } else {
@@ -296,6 +353,23 @@ impl Reader {
         Ok(())
     }
 
+    /// When the file holds current Link Score results for the settings shown
+    /// (spec 023 plan D5), points the unqualified `link_positions` and
+    /// `link_metrics` at them and builds nothing. Any temp copy from an
+    /// earlier build is dropped so it cannot shadow the file's.
+    fn use_stored_links(&self) -> Result<bool> {
+        if crate::analysis::stored_run(&self.conn, &self.features.link_settings)?.is_none() {
+            return Ok(false);
+        }
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS temp.link_positions;
+             DROP TABLE IF EXISTS temp.link_metrics;
+             DROP VIEW IF EXISTS temp.link_metrics;
+             CREATE TEMP VIEW link_metrics AS SELECT * FROM main.link_score;",
+        )?;
+        Ok(true)
+    }
+
     /// Records that a derived table was just built for the current data.
     pub(crate) fn mark_built(&mut self, d: Derived) -> Result<()> {
         self.version()?;
@@ -307,6 +381,15 @@ impl Reader {
     pub(crate) fn has_derived(&mut self, d: Derived) -> Result<bool> {
         self.version()?;
         Ok(self.derived.get(&d) == Some(&self.data_gen))
+    }
+
+    /// Counts accessibility results against another WCAG target without
+    /// checking again (spec 026 FR-020).
+    pub fn set_a11y_target(&mut self, wcag: spiderlens_config::WcagTarget) -> Result<()> {
+        self.features.a11y.wcag = wcag;
+        sql::register_a11y(&self.conn, &self.features.a11y)?;
+        self.bump_version();
+        Ok(())
     }
 
     pub fn link_settings(&self) -> &spiderlens_config::LinkAnalysisSettings {

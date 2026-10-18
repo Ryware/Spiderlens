@@ -4,6 +4,7 @@
 //! The unique index on `urls.url` is the seen-set; the partial index on
 //! queued rows is the queue. Nothing here grows with the crawl in memory.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::path::Path;
 use std::sync::Arc;
@@ -386,6 +387,84 @@ pub struct UrlRow {
     pub error_class: Option<String>,
 }
 
+/// Most failing elements stored per result and per page (spec 026 FR-010).
+const A11Y_NODES_PER_RESULT: usize = 20;
+const A11Y_NODES_PER_PAGE: i64 = 500;
+
+/// One accessibility result for a page (spec 026 data-model.md).
+#[derive(Debug, Clone)]
+pub struct A11yRow<'a> {
+    pub check_id: Cow<'a, str>,
+    pub kind: &'a str,
+    pub source: &'a str,
+    pub impact: Option<&'a str>,
+    pub wcag: Cow<'a, str>,
+    pub nodes_total: u32,
+    pub nodes: Vec<A11yNodeRow<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct A11yNodeRow<'a> {
+    pub selector: Cow<'a, str>,
+    pub excerpt: Cow<'a, str>,
+    pub data: Option<String>,
+    /// x, y, width, height in CSS px (Full only).
+    pub bbox: Option<[f64; 4]>,
+}
+
+/// Mobile usability measures; `None` fields keep what is stored.
+#[derive(Debug, Clone, Default)]
+pub struct MobileRow<'a> {
+    pub viewport: Option<&'a str>,
+    pub viewport_state: Option<&'a str>,
+    pub plugins: Option<i64>,
+    pub window: Option<&'a str>,
+    pub measured: Option<&'a str>,
+    pub content_px: Option<f64>,
+    pub window_px: Option<f64>,
+    pub widest: Option<&'a str>,
+    pub small_text_share: Option<f64>,
+    pub small_targets: Option<i64>,
+    pub examples: Option<String>,
+}
+
+/// The lowest WCAG level among the tags of the failing checks:
+/// `2.0-a` ... `2.2-aaa`, else `best_practice`; None without any failure.
+fn lowest_a11y_level(wcags: &[String]) -> Option<String> {
+    if wcags.is_empty() {
+        return None;
+    }
+    let mut best: Option<(usize, usize)> = None;
+    for tag in wcags.iter().flat_map(|w| w.split_whitespace()) {
+        let Some(rest) = tag.strip_prefix("wcag") else {
+            continue;
+        };
+        let Some(split) = rest.find(|c: char| c.is_ascii_alphabetic()) else {
+            continue;
+        };
+        let (num, letters) = rest.split_at(split);
+        let version = match num {
+            "2" => 0,
+            "21" => 1,
+            "22" => 2,
+            _ => continue,
+        };
+        let level = match letters {
+            "a" => 0,
+            "aa" => 1,
+            "aaa" => 2,
+            _ => continue,
+        };
+        if best.is_none_or(|b| (version, level) < b) {
+            best = Some((version, level));
+        }
+    }
+    Some(match best {
+        Some((v, l)) => format!("{}-{}", ["2.0", "2.1", "2.2"][v], ["a", "aa", "aaa"][l]),
+        None => "best_practice".to_string(),
+    })
+}
+
 pub struct CrawlStore {
     conn: Connection,
     next_seq: i64,
@@ -395,6 +474,20 @@ pub struct CrawlStore {
     checkpointer: Option<Checkpointer>,
     /// Next render queue number; read from the file on first use.
     render_seq: Cell<Option<i64>>,
+    /// Accessibility checks done in this run, for live progress (spec 026).
+    a11y_live: Cell<A11yLive>,
+}
+
+/// Pages checked and the full checks' total time, kept as results are
+/// written so progress never queries for them.
+#[derive(Debug, Clone, Copy, Default)]
+struct A11yLive {
+    checked: u64,
+    /// A static result was written in this run, so a page's full state does
+    /// not count it a second time.
+    static_seen: bool,
+    full_pages: u64,
+    full_ms: u64,
 }
 
 /// Copies the write-ahead log into the database file on its own thread, so
@@ -504,6 +597,9 @@ pub struct Counts {
     pub external_blocked: u64,
 }
 
+/// Prepared statements kept per connection (rusqlite's default is 16).
+const STATEMENT_CACHE: usize = 128;
+
 impl CrawlStore {
     /// Creates a new crawl file. An existing file is never overwritten.
     pub fn create(path: &Path) -> Result<Self> {
@@ -523,6 +619,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         store.set_meta("format", FORMAT)?;
         store.set_meta("extraction_version", EXTRACTION_VERSION)?;
@@ -562,6 +659,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -616,6 +714,7 @@ impl CrawlStore {
             live: Cell::default(),
             checkpointer: None,
             render_seq: Cell::new(None),
+            a11y_live: Cell::new(A11yLive::default()),
         };
         let mut live = StateCounts::default();
         for (state, n) in store.state_counts()? {
@@ -737,6 +836,14 @@ impl CrawlStore {
         self.live.get()
     }
 
+    /// Pages whose accessibility was checked in this run, and the average
+    /// time of their full checks in milliseconds (spec 026).
+    pub fn a11y_live(&self) -> (u64, Option<u32>) {
+        let l = self.a11y_live.get();
+        let avg = (l.full_pages > 0).then(|| (l.full_ms / l.full_pages).min(u64::from(u32::MAX)) as u32);
+        (l.checked, avg)
+    }
+
     /// `n` rows moved from `from` (None for new rows) to `to`.
     fn shift(&self, from: Option<UrlState>, to: UrlState, n: usize) {
         let mut live = self.live.get();
@@ -757,6 +864,10 @@ impl CrawlStore {
             conn.pragma_update(None, "cache_size", v.as_str())?;
         }
         conn.pragma_update(None, "foreign_keys", "OFF")?;
+        // The page path alone uses more statements than rusqlite's default
+        // cache of 16, so each page re-prepared the ones the cache had
+        // dropped; the render queue's two inserts made that cost visible.
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         Ok(())
     }
 
@@ -1402,6 +1513,298 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// Replaces the page's accessibility results of `source` (`static` or
+    /// `full`), then recounts the page's `a11y_audits` over both sources
+    /// (spec 026). A full result drops the static results that test the same
+    /// thing, and a static result is not stored beside such a full one.
+    pub fn record_a11y(&self, url_id: i64, source: &str, rows: &[A11yRow<'_>]) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "DELETE FROM a11y_nodes WHERE result_id IN \
+                 (SELECT id FROM a11y_results WHERE url_id = ?1 AND source = ?2)",
+            )?
+            .execute(params![url_id, source])?;
+        self.conn
+            .prepare_cached("DELETE FROM a11y_results WHERE url_id = ?1 AND source = ?2")?
+            .execute(params![url_id, source])?;
+        let mut skip: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if source == "full" {
+            for row in rows {
+                for id in crate::extract::a11y::static_ids_for_axe(&row.check_id) {
+                    let static_id = format!("static.{id}");
+                    self.conn
+                        .prepare_cached(
+                            "DELETE FROM a11y_nodes WHERE result_id IN \
+                             (SELECT id FROM a11y_results WHERE url_id = ?1 AND source = 'static' AND check_id = ?2)",
+                        )?
+                        .execute(params![url_id, static_id])?;
+                    self.conn
+                        .prepare_cached(
+                            "DELETE FROM a11y_results WHERE url_id = ?1 AND source = 'static' AND check_id = ?2",
+                        )?
+                        .execute(params![url_id, static_id])?;
+                }
+            }
+        } else {
+            let mut stmt = self
+                .conn
+                .prepare_cached("SELECT check_id FROM a11y_results WHERE url_id = ?1 AND source = 'full'")?;
+            let full_ids: Vec<String> = stmt
+                .query_map([url_id], |r| r.get(0))?
+                .collect::<std::result::Result<_, _>>()?;
+            for id in full_ids {
+                for s in crate::extract::a11y::static_ids_for_axe(&id) {
+                    skip.insert(format!("static.{s}"));
+                }
+            }
+        }
+        let mut used: i64 = self
+            .conn
+            .prepare_cached(
+                "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)",
+            )?
+            .query_row([url_id], |r| r.get(0))?;
+        {
+            let mut insert_result = self.conn.prepare_cached(
+                "INSERT INTO a11y_results (url_id, check_id, kind, source, impact, wcag, nodes_total) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let mut insert_node = self.conn.prepare_cached(
+                "INSERT INTO a11y_nodes (result_id, pos, selector, excerpt, data, x, y, w, h) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for row in rows {
+                if skip.contains(row.check_id.as_ref()) {
+                    continue;
+                }
+                insert_result.execute(params![
+                    url_id,
+                    row.check_id.as_ref(),
+                    row.kind,
+                    source,
+                    row.impact,
+                    row.wcag.as_ref(),
+                    row.nodes_total
+                ])?;
+                let result_id = self.conn.last_insert_rowid();
+                for (pos, node) in row.nodes.iter().take(A11Y_NODES_PER_RESULT).enumerate() {
+                    if used >= A11Y_NODES_PER_PAGE {
+                        break;
+                    }
+                    let excerpt: String = node
+                        .excerpt
+                        .chars()
+                        .take(crate::extract::a11y::EXCERPT_CHARS)
+                        .collect();
+                    let [x, y, w, h] = match node.bbox {
+                        Some([x, y, w, h]) => [Some(x), Some(y), Some(w), Some(h)],
+                        None => [None; 4],
+                    };
+                    insert_node.execute(params![
+                        result_id,
+                        pos as i64,
+                        node.selector.as_ref(),
+                        excerpt,
+                        node.data,
+                        x,
+                        y,
+                        w,
+                        h
+                    ])?;
+                    used += 1;
+                }
+            }
+        }
+        self.conn
+            .prepare_cached("INSERT INTO a11y_audits (url_id) VALUES (?1) ON CONFLICT(url_id) DO NOTHING")?
+            .execute([url_id])?;
+        let wcags: Vec<String> = {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT COALESCE(wcag, '') FROM a11y_results WHERE url_id = ?1 AND kind = 'violation'",
+            )?;
+            stmt.query_map([url_id], |r| r.get(0))?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        self.conn
+            .prepare_cached(
+                "UPDATE a11y_audits SET \
+                 critical = (SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation' AND impact = 'critical'), \
+                 serious = (SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation' AND impact = 'serious'), \
+                 moderate = (SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation' AND impact = 'moderate'), \
+                 minor = (SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation' AND impact = 'minor'), \
+                 needs_review = (SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND kind = 'needs_review'), \
+                 checks_failed = (SELECT COUNT(DISTINCT check_id) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation'), \
+                 elements = (SELECT COALESCE(SUM(nodes_total), 0) FROM a11y_results WHERE url_id = ?1 AND kind = 'violation'), \
+                 lowest_level = ?2 \
+                 WHERE url_id = ?1",
+            )?
+            .execute(params![url_id, lowest_a11y_level(&wcags)])?;
+        Ok(())
+    }
+
+    /// The static results of a page as it is first written during a crawl
+    /// (spec 026): no full results exist yet, so the counts come from `rows`
+    /// and the page costs a few statements instead of a recount.
+    pub fn record_static_a11y(
+        &self,
+        url_id: i64,
+        rows: &[A11yRow<'_>],
+        mobile: &MobileRow<'_>,
+    ) -> Result<()> {
+        if !rows.is_empty() {
+            self.conn
+                .prepare_cached(
+                    "DELETE FROM a11y_nodes WHERE result_id IN \
+                     (SELECT id FROM a11y_results WHERE url_id = ?1 AND source = 'static')",
+                )?
+                .execute([url_id])?;
+            self.conn
+                .prepare_cached("DELETE FROM a11y_results WHERE url_id = ?1 AND source = 'static'")?
+                .execute([url_id])?;
+        }
+        let mut counts = [0i64; 4];
+        let mut elements = 0i64;
+        let mut used = 0i64;
+        {
+            let mut insert_result = self.conn.prepare_cached(
+                "INSERT INTO a11y_results (url_id, check_id, kind, source, impact, wcag, nodes_total) \
+                 VALUES (?1, ?2, ?3, 'static', ?4, ?5, ?6)",
+            )?;
+            let mut insert_node = self.conn.prepare_cached(
+                "INSERT INTO a11y_nodes (result_id, pos, selector, excerpt) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for row in rows {
+                insert_result.execute(params![
+                    url_id,
+                    row.check_id.as_ref(),
+                    row.kind,
+                    row.impact,
+                    row.wcag.as_ref(),
+                    row.nodes_total
+                ])?;
+                let result_id = self.conn.last_insert_rowid();
+                match row.impact {
+                    Some("critical") => counts[0] += 1,
+                    Some("serious") => counts[1] += 1,
+                    Some("moderate") => counts[2] += 1,
+                    Some("minor") => counts[3] += 1,
+                    _ => {}
+                }
+                elements += i64::from(row.nodes_total);
+                for (pos, node) in row.nodes.iter().take(A11Y_NODES_PER_RESULT).enumerate() {
+                    if used >= A11Y_NODES_PER_PAGE {
+                        break;
+                    }
+                    insert_node.execute(params![
+                        result_id,
+                        pos as i64,
+                        node.selector.as_ref(),
+                        node.excerpt.as_ref()
+                    ])?;
+                    used += 1;
+                }
+            }
+        }
+        let wcags: Vec<String> = rows.iter().map(|r| r.wcag.to_string()).collect();
+        let mut live = self.a11y_live.get();
+        live.checked += 1;
+        live.static_seen = true;
+        self.a11y_live.set(live);
+        self.conn
+            .prepare_cached(
+                "INSERT INTO a11y_audits (url_id, static_state, critical, serious, moderate, minor, needs_review, \
+                 checks_failed, elements, lowest_level) VALUES (?1, 'checked', ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8) \
+                 ON CONFLICT(url_id) DO UPDATE SET static_state = 'checked', critical = ?2, serious = ?3, \
+                 moderate = ?4, minor = ?5, checks_failed = ?6, elements = ?7, lowest_level = ?8",
+            )?
+            .execute(params![
+                url_id,
+                counts[0],
+                counts[1],
+                counts[2],
+                counts[3],
+                rows.len() as i64,
+                elements,
+                lowest_a11y_level(&wcags)
+            ])?;
+        self.record_mobile(url_id, mobile)
+    }
+
+    /// Sets the page's `static_state` or `full_state` (with the reason and
+    /// probe time for the full checks), creating its `a11y_audits` row.
+    pub fn set_a11y_state(
+        &self,
+        url_id: i64,
+        source: &str,
+        state: &str,
+        reason: Option<&str>,
+        check_ms: Option<i64>,
+    ) -> Result<()> {
+        if source == "full" {
+            let mut live = self.a11y_live.get();
+            if !live.static_seen {
+                live.checked += 1;
+            }
+            if let Some(ms) = check_ms {
+                live.full_pages += 1;
+                live.full_ms += ms.max(0) as u64;
+            }
+            self.a11y_live.set(live);
+            self.conn
+                .prepare_cached(
+                    "INSERT INTO a11y_audits (url_id, full_state, full_reason, check_ms) VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(url_id) DO UPDATE SET full_state = ?2, full_reason = ?3, check_ms = ?4",
+                )?
+                .execute(params![url_id, state, reason, check_ms])?;
+        } else {
+            self.conn
+                .prepare_cached(
+                    "INSERT INTO a11y_audits (url_id, static_state) VALUES (?1, ?2) \
+                     ON CONFLICT(url_id) DO UPDATE SET static_state = ?2",
+                )?
+                .execute(params![url_id, state])?;
+        }
+        Ok(())
+    }
+
+    /// Upserts the page's `mobile_measures`; only the fields that are Some
+    /// overwrite what is stored.
+    pub fn record_mobile(&self, url_id: i64, m: &MobileRow<'_>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO mobile_measures (url_id, viewport, viewport_state, plugins, window, measured, \
+                 content_px, window_px, widest, small_text_share, small_targets, examples) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                 ON CONFLICT(url_id) DO UPDATE SET \
+                 viewport = COALESCE(excluded.viewport, viewport), \
+                 viewport_state = COALESCE(excluded.viewport_state, viewport_state), \
+                 plugins = COALESCE(excluded.plugins, plugins), \
+                 window = COALESCE(excluded.window, window), \
+                 measured = COALESCE(excluded.measured, measured), \
+                 content_px = COALESCE(excluded.content_px, content_px), \
+                 window_px = COALESCE(excluded.window_px, window_px), \
+                 widest = COALESCE(excluded.widest, widest), \
+                 small_text_share = COALESCE(excluded.small_text_share, small_text_share), \
+                 small_targets = COALESCE(excluded.small_targets, small_targets), \
+                 examples = COALESCE(excluded.examples, examples)",
+            )?
+            .execute(params![
+                url_id,
+                m.viewport,
+                m.viewport_state,
+                m.plugins,
+                m.window,
+                m.measured,
+                m.content_px,
+                m.window_px,
+                m.widest,
+                m.small_text_share,
+                m.small_targets,
+                m.examples
+            ])?;
+        Ok(())
+    }
+
     /// The stored raw HTML of a page, byte-identical to the received body
     /// (FR-030). None when the crawl did not keep it.
     pub fn page_html(&self, url_id: i64) -> Result<Option<Vec<u8>>> {
@@ -1948,6 +2351,60 @@ impl CrawlStore {
                 f.outcome,
                 f.error,
                 f.fetched_at
+            ])?;
+        Ok(())
+    }
+
+    /// The Markdown alternate of every internal page's raw HTML, in page
+    /// order: page id, page address, host key and the alternate as found
+    /// (spec 016 FR-012).
+    pub fn for_each_md_alternate(&self, mut f: impl FnMut(i64, &str, &str, &str)) -> Result<()> {
+        let mut st = self.conn.prepare(
+            "SELECT a.url_id, u.url, u.host_key, a.md_alternate FROM page_agent a
+             JOIN urls u ON u.id = a.url_id
+             WHERE a.source = 'raw' AND u.internal = 1 AND a.md_alternate IS NOT NULL
+             ORDER BY a.url_id",
+        )?;
+        let mut rows = st.query([])?;
+        while let Some(r) = rows.next()? {
+            f(
+                r.get(0)?,
+                &r.get::<_, String>(1)?,
+                &r.get::<_, String>(2)?,
+                &r.get::<_, String>(3)?,
+            );
+        }
+        Ok(())
+    }
+
+    /// What requesting a Markdown alternate found, for each page pointing at it.
+    pub fn record_md_check(&self, url_ids: &[i64], status: Option<u16>, outcome: &str) -> Result<()> {
+        let mut st = self.conn.prepare_cached(
+            "UPDATE page_agent SET md_status = ?2, md_outcome = ?3 WHERE url_id = ?1 AND source = 'raw'",
+        )?;
+        for id in url_ids {
+            st.execute(params![id, status, outcome])?;
+        }
+        Ok(())
+    }
+
+    /// One MCP endpoint's discovery answer (spec 016 FR-011).
+    pub fn record_mcp_check(&self, m: &super::agent_checks::McpRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO agent_mcp_checks
+                     (host_key, url, status, answered, protocol_versions, requires_sign_in, error, checked_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?
+            .execute(params![
+                m.host_key,
+                m.url,
+                m.status,
+                m.answered,
+                serde_json::to_string(&m.protocol_versions).unwrap_or_else(|_| "[]".into()),
+                m.requires_sign_in,
+                m.error,
+                m.checked_at
             ])?;
         Ok(())
     }
@@ -2841,15 +3298,18 @@ impl CrawlStore {
 
     /// Queues a page for rendering. `input` is the compressed raw body and
     /// its size, kept only until the render is final, when the crawl does
-    /// not store page HTML (research R8).
-    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<()> {
+    /// not store page HTML (research R8). Returns whether the page was added
+    /// (a page already in the table is left as it is).
+    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<bool> {
         let seq = self.take_render_seq()?;
-        self.conn
+        let added = self
+            .conn
             .prepare_cached(
                 "INSERT INTO renders (url_id, state, queue_seq) VALUES (?1, 'queued', ?2)
                  ON CONFLICT(url_id) DO NOTHING",
             )?
-            .execute(params![url_id, seq])?;
+            .execute(params![url_id, seq])?
+            == 1;
         if let Some((packed, size)) = input {
             self.conn
                 .prepare_cached(
@@ -2857,7 +3317,7 @@ impl CrawlStore {
                 )?
                 .execute(params![url_id, body::CODEC, size as i64, packed])?;
         }
-        Ok(())
+        Ok(added)
     }
 
     /// Records a page that is not rendered at all (`outside_rules`,

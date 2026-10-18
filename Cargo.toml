@@ -31,6 +31,7 @@ cookie_store = { version = "0.22", default-features = false }
 cookie = "0.18"
 url = { version = "2", features = ["serde"] }
 scraper = "0.24"
+similar = "2"
 html5ever = "0.35"
 ego-tree = "0.10"
 zstd = "0.13"
@@ -70,6 +71,7 @@ predicates = "3"
 unicode-segmentation = "1"
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 jsonschema = { version = "0.33", default-features = false }
+boa_engine = "0.20"
 chromiumoxide = { version = "0.9.1", default-features = false }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }

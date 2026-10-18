@@ -16,7 +16,7 @@ pub struct ToolDef {
     pub schema: fn() -> Value,
 }
 
-fn crawl_prop() -> Value {
+pub(crate) fn crawl_prop() -> Value {
     json!({"type": "string", "description": "Crawl id from list_crawls."})
 }
 
@@ -28,7 +28,7 @@ fn page_props() -> Value {
     })
 }
 
-fn obj(props: Value, required: &[&str]) -> Value {
+pub(crate) fn obj(props: Value, required: &[&str]) -> Value {
     json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
 }
 
@@ -111,6 +111,24 @@ pub const TOOLS: &[ToolDef] = &[
         name: "page_agent_findings",
         description: "How usable one page is for AI agents: its forms and fields with their accessible names, buttons without a name, actions that are not links, declared agent tools and the Markdown version.",
         schema: || obj(page_props(), &["crawl"]),
+    },
+    ToolDef {
+        name: "agents_summary",
+        description: "How ready the whole site is for AI agents: the crawl score and its four parts (access, discovery, reading, acting), the rules that cost the most points and the checks that could not run, with the reasons.",
+        schema: || obj(json!({"crawl": crawl_prop()}), &["crawl"]),
+    },
+    ToolDef {
+        name: "host_entry_points",
+        description: "What each host of the crawl offers to AI agents: the AI Catalog, API catalog, agent card and the service links found on pages, with the outcome of each and the problems found in the document.",
+        schema: || {
+            obj(
+                json!({
+                    "crawl": crawl_prop(),
+                    "host": {"type": "string", "description": "Only this host, for example www.example.com."}
+                }),
+                &["crawl"],
+            )
+        },
     },
     ToolDef {
         name: "export_rows",

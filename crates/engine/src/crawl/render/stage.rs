@@ -9,18 +9,21 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use spiderlens_config::{CrawlConfig, UaPreset, UrlFilter, WindowPreset};
 use spiderlens_render::{
     BlockSet, Browser, BrowserInfo, InternalHosts, LaunchError, LaunchOptions, MainResponse, Network,
-    RenderJob, RenderOutcome, ScreenshotOptions, Window,
+    PageProbe, RenderJob, RenderOutcome, ScreenshotOptions, Window,
 };
 use tokio::sync::{RwLock, Semaphore};
 use url::Url;
 
+use super::a11y_probe::{self, ProbeReport};
+use super::guard::{MemoryGuard, MemorySource, SystemMemory, TICK_EVERY};
 use super::net::{EngineNet, NetShared, Note};
-use crate::crawl::store::{CrawlStore, RenderEntry, Result as StoreResult};
+use super::progress::{Meter, RenderProgress};
+use crate::crawl::store::{CrawlStore, RenderEntry, RenderStatus, Result as StoreResult};
 use crate::extract::compare::{Comparison, compare};
 use crate::extract::{self, HeaderFacts, PageData, PageInput, body, challenge};
 
@@ -45,6 +48,9 @@ pub(crate) struct Rendered {
     pub header_facts: HeaderFacts,
     /// Compressed serialised DOM and its size, when HTML is kept.
     pub html: Option<(Vec<u8>, usize)>,
+    /// The accessibility and mobile probes, parsed on the render task
+    /// (spec 026). Empty when the job carried no probes.
+    pub probe_report: ProbeReport,
 }
 
 /// The parts of every page's job that come from the settings.
@@ -56,6 +62,11 @@ struct JobTemplate {
     block: BlockSet,
     internal: InternalHosts,
     screenshot: bool,
+    /// Spec 026: the probes every job carries, built once, and the shared
+    /// cap of all of them. Empty unless full checks or mobile checks (with a
+    /// mobile window) are on.
+    probes: Vec<PageProbe>,
+    probes_total: Duration,
 }
 
 pub(crate) struct RenderStage {
@@ -76,6 +87,22 @@ pub(crate) struct RenderStage {
     filter: UrlFilter,
     /// Also render internal 4xx and 5xx HTML pages (FR-004).
     error_pages: bool,
+    /// Lowers and raises `limit` with memory pressure (FR-037, FR-038).
+    guard: MemoryGuard,
+    memory: Box<dyn MemorySource>,
+    last_tick: Option<Instant>,
+    /// The guard asked for a restart between pages (over budget at a limit
+    /// of 1, or 1,000 pages since the last one).
+    restart_asked: AtomicBool,
+    /// A render failed in a way that may mean the browser died: check it
+    /// before the next page and start a new one if it is gone (FR-042).
+    suspect: Arc<AtomicBool>,
+    /// The browser died and could not be started again: the rest of the
+    /// queue becomes `browser_unavailable` (FR-046).
+    unavailable: Arc<AtomicBool>,
+    /// Sizes of the queue and of the finished work, for progress and
+    /// back-pressure. The queue itself is in the crawl file.
+    meter: Meter,
 }
 
 /// What happens to a fetched page when the crawl renders (plan D2).
@@ -159,14 +186,20 @@ impl RenderStage {
         // edited by hand falls back to rendering every eligible page.
         let filter = UrlFilter::new(&r.include, &r.exclude)
             .unwrap_or_else(|_| UrlFilter::new(&[], &[]).expect("no patterns"));
+        let window = window_for(config);
+        let (probes, probes_total) = a11y_probe::probes_for(&config.accessibility, window.mobile);
         let browser = Browser::launch(info, launch).await?;
+        let limit = r
+            .concurrency
+            .unwrap_or_else(spiderlens_render::default_concurrency)
+            .max(1);
         Ok(Self {
             browser: Arc::new(RwLock::new(browser)),
             restarting: Arc::new(AtomicBool::new(false)),
             net,
             template: JobTemplate {
                 user_agent,
-                window: window_for(config),
+                window,
                 max_time: Duration::from_secs_f64(r.max_render_secs),
                 min_wait: Duration::from_secs_f64(r.min_wait_secs),
                 block: BlockSet {
@@ -178,17 +211,23 @@ impl RenderStage {
                 },
                 internal,
                 screenshot: r.screenshots,
+                probes,
+                probes_total,
             },
             queue: VecDeque::new(),
             last_seq: None,
             exhausted: false,
             open: 0,
-            limit: r
-                .concurrency
-                .unwrap_or_else(spiderlens_render::default_concurrency)
-                .max(1),
+            limit,
             filter,
             error_pages: r.render_error_pages,
+            guard: MemoryGuard::new(limit, r.memory_budget_mb),
+            memory: Box::new(SystemMemory),
+            last_tick: None,
+            restart_asked: AtomicBool::new(false),
+            suspect: Arc::new(AtomicBool::new(false)),
+            unavailable: Arc::new(AtomicBool::new(false)),
+            meter: Meter::new(0, 0),
         })
     }
 
@@ -206,9 +245,45 @@ impl RenderStage {
         }
     }
 
+    /// Counts the queue and the finished renders already in the file (a
+    /// resumed crawl) and sets the back-pressure marks.
+    pub(crate) fn init_counts(&mut self, store: &CrawlStore, high: u64, low: u64) -> StoreResult<()> {
+        let (mut queued, mut done) = (0, 0);
+        for (state, n) in store.render_counts()? {
+            match state {
+                RenderStatus::Queued | RenderStatus::Rendering => queued += n,
+                RenderStatus::Rendered | RenderStatus::TimedOut | RenderStatus::Failed => done += n,
+                RenderStatus::NotRendered => {}
+            }
+        }
+        self.meter = Meter::new(queued, done);
+        self.meter.set_marks(high, low);
+        Ok(())
+    }
+
     /// A page was queued for rendering after the last refill.
     pub(crate) fn on_enqueued(&mut self) {
         self.exhausted = false;
+        self.meter.queued += 1;
+    }
+
+    /// A queued render started.
+    pub(crate) fn on_started(&mut self) {
+        self.meter.queued = self.meter.queued.saturating_sub(1);
+    }
+
+    /// A render reached a final state.
+    pub(crate) fn on_done(&mut self) {
+        self.meter.done += 1;
+    }
+
+    /// Fetching must not start page requests now (FR-035, back-pressure).
+    pub(crate) fn queue_full(&mut self) -> bool {
+        self.meter.queue_full()
+    }
+
+    pub(crate) fn progress(&mut self, fetching_done: bool) -> RenderProgress {
+        self.meter.progress(self.open, self.limit, fetching_done)
     }
 
     /// The next queued render, in queue order.
@@ -241,20 +316,82 @@ impl RenderStage {
     /// A render to try again goes back to the head of the window (its queue
     /// place is earlier than anything refilled since).
     pub(crate) fn retry(&mut self, entry: RenderEntry) {
+        self.meter.queued += 1;
         self.queue.push_front(entry);
     }
 
     /// Restarts the browser between pages when a render had to be abandoned.
     /// Renders started meanwhile wait for the new process.
     pub(crate) fn restart_if_needed(&self) {
-        let needs = self.browser.try_read().is_ok_and(|b| b.needs_restart());
-        if needs && !self.restarting.swap(true, Ordering::AcqRel) {
+        let asked = self.restart_asked.swap(false, Ordering::AcqRel);
+        let stuck = self.browser.try_read().is_ok_and(|b| b.needs_restart());
+        let suspect = self.suspect.swap(false, Ordering::AcqRel);
+        if (asked || stuck || suspect) && !self.restarting.swap(true, Ordering::AcqRel) {
             let browser = self.browser.clone();
             let flag = self.restarting.clone();
+            let unavailable = self.unavailable.clone();
+            // A suspect browser is replaced only if it is gone; one that
+            // was asked for (memory, 1,000 pages) or is stuck always is.
+            let always = asked || stuck;
             tokio::spawn(async move {
-                let _ = browser.write().await.restart().await;
+                // Waits for the renders in progress to end.
+                let mut b = browser.write().await;
+                if always || !b.is_alive().await {
+                    // One more try: a first launch can fail while the old
+                    // process is still being cleaned up.
+                    let mut relaunched = b.restart().await.is_ok();
+                    if !relaunched {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        relaunched = b.restart().await.is_ok();
+                    }
+                    if !relaunched {
+                        unavailable.store(true, Ordering::Release);
+                    }
+                }
+                drop(b);
                 flag.store(false, Ordering::Release);
             });
+        }
+    }
+
+    /// A render failed in a way that may mean the browser is gone.
+    pub(crate) fn browser_suspect(&self) {
+        self.suspect.store(true, Ordering::Release);
+    }
+
+    /// The browser is gone and could not be started again.
+    pub(crate) fn unavailable(&self) -> bool {
+        self.unavailable.load(Ordering::Acquire)
+    }
+
+    /// Once a second: reads memory and lowers or raises the render limit
+    /// (plan D10). Called from the coordinator's loop; cheap between ticks.
+    pub(crate) fn guard_tick(&mut self) {
+        let now = Instant::now();
+        if self.last_tick.is_some_and(|t| now.duration_since(t) < TICK_EVERY) {
+            return;
+        }
+        self.last_tick = Some(now);
+        let browser_bytes = self.browser.try_read().map_or(0, |b| b.memory_bytes());
+        let reading = self.memory.read(browser_bytes);
+        let decision = self.guard.tick(reading, now);
+        self.limit = decision.limit;
+        if decision.restart {
+            self.restart_asked.store(true, Ordering::Release);
+        }
+    }
+
+    /// Memory holds the render limit below what the settings allow: the
+    /// limiting reason `memory_guard` (plan D13).
+    #[allow(dead_code)] // read by the progress line (batch A)
+    pub(crate) fn memory_limited(&self) -> bool {
+        self.guard.limited()
+    }
+
+    /// A render ended: every 1,000 pages the browser restarts to cap leaks.
+    pub(crate) fn page_done(&mut self) {
+        if self.guard.page_done() {
+            self.restart_asked.store(true, Ordering::Release);
         }
     }
 
@@ -284,6 +421,16 @@ impl RenderStage {
         job.max_time = t.max_time;
         job.min_wait = t.min_wait;
         job.block = t.block;
+        if !t.probes.is_empty() {
+            // Spec 026 FR-012: contrast and layout checks need the page's
+            // fonts and images (media stay blocked as set).
+            job.block.fonts = false;
+            job.block.images = false;
+            job.probes = t.probes.clone();
+            job.probes_max_total = t.probes_total;
+        }
+        let want_full = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_A11Y);
+        let want_mobile = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_MOBILE);
         job.internal_hosts = t.internal.clone();
         job.screenshot = t.screenshot.then(ScreenshotOptions::default);
         let internal = t.internal.clone();
@@ -291,7 +438,7 @@ impl RenderStage {
         let browser = self.browser.clone();
         self.open += 1;
         tokio::spawn(async move {
-            let outcome = {
+            let mut outcome = {
                 let b = browser.read().await;
                 b.render(job, net.clone() as Arc<dyn Network>).await
             };
@@ -306,6 +453,7 @@ impl RenderStage {
             let permit = budget.acquire_many(kib).await;
             let charset = charset_of(&headers);
             let page_url = url.clone();
+            let probe_outcomes = std::mem::take(&mut outcome.probes);
             let work = tokio::task::spawn_blocking(move || {
                 let input = |body: &[u8], charset: Option<&str>| {
                     extract::extract_page_caught(
@@ -339,17 +487,26 @@ impl RenderStage {
                 } else {
                     None
                 };
-                (raw, rendered, comparison, bot_challenge, packed)
+                // Probe results are parsed here, off the coordinator; a bot
+                // challenge page keeps none (spec 026 FR-014).
+                let probe_report = if want_full || want_mobile {
+                    a11y_probe::digest(probe_outcomes, bot_challenge)
+                } else {
+                    ProbeReport::default()
+                };
+                (raw, rendered, comparison, bot_challenge, packed, probe_report)
             });
-            let (raw, rendered, comparison, bot_challenge, html) = work.await.unwrap_or_else(|e| {
-                (
-                    None,
-                    Some(Err(format!("Page extraction failed: {e}"))),
-                    None,
-                    false,
-                    None,
-                )
-            });
+            let (raw, rendered, comparison, bot_challenge, html, probe_report) =
+                work.await.unwrap_or_else(|e| {
+                    (
+                        None,
+                        Some(Err(format!("Page extraction failed: {e}"))),
+                        None,
+                        false,
+                        None,
+                        ProbeReport::default(),
+                    )
+                });
             drop(permit);
             report(Rendered {
                 entry,
@@ -361,6 +518,7 @@ impl RenderStage {
                 bot_challenge,
                 header_facts,
                 html,
+                probe_report,
             });
         });
     }

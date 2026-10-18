@@ -17,8 +17,9 @@ use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError,
-    Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, SegmentCounts, TabCounts,
-    TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in, issue_tabs, tabs,
+    Features, FilterCounts, HtmlDiff, HtmlVersion, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage,
+    SegmentCounts, TabCounts, TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in,
+    issue_tabs, tabs,
 };
 use spiderlens_results::{
     GenerateError, GenerateReport, OrphanSummary, SitemapFiles, SitemapOutput, UrlSitemapEntry,
@@ -379,6 +380,26 @@ pub async fn agents_page(
         .await
 }
 
+/// The crawl's AI agent score and what drives it (spec 016 FR-018).
+#[tauri::command]
+pub async fn agents_summary(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+) -> Cmd<spiderlens_results::agents::AgentsSummary> {
+    state.with(&path, move |r| r.agents_summary().map_err(err)).await
+}
+
+/// What each host offers to AI agents (spec 016 FR-008).
+#[tauri::command]
+pub async fn agents_entry_points(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+) -> Cmd<Vec<spiderlens_results::agents::EntryPointRow>> {
+    state
+        .with(&path, move |r| r.agent_entry_points().map_err(err))
+        .await
+}
+
 #[tauri::command]
 pub async fn url_list(
     state: tauri::State<'_, State>,
@@ -388,10 +409,12 @@ pub async fn url_list(
     from: u32,
     count: u32,
     position: Option<String>,
+    values: Option<Values>,
 ) -> Cmd<ListPage> {
     state
         .with(&path, move |r| {
-            r.list_at(id, kind, position.as_deref(), from, count).map_err(err)
+            r.list_values(id, kind, position.as_deref(), values, from, count)
+                .map_err(err)
         })
         .await
 }
@@ -605,10 +628,35 @@ pub async fn cookie_urls(
         .await
 }
 
-/// A page's stored HTML for the source viewer (T029).
+/// A page's stored HTML for the source viewer (T029): the raw version, or
+/// the rendered one with `version` (spec 014 FR-032).
 #[tauri::command]
-pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageHtml> {
-    state.with(&path, move |r| r.page_html(id).map_err(err)).await
+pub async fn url_html(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    id: i64,
+    version: Option<HtmlVersion>,
+) -> Cmd<PageHtml> {
+    state
+        .with(&path, move |r| {
+            r.page_html_version(id, version.unwrap_or_default()).map_err(err)
+        })
+        .await
+}
+
+/// The differences between a page's normalised raw and rendered HTML:
+/// `max_hunks` hunks from hunk `from_hunk` (spec 014 FR-028).
+#[tauri::command]
+pub async fn url_html_diff(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    id: i64,
+    from_hunk: u32,
+    max_hunks: u32,
+) -> Cmd<HtmlDiff> {
+    state
+        .with(&path, move |r| r.html_diff(id, from_hunk, max_hunks).map_err(err))
+        .await
 }
 
 /// The tabs that list URL `id` unfiltered, for "show in table".
@@ -832,19 +880,29 @@ struct IssuesPartial {
 /// Runs the Crawl Analysis passes that have not run on `path` (spec 009
 /// plan D12), sending `passes-progress` events. `cancel` stops it between
 /// batches; finished passes stay.
-pub fn analyse(app: &AppHandle, path: &Path, cancel: &AtomicBool) -> Result<AnalysisReport, String> {
+pub fn analyse(
+    app: &AppHandle,
+    path: &Path,
+    skip: &[&str],
+    cancel: &AtomicBool,
+) -> Result<AnalysisReport, String> {
     let mut progress = |p: PassProgress| {
         let _ = app.emit("passes-progress", p);
     };
-    spiderlens_results::analysis::analyse_file(path, &mut progress, cancel).map_err(|e| e.to_string())
+    spiderlens_results::analysis::analyse_file_with(path, skip, &mut progress, cancel)
+        .map_err(|e| e.to_string())
 }
 
 /// Analyses an opened file whose passes are missing or stale.
 #[tauri::command]
 pub async fn passes_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
-    tauri::async_runtime::spawn_blocking(move || analyse(&app, &path, &AtomicBool::new(false)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        // Link analysis only when the file's settings run it automatically.
+        let skip = spiderlens_results::analysis::auto_skips(&path).unwrap_or_default();
+        analyse(&app, &path, &skip, &AtomicBool::new(false))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The issues of one URL with evidence (FR-016).

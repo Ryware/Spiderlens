@@ -10,8 +10,8 @@ use spiderlens_config::Change;
 use spiderlens_config::{ModeInput, normalize_url, validate};
 use spiderlens_engine::crawl::file::{self, DEFAULT_DISK_RESERVE};
 use spiderlens_engine::crawl::{
-    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ResumeOptions,
-    Upgrade, UrlState, default_file_name, retry_preview,
+    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, RenderSummary,
+    ResumeOptions, Upgrade, UrlState, default_file_name, retry_preview,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -21,13 +21,17 @@ use crate::{exit, print_issues, print_json, read_input};
 #[derive(Args)]
 pub struct CrawlCmd {
     /// Start URL (Spider mode).
-    #[arg(required_unless_present_any = ["list", "resume"])]
+    #[arg(required_unless_present_any = ["list", "list_sitemap", "resume"])]
     url: Option<String>,
     /// URL list file, text or CSV (List mode).
     #[arg(long, value_name = "FILE", conflicts_with = "url")]
     list: Option<PathBuf>,
+    /// Sitemap address or file whose page URLs are the list (List mode); a
+    /// file may be followed by =BASE-URL for relative addresses.
+    #[arg(long, value_name = "URL-OR-PATH[=BASE-URL]", conflicts_with_all = ["url", "list"])]
+    list_sitemap: Option<String>,
     /// Continue a paused or stopped crawl with its stored settings.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "out"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "list_sitemap", "out"])]
     resume: Option<PathBuf>,
     /// Crawl file to create [default: <host>-<time>.spiderlens].
     #[arg(long, value_name = "FILE")]
@@ -38,6 +42,13 @@ pub struct CrawlCmd {
     /// No progress on stderr.
     #[arg(long)]
     quiet: bool,
+    /// Skip the Crawl Analysis phase at the end (link positions, Link Score,
+    /// sitemap checks); run `spiderlens analyse <file>` later.
+    #[arg(long)]
+    no_analyse: bool,
+    /// Also find near duplicate content when the crawl ends (otherwise run `spiderlens duplicates`).
+    #[arg(long)]
+    near_duplicates: bool,
     /// Pause when less than this much space (MB) is free on the crawl
     /// file's drive.
     #[arg(long, value_name = "MB", default_value_t = DEFAULT_DISK_RESERVE / (1024 * 1024))]
@@ -115,6 +126,10 @@ pub struct ReportArgs {
     /// Issue settings JSON (rule overrides) for --audit and --html.
     #[arg(long, value_name = "FILE")]
     issues: Option<PathBuf>,
+    /// With --audit or --html: add a section on what changed since this
+    /// earlier crawl file.
+    #[arg(long, value_name = "PREVIOUS", conflicts_with_all = ["not_crawled", "crawled", "reason", "log"])]
+    compare_with: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -175,7 +190,7 @@ pub fn run_retry(args: RetryArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    execute(crawler, args.file, args.quiet, args.json)
+    execute(crawler, args.file, args.quiet, args.json, true, false)
 }
 
 #[derive(Args)]
@@ -221,13 +236,15 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 15] = [
+        const ALLOWED: [&str; 17] = [
             "resume",
             "cookies_file",
             "browser",
             "allow_browser_download",
             "json",
             "quiet",
+            "no_analyse",
+            "near_duplicates",
             "disk_reserve",
             "no_backup",
             "header_secret",
@@ -348,7 +365,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     } else {
-        let mode = if cmd.list.is_some() {
+        let mode = if cmd.list.is_some() || cmd.list_sitemap.is_some() {
             spiderlens_config::Mode::List
         } else {
             spiderlens_config::Mode::Spider
@@ -363,10 +380,15 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         for n in &resolved.notices {
             eprintln!("notice: {n}");
         }
-        let input = match read_input(cmd.url.as_deref(), cmd.list.as_deref()) {
+        let input = match read_input(
+            cmd.url.as_deref(),
+            cmd.list.as_deref(),
+            cmd.list_sitemap.as_deref(),
+            &resolved.config,
+        ) {
             Ok(Some(i)) => i,
             Ok(None) => {
-                eprintln!("error: give a start URL or --list FILE");
+                eprintln!("error: give a start URL, --list FILE or --list-sitemap URL-OR-PATH");
                 return ExitCode::from(exit::USAGE);
             }
             Err(code) => return code,
@@ -441,7 +463,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());
     }
-    execute(crawler, file, cmd.quiet, cmd.json)
+    execute(
+        crawler,
+        file,
+        cmd.quiet,
+        cmd.json,
+        !cmd.no_analyse,
+        cmd.near_duplicates,
+    )
 }
 
 /// Reads a browser's `cookies.txt` as a login session, keeping the start
@@ -515,14 +544,66 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
     }
 }
 
+/// The second progress line of a crawl with rendering on (spec 014 FR-040):
+/// what is rendered, waiting and rendering, how fast, and why rendering is
+/// the slower stage, if it is.
+fn render_line(r: &spiderlens_engine::crawl::render::progress::RenderProgress) -> String {
+    use spiderlens_engine::crawl::render::progress::RenderLimiting as L;
+    let why = match r.limiting {
+        Some(L::QueueFull) => "  (fetching is paused until fewer pages wait to be rendered)".to_string(),
+        Some(L::Concurrency) => format!("  (rendering {} pages at once)", r.limit),
+        Some(L::MemoryGuard) => "  (the memory guard lowered the number of pages rendered at once)".into(),
+        Some(L::SlowPages) => "  (slow pages are using the render slots)".into(),
+        Some(L::SiteLimits) => "  (the site's limits hold back the pages' resources)".into(),
+        None => String::new(),
+    };
+    let done = if r.fetching_done {
+        "  fetching done; rendering continues"
+    } else {
+        ""
+    };
+    format!(
+        "rendered {}  waiting {}  rendering {}  {:.1} pages/s{done}{why}",
+        r.rendered, r.queued, r.rendering, r.pages_per_sec
+    )
+}
+
+/// Runs the near duplicate analysis (spec 020) into the file, as the process
+/// that wrote it. A failure is a warning: the crawl itself succeeded and
+/// `spiderlens duplicates` can run it again.
+fn analyse_after_crawl(file: &Path, quiet: bool) {
+    use spiderlens_results::near_dup;
+    let settings = near_dup::open_read_only(file)
+        .ok()
+        .and_then(|c| near_dup::stored_settings(&c).ok())
+        .unwrap_or_default();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match near_dup::analyse_file(file, &settings, true, &cancel, |_, _, _| {}) {
+        Ok((_, s)) if !quiet => eprintln!(
+            "near duplicates: {} pages compared, {} clusters ({} ms)",
+            s.compared, s.clusters, s.ms
+        ),
+        Ok(_) | Err(spiderlens_results::Error::Unavailable(_)) => {}
+        Err(e) => eprintln!("warning: near duplicate analysis did not finish: {e}"),
+    }
+}
+
 /// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and
 /// prints its progress and summary.
-fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode {
+fn execute(
+    crawler: Crawler,
+    file: PathBuf,
+    quiet: bool,
+    json: bool,
+    analyse: bool,
+    near_dup: bool,
+) -> ExitCode {
     let rt = match runtime() {
         Ok(rt) => rt,
         Err(code) => return code,
     };
     let ai_auto = crawler.config().ai_checks.auto;
+    let a11y_level = crawler.config().accessibility.level.clone();
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -574,10 +655,18 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
                                 Some(l) if !p.waiting_for_host => format!("  ({})", l.message),
                                 _ => String::new(),
                             };
+                            let a11y = match (p.a11y_checked, p.a11y_avg_ms) {
+                                (0, _) => String::new(),
+                                (n, Some(ms)) => format!("  accessibility checked {n} (full checks {ms} ms each)"),
+                                (n, None) => format!("  accessibility checked {n}"),
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{limit}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{a11y}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
+                            if let Some(r) = &p.render {
+                                eprintln!("{}", render_line(r));
+                            }
                         }
                     }
                 }
@@ -608,14 +697,35 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
     record_issue_settings(&file);
     // The Crawl Analysis phase, while this process still owns the file
     // (spec 009 plan D12).
-    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
-        eprintln!(
-            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
-            file.display()
-        );
+    if !analyse {
+        // --no-analyse (spec 023 FR-028); the exit code still reflects the
+        // crawl only.
+        if !json && !quiet {
+            eprintln!(
+                "crawl analysis skipped; run spiderlens analyse {}",
+                file.display()
+            );
+        }
+    } else {
+        // Link analysis follows the crawl's own setting (FR-012).
+        let skip = spiderlens_results::analysis::auto_skips(&file).unwrap_or_default();
+        if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet, &skip) {
+            eprintln!(
+                "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+                file.display()
+            );
+        }
+    }
+    if !json && !quiet {
+        crate::accessibility_cmd::print_crawl_summary(&file, &a11y_level);
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
+    // Opt-in: it adds to the process's run time, which the crawl benchmark
+    // measures.
+    if near_dup && summary.crawled > 0 {
+        analyse_after_crawl(&file, quiet || json);
     }
     if !json && !quiet {
         eprintln!(
@@ -754,19 +864,14 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
 
 /// The Rendering block (contracts/cli.md "Summary"): final states and
 /// reasons add up to the pages eligible for rendering.
-fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::RenderSummary) {
+fn print_render_summary(out: &mut impl Write, r: &RenderSummary) {
     let n = |k: &str| r.by_state.get(k).copied().unwrap_or(0);
     let reason = |k: &str| r.by_reason.get(k).copied().unwrap_or(0);
-    let label = |k: &'static str| match k {
-        "crash" => "Browser crash",
-        "renderer_error" => "Renderer error",
-        "page_too_large" => "Page too large",
-        "navigation_error" => "Navigation error",
-        "outside_rules" => "Outside rendering rules",
-        "crawl_stopped" => "Crawl stopped",
-        "browser_unavailable" => "Browser unavailable",
-        "html_not_stored" => "Raw HTML not stored",
-        other => other,
+    let label = |k: &'static str| {
+        RenderSummary::REASONS
+            .iter()
+            .find(|(key, _)| *key == k)
+            .map_or(k, |(_, label)| *label)
     };
     let _ = writeln!(out, "Rendering");
     let _ = writeln!(out, "  {:<32} {}", "Rendered", n("rendered"));
@@ -807,12 +912,22 @@ fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::Rend
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
+    if args.compare_with.is_some() && !args.audit && args.html.is_none() {
+        eprintln!("error: --compare-with needs --audit or --html");
+        return ExitCode::from(exit::USAGE);
+    }
     if args.audit {
-        return crate::report_cmd::run_audit(&args.file, args.issues.as_deref(), args.json);
+        return crate::report_cmd::run_audit(
+            &args.file,
+            args.issues.as_deref(),
+            args.json,
+            args.compare_with.as_deref(),
+        );
     }
     if let Some(out) = args.html {
         let a = crate::report_cmd::HtmlArgs {
             out,
+            compare_with: args.compare_with,
             title: args.title,
             note: args.note,
             urls_per_issue: args.urls_per_issue,
@@ -972,6 +1087,13 @@ pub struct HtmlArgs {
     /// Write to this file instead of standard output.
     #[arg(long, value_name = "PATH")]
     out: Option<PathBuf>,
+    /// The stored rendered HTML, as the browser serialised it.
+    #[arg(long, conflicts_with = "diff")]
+    rendered: bool,
+    /// The differences between the normalised raw and rendered HTML, as a
+    /// unified diff.
+    #[arg(long)]
+    diff: bool,
 }
 
 /// Finds the URL as given, then in its normalized form.
@@ -1152,15 +1274,33 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
         Ok(Some(id)) => id,
         _ => return ExitCode::FAILURE,
     };
-    let html = match store.page_html(id) {
-        Ok(Some(h)) => h,
-        Ok(None) => {
-            eprintln!("error: this crawl did not store the HTML of {url}");
-            return ExitCode::FAILURE;
+    let html = if args.diff {
+        let diff =
+            spiderlens_results::Reader::open(&args.file).and_then(|mut reader| reader.html_unified(id));
+        match diff {
+            Ok(d) => d.into_bytes(),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
         }
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
+    } else {
+        let stored = if args.rendered {
+            store.rendered_html(id)
+        } else {
+            store.page_html(id)
+        };
+        match stored {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                let which = if args.rendered { "rendered HTML" } else { "HTML" };
+                eprintln!("error: this crawl did not store the {which} of {url}");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
         }
     };
     let written = match &args.out {
@@ -1274,4 +1414,43 @@ pub fn run_info(args: InfoArgs) -> ExitCode {
         }
     }
     ExitCode::from(exit::FETCHED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_line;
+    use spiderlens_engine::crawl::render::progress::{RenderLimiting, RenderProgress};
+
+    fn progress() -> RenderProgress {
+        RenderProgress {
+            rendered: 120,
+            queued: 30,
+            rendering: 4,
+            pages_per_sec: 7.26,
+            avg_pages_per_sec: 6.0,
+            limit: 4,
+            limiting: None,
+            fetching_done: false,
+        }
+    }
+
+    #[test]
+    fn the_render_line_shows_the_figures() {
+        assert_eq!(
+            render_line(&progress()),
+            "rendered 120  waiting 30  rendering 4  7.3 pages/s"
+        );
+    }
+
+    #[test]
+    fn the_render_line_says_when_fetching_is_done_and_what_limits_rendering() {
+        let mut p = progress();
+        p.fetching_done = true;
+        p.limiting = Some(RenderLimiting::Concurrency);
+        let line = render_line(&p);
+        assert!(line.contains("fetching done; rendering continues"), "{line}");
+        assert!(line.contains("rendering 4 pages at once"), "{line}");
+        p.limiting = Some(RenderLimiting::QueueFull);
+        assert!(render_line(&p).contains("fetching is paused"));
+    }
 }

@@ -3,8 +3,18 @@
 //! agent rules in spec 009's catalogue reuse (009 FR-005).
 
 mod detail;
+mod entry_points;
+mod pass;
+pub mod score;
+mod summary;
 
 pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFindings};
+pub use entry_points::{AgentEntryPoints, EntryPointRow, EntryProblem, Evaluated, evaluate};
+pub use pass::AgentScores;
+pub use score::{AgentPart, WEIGHTS_VERSION};
+pub use summary::{
+    AgentAccessRow, AgentFailedRule, AgentNotChecked, AgentPartScore, AgentProbe, AgentRobots, AgentsSummary,
+};
 
 use std::borrow::Cow;
 
@@ -41,6 +51,8 @@ pub mod conditions {
     pub const DECLARED_TOOLS: &str = any_raw!("declared_tools");
     pub const TOOLS_MISSING_DESCRIPTION: &str = any_raw!("tools_missing_description");
     pub const HAS_MARKDOWN: &str = concat!(raw!("md_alternate"), " IS NOT NULL");
+    /// Pages whose Markdown alternate failed to load or is not Markdown.
+    pub const MARKDOWN_BROKEN: &str = "EXISTS (SELECT 1 FROM page_agent a WHERE a.url_id = u.id AND a.source = 'raw' AND a.md_outcome IN ('error', 'wrong_type'))";
     /// Checked pages only: a page without a `page_agent` row was not checked.
     pub const NO_MARKDOWN: &str = "EXISTS (SELECT 1 FROM page_agent a WHERE a.url_id = u.id AND a.source = 'raw' AND a.md_alternate IS NULL)";
 }

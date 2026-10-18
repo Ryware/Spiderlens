@@ -15,19 +15,22 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
+    A11yLevel, Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
     normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
+use super::agent_checks;
 use super::file::{self, LocalError, LockError, WriterLock};
 use super::health::Transition;
 use super::hosts::{Host, RobotsState};
 use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, SpeedLimit};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
+use super::render::progress::{QUEUE_HIGH, QUEUE_LOW, RenderProgress};
 use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
@@ -236,6 +239,14 @@ pub struct Progress {
     pub sites: Vec<SitePace>,
     /// How many sites have work in progress in all.
     pub sites_total: u32,
+    /// Pages whose accessibility was checked so far (spec 026).
+    pub a11y_checked: u64,
+    /// Average time of a page's full accessibility checks, in milliseconds.
+    pub a11y_avg_ms: Option<u32>,
+    /// Rendering progress (spec 014 D13); absent for crawls that do not
+    /// render, so their progress payload is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -328,6 +339,32 @@ pub struct RenderSummary {
     pub failed_resources: u64,
     pub blocked_resources: u64,
     pub renderer: Option<RendererInfo>,
+}
+
+impl RenderSummary {
+    /// The window's and the CLI's words for a render failure or skip reason
+    /// (`renders.reason`), in the order the summary lists them.
+    pub const REASONS: [(&'static str, &'static str); 8] = [
+        ("crash", "Browser crash"),
+        ("renderer_error", "Renderer error"),
+        ("page_too_large", "Page too large"),
+        ("navigation_error", "Navigation error"),
+        ("outside_rules", "Outside rendering rules"),
+        ("crawl_stopped", "Crawl stopped"),
+        ("browser_unavailable", "Browser unavailable"),
+        ("html_not_stored", "Raw HTML not stored"),
+    ];
+
+    /// The reasons with a count, labelled, in listing order.
+    pub fn labelled_reasons(&self) -> Vec<(&'static str, &'static str, u64)> {
+        Self::REASONS
+            .iter()
+            .filter_map(|(key, label)| {
+                let n = self.by_reason.get(*key).copied().unwrap_or(0);
+                (n > 0).then_some((*key, *label, n))
+            })
+            .collect()
+    }
 }
 
 /// What slowed one site down during a run (spec 008 FR-021).
@@ -502,6 +539,15 @@ enum Msg {
         read: pdf::pool::Read,
     },
     SiteFile(SiteFileRow),
+    /// A Markdown alternate was requested (spec 016 FR-012): what it
+    /// answered, for every page pointing at it.
+    AgentMd {
+        url_ids: Vec<i64>,
+        status: Option<u16>,
+        outcome: &'static str,
+    },
+    /// An MCP endpoint's discovery answer (spec 016 FR-011).
+    AgentMcp(agent_checks::McpRow),
     SiteFilesFinished,
     /// The signed-out check's answer (spec 025 FR-012).
     SessionCheck {
@@ -691,6 +737,59 @@ struct Extracted {
     html: Option<(Vec<u8>, usize)>,
 }
 
+/// Stores the static accessibility findings and mobile facts of one page
+/// (spec 026), inside the writer's batch.
+fn record_static_a11y(
+    store: &CrawlStore,
+    url_id: i64,
+    a: &extract::a11y::A11yStatic,
+) -> Result<(), super::store::StoreError> {
+    use super::store::{A11yNodeRow, A11yRow, MobileRow};
+    use extract::a11y::StaticCheck;
+    let rows: Vec<A11yRow<'_>> = a
+        .findings
+        .iter()
+        .map(|f| A11yRow {
+            check_id: format!("static.{}", f.check.as_str()).into(),
+            kind: "violation",
+            source: "static",
+            impact: Some(f.check.impact().as_str()),
+            wcag: f.check.wcag().into(),
+            nodes_total: f.count,
+            nodes: f
+                .nodes
+                .iter()
+                .map(|n| A11yNodeRow {
+                    selector: n.selector.as_str().into(),
+                    excerpt: n.excerpt.as_str().into(),
+                    data: None,
+                    bbox: None,
+                })
+                .collect(),
+        })
+        .collect();
+    let viewport_state = match &a.viewport {
+        None => "missing",
+        Some(v) if v.zoom_disabled => "zoom_disabled",
+        Some(v) if !v.device_width => "not_device_width",
+        Some(_) => "ok",
+    };
+    store.record_static_a11y(
+        url_id,
+        &rows,
+        &MobileRow {
+            viewport: a.viewport.as_ref().map(|v| v.content.as_str()),
+            viewport_state: Some(viewport_state),
+            plugins: Some(
+                a.finding(StaticCheck::PluginElement)
+                    .map_or(0, |f| i64::from(f.count)),
+            ),
+            ..MobileRow::default()
+        },
+    )?;
+    Ok(())
+}
+
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
@@ -704,6 +803,7 @@ async fn finish_page(
     custom: Option<Arc<CustomRun>>,
     hook: Option<PageHook>,
     content: Arc<ContentRules>,
+    a11y: bool,
     budget: &Semaphore,
 ) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
@@ -725,9 +825,9 @@ async fn finish_page(
                         body: &bytes,
                         truncated,
                         robots_token: &token,
-                        // Spec 026: stored once the crawl file has the tables.
                         keep_text: false,
-                        a11y: false,
+                        // Spec 026: static accessibility checks, internal pages only.
+                        a11y,
                         hook: hook.as_ref(),
                         content: Some(&content),
                     },
@@ -801,6 +901,9 @@ pub struct Crawler {
     browser: Option<spiderlens_render::BrowserInfo>,
     /// How to start it; through the guard process when not given.
     render_launch: Option<spiderlens_render::LaunchOptions>,
+    /// Back-pressure marks: fetching pauses above the first number of
+    /// queued renders and resumes below the second (FR-035).
+    render_queue_marks: (u64, u64),
     page_hook: Option<PageHook>,
     /// The login session the crawl signs in with (spec 025 plan D5); held
     /// in memory only.
@@ -873,6 +976,9 @@ impl Crawler {
         if config.extraction.check_amp {
             features.push_str(",amp");
         }
+        if config.accessibility.level != A11yLevel::Off {
+            features.push_str(",accessibility_static");
+        }
         store.set_meta("data_features", &features)?;
         if config.rendering.is_on() {
             let mut features = vec!["rendering"];
@@ -881,6 +987,17 @@ impl Crawler {
             }
             if config.rendering.screenshots {
                 features.push("screenshots");
+            }
+            // Spec 026: full checks and mobile layout need the render stage.
+            if config.accessibility.level == A11yLevel::Full {
+                features.push("accessibility_full");
+                store.set_meta(
+                    "a11y_engine",
+                    &format!("{{\"name\":\"axe-core\",\"version\":\"{}\"}}", AXE_VERSION),
+                )?;
+            }
+            if config.accessibility.mobile && config.accessibility.level != A11yLevel::Off {
+                features.push("mobile_layout");
             }
             store.add_data_features(&features)?;
         }
@@ -928,6 +1045,7 @@ impl Crawler {
             retry_base: Duration::from_secs(1),
             browser: None,
             render_launch: None,
+            render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
         })
@@ -1039,6 +1157,7 @@ impl Crawler {
             retry_base: Duration::from_secs(1),
             browser: None,
             render_launch: None,
+            render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
         })
@@ -1062,6 +1181,13 @@ impl Crawler {
     /// closed even if this process is killed (research R12).
     pub fn with_render_launch(mut self, launch: spiderlens_render::LaunchOptions) -> Self {
         self.render_launch = Some(launch);
+        self
+    }
+
+    /// Overrides the render queue marks that hold fetching back (tests use
+    /// small ones).
+    pub fn with_render_queue_marks(mut self, high: u64, low: u64) -> Self {
+        self.render_queue_marks = (high, low);
         self
     }
 
@@ -1595,6 +1721,9 @@ impl Run {
                     .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
             let load = self.load.load(Instant::now());
             let (limit, sites, sites_total) = self.pace(urls_per_sec, load);
+            let (a11y_checked, a11y_avg_ms) = self.c.store.a11y_live();
+            let fetching_done = self.fetch_completed;
+            let render = self.render.as_mut().map(|r| r.progress(fetching_done));
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -1612,6 +1741,9 @@ impl Run {
                 limit,
                 sites,
                 sites_total,
+                a11y_checked,
+                a11y_avg_ms,
+                render,
             }));
         }
     }
@@ -2284,6 +2416,9 @@ impl Run {
             }
             self.window.refill(&self.c.store)?;
             let now = Instant::now();
+            // Back-pressure (FR-035): while too many renders wait, only
+            // external checks start; robots.txt is fetched below as usual.
+            let queue_full = self.render.as_mut().is_some_and(RenderStage::queue_full);
 
             // Hosts seen for the first time: fetch robots.txt (or skip it).
             let mut need_robots = Vec::new();
@@ -2326,29 +2461,39 @@ impl Run {
             // The earliest queued URL among hosts that may start now.
             let mut best: Option<QueueKey> = None;
             let mut held_back = false;
-            for (key, head) in self.window.host_heads() {
-                let Some(host) = self.hosts.get_mut(key) else {
-                    continue;
+            {
+                let (mut all_heads, mut check_heads);
+                let heads: &mut dyn Iterator<Item = (&str, QueueKey)> = if queue_full {
+                    check_heads = self.window.check_heads();
+                    &mut check_heads
+                } else {
+                    all_heads = self.window.host_heads();
+                    &mut all_heads
                 };
-                if !matches!(host.robots, RobotsState::Known(..)) {
-                    continue;
-                }
-                host.health.tick(now);
-                if let Some(until) = host.health.paused_until() {
-                    soonest(until, &mut wake);
-                    held_back = true;
-                    continue;
-                }
-                if host.in_flight >= host.limit() {
-                    continue;
-                }
-                if host.next_start > now {
-                    soonest(host.next_start, &mut wake);
-                    held_back = true;
-                    continue;
-                }
-                if best.is_none_or(|b| head < b) {
-                    best = Some(head);
+                for (key, head) in heads {
+                    let Some(host) = self.hosts.get_mut(key) else {
+                        continue;
+                    };
+                    if !matches!(host.robots, RobotsState::Known(..)) {
+                        continue;
+                    }
+                    host.health.tick(now);
+                    if let Some(until) = host.health.paused_until() {
+                        soonest(until, &mut wake);
+                        held_back = true;
+                        continue;
+                    }
+                    if host.in_flight >= host.limit() {
+                        continue;
+                    }
+                    if host.next_start > now {
+                        soonest(host.next_start, &mut wake);
+                        held_back = true;
+                        continue;
+                    }
+                    if best.is_none_or(|b| head < b) {
+                        best = Some(head);
+                    }
                 }
             }
             let Some(best) = best else {
@@ -2509,6 +2654,9 @@ impl Run {
             "source": source,
         });
         self.c.store.set_renderer(&renderer.to_string())?;
+        let mut stage = stage;
+        let (high, low) = self.c.render_queue_marks;
+        stage.init_counts(&self.c.store, high, low)?;
         self.render = Some(stage);
         Ok(())
     }
@@ -2541,13 +2689,32 @@ impl Run {
         let Some(stage) = &mut self.render else {
             return Ok(());
         };
+        stage.guard_tick();
         stage.restart_if_needed();
         let store = &self.c.store;
+        // A browser that cannot be started again: everything still waiting
+        // ends as "Browser unavailable", with one warning (FR-046).
+        if stage.unavailable() {
+            let mut skipped = 0;
+            while let Some(e) = stage.next(store)? {
+                store.skip_render(e.url_id, "browser_unavailable", None)?;
+                stage.on_started();
+                skipped += 1;
+            }
+            if skipped > 0 {
+                self.warn(
+                    "The browser stopped and could not be started again. The pages still waiting were not rendered."
+                        .into(),
+                )?;
+            }
+            return Ok(());
+        }
         while stage.open < stage.limit {
             let Some(mut e) = stage.next(store)? else { break };
             if !store.mark_rendering(e.url_id)? {
                 continue;
             }
+            stage.on_started();
             e.attempts += 1;
             let (Some((status, headers)), Some(raw)) =
                 (store.render_main(e.url_id)?, store.render_input(e.url_id)?)
@@ -2582,7 +2749,12 @@ impl Run {
             return Ok(());
         };
         stage.open -= 1;
+        stage.page_done();
         let id = r.entry.url_id;
+        if let RenderState::Failed { retryable: true, .. } = r.outcome.state {
+            // The browser may have died with the page (FR-042).
+            stage.browser_suspect();
+        }
         if let RenderState::Failed { retryable: true, .. } = r.outcome.state
             && r.entry.attempts < MAX_ATTEMPTS
         {
@@ -2590,6 +2762,7 @@ impl Run {
             stage.retry(r.entry);
             return Ok(());
         }
+        stage.on_done();
         let o = &r.outcome;
         let (status, reason) = match o.state {
             RenderState::Rendered => (RenderStatus::Rendered, None),
@@ -2631,6 +2804,11 @@ impl Run {
                 let note = take_note(&x.url);
                 let (outcome, error, robots_rule) = match (&note, x.failed) {
                     (Some(Note::BlockedByRobots(rule)), _) => ("blocked_robots", None, Some(rule.clone())),
+                    // An answer of 4xx or 5xx is a failed resource too (FR-018, FR-043).
+                    (_, None) if x.status.is_some_and(|c| c >= 400) => {
+                        let code = x.status.unwrap_or_default();
+                        ("failed", Some(format!("HTTP {code}")), None)
+                    }
                     (Some(Note::Cached), None) => ("cached", None, None),
                     (Some(Note::RobotsIgnored(rule)), None) => ("loaded", None, Some(rule.clone())),
                     (_, None) => ("loaded", None, None),
@@ -2761,7 +2939,91 @@ impl Run {
                     .map(|s| (s.webp.as_slice(), s.width, s.height)),
             },
         )?;
+        self.record_probes(id, &r)?;
         self.finished += 1;
+        Ok(())
+    }
+
+    /// Stores what the spec 026 probes found on one rendered page: the full
+    /// accessibility result or why there is none, and the mobile layout. The
+    /// results were parsed on the render task; this only writes rows. A page
+    /// never rendered gets nothing (the UI reads a missing state as not
+    /// rendered).
+    fn record_probes(&self, id: i64, r: &Rendered) -> Result<(), CrawlError> {
+        use super::store::MobileRow;
+        use spiderlens_render::RenderState;
+        let a = &self.c.config.accessibility;
+        let store = &self.c.store;
+        if a.level == A11yLevel::Full {
+            let rendered = matches!(r.outcome.state, RenderState::Rendered);
+            let not_checked =
+                |reason: &str| store.set_a11y_state(id, "full", "not_checked", Some(reason), None);
+            if !rendered {
+                not_checked(match r.outcome.state {
+                    RenderState::TimedOut => "render_timed_out",
+                    _ => "render_failed",
+                })?;
+            } else if r.rendered.is_none() || r.outcome.html.is_none() {
+                not_checked("render_failed")?;
+            } else if r.bot_challenge {
+                not_checked("bot_challenge")?;
+            } else {
+                match &r.probe_report.full {
+                    Some(FullOutcome::Checked(f)) => {
+                        let rows: Vec<_> = f.results.iter().map(|x| x.as_row()).collect();
+                        store.record_a11y(id, "full", &rows)?;
+                        store.set_a11y_state(id, "full", "checked", None, Some(f.ms))?;
+                    }
+                    Some(FullOutcome::TimedOut { ms }) => {
+                        store.set_a11y_state(id, "full", "timed_out", None, Some(*ms))?;
+                    }
+                    Some(FullOutcome::NotChecked(reason)) => not_checked(*reason)?,
+                    None => not_checked("probe_failed")?,
+                }
+            }
+        }
+        if a.mobile
+            && a.level != A11yLevel::Off
+            && matches!(r.outcome.state, RenderState::Rendered)
+            && !r.bot_challenge
+        {
+            if !r.outcome.window.mobile {
+                store.record_mobile(
+                    id,
+                    &MobileRow {
+                        window: Some("desktop"),
+                        measured: Some("desktop_window"),
+                        ..MobileRow::default()
+                    },
+                )?;
+            } else {
+                match &r.probe_report.mobile {
+                    Some(MobileOutcome::Measured(m)) => store.record_mobile(
+                        id,
+                        &MobileRow {
+                            window: Some("mobile"),
+                            measured: Some("yes"),
+                            content_px: Some(m.content_px),
+                            window_px: Some(m.window_px),
+                            widest: m.widest.as_deref(),
+                            small_text_share: Some(m.small_text_share),
+                            small_targets: Some(m.small_targets),
+                            examples: Some(m.examples.clone()),
+                            ..MobileRow::default()
+                        },
+                    )?,
+                    Some(MobileOutcome::TimedOut) => store.record_mobile(
+                        id,
+                        &MobileRow {
+                            window: Some("mobile"),
+                            measured: Some("timed_out"),
+                            ..MobileRow::default()
+                        },
+                    )?,
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2888,6 +3150,8 @@ impl Run {
         // (one `Option` check when it is off, plan D2).
         let keep_html = store_html || (internal && self.render.is_some());
         let content = self.content_rules.clone();
+        // Spec 026: one `bool` per page; Off collects and stores nothing.
+        let a11y = internal && self.c.config.accessibility.level != A11yLevel::Off;
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&net, &url, &headers, internal, !check_only, max_body, pdf_max).await;
@@ -2899,7 +3163,7 @@ impl Run {
                 Ok(mut o) => {
                     pdf_body = o.pdf.take();
                     let mut outcome =
-                        finish_page(o, url, token, keep_html, rules, hook, content, &budget).await;
+                        finish_page(o, url, token, keep_html, rules, hook, content, a11y, &budget).await;
                     outcome.pdf = pdf_body.is_some();
                     Ok(outcome)
                 }
@@ -3015,12 +3279,41 @@ impl Run {
 
     /// Fetches each internal host's AI site files, one at a time per host
     /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    /// With agent entry points on, the same task then verifies the host's
+    /// Markdown alternates and sends one discovery request to each MCP
+    /// endpoint its catalog or cards list (spec 016 FR-011, FR-012), all
+    /// after the last page and without cookies.
     fn start_site_files(&mut self) -> Result<(), CrawlError> {
-        if !self.c.config.ai_checks.site_files {
+        let mut wanted: Vec<&'static str> = Vec::new();
+        if self.c.config.ai_checks.site_files {
+            wanted.extend(site_files::PATHS);
+        }
+        let agents = self.c.config.agents.entry_points;
+        if agents {
+            wanted.extend(site_files::AGENT_PATHS);
+        }
+        if wanted.is_empty() {
             self.site_files = SiteFiles::Done;
             return Ok(());
         }
+        // Pages pointing at an alternate beyond the cap are listed as not
+        // verified right away; the rest are requested below.
+        let mut md = agent_checks::MdPlan::new(self.c.config.agents.markdown_alternates_max as usize);
+        if agents {
+            self.c
+                .store
+                .for_each_md_alternate(|id, page, host, alt| md.add(id, page, host, alt))?;
+            self.c
+                .store
+                .record_md_check(&std::mem::take(&mut md.unverified), None, "not_verified")?;
+        }
+        let mcp = agents && self.c.config.agents.mcp_discovery;
+        let mut md_jobs: HashMap<String, Vec<agent_checks::MdJob>> = HashMap::new();
+        for job in std::mem::take(&mut md.jobs) {
+            md_jobs.entry(job.host_key.clone()).or_default().push(job);
+        }
         let mut jobs = Vec::new();
+        let mut known: HashMap<String, (Option<Arc<RobotsPolicy>>, bool)> = HashMap::new();
         for key in self.c.store.internal_hosts()? {
             let host = self.hosts.get(&key);
             let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
@@ -3030,7 +3323,8 @@ impl Run {
             };
             // A host the crawl gave up on gets no more requests (spec 004).
             let given_up = host.is_some_and(|h| h.health.is_given_up());
-            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+            known.insert(key.clone(), (policy.clone(), given_up));
+            let paths: Vec<(String, Option<String>)> = wanted
                 .iter()
                 .map(|path| {
                     if given_up {
@@ -3049,13 +3343,33 @@ impl Run {
                     ((*path).to_string(), blocked)
                 })
                 .collect();
-            jobs.push((key, delay, paths));
+            let md = md_jobs.remove(&key).unwrap_or_default();
+            jobs.push((key, delay, paths, md));
         }
         self.site_files = SiteFiles::Pending;
         let client = self.client.clone();
+        // Requests that must carry no cookies.
+        let plain = if agents {
+            self.net.plain_client().map_err(CrawlError::Client)?
+        } else {
+            client.clone()
+        };
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            for (key, delay, paths) in jobs {
+            // Whether a request to `url` may be sent: its host is one of
+            // this crawl's, was not given up on, and robots.txt allows it.
+            let allowed = |url: &Url| -> bool {
+                let Some((policy, given_up)) = known.get(&host_key(url)) else {
+                    return false;
+                };
+                !*given_up
+                    && !policy
+                        .as_ref()
+                        .is_some_and(|p| matches!(p.check(url), RobotsVerdict::Disallowed(_)))
+            };
+            for (key, delay, paths, md) in jobs {
+                let mut docs: Vec<(Url, Vec<u8>)> = Vec::new();
+                let mut sent = false;
                 for (i, (path, blocked)) in paths.into_iter().enumerate() {
                     let row = match blocked {
                         Some(why) => SiteFileRow::skipped(&key, &path, &why),
@@ -3063,10 +3377,57 @@ impl Run {
                             if i > 0 && !delay.is_zero() {
                                 tokio::time::sleep(delay).await;
                             }
+                            sent = true;
                             site_files::fetch(&client, &key, &path).await
                         }
                     };
+                    if mcp && site_files::MCP_CARD_PATHS.contains(&path.as_str()) && row.outcome == "ok" {
+                        let base = row.final_url.as_deref().and_then(|u| Url::parse(u).ok());
+                        let bytes =
+                            row.body.as_deref().zip(row.size).and_then(|(b, n)| {
+                                crate::extract::body::decompress(b, n.max(0) as usize).ok()
+                            });
+                        if let (Some(base), Some(bytes)) = (base, bytes) {
+                            docs.push((base, bytes));
+                        }
+                    }
                     let _ = tx.send(Msg::SiteFile(row));
+                }
+                for job in md {
+                    let (status, outcome) = if allowed(&job.url) {
+                        if sent && !delay.is_zero() {
+                            tokio::time::sleep(delay).await;
+                        }
+                        sent = true;
+                        agent_checks::fetch_markdown(&plain, &job.url).await
+                    } else {
+                        (None, "not_verified")
+                    };
+                    let _ = tx.send(Msg::AgentMd {
+                        url_ids: job.url_ids,
+                        status,
+                        outcome,
+                    });
+                }
+                let mut endpoints: Vec<Url> = Vec::new();
+                for (base, bytes) in &docs {
+                    for url in agent_checks::mcp_endpoints(base, bytes) {
+                        if !endpoints.contains(&url) {
+                            endpoints.push(url);
+                        }
+                    }
+                }
+                endpoints.truncate(agent_checks::MCP_PER_HOST);
+                for url in endpoints {
+                    if !allowed(&url) {
+                        continue;
+                    }
+                    if sent && !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    sent = true;
+                    let row = agent_checks::probe_mcp(&plain, &key, &url).await;
+                    let _ = tx.send(Msg::AgentMcp(row));
                 }
             }
             let _ = tx.send(Msg::SiteFilesFinished);
@@ -3297,6 +3658,12 @@ impl Run {
                 Ok(())
             }
             Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::AgentMd {
+                url_ids,
+                status,
+                outcome,
+            } => Ok(self.c.store.record_md_check(&url_ids, status, outcome)?),
+            Msg::AgentMcp(row) => Ok(self.c.store.record_mcp_check(&row)?),
             Msg::SessionCheck { signed_out } => {
                 let Some(check) = &mut self.session_check else {
                     return Ok(());
@@ -3892,6 +4259,11 @@ impl Run {
                     {
                         store.record_amp(entry.id, amp)?;
                     }
+                    if self.c.config.accessibility.level != A11yLevel::Off
+                        && let Some(a) = p.data.as_ref().ok().and_then(|d| d.a11y.as_ref())
+                    {
+                        record_static_a11y(store, entry.id, a)?;
+                    }
                     if let Some(c) = &p.custom {
                         store.record_custom(entry.id, c)?;
                     }
@@ -3914,8 +4286,9 @@ impl Run {
                             .and_then(|p| p.html.as_ref())
                             .filter(|_| !store_html)
                             .map(|(b, n)| (b.as_slice(), *n));
-                        store.enqueue_render(entry.id, input)?;
-                        stage.on_enqueued();
+                        if store.enqueue_render(entry.id, input)? {
+                            stage.on_enqueued();
+                        }
                     }
                 }
             }

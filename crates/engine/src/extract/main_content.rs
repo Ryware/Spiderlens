@@ -122,6 +122,11 @@ pub(super) struct Spans {
     spans: Vec<Span>,
     pub(super) main_seen: bool,
     pub(super) selected_seen: bool,
+    /// Whether any pushed span carries [`MAIN`]. Lets `source` skip the
+    /// word scan for a source that cannot hold any span.
+    any_main: bool,
+    /// Whether any pushed span carries [`ARTICLE`] (same use as `any_main`).
+    any_article: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -177,6 +182,8 @@ impl Spans {
         if t.is_empty() {
             return;
         }
+        self.any_main |= flags & MAIN != 0;
+        self.any_article |= flags & ARTICLE != 0;
         let start = self.text.len() as u32;
         self.text.push_str(t);
         self.spans.push(Span {
@@ -246,10 +253,15 @@ impl Spans {
                 MainSource::SelectorMissing
             };
         }
-        [MainSource::Main, MainSource::Article]
-            .into_iter()
-            .find(|&s| self.has_words(s))
-            .unwrap_or(MainSource::Fallback)
+        // `keeps` needs the MAIN / ARTICLE flag, so without any such span
+        // the scan would find nothing.
+        if self.any_main && self.has_words(MainSource::Main) {
+            MainSource::Main
+        } else if self.any_article && self.has_words(MainSource::Article) {
+            MainSource::Article
+        } else {
+            MainSource::Fallback
+        }
     }
 
     pub(super) fn summary(&self, rules: Option<&ContentRules>) -> MainContent {

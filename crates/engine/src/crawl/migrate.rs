@@ -314,7 +314,122 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: SITEMAP_PASSES,
     },
+    // Spec 026: accessibility and mobile usability results.
+    Step {
+        version: 19,
+        additive: true,
+        sql: A11Y_TABLES,
+    },
+    // Spec 023 stage 2 (data-model.md): the outputs of the `link_positions`
+    // and `link_metrics` Crawl Analysis passes. `IF NOT EXISTS` because a
+    // pass creates its table itself when it runs on a file from before this
+    // step. Link Score is stored as `link_score`: `link_metrics` is already
+    // the spec 024 provider table in `main`.
+    Step {
+        version: 20,
+        additive: true,
+        sql: LINK_PASSES,
+    },
+    // Spec 016: what the MCP discovery request of each endpoint answered.
+    Step {
+        version: 21,
+        additive: true,
+        sql: "CREATE TABLE agent_mcp_checks (
+    host_key TEXT NOT NULL,
+    url TEXT NOT NULL,
+    status INTEGER,
+    answered INTEGER NOT NULL,
+    protocol_versions TEXT,
+    requires_sign_in INTEGER NOT NULL,
+    error TEXT,
+    checked_at INTEGER,
+    PRIMARY KEY (host_key, url)
+);",
+    },
 ];
+
+/// Step 19's tables (spec 026 data-model.md). They stay empty when the
+/// accessibility level is Off.
+const A11Y_TABLES: &str = "
+CREATE TABLE a11y_audits (
+    url_id INTEGER PRIMARY KEY,
+    static_state TEXT,
+    full_state TEXT,
+    full_reason TEXT,
+    check_ms INTEGER,
+    critical INTEGER,
+    serious INTEGER,
+    moderate INTEGER,
+    minor INTEGER,
+    needs_review INTEGER,
+    checks_failed INTEGER,
+    elements INTEGER,
+    lowest_level TEXT
+);
+CREATE TABLE a11y_results (
+    id INTEGER PRIMARY KEY,
+    url_id INTEGER NOT NULL,
+    check_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    impact TEXT,
+    wcag TEXT,
+    nodes_total INTEGER
+);
+CREATE INDEX a11y_results_url ON a11y_results(url_id);
+CREATE INDEX a11y_results_check ON a11y_results(check_id, kind);
+CREATE TABLE a11y_nodes (
+    result_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    selector TEXT,
+    excerpt TEXT,
+    data TEXT,
+    x REAL,
+    y REAL,
+    w REAL,
+    h REAL
+);
+CREATE INDEX a11y_nodes_result ON a11y_nodes(result_id);
+CREATE TABLE mobile_measures (
+    url_id INTEGER PRIMARY KEY,
+    viewport TEXT,
+    viewport_state TEXT,
+    plugins INTEGER,
+    window TEXT,
+    measured TEXT,
+    content_px REAL,
+    window_px REAL,
+    widest TEXT,
+    small_text_share REAL,
+    small_targets INTEGER,
+    examples TEXT
+);
+";
+
+/// Step 20's tables. The passes in `spiderlens-results`
+/// (`analysis::link_positions`, `analysis::link_metrics`) create the same
+/// two tables in `temp` (Link Score as `link_metrics`, which the column
+/// expressions name) for a file they cannot write.
+const LINK_PASSES: &str = "
+CREATE TABLE IF NOT EXISTS link_positions (
+    from_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    rule INTEGER,
+    PRIMARY KEY (from_id, pos)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS link_score (
+    url_id INTEGER PRIMARY KEY,
+    score REAL NOT NULL,
+    rank INTEGER NOT NULL,
+    unique_inlinks INTEGER NOT NULL,
+    followed_inlinks INTEGER NOT NULL,
+    all_inlinks INTEGER NOT NULL,
+    unique_outlinks INTEGER NOT NULL,
+    external_outlinks INTEGER NOT NULL,
+    pct_linking REAL NOT NULL
+);
+";
 
 /// Step 18's tables. The passes in `spiderlens-results`
 /// (`sitemaps::audit`, `sitemaps::orphans`) create the same two tables in

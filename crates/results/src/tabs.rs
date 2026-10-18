@@ -80,6 +80,12 @@ pub enum Need {
     FieldData,
     /// PageSpeed Insights lab tests run after the crawl (spec 024).
     LabTests,
+    /// Static accessibility checks (spec 026).
+    AccessibilityStatic,
+    /// Full accessibility checks in the rendering stage (spec 026).
+    AccessibilityFull,
+    /// Mobile layout measures from a mobile-sized window (spec 026).
+    MobileLayout,
 }
 
 impl Need {
@@ -137,6 +143,15 @@ impl Need {
                 "No field data in this crawl yet. Save a Google API key and fetch field data from Integrations."
             }
             Self::LabTests => "No lab test results in this crawl yet. Run lab tests from Integrations.",
+            Self::AccessibilityStatic => {
+                "This crawl did not check accessibility. Turn on accessibility checks in the crawl settings to check it."
+            }
+            Self::AccessibilityFull => {
+                "This crawl did not run the full accessibility checks. Choose Full in the accessibility settings and render pages to run them."
+            }
+            Self::MobileLayout => {
+                "This crawl did not measure mobile layout. Render pages with accessibility checks on to measure it."
+            }
         }
     }
 
@@ -169,6 +184,9 @@ impl Need {
             Self::NearDup => "near_dup",
             Self::FieldData => "field_data",
             Self::LabTests => "lab_tests",
+            Self::AccessibilityStatic => "accessibility_static",
+            Self::AccessibilityFull => "accessibility_full",
+            Self::MobileLayout => "mobile_layout",
         }
     }
 }
@@ -701,15 +719,12 @@ macro_rules! amp_failed {
     };
 }
 
-/// An AMP page whose canonical page has no `amphtml` link back to it.
-const AMP_UNPAIRED: &str = "EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id AND ap.format = 'website') \
-     AND u.canonical IS NOT NULL AND u.canonical <> u.url \
-     AND NOT EXISTS (SELECT 1 FROM urls c JOIN links l ON l.from_id = c.id \
-         WHERE c.url = u.canonical AND l.kind = 'amphtml' AND l.to_id = u.id)";
+/// An AMP page whose canonical page has no `amphtml` link back to it (the
+/// rule's own condition, spec 009 FR-005).
+const AMP_UNPAIRED: &str = crate::issues::rules::amp::UNPAIRED;
 
 /// Reached through an `amphtml` link but not marked as AMP.
-const AMP_UNMARKED: &str = "NOT EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
-     AND EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml')";
+const AMP_UNMARKED: &str = crate::issues::rules::amp::NOT_MARKED;
 
 const fn amp_col(
     id: &'static str,
@@ -723,6 +738,77 @@ const fn amp_col(
 
 const fn amp_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     filter(id, label, cond).needs(Need::Amp)
+}
+
+/// Accessibility violations of `impact` inside the crawl's WCAG target
+/// (spec 026 FR-020).
+macro_rules! a11y_count {
+    ($impact:literal) => {
+        concat!(
+            "(SELECT COUNT(*) FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'violation' \
+             AND a.impact = '",
+            $impact,
+            "' AND wcag_in_target(a.wcag))"
+        )
+    };
+}
+
+/// A page with at least one violation of `impact` inside the target.
+macro_rules! a11y_has {
+    ($impact:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'violation' \
+             AND a.impact = '",
+            $impact,
+            "' AND wcag_in_target(a.wcag))"
+        )
+    };
+}
+
+const A11Y_NEEDS_REVIEW: &str =
+    "EXISTS (SELECT 1 FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'needs_review')";
+
+/// Neither the static nor the full checks ran on the page.
+const A11Y_NOT_CHECKED: &str = "NOT EXISTS (SELECT 1 FROM a11y_audits d WHERE d.url_id = u.id \
+     AND (d.static_state = 'checked' OR d.full_state = 'checked'))";
+
+const fn a11y_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::AccessibilityStatic)
+}
+
+const fn a11y_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::AccessibilityStatic)
+}
+
+const fn mobile_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::MobileLayout)
+}
+
+const fn mobile_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::MobileLayout)
+}
+
+/// A value of the page's `mobile_measures` row.
+macro_rules! mobile_value {
+    ($expr:literal) => {
+        concat!(
+            "(SELECT ",
+            $expr,
+            " FROM mobile_measures m WHERE m.url_id = u.id)"
+        )
+    };
 }
 
 pub(crate) const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -755,7 +841,14 @@ impl FilterDef {
         match self.threshold {
             Some((rule, template)) => values.get(rule).map_or_else(
                 || self.label.to_string(),
-                |v| template.replace("{n}", &crate::issues::fmt_num(*v)),
+                |v| {
+                    let mut label = template.replace("{n}", &crate::issues::fmt_num(*v));
+                    // A second value, for labels with two (spec 014 FR-027).
+                    if let Some(w) = values.get(format!("{rule}.2").as_str()) {
+                        label = label.replace("{w}", &crate::issues::fmt_num(*w));
+                    }
+                    label
+                },
             ),
             None => self.label.to_string(),
         }
@@ -1374,6 +1467,12 @@ fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
         Directives => "directives",
         Url => "url",
         Sitemaps => "sitemaps",
+        Serp => "page-titles",
+        Pdf => "pdfs",
+        Spelling => "spelling",
+        Amp => "amp",
+        Accessibility => "accessibility",
+        Mobile => "mobile",
         _ => return None,
     })
 }
@@ -1463,7 +1562,9 @@ fn build_tabs() -> Vec<TabDef> {
     use ValueKind::*;
     // Filters that test what an issue rule tests share its condition
     // (spec 009 FR-005).
-    use crate::issues::rules::{canonicals as ca, headings as hd, images as im, meta as me, url as ur};
+    use crate::issues::rules::{
+        canonicals as ca, headings as hd, images as im, meta as me, serp as sp, url as ur,
+    };
     vec![
         TabDef {
             id: Cow::Borrowed("internal"),
@@ -1705,8 +1806,8 @@ fn build_tabs() -> Vec<TabDef> {
                 col("title_length", "Title length", "x.len", Int, 100),
                 col("occurrences", "Occurrences", "x.n", Int, 110),
                 col("title_px", "Title pixels", TITLE_PX, Int, 100),
-                col("title_cut_desktop", "Cut on desktop", concat!("(", px!("u.title", "title"), " > 600)"), Bool, 120),
-                col("title_cut_mobile", "Cut on mobile", concat!("(", px!("u.title", "title"), " > 580)"), Bool, 120),
+                col("title_cut_desktop", "Cut on desktop", "(px_width(u.title, 'title') > thr('serp.title_over_desktop'))", Bool, 120),
+                col("title_cut_mobile", "Cut on mobile", "(px_width(u.title, 'title') > thr('serp.title_over_mobile'))", Bool, 120),
                 ext(
                     "title_2",
                     "Title (second)",
@@ -1731,11 +1832,13 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
                 filter("duplicate", "Duplicate", "x.n > 1"),
                 filter("over_60", "Over 60 characters", "x.len > thr('title.over')").thr("title.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 600 pixels (desktop)", concat!(px!("u.title", "title"), " > 600")),
-                filter("px_over_mobile", "Over 580 pixels (mobile)", concat!(px!("u.title", "title"), " > 580")),
+                filter("px_over_desktop", "Over 600 pixels (desktop)", sp::TITLE_OVER_DESKTOP)
+                    .thr("serp.title_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 580 pixels (mobile)", sp::TITLE_OVER_MOBILE)
+                    .thr("serp.title_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < thr('title.below')")
                     .thr("title.below", "Below {n} characters"),
-                filter("px_below", "Below 200 pixels", concat!("x.t <> '' AND ", px!("u.title", "title"), " < 200")),
+                filter("px_below", "Below 200 pixels", sp::TITLE_BELOW).thr("serp.title_below", "Below {n} pixels"),
                 filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
                 filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
@@ -1751,8 +1854,8 @@ fn build_tabs() -> Vec<TabDef> {
                 ext("meta_description", "Meta description", MD, Text, 360),
                 ext("length", "Length", "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))", Int, 80),
                 ext("desc_px", "Pixels", DESC_PX, Int, 90),
-                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > 990)"), Bool, 120),
-                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > 680)"), Bool, 120),
+                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_desktop'))"), Bool, 120),
+                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_mobile'))"), Bool, 120),
                 ext(
                     "occurrences",
                     "Occurrences",
@@ -1766,8 +1869,10 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", me::MISSING),
                 filter("duplicate", "Duplicate", me::DUPLICATE).reads(Derived::OccMeta),
                 filter("over_155", "Over 155 characters", me::OVER).thr("meta.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 990 pixels (desktop)", concat!(px!(md_expr!(), "desc"), " > 990")),
-                filter("px_over_mobile", "Over 680 pixels (mobile)", concat!(px!(md_expr!(), "desc"), " > 680")),
+                filter("px_over_desktop", "Over 990 pixels (desktop)", sp::DESC_OVER_DESKTOP)
+                    .thr("serp.desc_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 680 pixels (mobile)", sp::DESC_OVER_MOBILE)
+                    .thr("serp.desc_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_70", "Below 70 characters", me::BELOW).thr("meta.below", "Below {n} characters"),
                 filter("multiple", "Multiple", me::MULTIPLE),
             ],
@@ -2003,6 +2108,161 @@ fn build_tabs() -> Vec<TabDef> {
             scoped: false,
             rows: None,
         },
+        TabDef {
+            id: Cow::Borrowed("accessibility"),
+            title: Cow::Borrowed("Accessibility"),
+            // Every internal HTML page; pages the checks did not reach are
+            // listed as not checked.
+            eligible: Cow::Borrowed(HTML_OK),
+            columns: vec![
+                c::ADDRESS,
+                a11y_col("a11y_critical", "Critical", a11y_count!("critical"), Int, 80),
+                a11y_col("a11y_serious", "Serious", a11y_count!("serious"), Int, 80),
+                a11y_col("a11y_moderate", "Moderate", a11y_count!("moderate"), Int, 90),
+                a11y_col("a11y_minor", "Minor", a11y_count!("minor"), Int, 70),
+                a11y_col(
+                    "a11y_needs_review",
+                    "Needs review",
+                    "(SELECT COUNT(*) FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'needs_review')",
+                    Int,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_checks_failed",
+                    "Checks failed",
+                    "(SELECT COUNT(DISTINCT a.check_id) FROM a11y_results a WHERE a.url_id = u.id \
+                     AND a.kind = 'violation' AND wcag_in_target(a.wcag))",
+                    Int,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_elements",
+                    "Elements",
+                    "(SELECT COALESCE(SUM(a.nodes_total), 0) FROM a11y_results a WHERE a.url_id = u.id \
+                     AND a.kind = 'violation' AND wcag_in_target(a.wcag))",
+                    Int,
+                    90,
+                ),
+                a11y_col(
+                    "a11y_lowest_level",
+                    "Lowest level failed",
+                    "(SELECT CASE d.lowest_level WHEN 'best_practice' THEN 'Best practice' \
+                     ELSE replace(upper(d.lowest_level), '-', ' ') END \
+                     FROM a11y_audits d WHERE d.url_id = u.id)",
+                    Text,
+                    140,
+                ),
+                a11y_col(
+                    "a11y_static_state",
+                    "Static checks",
+                    "COALESCE((SELECT CASE d.static_state WHEN 'checked' THEN 'Checked' END \
+                     FROM a11y_audits d WHERE d.url_id = u.id), 'Not checked')",
+                    Text,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_full_state",
+                    "Full checks",
+                    "(SELECT CASE d.full_state WHEN 'checked' THEN 'Checked' WHEN 'timed_out' THEN 'Timed out' \
+                     WHEN 'not_checked' THEN 'Not checked' || COALESCE(' (' || replace(d.full_reason, '_', ' ') || ')', '') \
+                     END FROM a11y_audits d WHERE d.url_id = u.id)",
+                    Text,
+                    180,
+                ),
+                c::STATUS_CODE.hidden(),
+                c::INDEXABILITY.hidden(),
+            ],
+            filters: vec![
+                a11y_filter("all", "All", "1"),
+                a11y_filter("critical", "Critical", a11y_has!("critical")),
+                a11y_filter("serious", "Serious", a11y_has!("serious")),
+                a11y_filter("moderate", "Moderate", a11y_has!("moderate")),
+                a11y_filter("minor", "Minor", a11y_has!("minor")),
+                a11y_filter("needs_review", "Needs review", A11Y_NEEDS_REVIEW),
+                a11y_filter("not_checked", "Not checked", A11Y_NOT_CHECKED),
+            ],
+            search_column: None,
+            scoped: false,
+            rows: None,
+        },
+        TabDef {
+            id: Cow::Borrowed("mobile"),
+            title: Cow::Borrowed("Mobile"),
+            eligible: Cow::Borrowed(HTML_OK),
+            columns: vec![
+                c::ADDRESS,
+                a11y_col("mobile_viewport", "Viewport", mobile_value!("m.viewport"), Text, 220),
+                a11y_col(
+                    "mobile_viewport_state",
+                    "Viewport state",
+                    "COALESCE((SELECT CASE m.viewport_state WHEN 'ok' THEN 'OK' WHEN 'missing' THEN 'Missing' \
+                     WHEN 'not_device_width' THEN 'Not device width' WHEN 'zoom_disabled' THEN 'Zoom disabled' END \
+                     FROM mobile_measures m WHERE m.url_id = u.id), 'Not checked')",
+                    Text,
+                    140,
+                ),
+                a11y_col("mobile_plugins", "Plugins", mobile_value!("m.plugins"), Int, 80),
+                a11y_col(
+                    "mobile_measured",
+                    "Measured",
+                    "COALESCE((SELECT CASE m.measured WHEN 'yes' THEN 'Yes' WHEN 'desktop_window' THEN 'No: desktop window' \
+                     WHEN 'not_rendered' THEN 'No: not rendered' WHEN 'timed_out' THEN 'No: timed out' END \
+                     FROM mobile_measures m WHERE m.url_id = u.id), 'No')",
+                    Text,
+                    150,
+                ),
+                mobile_col(
+                    "mobile_content_px",
+                    "Content width",
+                    mobile_value!("CAST(ROUND(m.content_px) AS INTEGER)"),
+                    Int,
+                    110,
+                ),
+                mobile_col(
+                    "mobile_window_px",
+                    "Window width",
+                    mobile_value!("CAST(ROUND(m.window_px) AS INTEGER)"),
+                    Int,
+                    110,
+                ),
+                mobile_col("mobile_widest", "Widest element", mobile_value!("m.widest"), Text, 220),
+                mobile_col(
+                    "mobile_small_text",
+                    "Small text share",
+                    mobile_value!("m.small_text_share"),
+                    Percent,
+                    120,
+                ),
+                mobile_col(
+                    "mobile_small_targets",
+                    "Small tap targets",
+                    mobile_value!("m.small_targets"),
+                    Int,
+                    120,
+                ),
+                c::STATUS_CODE.hidden(),
+                c::INDEXABILITY.hidden(),
+            ],
+            filters: vec![
+                a11y_filter("all", "All", "1"),
+                a11y_filter(
+                    "viewport_issues",
+                    "Viewport issues",
+                    "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state <> 'ok')",
+                ),
+                mobile_filter("content_wider", "Content wider", crate::issues::rules::mobile::CONTENT_WIDER),
+                mobile_filter("small_text", "Small text", crate::issues::rules::mobile::SMALL_TEXT),
+                mobile_filter("small_targets", "Small targets", crate::issues::rules::mobile::SMALL_TARGETS),
+                mobile_filter(
+                    "not_measured",
+                    "Not measured",
+                    "NOT EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.measured = 'yes')",
+                ),
+            ],
+            search_column: None,
+            scoped: false,
+            rows: None,
+        },
         content_tab(
             "canonicals",
             "Canonicals",
@@ -2094,6 +2354,7 @@ fn build_tabs() -> Vec<TabDef> {
         crate::link_data::tab(),
         ai_search_tab(),
         near_dup_tab(),
+        javascript_tab(),
     ]
 }
 
@@ -2247,10 +2508,10 @@ pub fn build_derived(
         // Built by the reader or export, which know the issue settings.
         Derived::IssueHits => Ok(()),
         Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
-            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+            crate::analysis::link_metrics::build(conn, "temp", links.weighting.as_ref(), w).map(|_| ())
         }),
         Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
-            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+            crate::analysis::link_positions::build(conn, "temp", &links.position_rules, w).map(|_| ())
         }),
         Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
         Derived::VizDirs => crate::viz::dirs::build(conn),
@@ -2591,6 +2852,282 @@ fn occ(conn: &rusqlite::Connection, table: &str, field: &str) -> rusqlite::Resul
     ))
 }
 
+/// One value from a page's `renders` row (spec 014).
+macro_rules! rx {
+    ($field:literal) => {
+        concat!("(SELECT r.", $field, " FROM renders r WHERE r.url_id = u.id)")
+    };
+}
+
+/// One value from a page's `render_comparisons` row (spec 014).
+macro_rules! cx {
+    ($field:literal) => {
+        concat!(
+            "(SELECT c.",
+            $field,
+            " FROM render_comparisons c WHERE c.url_id = u.id)"
+        )
+    };
+}
+
+/// A condition on a page's `renders` row.
+macro_rules! on_render {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM renders r WHERE r.url_id = u.id AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+/// A condition on a page's `render_comparisons` row.
+macro_rules! on_cmp {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM render_comparisons c WHERE c.url_id = u.id AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+/// The rows of the JavaScript tab: pages with a `renders` row (spec 014
+/// FR-025). Reads no rendered values, so it ignores the Raw / Rendered
+/// switch.
+const JS_ELIGIBLE: &str = "EXISTS (SELECT 1 FROM renders r WHERE r.url_id = u.id)";
+
+/// "Contains JavaScript content": rendered words exceed the raw count by
+/// the stored percentage and word count (FR-027).
+const JS_CONTENT: &str = on_cmp!(
+    "c.words_rendered - c.words_raw >= js_content_words() \
+     AND c.words_rendered * 100 > c.words_raw * (100 + js_content_percent())"
+);
+
+/// "Content hidden from non-rendering crawlers": dependence over the stored
+/// percentage, or a title or first H1 that exists only after rendering
+/// (FR-030).
+const JS_HIDDEN: &str =
+    on_cmp!("(c.dependence > hidden_content_percent() OR c.title_diff = 'added' OR c.h1_diff = 'added')");
+
+/// The JavaScript tab: what rendering changed on each rendered page (spec
+/// 014 FR-025 and FR-026).
+fn javascript_tab() -> TabDef {
+    use ValueKind::*;
+    let js_col = |id, label, expr, kind, width| col(id, label, expr, kind, width).needs(Need::Rendering);
+    let js_filter = |id, label, cond| filter(id, label, cond).needs(Need::Rendering);
+    TabDef {
+        id: Cow::Borrowed("javascript"),
+        title: Cow::Borrowed("JavaScript"),
+        eligible: Cow::Borrowed(JS_ELIGIBLE),
+        columns: vec![
+            c::ADDRESS,
+            js_col(
+                "render_status",
+                "Rendering status",
+                "(SELECT CASE r.state WHEN 'rendered' THEN 'Rendered' WHEN 'timed_out' THEN 'Timed out' \
+                 WHEN 'failed' THEN 'Failed' WHEN 'not_rendered' THEN 'Not rendered' \
+                 WHEN 'queued' THEN 'Queued' WHEN 'rendering' THEN 'Rendering' ELSE r.state END \
+                 || CASE WHEN r.reason IS NULL THEN '' ELSE ' (' || replace(r.reason, '_', ' ') || ')' END \
+                 FROM renders r WHERE r.url_id = u.id)",
+                Text,
+                190,
+            ),
+            js_col("render_time", "Render time", rx!("render_ms"), Ms, 110),
+            js_col("words_raw", "Word count (raw)", cx!("words_raw"), Int, 130),
+            js_col(
+                "words_rendered",
+                "Word count (rendered)",
+                cx!("words_rendered"),
+                Int,
+                160,
+            ),
+            js_col("words_change", "Word count change", cx!("words_change"), Int, 140),
+            js_col("links_raw", "Links (raw)", cx!("links_raw"), Int, 100),
+            js_col(
+                "links_rendered",
+                "Links (rendered)",
+                cx!("links_rendered"),
+                Int,
+                130,
+            ),
+            js_col(
+                "js_links",
+                "JavaScript-only links",
+                cx!("links_rendered_only"),
+                Int,
+                150,
+            ),
+            js_col(
+                "js_dependence",
+                "JavaScript dependence",
+                "(SELECT round(c.dependence, 1) FROM render_comparisons c WHERE c.url_id = u.id)",
+                Percent,
+                150,
+            ),
+            js_col("js_errors", "JavaScript errors", rx!("console_errors"), Int, 130),
+            js_col(
+                "blocked_resources",
+                "Blocked resources",
+                rx!("resources_blocked"),
+                Int,
+                130,
+            ),
+            js_col(
+                "failed_resources",
+                "Failed resources",
+                rx!("resources_failed"),
+                Int,
+                130,
+            )
+            .hidden(),
+            js_col(
+                "js_warnings",
+                "JavaScript warnings",
+                rx!("console_warnings"),
+                Int,
+                140,
+            )
+            .hidden(),
+            js_col("js_redirect", "JavaScript redirect", rx!("js_redirect"), Url, 320).hidden(),
+            js_col(
+                "bot_challenge",
+                "Possible bot challenge",
+                rx!("bot_challenge"),
+                Bool,
+                150,
+            )
+            .hidden(),
+        ],
+        filters: vec![
+            js_filter("all", "All", "1"),
+            js_filter("rendered", "Rendered", on_render!("r.state = 'rendered'")),
+            js_filter(
+                "not_rendered",
+                "Not rendered",
+                on_render!("r.state = 'not_rendered'"),
+            ),
+            js_filter(
+                "timed_out",
+                "Render timed out",
+                on_render!("r.state = 'timed_out'"),
+            ),
+            js_filter("failed", "Render failed", on_render!("r.state = 'failed'")),
+            js_filter(
+                "js_links",
+                "Contains JavaScript links",
+                on_cmp!("c.links_rendered_only > 0"),
+            ),
+            js_filter("js_content", "Contains JavaScript content", JS_CONTENT).thr(
+                "render.js_content",
+                "Contains JavaScript content (over {n}% and {w} words)",
+            ),
+            js_filter(
+                "title_only_rendered",
+                "Title only in rendered HTML",
+                on_cmp!("c.title_diff = 'added'"),
+            ),
+            js_filter(
+                "title_updated",
+                "Title updated by JavaScript",
+                on_cmp!("c.title_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "description_only_rendered",
+                "Meta description only in rendered HTML",
+                on_cmp!("c.description_diff = 'added'"),
+            ),
+            js_filter(
+                "description_updated",
+                "Meta description updated by JavaScript",
+                on_cmp!("c.description_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "h1_only_rendered",
+                "H1 only in rendered HTML",
+                on_cmp!("c.h1_diff = 'added'"),
+            ),
+            js_filter(
+                "h1_updated",
+                "H1 updated by JavaScript",
+                on_cmp!("c.h1_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "canonical_only_rendered",
+                "Canonical only in rendered HTML",
+                on_cmp!("c.canonical_diff = 'added'"),
+            ),
+            js_filter(
+                "canonical_mismatch",
+                "Canonical mismatch",
+                on_cmp!("c.canonical_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "noindex_only_original",
+                "Noindex only in original HTML",
+                on_cmp!("c.noindex_diff = 'removed'"),
+            ),
+            js_filter(
+                "noindex_only_rendered",
+                "Noindex only in rendered HTML",
+                on_cmp!("c.noindex_diff = 'added'"),
+            ),
+            js_filter(
+                "nofollow_only_original",
+                "Nofollow only in original HTML",
+                on_cmp!("c.nofollow_diff = 'removed'"),
+            ),
+            js_filter(
+                "nofollow_only_rendered",
+                "Nofollow only in rendered HTML",
+                on_cmp!("c.nofollow_diff = 'added'"),
+            ),
+            js_filter(
+                "structured_only_rendered",
+                "Structured data only in rendered HTML",
+                on_cmp!("c.structured_rendered_only > 0"),
+            ),
+            js_filter(
+                "js_redirect",
+                "JavaScript redirect",
+                on_render!("r.js_redirect IS NOT NULL"),
+            ),
+            js_filter(
+                "js_errors",
+                "JavaScript errors",
+                on_render!("r.console_errors > 0"),
+            ),
+            js_filter(
+                "failed_resources",
+                "Has failed resources",
+                on_render!("r.resources_failed > 0"),
+            ),
+            js_filter(
+                "blocked_resources",
+                "Has blocked resources",
+                on_render!("r.resources_blocked > 0"),
+            ),
+            js_filter(
+                "bot_challenge",
+                "Possible bot challenge",
+                on_render!("r.bot_challenge = 1"),
+            ),
+            js_filter(
+                "hidden_content",
+                "Content hidden from non-rendering crawlers",
+                JS_HIDDEN,
+            )
+            .thr(
+                "render.hidden",
+                "Content hidden from non-rendering crawlers (over {n}%)",
+            ),
+        ],
+        search_column: Some(Cow::Borrowed("address")),
+        scoped: false,
+        rows: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2615,7 +3152,37 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 24);
+        assert_eq!(tab_ids.len(), 27);
+    }
+
+    #[test]
+    fn javascript_tab_has_the_26_filters_with_thresholds_in_labels() {
+        // FR-026, FR-027, FR-030.
+        let t = tab("javascript").unwrap();
+        // The 26 of FR-026, plus the "With issues" filter every tab has.
+        assert_eq!(t.filters.len(), 27);
+        let mut values = crate::features::RenderThresholds::default().as_map();
+        let label = |id: &str, values: &crate::sql::Thresholds| t.filter(id).unwrap().label_with(values);
+        assert_eq!(
+            label("js_content", &values),
+            "Contains JavaScript content (over 20% and 50 words)"
+        );
+        assert_eq!(
+            label("hidden_content", &values),
+            "Content hidden from non-rendering crawlers (over 50%)"
+        );
+        values.insert("render.js_content", 35.0);
+        values.insert("render.js_content.2", 120.0);
+        assert_eq!(
+            label("js_content", &values),
+            "Contains JavaScript content (over 35% and 120 words)"
+        );
+        assert_eq!(label("rendered", &values), "Rendered");
+        assert!(
+            t.filters
+                .iter()
+                .all(|f| f.id == "with_issues" || f.need == Need::Rendering)
+        );
     }
 
     #[test]

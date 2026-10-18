@@ -3,7 +3,9 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod accessibility_cmd;
 mod aeo_cmd;
+mod agents_cmd;
 mod browser;
 mod compare_cmd;
 mod cookies_cmd;
@@ -36,6 +38,7 @@ use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
     test_patterns, validate, validate_config,
 };
+use spiderlens_engine::crawl::sitemap_list::{SitemapListSource, list_from_sitemap};
 use spiderlens_engine::{
     BuildInfo, CheckOptions, ErrorClass, FinalState, PageCheckResult, Title, check_page,
 };
@@ -97,6 +100,8 @@ enum Command {
     Html(HtmlArgs),
     /// List the cookies the site set during a crawl (no values).
     Cookies(cookies_cmd::CookiesArgs),
+    /// Show a crawl file's accessibility results, or its mobile measures.
+    Accessibility(accessibility_cmd::AccessibilityArgs),
     /// List crawl files in a folder with their size and stored HTML.
     Files(files_cmd::FilesArgs),
     /// Remove the stored page HTML from a crawl file, keeping its results.
@@ -126,6 +131,9 @@ enum Command {
     /// AI search checks (AEO and GEO) on a crawl file.
     #[command(subcommand)]
     Aeo(aeo_cmd::AeoCommand),
+    /// AI agent readiness of a crawl file: score, parts and entry points.
+    #[command(subcommand)]
+    Agents(agents_cmd::AgentsCommand),
     /// URLs per segment of a crawl file.
     Segments(segments_cmd::SegmentsArgs),
     /// Check the spelling of a crawl file, or manage dictionaries.
@@ -136,6 +144,9 @@ enum Command {
     /// Validate, test and run custom extraction and search rules.
     #[command(subcommand)]
     CustomRules(rules_cmd::RulesCommand),
+    /// The browser JavaScript rendering uses: status, download, removal.
+    #[command(subcommand)]
+    Browser(browser::BrowserCommand),
     /// Generate XML sitemaps from a crawl file.
     #[command(subcommand)]
     Sitemap(sitemap_cmd::SitemapCommand),
@@ -222,6 +233,10 @@ struct ConfigArgs {
     /// URL list file, text or CSV (List mode).
     #[arg(long, value_name = "FILE", conflicts_with = "url")]
     list: Option<PathBuf>,
+    /// Sitemap address or file whose page URLs are the list (List mode);
+    /// a file may be followed by =BASE-URL for relative addresses.
+    #[arg(long, value_name = "URL-OR-PATH[=BASE-URL]", conflicts_with_all = ["url", "list"])]
+    list_sitemap: Option<String>,
     /// Print as JSON.
     #[arg(long)]
     json: bool,
@@ -254,6 +269,7 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Cookies(args) => cookies_cmd::run_cookies(args),
+        Command::Accessibility(args) => accessibility_cmd::run_accessibility(args),
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),
@@ -271,10 +287,12 @@ fn main() -> ExitCode {
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
+        Command::Agents(cmd) => agents_cmd::run(cmd),
         Command::Segments(args) => segments_cmd::run_segments(args),
         Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::CustomRules(cmd) => rules_cmd::run(cmd),
+        Command::Browser(cmd) => browser::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Orphans(args) => sitemap_cmd::run_orphans(&args),
@@ -373,7 +391,7 @@ fn run_config(cmd: ConfigCommand) -> ExitCode {
 }
 
 fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
-    let mode = if args.list.is_some() {
+    let mode = if args.list.is_some() || args.list_sitemap.is_some() {
         Mode::List
     } else {
         Mode::Spider
@@ -388,7 +406,12 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     for n in &resolved.notices {
         eprintln!("notice: {n}");
     }
-    let input = match read_input(args.url.as_deref(), args.list.as_deref()) {
+    let input = match read_input(
+        args.url.as_deref(),
+        args.list.as_deref(),
+        args.list_sitemap.as_deref(),
+        &resolved.config,
+    ) {
         Ok(i) => i,
         Err(code) => return code,
     };
@@ -412,13 +435,20 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     }
 }
 
-/// Reads the Spider start URL or the List file into a mode input.
-pub(crate) fn read_input(url: Option<&str>, list: Option<&Path>) -> Result<Option<ModeInput>, ExitCode> {
-    match (url, list) {
-        (Some(url), _) => Ok(Some(ModeInput::Spider {
+/// Reads the Spider start URL, the List file or the List sitemap into a
+/// mode input. A sitemap is read here, before the crawl, so the crawl is an
+/// ordinary list crawl (spec 011 FR-005).
+pub(crate) fn read_input(
+    url: Option<&str>,
+    list: Option<&Path>,
+    list_sitemap: Option<&str>,
+    config: &CrawlConfig,
+) -> Result<Option<ModeInput>, ExitCode> {
+    match (url, list, list_sitemap) {
+        (Some(url), _, _) => Ok(Some(ModeInput::Spider {
             start_url: url.to_string(),
         })),
-        (None, Some(path)) => match std::fs::read(path) {
+        (None, Some(path), _) => match std::fs::read(path) {
             Ok(bytes) => {
                 let format = ListFormat::from_file_name(&path.to_string_lossy());
                 let list = parse_list_bytes(&bytes, format, &mut |_| {});
@@ -435,7 +465,34 @@ pub(crate) fn read_input(url: Option<&str>, list: Option<&Path>) -> Result<Optio
                 Err(ExitCode::from(exit::USAGE))
             }
         },
-        (None, None) => Ok(None),
+        (None, None, Some(arg)) => {
+            let source = SitemapListSource::parse_arg(arg).map_err(|e| {
+                eprintln!("error: --list-sitemap: {e}");
+                ExitCode::from(exit::USAGE)
+            })?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    eprintln!("error: could not start: {e}");
+                    ExitCode::FAILURE
+                })?;
+            let list = runtime.block_on(list_from_sitemap(source, config)).map_err(|e| {
+                eprintln!("error: --list-sitemap: {e}");
+                ExitCode::from(exit::USAGE)
+            })?;
+            for n in &list.notices {
+                eprintln!("notice: {n}");
+            }
+            eprintln!(
+                "list: {} URLs to crawl, {} duplicates removed, {} invalid",
+                list.urls.len(),
+                list.duplicates,
+                list.invalid_count
+            );
+            Ok(Some(ModeInput::List(list)))
+        }
+        (None, None, None) => Ok(None),
     }
 }
 

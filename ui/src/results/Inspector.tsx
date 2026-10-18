@@ -14,8 +14,13 @@ import type { PairsPage } from "../generated/PairsPage";
 import type { AgentField } from "../generated/AgentField";
 import type { PageAgentFindings } from "../generated/PageAgentFindings";
 import type { AmpDetail } from "../generated/AmpDetail";
+import type { A11yDetail } from "../generated/A11yDetail";
+import type { A11yCheckDetail } from "../generated/A11yCheckDetail";
+import type { MobileDetail } from "../generated/MobileDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
+import type { ElementChange } from "../generated/ElementChange";
+import type { RenderDetail } from "../generated/RenderDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { UrlIssue } from "../generated/UrlIssue";
 import { PriorityBadge } from "../issues/priority";
@@ -26,6 +31,7 @@ import { AiPageSection } from "./AiPageSection";
 import { CookieFlags, expiresText } from "./CookiesView";
 
 import { cellTone, formatBytes, toneText } from "./format";
+import { HtmlDiffSheet } from "./HtmlDiff";
 import { HtmlViewer } from "./HtmlViewer";
 import { SearchPreview } from "./SearchPreview";
 import { SitemapEntryList, useSitemapEntries } from "../sitemaps/InspectorSitemaps";
@@ -63,6 +69,108 @@ const ampCheck: Record<string, string> = {
   style_size: "Custom CSS size",
   disallowed: "Disallowed element",
 };
+
+const impactClass: Record<string, string> = {
+  critical: "text-impact-critical",
+  serious: "text-impact-serious",
+  moderate: "text-impact-moderate",
+  minor: "text-impact-minor",
+};
+
+const NODE_CAP = 20;
+
+function A11yCheck({ check, capped }: { check: A11yCheckDetail; capped: boolean }) {
+  const impact = check.impact ?? "none";
+  return (
+    <li className="flex flex-col gap-0.5 border-t border-line pt-1.5 first:border-t-0 first:pt-0">
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className={cn("text-xs font-semibold", impactClass[impact] ?? "text-fg-2")}>{impact.charAt(0).toUpperCase() + impact.slice(1)}</span>
+        <span className="text-sm font-medium">{check.title}</span>
+        {check.kind !== "violation" && <Badge tone="neutral">{check.kind === "incomplete" ? "Needs review" : check.kind}</Badge>}
+      </span>
+      <span className="text-xs text-fg-3">
+        {check.wcag ? check.wcag.split(" ").join(", ") : "Best practice"} · {check.nodes_total.toLocaleString()} {check.nodes_total === 1 ? "element" : "elements"}
+        {check.help_url && (
+          <>
+            {" · "}
+            <a className="text-accent-text underline" href={check.help_url} target="_blank" rel="noreferrer noopener">
+              How to fix
+            </a>
+          </>
+        )}
+      </span>
+      {(capped || check.nodes_total > check.nodes.length) && check.nodes.length > 0 && check.nodes_total > check.nodes.length && (
+        <span className="text-xs text-fg-3">
+          Showing the first {check.nodes.length.toLocaleString()} elements of {check.nodes_total.toLocaleString()}
+        </span>
+      )}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0" data-selectable>
+        {check.nodes.slice(0, NODE_CAP).map((n, i) => (
+          <li key={`${n.selector}-${i}`} className="flex flex-col">
+            <code className="font-mono text-xs break-all">{n.selector}</code>
+            {n.excerpt && <code className="font-mono text-xs break-all text-fg-3">{n.excerpt}</code>}
+          </li>
+        ))}
+      </ul>
+    </li>
+  );
+}
+
+/** Accessibility checks on this page (spec 026). */
+function AccessibilitySection({ a }: { a: A11yDetail }) {
+  const failed = a.checks.filter((c) => c.kind === "violation").length;
+  return (
+    <Section title={`Accessibility (${failed === 0 ? "no failures" : `${failed} failed`})`}>
+      {a.full_reason && <p className="m-0 text-xs text-fg-3">Full checks: {a.full_reason}</p>}
+      {a.checks.length === 0 && <p className="m-0 text-sm text-fg-3">No problems found by the checks that ran.</p>}
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+        {a.checks.map((c) => (
+          <A11yCheck key={`${c.source}-${c.check_id}`} check={c} capped={a.capped} />
+        ))}
+      </ul>
+      <p className="m-0 text-xs text-fg-3">{a.disclaimer}</p>
+    </Section>
+  );
+}
+
+/** Mobile friendliness of this page (spec 026). */
+function MobileSection({ m }: { m: MobileDetail }) {
+  const px = (v: number | null) => (v === null ? null : `${Math.round(v).toLocaleString()} px`);
+  const rows: [string, ReactNode][] = [
+    ["Viewport", m.viewport ? <code className="font-mono">{m.viewport}</code> : "None"],
+    ["Viewport state", m.viewport_state],
+    ["Measured", m.measured],
+    ["Content width", px(m.content_px)],
+    ["Window width", px(m.window_px)],
+    ["Widest element", m.widest ? <code className="font-mono break-all">{m.widest}</code> : null],
+    ["Small text", m.small_text_share === null ? null : `${Math.round(m.small_text_share).toLocaleString()}% of text`],
+    ["Small tap targets", m.small_targets === null ? null : m.small_targets.toLocaleString()],
+  ];
+  return (
+    <Section title="Mobile">
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm" data-selectable>
+        {rows
+          .filter(([, v]) => v !== null && v !== undefined && v !== "")
+          .map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-fg-3">{k}</dt>
+              <dd className="m-0">{v}</dd>
+            </div>
+          ))}
+      </dl>
+      {m.examples.length > 0 && (
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0" data-selectable>
+          {m.examples.map((e, i) => (
+            <li key={`${e.selector}-${i}`} className="text-xs">
+              <code className="font-mono break-all">{e.selector}</code>
+              <span className="text-fg-3">{` · ${Math.round(e.w)} x ${Math.round(e.h)} px`}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
 
 /** What the AMP checks found (spec 027 part E). */
 function AmpSection({ amp }: { amp: AmpDetail }) {
@@ -191,6 +299,92 @@ function LinkScoreSection({ m }: { m: LinkMetrics }) {
           ["Pages linking", `${m.pct_linking.toFixed(1)}%`],
         ]}
       />
+    </Section>
+  );
+}
+
+/** Where a link or heading was found on a rendered page (spec 014 FR-028). */
+function OriginBadge({ origin }: { origin: string | null }) {
+  if (origin === "raw") return <Badge tone="warn" className="shrink-0">raw only</Badge>;
+  if (origin === "rendered") return <Badge tone="ok" className="shrink-0">rendered only</Badge>;
+  return null;
+}
+
+const changeText: Record<string, string> = {
+  added: "Only in rendered HTML",
+  removed: "Removed by JavaScript",
+  changed: "Updated by JavaScript",
+};
+const flagText: Record<string, string> = { added: "Only in rendered HTML", removed: "Only in original HTML" };
+
+/** Both values of an element rendering changed. */
+function ChangeValues({ change }: { change: ElementChange }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-fg-3">{changeText[change.diff] ?? change.diff}</span>
+      <span className="break-words">
+        <span className="text-fg-3">Raw: </span>
+        {change.raw ?? <span className="text-fg-3">none</span>}
+      </span>
+      <span className="break-words">
+        <span className="text-fg-3">Rendered: </span>
+        {change.rendered ?? <span className="text-fg-3">none</span>}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * What JavaScript changed on a rendered page, and the side-by-side
+ * comparison of its raw and rendered HTML (spec 014 FR-028, US3).
+ */
+function RenderSection({ transport, path, id, url, render, htmlStored }: { transport: Transport; path: string; id: number; url: string; render: RenderDetail; htmlStored: boolean }) {
+  const [open, setOpen] = useState(false);
+  const c = render.comparison;
+  if (!c) {
+    return (
+      <Section title="Raw vs rendered">
+        <p className="m-0 text-sm text-fg-3" data-selectable>
+          {render.reason_label ?? "This page has no rendered version to compare."}
+          {render.reason_detail ? `: ${render.reason_detail}` : ""}
+        </p>
+      </Section>
+    );
+  }
+  const n = (v: number) => v.toLocaleString();
+  const rows: [string, ReactNode][] = [
+    ["Words", `${n(c.words_raw)} raw, ${n(c.words_rendered)} rendered (${c.words_change > 0 ? "+" : ""}${n(c.words_change)})`],
+    ["Links", `${n(c.links_raw)} raw, ${n(c.links_rendered)} rendered, ${n(c.links_rendered_only)} only after rendering`],
+    ["JavaScript dependence", `${Math.round(c.dependence)}% of the visible text exists only in the rendered page`],
+  ];
+  const elements: [string, ElementChange][] = [
+    ["Title", c.title],
+    ["Meta description", c.description],
+    ["H1", c.h1],
+    ["Canonical", c.canonical],
+    ["Hreflang", c.hreflang],
+  ];
+  for (const [label, change] of elements) if (change.diff !== "same") rows.push([label, <ChangeValues change={change} />]);
+  for (const [label, change] of [["Noindex", c.noindex], ["Nofollow", c.nofollow]] as const) if (change.diff !== "same") rows.push([label, flagText[change.diff] ?? change.diff]);
+  if (c.structured_rendered_only > 0) rows.push(["Structured data", `${n(c.structured_rendered_only)} ${c.structured_rendered_only === 1 ? "block" : "blocks"} only in rendered HTML`]);
+  const canCompare = htmlStored && render.rendered_html_stored;
+  return (
+    <Section
+      title="Raw vs rendered"
+      aside={
+        <Button size="sm" disabled={!canCompare} onClick={() => setOpen(true)}>
+          <Columns2 className="size-3.5" /> Compare HTML
+        </Button>
+      }
+    >
+      {c.noindex.diff === "removed" && (
+        <Notice kind="warn">
+          Noindex only in original HTML: search engines read the raw noindex first and may never render this page, so a script that removes it may not make the page indexable.
+        </Notice>
+      )}
+      <Facts rows={rows} />
+      {!canCompare && <p className="m-0 text-xs text-fg-3">Turn on Store page HTML in the crawl settings and crawl again to compare the HTML side by side.</p>}
+      <HtmlDiffSheet transport={transport} path={path} id={id} url={url} open={open} onOpenChange={setOpen} />
     </Section>
   );
 }
@@ -336,6 +530,7 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
             <li key={i} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
               <span className="w-6 shrink-0 text-xs font-medium text-fg-3">H{h.level}</span>
               <span className={cn("min-w-0 flex-1 break-words", h.level === 1 ? "text-fg" : "text-fg-2")}>{h.text || <span className="text-fg-3">(empty)</span>}</span>
+              <OriginBadge origin={h.origin} />
             </li>
           ))}
         </ol>
@@ -350,6 +545,7 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
                 {r.url}
               </span>
               <LinkText kind={kind} text={r.text} />
+              <OriginBadge origin={r.origin} />
               {r.position && (
                 <span className="shrink-0 text-xs text-fg-3" title="Where the link sits on its page">
                   {positionLabel[r.position] ?? r.position}
@@ -799,7 +995,8 @@ export function Inspector({
     facts.push(["Indexability", <span className={non ? "text-warn" : undefined}>{d.indexability}</span>]);
   }
   if (d.fetched_at !== null) facts.push(["Fetched", new Date(d.fetched_at).toLocaleString()]);
-  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings };
+  // The Resources and Console lists have their own sections.
+  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings, resources: 0, console: 0 };
   // Fields the file has no data for, grouped by why. Page HTML has its own
   // section, which says how to get it.
   const missing = new Map<string, string[]>();
@@ -906,8 +1103,12 @@ export function Inspector({
         )}
       </Section>
 
+      {d.render && <RenderSection transport={transport} path={path} id={d.id} url={d.url} render={d.render} htmlStored={d.html_stored} />}
+
       <AgentsSection transport={transport} path={path} id={d.id} />
       {d.amp && <AmpSection amp={d.amp} />}
+      {d.accessibility && <AccessibilitySection a={d.accessibility} />}
+      {d.mobile && <MobileSection m={d.mobile} />}
       <CustomSection transport={transport} path={path} id={d.id} epoch={epoch} rules={rules} htmlStored={d.html_stored} />
       {d.spelling && <SpellingSection spell={d.spelling} ignored={ignored} onIgnore={onIgnoreWord} />}
 

@@ -35,3 +35,10 @@ CSV rules as spec 007 FR-029. Columns: Address (previous), Address
 | 0 | compared; no failure condition met |
 | 2 | usage error, unreadable file, same file twice, newer file it cannot read |
 | `COMPARE_FAILED` (next free at merge, expected 8) | one or more `--fail-on-*` conditions met; each is named on stderr |
+
+## Report section (FR-033)
+
+`spiderlens report <FILE> --audit|--html <OUT> --compare-with <PREVIOUS>`
+compares the report's file (as the current crawl, default comparison and
+issue settings) with `PREVIOUS` and adds the section "Changes since the
+previous crawl" to the text, JSON and HTML output.

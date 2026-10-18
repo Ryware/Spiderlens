@@ -8,6 +8,7 @@ pub mod auth;
 pub mod jar;
 pub mod login;
 pub(crate) mod ntlm;
+mod pac;
 pub mod proxy;
 
 use std::collections::HashMap;
@@ -215,6 +216,19 @@ impl NetSession {
         finish(builder)
     }
 
+    /// A client for requests that must carry no cookies, such as the agent
+    /// checks after the last page (spec 016): the main client when it has
+    /// no cookie jar, else one built the same way without it. Credentials
+    /// are only ever added per request by [`Self::authorize`], never here.
+    pub fn plain_client(&self) -> Result<Client, CheckError> {
+        if self.jar.is_none() {
+            return Ok(self.client.clone());
+        }
+        let builder = proxy::apply(client_builder(&self.opts, &self.resolve), self.proxy.as_ref())
+            .map_err(|p| CheckError::new(ErrorClass::Connection, p.message()))?;
+        finish(builder)
+    }
+
     /// Checks the proxy by requesting `probe` (the start URL's robots.txt)
     /// through it (FR-022). Without a proxy there is nothing to check.
     pub async fn check_proxy(&self, probe: &Url) -> Result<(), ProxyProblem> {
@@ -247,5 +261,9 @@ pub async fn test_proxy(
     let client = proxy::apply(client_builder(opts, &[]), Some(&r))
         .and_then(|b| finish(b).map_err(|e| ProxyProblem::Invalid(e.message)))?;
     proxy::check(&client, probe).await?;
-    Ok(r.in_effect(access.proxy.mode))
+    let mut shown = r.in_effect(access.proxy.mode);
+    if let (Some(note), Some(script)) = (r.pac_note(probe), shown.host.clone()) {
+        shown.host = Some(format!("{script} ({note})"));
+    }
+    Ok(shown)
 }

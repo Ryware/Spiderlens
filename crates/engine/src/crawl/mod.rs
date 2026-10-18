@@ -6,6 +6,7 @@
 //! - `speed` adapts how many requests each site gets at once (spec 008).
 //! - `pace` explains what limits the crawl's speed, per site (spec 008).
 
+pub mod agent_checks;
 pub mod cookies;
 pub mod file;
 mod health;
@@ -21,6 +22,7 @@ mod runner;
 pub mod scope;
 pub mod site_files;
 pub mod sitemap;
+pub mod sitemap_list;
 mod speed;
 mod spelling;
 pub mod store;

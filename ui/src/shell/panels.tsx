@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Copy, Info, MousePointerClick } from "lucide-react";
 import { formatElapsed, type CrawlRun, type Phase } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
-import type { BuildInfo, Transport } from "../transport";
+import type { BuildInfo, RenderLimiting, RenderProgress, Transport } from "../transport";
 import { Badge, Bar, Button, cn, EmptyState, Kbd, Modal, Notice, Tooltip, type Tone } from "../components/ui";
 import { IssueList } from "../settings/fields";
 import { analysisLabel, type Analysis } from "../results/useAnalysis";
@@ -92,15 +92,58 @@ export function StatusBar({ setup, run, analysis }: { setup: CrawlSetup; run: Cr
           <span className="font-medium text-fg-2">{n}</span> {label}
         </span>
       ))}
+      {setup.config && setup.config.accessibility.level !== "off" && p && (
+        <span data-figure="accessibility">
+          Accessibility: <span className="font-medium text-fg-2">{count(p.a11y_checked)}</span> checked
+          {p.a11y_avg_ms != null && <> · avg {Math.round(p.a11y_avg_ms).toLocaleString()} ms</>}
+        </span>
+      )}
       {analysis && <AnalysisStatus analysis={analysis} />}
       <PausedSites run={run} />
       <CrawlSpeed run={run} />
+      {run.running && p?.render && <RenderRow render={p.render} />}
       <span className="ml-auto">
         {setup.loaded ? `${setup.loaded.name} · ` : ""}
         {speed}
         {setup.config ? ` · ${robotsLabel[setup.config.robots.mode]}` : ""}
       </span>
     </footer>
+  );
+}
+
+/** Why rendering is the slower stage, in words (spec 014 FR-040). */
+const renderLimiting: Record<RenderLimiting, (limit: number) => string> = {
+  concurrency: (limit) => `rendering ${limit} ${limit === 1 ? "page" : "pages"} at once`,
+  memory_guard: () => "the memory guard lowered the number of pages rendered at once",
+  slow_pages: () => "slow pages are using the render slots",
+  site_limits: () => "the site's limits hold back the pages' resources",
+  queue_full: () => "fetching is paused until fewer pages wait to be rendered",
+};
+
+/** The rendering row of the status bar: shown only for a crawl that renders (spec 014 FR-040). */
+function RenderRow({ render: r }: { render: RenderProgress }) {
+  const rate = r.pages_per_sec.toFixed(r.pages_per_sec < 10 ? 1 : 0);
+  return (
+    <span className="flex items-center gap-3" data-row="rendering" aria-label="Rendering">
+      <span data-figure="rendered">
+        <span className="font-medium text-fg-2">{count(r.rendered)}</span> rendered
+      </span>
+      <span data-figure="render-waiting">
+        <span className="font-medium text-fg-2">{count(r.queued)}</span> waiting to render
+      </span>
+      <span data-figure="rendering">
+        <span className="font-medium text-fg-2">{count(r.rendering)}</span> rendering
+      </span>
+      <span data-figure="render-rate">
+        <span className="font-medium text-fg-2">{rate}</span> pages/s
+      </span>
+      {r.fetching_done && <span data-note="fetching-done">Fetching done; rendering continues</span>}
+      {r.limiting && (
+        <span data-limit={r.limiting} className="text-fg-2">
+          Limited by: {renderLimiting[r.limiting](r.limit)}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -242,6 +285,45 @@ export function CrawlOverview({ run, onInfo, onResume, onSaveAs, onReport }: { r
                 <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
               </tr>
             ))}
+          </Table>
+        )}
+        {s?.render && (
+          <Table title="Rendering" head={["Result", "Pages"]} aside={s.render.renderer ? `${s.render.renderer.name} ${s.render.renderer.version}` : undefined}>
+            {(
+              [
+                ["rendered", "Rendered"],
+                ["timed_out", "Timed out"],
+                ["failed", "Failed"],
+                ["not_rendered", "Not rendered"],
+              ] as const
+            ).map(([state, label]) => (
+              <tr key={state} data-render-state={state}>
+                <td className="px-3 py-1.5">{label}</td>
+                <td className="px-3 py-1.5 text-right tabular">{count(s.render?.by_state[state] ?? 0)}</td>
+              </tr>
+            ))}
+            {(run.report?.render_reasons ?? []).map((r) => (
+              <tr key={r.reason} data-render-reason={r.reason}>
+                <td className="py-1.5 pr-3 pl-6 text-fg-2">{r.label}</td>
+                <td className="px-3 py-1.5 text-right tabular">{count(r.count)}</td>
+              </tr>
+            ))}
+            <tr data-render-figure="time">
+              <td className="px-3 py-1.5">Render time</td>
+              <td className="px-3 py-1.5 text-right tabular">
+                {s.render.avg_render_ms === null ? "none" : `${count(s.render.avg_render_ms)} ms average, ${count(s.render.max_render_ms ?? 0)} ms slowest`}
+              </td>
+            </tr>
+            <tr data-render-figure="js_errors">
+              <td className="px-3 py-1.5">JavaScript errors</td>
+              <td className="px-3 py-1.5 text-right tabular">{count(s.render.js_errors)}</td>
+            </tr>
+            <tr data-render-figure="resources">
+              <td className="px-3 py-1.5">Resources</td>
+              <td className="px-3 py-1.5 text-right tabular">
+                {count(s.render.failed_resources)} failed, {count(s.render.blocked_resources)} blocked
+              </td>
+            </tr>
           </Table>
         )}
         {byClass.length > 0 && (

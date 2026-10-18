@@ -190,7 +190,8 @@ export const VizCanvas = forwardRef<VizCanvasHandle, Props>(function VizCanvas({
       }
       return;
     }
-    const radial = scene.layout === "radial";
+    // Radial and force layouts draw straight parent lines.
+    const radial = scene.layout === "radial" || scene.layout === "force";
     // Lines, one path.
     const lines = new Path2D();
     for (const n of nodes) {

@@ -10,4 +10,8 @@ export type Setup = { previous: CrawlInfo, current: CrawlInfo, config_diffs: Arr
 /**
  * A host rule when the two crawls start on different origins.
  */
-suggested_mapping: MapRule | null, };
+suggested_mapping: MapRule | null, 
+/**
+ * Set when the temporary folder may be too small for the workspace.
+ */
+disk_warning: string | null, };

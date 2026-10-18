@@ -4,7 +4,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../App";
 import { fakeReport, fakeTransport } from "../testing/fakeTransport";
-import { fakeUrls } from "../testing/fakeResults";
+import { fakeRender, fakeUrls } from "../testing/fakeResults";
 
 const grid = () => screen.getByRole("grid");
 const rows = () => within(grid()).getAllByRole("row").slice(1);
@@ -358,4 +358,96 @@ test("show_in_table_says_when_no_tab_lists_the_url", async () => {
   fireEvent.click(await within(detailsPane()).findByRole("button", { name: "Show https://example.com/img-0.png in table" }));
   await waitFor(() => expect(within(detailsPane()).getByRole("status").textContent).toBe("That URL is not in any results table of this crawl."));
   expect(selectedRow()?.getAttribute("data-id")).toBe("2");
+});
+
+// JavaScript rendering (spec 014 US3) ------------------------------------------
+
+test("the_javascript_tab_explains_that_a_crawl_was_not_rendered", async () => {
+  const t = fakeTransport();
+  t.results.javascriptTab = true;
+  await openInternal(t);
+  fireEvent.click(screen.getByRole("button", { name: "JavaScript" }));
+  const tab = await screen.findByRole("region", { name: "JavaScript" });
+  expect(within(tab).getByText("This crawl was not rendered")).toBeTruthy();
+  expect(within(tab).queryByRole("grid")).toBeNull();
+});
+
+test("the_javascript_tab_lists_rendered_pages_of_a_rendered_crawl", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering"];
+  t.results.renders.set(2, fakeRender());
+  t.results.renders.set(3, fakeRender());
+  await openInternal(t);
+  fireEvent.click(screen.getByRole("button", { name: "JavaScript" }));
+  await waitFor(() => expect(rowCount()).toContain("2 URLs"));
+  expect(screen.queryByText("This crawl was not rendered")).toBeNull();
+  expect(screen.getByRole("button", { name: /^Contains JavaScript content/ })).toBeTruthy();
+});
+
+test("the_inspector_compares_raw_and_rendered_values_of_a_rendered_page", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering", "raw_html"];
+  const changed = (diff: string, raw: string | null, rendered: string | null) => ({ diff, raw, rendered });
+  const base = fakeRender();
+  t.results.renders.set(
+    2,
+    fakeRender({
+      comparison: {
+        ...base.comparison!,
+        words_raw: 50,
+        words_rendered: 900,
+        words_change: 850,
+        links_raw: 28,
+        links_rendered: 40,
+        links_rendered_only: 12,
+        title: changed("changed", "Loading", "Red Shoes | Shop"),
+        canonical: changed("changed", "https://example.com/a", "https://example.com/b"),
+        noindex: changed("removed", "noindex", null),
+        dependence: 94,
+      },
+    }),
+  );
+  const list = t.urlList;
+  t.urlList = async (p, id, kind, from, count, position, values) => {
+    const page = await list(p, id, kind, from, count, position, values);
+    return kind === "inlinks" ? { ...page, rows: page.rows.map((r, i) => ({ ...r, origin: i === 0 ? "raw" : "rendered" })) } : page;
+  };
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  const section = await within(detailsPane()).findByRole("heading", { name: "Raw vs rendered" });
+  const pane = section.closest("section") as HTMLElement;
+  // Both values of what changed (scenarios 1, 2, 4, 5).
+  expect(within(pane).getByText("50 raw, 900 rendered (+850)")).toBeTruthy();
+  expect(within(pane).getByText("28 raw, 40 rendered, 12 only after rendering")).toBeTruthy();
+  expect(within(pane).getByText("Loading")).toBeTruthy();
+  expect(within(pane).getByText("Red Shoes | Shop")).toBeTruthy();
+  expect(within(pane).getByText("https://example.com/a")).toBeTruthy();
+  expect(within(pane).getByText("https://example.com/b")).toBeTruthy();
+  expect(within(pane).getByText("94% of the visible text exists only in the rendered page")).toBeTruthy();
+  // Scenario 3: a noindex only in the original HTML.
+  expect(within(pane).getAllByText(/Noindex only in original HTML/).length).toBeGreaterThan(0);
+  expect(within(pane).getByText(/may never render this page/)).toBeTruthy();
+  // The comparison opens when both versions are stored.
+  expect((within(pane).getByRole("button", { name: "Compare HTML" }) as HTMLButtonElement).disabled).toBe(false);
+  // Origins in the link lists.
+  expect(await within(detailsPane()).findByText("raw only")).toBeTruthy();
+  expect(within(detailsPane()).getByText("rendered only")).toBeTruthy();
+});
+
+test("the_comparison_needs_both_versions_stored", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering", "raw_html"];
+  t.results.renders.set(2, fakeRender({ rendered_html_stored: false }));
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  const pane = (await within(detailsPane()).findByRole("heading", { name: "Raw vs rendered" })).closest("section") as HTMLElement;
+  expect((within(pane).getByRole("button", { name: "Compare HTML" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(within(pane).getByText(/Turn on Store page HTML/)).toBeTruthy();
+});
+
+test("a_page_that_was_not_rendered_has_no_comparison_section", async () => {
+  await openInternal();
+  fireEvent.click(rows()[1]);
+  await within(detailsPane()).findByRole("heading", { level: 2 });
+  expect(within(detailsPane()).queryByRole("heading", { name: "Raw vs rendered" })).toBeNull();
 });

@@ -6,10 +6,11 @@
 //! about crawls, crawl files or the UI, and depends on nothing in this
 //! workspace. The public API is `contracts/render-crate.md`.
 //!
-//! Not yet here: the `chrome-headless-shell` download (no pins yet, so
-//! [`download_plan`] is `None`) and running probes (each probe is reported
-//! as failed until specs 025 and 026 need them).
+//! The browser is a `chrome-headless-shell` downloaded on first use, after
+//! the user agreed ([`fetcher`]). Probes run after the page settled, in an
+//! isolated world each, under their own budget and the per-page total.
 
+mod fetcher;
 mod find;
 mod guard;
 mod launch;
@@ -20,32 +21,14 @@ mod types;
 use std::path::Path;
 use std::sync::Arc;
 
+pub use fetcher::{DownloadOptions, download, download_host_reachable, download_plan, download_with};
 pub use find::{
     MAJOR_TOLERANCE, PINNED_VERSION, PREFER_DOWNLOAD, browser_for_tests, data_dir, find_browser, min_major,
     should_offer_download,
 };
 pub use guard::{GUARD_ARG, parse_guard_args, run_guard};
-pub use launch::{default_concurrency, launch_count, sweep_stale_profiles};
+pub use launch::{default_concurrency, launch_count, sweep_stale_profiles, system_memory};
 pub use types::*;
-
-/// The pinned download for this platform, or `None` where Chrome for
-/// Testing has none. `None` until the pins exist (research R14).
-pub fn download_plan() -> Option<DownloadPlan> {
-    None
-}
-
-/// Downloads, verifies and unpacks into `<data_dir>/browsers/`. The caller
-/// must have the user's consent (FR-045). Partial files are removed on error
-/// or cancel.
-pub async fn download(
-    plan: &DownloadPlan,
-    data_dir: &Path,
-    progress: &(dyn Fn(DownloadProgress) + Send + Sync),
-    cancel: &CancellationFlag,
-) -> Result<BrowserInfo, DownloadError> {
-    let _ = (plan, data_dir, progress, cancel);
-    Err(DownloadError::NoPlan)
-}
 
 /// Removes a previous download, if any.
 pub fn remove_download(data_dir: &Path) -> std::io::Result<()> {
@@ -97,6 +80,17 @@ impl Browser {
             self.stuck.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         out
+    }
+
+    /// Whether the browser process still answers (a `Browser.getVersion`
+    /// within 3 s). False after it was killed or crashed.
+    pub async fn is_alive(&self) -> bool {
+        match &self.running {
+            Some(r) => tokio::time::timeout(std::time::Duration::from_secs(3), r.cdp.version())
+                .await
+                .is_ok_and(|v| v.is_ok()),
+            None => false,
+        }
     }
 
     /// Whether a render had to be abandoned at the hard stop, so the browser
@@ -170,11 +164,6 @@ impl Browser {
 mod tests {
     use super::*;
     use url::Url;
-
-    #[test]
-    fn no_download_plan_until_the_pins_exist() {
-        assert!(download_plan().is_none());
-    }
 
     #[test]
     fn remove_download_without_a_download_is_ok() {

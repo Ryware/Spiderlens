@@ -204,6 +204,10 @@ pub struct ReportOptions {
     pub running: bool,
     /// The active profile's name, when the app has one.
     pub profile: Option<String>,
+    /// Sections the caller built from other sources, appended after the
+    /// built-in ones (the comparison section of spec 012 FR-033). Every
+    /// output renders them like any other section.
+    pub extra_sections: Vec<Section>,
 }
 
 impl Reader {
@@ -222,6 +226,7 @@ impl Reader {
         for def in SECTIONS {
             out.push(sections::build(self, def, &ctx));
         }
+        out.extend(opts.extra_sections.iter().cloned());
         let incomplete = sections::incomplete(self)?;
         let meta = ReportMeta {
             start_url: self.meta("start_url")?,

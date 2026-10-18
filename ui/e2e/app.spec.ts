@@ -463,6 +463,29 @@ test("amp_tab_lists_amp_pages_with_the_core_subset_note", async ({ page }) => {
   await expect(page.getByTestId("row-count")).toHaveText("1 URL");
 });
 
+// Spec 026: the Accessibility tab, its Critical filter, and a page's detail section.
+test("accessibility_tab_filters_critical_pages_and_shows_the_inspector_section", async ({ page }) => {
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features.push("accessibility_static");
+    s.results.urls[1].a11y = s.fakeA11y({ checks: s.fakeA11y().checks.slice(1, 2) });
+    s.results.urls[2].a11y = s.fakeA11y();
+    s.results.urls[2].mobile = s.fakeMobile();
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "Accessibility", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("2 URLs");
+  const tab = page.getByRole("region", { name: "Accessibility" });
+  await tab.getByRole("button", { name: /^Critical/ }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1 URL");
+  await page.getByRole("grid").getByRole("row").nth(1).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { name: /^Accessibility \(2 failed\)/ })).toBeVisible();
+  await expect(details.getByText("Text has too little contrast")).toBeVisible();
+});
+
 // Spec 027 part D: spelling is checked after the crawl, from the Spelling tab.
 test("check_spelling_from_the_spelling_tab", async ({ page }) => {
   await crawl(page);
@@ -1122,6 +1145,17 @@ test("ai_assistants_settings_from_the_palette_fit_and_save", async ({ page }) =>
   await expect(panel.getByLabel("Claude Code configuration")).toContainText("claude mcp add spiderlens --");
   await panel.getByRole("button", { name: "Test" }).click();
   await expect(panel.getByRole("status")).toContainText("The server works: 8 tools");
+  // Crawling is a separate switch, off by default; profiles that ignore robots.txt cannot be allowed.
+  const crawl = panel.getByRole("switch", { name: "Allow AI assistants to start crawls" });
+  await expect(crawl).toHaveAttribute("aria-checked", "false");
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toBeDisabled();
+  await crawl.click();
+  await expect(crawl).toHaveAttribute("aria-checked", "true");
+  await panel.getByRole("switch", { name: "Allow Polite" }).click();
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("switch", { name: "Allow Stress test" })).toBeDisabled();
+  await expect(panel.getByRole("list", { name: "Allowed profiles" })).toContainText("Ignores robots.txt");
+  expect(await page.evaluate(() => window.spiderlens.assistants.settings.allowed_profiles)).toEqual(["Polite"]);
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
 });
@@ -1140,4 +1174,36 @@ test("details_show_a_pages_forms_for_ai_agents", async ({ page }) => {
   const pane = (await details.boundingBox())!;
   const fb = (await form.boundingBox())!;
   expect(fb.x + fb.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
+});
+
+test("list_mode_reads_a_sitemap_into_the_list", async ({ page }) => {
+  // Spec 011 FR-005: a sitemap address is a source for the List mode list.
+  await page.getByLabel("List", { exact: true }).click();
+  await page.getByRole("button", { name: "Add a list of URLs…" }).click();
+  const group = page.getByRole("group", { name: "From a sitemap" });
+  const read = group.getByRole("button", { name: "Read sitemap" });
+  await expect(read).toBeDisabled();
+  await group.getByLabel("Sitemap address").fill("https://example.com/sitemap.xml");
+  await read.click();
+  await expect(page.getByTestId("list-summary")).toContainText("3 URLs to crawl");
+  await expect(page.getByTestId("list-summary")).toContainText("Read 1 sitemap file.");
+});
+
+// Spec 016 FR-018: the Agents tab opens with the crawl's score, and its details
+// list the rules that cost points and the entry points of the host.
+test("agents_tab_shows_the_score_and_entry_points", async ({ page }) => {
+  await page.evaluate(() => window.spiderlens.results.features.push("extraction", "agents"));
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Agents", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  const summary = page.getByRole("region", { name: "AI agents" });
+  await expect(summary.getByTestId("agents-score")).toHaveText("72");
+  await summary.getByRole("button", { name: "Details" }).click();
+  await expect(summary.getByText("Form fields without a label")).toBeVisible();
+  await expect(summary.getByText("Challenge pages")).toBeVisible();
+  const host = summary.getByRole("region", { name: "Entry points for example.com" });
+  await expect(host.getByText("Invalid")).toBeVisible();
+  const box = (await summary.boundingBox())!;
+  const hb = (await host.boundingBox())!;
+  expect(hb.x + hb.width).toBeLessThanOrEqual(box.x + box.width + 1);
 });

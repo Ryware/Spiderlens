@@ -861,6 +861,7 @@ async fn list_mode_depth_zero_and_hosts_internal() {
         invalid_count: 0,
         invalid_sample: vec![],
         notices: vec![],
+        sitemap: None,
     });
     let d = run_input(&site, input, Mode::List, fast).await;
     assert_eq!(d.row(&site.url("other.test", "/b")).state, UrlState::Crawled);
@@ -1175,6 +1176,21 @@ async fn ai_site_files_once_per_internal_host() {
     assert_eq!(
         rows,
         [
+            (
+                "/.well-known/agent-card.json".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            (
+                "/.well-known/ai-catalog.json".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            (
+                "/.well-known/api-catalog".to_string(),
+                "skipped".to_string(),
+                None
+            ),
             (
                 "/.well-known/tdmrep.json".to_string(),
                 "skipped".to_string(),

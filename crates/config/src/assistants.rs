@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::model::RobotsMode;
+use crate::store::{ProfileStore, StoreError};
+
 const FILE: &str = "assistants.json";
 const VERSION: u32 = 1;
 
@@ -28,17 +31,67 @@ pub struct AssistantSettings {
     /// Folders whose crawl files assistants may read (one level deep).
     #[ts(type = "string[]")]
     pub allowed_folders: Vec<PathBuf>,
-    /// Start, pause and stop crawls (P3, off by default).
+    /// Start, watch, pause and stop crawls (P3, off by default).
     pub allow_crawl: bool,
     /// Crawl profiles an assistant may start crawls with.
     pub allowed_profiles: Vec<String>,
 }
 
+/// A saved profile as Settings › AI assistants offers it for crawls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AssistantProfile {
+    pub name: String,
+    /// False when the profile ignores robots.txt; assistants may not use it.
+    pub respects_robots: bool,
+    /// Why the profile cannot be allowed.
+    pub reason: Option<String>,
+}
+
+/// Why an assistant may not crawl with the saved profile `name`, or `None`
+/// when it may (spec 016 FR-026: only profiles that respect robots.txt).
+pub fn crawl_profile_problem(store: &ProfileStore, name: &str) -> Option<String> {
+    match store.load(name) {
+        Ok(p) if p.config.robots.mode == RobotsMode::Respect => None,
+        Ok(_) => Some(format!(
+            "The profile \"{name}\" ignores robots.txt, so an AI assistant cannot use it."
+        )),
+        Err(StoreError::NotFound(_)) => Some(format!("There is no saved profile named \"{name}\".")),
+        Err(e) => Some(format!("The profile \"{name}\" cannot be read: {e}")),
+    }
+}
+
+/// The saved profiles with whether an assistant may use each.
+pub fn assistant_profiles(store: &ProfileStore) -> Vec<AssistantProfile> {
+    store
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| {
+            let reason = match &e.error {
+                Some(err) => Some(format!("The profile cannot be read: {err}")),
+                None => crawl_profile_problem(store, &e.name),
+            };
+            AssistantProfile {
+                respects_robots: reason.is_none(),
+                reason: reason.map(|r| {
+                    if r.contains("ignores robots.txt") {
+                        "Ignores robots.txt".to_string()
+                    } else {
+                        r
+                    }
+                }),
+                name: e.name,
+            }
+        })
+        .collect()
+}
+
 impl AssistantSettings {
     /// The settings as they are saved: allowed folders must be existing
-    /// folders, listed once. Starting crawls is not offered yet (spec 016
-    /// P3), so it stays off.
-    pub fn checked(mut self) -> Result<Self, String> {
+    /// folders, listed once. With crawling on, every allowed profile must be
+    /// a saved profile that respects robots.txt (spec 016 FR-026).
+    pub fn checked(mut self, profiles: &ProfileStore) -> Result<Self, String> {
         let mut folders: Vec<PathBuf> = Vec::new();
         for f in self.allowed_folders {
             if !f.is_dir() {
@@ -49,8 +102,18 @@ impl AssistantSettings {
             }
         }
         self.allowed_folders = folders;
-        self.allow_crawl = false;
-        self.allowed_profiles.clear();
+        let mut names: Vec<String> = Vec::new();
+        for n in self.allowed_profiles {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        if self.allow_crawl
+            && let Some(problem) = names.iter().find_map(|n| crawl_profile_problem(profiles, n))
+        {
+            return Err(problem);
+        }
+        self.allowed_profiles = names;
         Ok(self)
     }
 }
@@ -131,6 +194,7 @@ impl AppDirs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CrawlConfig;
 
     #[test]
     fn missing_or_damaged_file_means_everything_off() {
@@ -148,7 +212,7 @@ mod tests {
         let want = AssistantSettings {
             allow_read: true,
             allowed_folders: vec![PathBuf::from("/crawls")],
-            allow_crawl: false,
+            allow_crawl: true,
             allowed_profiles: vec!["Polite".into()],
         };
         s.save(&want).unwrap();
@@ -159,24 +223,86 @@ mod tests {
         assert_eq!(raw["allow_read"], true);
     }
 
+    fn profiles(dir: &Path) -> ProfileStore {
+        let store = ProfileStore::open(dir.join("profiles")).unwrap();
+        let polite = CrawlConfig::default();
+        let mut rude = CrawlConfig::default();
+        rude.robots.mode = RobotsMode::Ignore;
+        let mut report = CrawlConfig::default();
+        report.robots.mode = RobotsMode::IgnoreReport;
+        store.save("Polite", &polite, None, false).unwrap();
+        store.save("Rude", &rude, None, false).unwrap();
+        store.save("Report", &report, None, false).unwrap();
+        store
+    }
+
     #[test]
-    fn checked_keeps_existing_folders_once_and_crawling_off() {
+    fn checked_keeps_existing_folders_once() {
         let dir = tempfile::tempdir().unwrap();
+        let store = profiles(dir.path());
         let ok = AssistantSettings {
             allow_read: true,
             allowed_folders: vec![dir.path().into(), dir.path().into()],
-            allow_crawl: true,
-            allowed_profiles: vec!["Fast".into()],
+            ..AssistantSettings::default()
         }
-        .checked()
+        .checked(&store)
         .unwrap();
         assert_eq!(ok.allowed_folders, vec![dir.path().to_path_buf()]);
-        assert!(!ok.allow_crawl && ok.allowed_profiles.is_empty());
+        assert!(!ok.allow_crawl);
         let missing = AssistantSettings {
             allowed_folders: vec![dir.path().join("nope")],
             ..AssistantSettings::default()
         };
-        assert!(missing.checked().unwrap_err().contains("not a folder"));
+        assert!(missing.checked(&store).unwrap_err().contains("not a folder"));
+    }
+
+    #[test]
+    fn crawling_needs_saved_profiles_that_respect_robots() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = profiles(dir.path());
+        let with = |names: &[&str]| AssistantSettings {
+            allow_crawl: true,
+            allowed_profiles: names.iter().map(|n| n.to_string()).collect(),
+            ..AssistantSettings::default()
+        };
+        let ok = with(&["Polite", "Polite"]).checked(&store).unwrap();
+        assert!(ok.allow_crawl);
+        assert_eq!(ok.allowed_profiles, vec!["Polite".to_string()]);
+        assert!(
+            with(&["Rude"])
+                .checked(&store)
+                .unwrap_err()
+                .contains("ignores robots.txt")
+        );
+        assert!(
+            with(&["Report"])
+                .checked(&store)
+                .unwrap_err()
+                .contains("ignores robots.txt")
+        );
+        assert!(
+            with(&["Gone"])
+                .checked(&store)
+                .unwrap_err()
+                .contains("no saved profile")
+        );
+        // Off: a profile deleted or changed later never blocks saving.
+        let off = AssistantSettings {
+            allowed_profiles: vec!["Gone".into()],
+            ..AssistantSettings::default()
+        };
+        assert!(off.checked(&store).is_ok());
+    }
+
+    #[test]
+    fn profiles_are_listed_with_the_reason_they_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let list = assistant_profiles(&profiles(dir.path()));
+        let get = |n: &str| list.iter().find(|p| p.name == n).unwrap().clone();
+        assert!(get("Polite").respects_robots && get("Polite").reason.is_none());
+        assert!(!get("Rude").respects_robots);
+        assert_eq!(get("Rude").reason.as_deref(), Some("Ignores robots.txt"));
+        assert!(!get("Report").respects_robots);
     }
 
     #[test]

@@ -28,6 +28,97 @@ pub fn register_thresholds(
     })
 }
 
+/// Position of the target WCAG version in the order 2.0, 2.1, 2.2.
+fn version_rank(v: spiderlens_config::WcagVersion) -> u8 {
+    match v {
+        spiderlens_config::WcagVersion::V2_0 => 0,
+        spiderlens_config::WcagVersion::V2_1 => 1,
+        spiderlens_config::WcagVersion::V2_2 => 2,
+    }
+}
+
+fn level_rank(l: spiderlens_config::WcagLevel) -> u8 {
+    match l {
+        spiderlens_config::WcagLevel::A => 0,
+        spiderlens_config::WcagLevel::Aa => 1,
+        spiderlens_config::WcagLevel::Aaa => 2,
+    }
+}
+
+/// Whether a space-separated tag string, as axe writes it (`wcag2aa
+/// wcag143`) or `best-practice`, falls inside the target: a level tag at or
+/// below the target version and level, or best practice when asked for
+/// (spec 026 FR-003, FR-020).
+pub fn wcag_in_target(tags: &str, target: &spiderlens_config::AccessibilitySettings) -> bool {
+    let max_version = version_rank(target.wcag.version);
+    let max_level = level_rank(target.wcag.level);
+    tags.split_whitespace().any(|tag| {
+        if tag == "best-practice" {
+            return target.best_practice;
+        }
+        let Some(rest) = tag.strip_prefix("wcag") else {
+            return false;
+        };
+        // wcag2a, wcag21aa, wcag22aaa; criteria such as wcag143 end in a digit.
+        let split = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let (digits, letters) = rest.split_at(split);
+        let version = match digits {
+            "2" => 0,
+            "21" => 1,
+            "22" => 2,
+            _ => return false,
+        };
+        let level = match letters {
+            "a" => 0,
+            "aa" => 1,
+            "aaa" => 2,
+            _ => return false,
+        };
+        version <= max_version && level <= max_level
+    })
+}
+
+/// `wcag_in_target(tags)` and `a11y_setting(name)`: the accessibility
+/// settings of the crawl (or the target given on the command line). Not
+/// deterministic, so a replaced target applies to the next query.
+pub fn register_a11y(
+    conn: &Connection,
+    settings: &spiderlens_config::AccessibilitySettings,
+) -> rusqlite::Result<()> {
+    let target = settings.clone();
+    conn.create_scalar_function("wcag_in_target", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
+        let tags: Option<String> = ctx.get(0)?;
+        Ok(tags.is_some_and(|t| wcag_in_target(&t, &target)))
+    })?;
+    let values = settings.clone();
+    conn.create_scalar_function("a11y_setting", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
+        let name: String = ctx.get(0)?;
+        Ok(match name.as_str() {
+            "small_text_px" => Some(i64::from(values.small_text_px)),
+            "small_text_share" => Some(i64::from(values.small_text_share)),
+            "tap_target_px" => Some(i64::from(values.tap_target_px)),
+            "overflow_px" => Some(i64::from(values.overflow_px)),
+            _ => None,
+        })
+    })
+}
+
+/// The registry's purpose of the crawler with this robots.txt token, as the
+/// snake case word the stored data and the UI use.
+fn ai_bot_purpose(token: &str) -> Option<String> {
+    use spiderlens_config::ai_bots::BotPurpose;
+    let b = spiderlens_config::ai_bots::by_token(token)?;
+    Some(
+        match b.purpose {
+            BotPurpose::Training => "training",
+            BotPurpose::Search => "search",
+            BotPurpose::UserFetch => "user_fetch",
+            BotPurpose::Other => "other",
+        }
+        .to_string(),
+    )
+}
+
 pub fn register(conn: &Connection) -> rusqlite::Result<()> {
     conn.create_scalar_function("has_header", 2, FLAGS, |ctx| {
         let headers: Option<String> = ctx.get(0)?;
@@ -99,6 +190,18 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
             .map(|b| b.name.as_str())
             .collect();
         Ok(Some(names.join(", ")))
+    })?;
+    // Spec 016 FR-013: what a stored crawler token is for (`user_fetch` for
+    // agents that fetch a page because a person asked), and its name. Both
+    // read the shared registry; a token it does not know (a user's own
+    // entry) gives NULL.
+    conn.create_scalar_function("ai_bot_purpose", 1, FLAGS, |ctx| {
+        let token: Option<String> = ctx.get(0)?;
+        Ok(token.and_then(|t| ai_bot_purpose(&t)))
+    })?;
+    conn.create_scalar_function("ai_bot_name", 1, FLAGS, |ctx| {
+        let token: Option<String> = ctx.get(0)?;
+        Ok(token.and_then(|t| spiderlens_config::ai_bots::by_token(&t).map(|b| b.name.clone())))
     })?;
     conn.create_scalar_function("px_width", 2, FLAGS, |ctx| {
         let text: Option<String> = ctx.get(0)?;
@@ -612,6 +715,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn ai_bot_purpose_comes_from_the_registry() {
+        let conn = Connection::open_in_memory().unwrap();
+        register(&conn).unwrap();
+        let user_fetch = spiderlens_config::ai_bots::active()
+            .find(|b| b.purpose == spiderlens_config::ai_bots::BotPurpose::UserFetch)
+            .expect("the registry has a user-fetch agent");
+        let get = |sql: &str, token: &str| -> Option<String> {
+            conn.query_row(sql, [token], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(
+            get("SELECT ai_bot_purpose(?1)", &user_fetch.token).as_deref(),
+            Some("user_fetch")
+        );
+        assert_eq!(
+            get("SELECT ai_bot_purpose(?1)", &user_fetch.token.to_uppercase()).as_deref(),
+            Some("user_fetch")
+        );
+        assert_eq!(
+            get("SELECT ai_bot_name(?1)", &user_fetch.token),
+            Some(user_fetch.name.clone())
+        );
+        assert_eq!(get("SELECT ai_bot_purpose(?1)", "not-a-registered-bot"), None);
+        assert_eq!(get("SELECT ai_bot_name(?1)", "not-a-registered-bot"), None);
+        let null: Option<String> = conn
+            .query_row("SELECT ai_bot_purpose(NULL)", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(null, None);
+    }
 
     #[test]
     fn natural_order() {

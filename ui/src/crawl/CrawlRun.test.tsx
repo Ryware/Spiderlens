@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { App } from "../App";
 import { fakeReport, fakeTransport } from "../testing/fakeTransport";
 import { formatElapsed } from "./useCrawlRun";
+import type { RenderProgress } from "../transport";
 
 const button = (name: RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
 const status = () => screen.getByRole("contentinfo", { name: "Crawl status" });
@@ -35,6 +36,50 @@ test("start_runs_a_crawl_and_shows_live_figures", async () => {
   expect(figure("left")).toBe("~01:30 left");
   const overview = screen.getByRole("region", { name: "Overview" });
   expect(within(overview).getByText("Discovered").nextSibling?.textContent).toBe("40");
+});
+
+const renderProgress = (patch: Partial<RenderProgress> = {}): RenderProgress => ({
+  rendered: 120,
+  queued: 30,
+  rendering: 4,
+  pages_per_sec: 7.26,
+  avg_pages_per_sec: 6,
+  limit: 4,
+  limiting: null,
+  fetching_done: false,
+  ...patch,
+});
+
+test("the_rendering_row_is_hidden_for_raw_progress_events", async () => {
+  // Spec 014 US2 scenario 4: a raw crawl's events have no render figures.
+  const t = await startCrawl();
+  act(() => t.crawls.progress({ crawled: 12, queued: 25 }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
+  act(() => t.crawls.progress({ crawled: 13, render: null }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
+});
+
+test("the_rendering_row_shows_the_figures_and_why_rendering_is_the_limit", async () => {
+  const t = await startCrawl();
+  act(() => t.crawls.progress({ crawled: 12, render: renderProgress() }));
+  expect(status().querySelector('[data-row="rendering"]')).not.toBeNull();
+  expect(figure("rendered")).toBe("120 rendered");
+  expect(figure("render-waiting")).toBe("30 waiting to render");
+  expect(figure("rendering")).toBe("4 rendering");
+  expect(figure("render-rate")).toBe("7.3 pages/s");
+  expect(status().textContent).not.toMatch(/Limited by/);
+  expect(status().textContent).not.toMatch(/Fetching done/);
+
+  act(() => t.crawls.progress({ crawled: 40, render: renderProgress({ limiting: "queue_full", fetching_done: false }) }));
+  expect(status().textContent).toMatch(/Limited by: fetching is paused until fewer pages wait to be rendered/);
+
+  act(() => t.crawls.progress({ crawled: 40, render: renderProgress({ limiting: "concurrency", fetching_done: true }) }));
+  expect(status().textContent).toMatch(/Fetching done; rendering continues/);
+  expect(status().textContent).toMatch(/Limited by: rendering 4 pages at once/);
+
+  // The row goes away when a later event has no render figures.
+  act(() => t.crawls.progress({ crawled: 41, render: undefined }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
 });
 
 test("analysis_phase_shows_in_the_status_bar_until_the_crawl_finishes", async () => {
@@ -131,4 +176,44 @@ test("enter_on_a_host_without_a_dot_shows_an_error_and_does_not_crawl", async ()
   expect(t.crawls.started).toEqual([]);
   expect(field.value).toBe("ryware");
   expect(button(/Start$/).disabled).toBe(true);
+});
+
+test("rendering_block_shows_counts_reasons_and_the_renderer", async () => {
+  // Spec 014 FR-041: the states are listed with their reasons.
+  const t = await startCrawl();
+  const report = fakeReport("completed", 12);
+  report.summary.render = {
+    by_state: { rendered: 7, timed_out: 1, failed: 2, not_rendered: 1 },
+    by_reason: { crash: 1, page_too_large: 1, outside_rules: 1 },
+    avg_render_ms: 420,
+    max_render_ms: 1800,
+    js_errors: 3,
+    failed_resources: 4,
+    blocked_resources: 9,
+    renderer: { name: "Chrome Headless Shell", version: "155.0.8059.39", source: "downloaded" },
+  };
+  report.render_reasons = [
+    { reason: "crash", label: "Browser crash", count: 1 },
+    { reason: "page_too_large", label: "Page too large", count: 1 },
+    { reason: "outside_rules", label: "Outside rendering rules", count: 1 },
+  ];
+  await act(async () => t.crawls.finish({ report }));
+  const block = await screen.findByRole("region", { name: "Rendering" });
+  const row = (state: string) => block.querySelector(`[data-render-state="${state}"]`)?.textContent;
+  expect(row("rendered")).toBe("Rendered7");
+  expect(row("timed_out")).toBe("Timed out1");
+  expect(row("failed")).toBe("Failed2");
+  expect(row("not_rendered")).toBe("Not rendered1");
+  expect(block.querySelector('[data-render-reason="crash"]')?.textContent).toBe("Browser crash1");
+  expect(block.querySelector('[data-render-figure="time"]')?.textContent).toContain("420 ms average, 1,800 ms slowest");
+  expect(block.querySelector('[data-render-figure="js_errors"]')?.textContent).toBe("JavaScript errors3");
+  expect(block.querySelector('[data-render-figure="resources"]')?.textContent).toContain("4 failed, 9 blocked");
+  expect(within(block).getByText("Chrome Headless Shell 155.0.8059.39")).toBeTruthy();
+});
+
+test("raw_crawls_have_no_rendering_block", async () => {
+  const t = await startCrawl();
+  await act(async () => t.crawls.finish({ report: fakeReport("completed", 5) }));
+  await screen.findByRole("region", { name: "Overview" });
+  expect(screen.queryByRole("region", { name: "Rendering" })).toBeNull();
 });

@@ -56,12 +56,14 @@ export function fakeScene(urls: FakeUrl[], state: ViewState): Scene {
     slot[k] = (Math.min(...ch) + Math.max(...ch)) / 2;
   }
   const radial = state.layout === "radial";
+  const force = state.layout === "force";
   const leaves = Math.max(next, 1);
   const nodes: SceneNode[] = order.map(({ i, parent, level }, k) => {
     const u = urls[i];
     const folder = tree && kids[i].length > 0;
     const a = (slot[k] / leaves) * Math.PI * 2;
-    const [x, y] = radial ? (level === 0 ? [0, 0] : [level * 160 * Math.cos(a), level * 160 * Math.sin(a)]) : [level * 220, slot[k] * 22];
+    // Force: a stand-in that spreads each level on a ring, root at the centre.
+    const [x, y] = force ? (level === 0 ? [0, 0] : [level * 120 * Math.cos(k), level * 120 * Math.sin(k)]) : radial ? (level === 0 ? [0, 0] : [level * 160 * Math.cos(a), level * 160 * Math.sin(a)]) : [level * 220, slot[k] * 22];
     return {
       key: key(i),
       label: i === 0 ? u.url : folder ? `section-${i}/` : new URL(u.url).pathname,
@@ -202,7 +204,9 @@ function fakeTerms(urls: FakeUrl[], state: ViewState): [string, number][] {
       : state.stop_words
         ? words
         : [...words.slice(0, 2), ["the", 7], ...words.slice(2), ["here", 1]];
-  return terms.map(([t, c]) => [t, state.followed_only ? Math.max(1, c - 1) : c] as [string, number]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  // A position filter keeps some of the links: half of each term's, at least one.
+  const kept = (c: number) => (state.positions.length > 0 ? Math.max(1, Math.floor(c / 2)) : c);
+  return terms.map(([t, c]) => [t, kept(state.followed_only ? Math.max(1, c - 1) : c)] as [string, number]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 function fakeAnchors(urls: FakeUrl[], state: ViewState): Scene {
