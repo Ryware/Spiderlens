@@ -223,6 +223,10 @@ pub struct CrawlView {
     pub max_concurrent: u32,
     pub max_urls_per_sec: Option<f64>,
     pub urls_per_sec: f64,
+    /// The URLs-per-second cap held back a ready request lately. The
+    /// measured rate can stay under 90% of the cap while it holds (timers
+    /// wake late, notably on Windows).
+    pub rate_held: bool,
     /// Every site is slow at once (FR-019).
     pub connection_slow: bool,
     pub load: Load,
@@ -272,7 +276,7 @@ pub fn crawl_limit(c: &CrawlView, blocking: Option<&SiteView>, now: Instant) -> 
         ));
     }
     if let Some(rate) = c.max_urls_per_sec
-        && c.urls_per_sec >= rate * 0.9
+        && (c.rate_held || c.urls_per_sec >= rate * 0.9)
     {
         return Some(limit(
             LimitKind::Rate,
@@ -503,6 +507,7 @@ mod tests {
             max_concurrent: 64,
             max_urls_per_sec: None,
             urls_per_sec: 100.0,
+            rate_held: false,
             connection_slow: false,
             load: Load::default(),
         }
@@ -595,6 +600,10 @@ mod tests {
             crawl_limit(&c, Some(&v), now).unwrap().kind,
             LimitKind::StartingUp
         );
+        // Late timers keep the measured rate under 90%; the cap holding a
+        // URL back still names it.
+        c.rate_held = true;
+        assert_eq!(crawl_limit(&c, Some(&v), now).unwrap().kind, LimitKind::Rate);
         // Nothing blocked and no cap reached: no limit to name.
         assert_eq!(crawl_limit(&crawl(3), None, now), None);
     }
