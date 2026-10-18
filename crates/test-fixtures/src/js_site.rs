@@ -31,6 +31,9 @@ pub const JS_HOST: &str = "js.test";
 /// A third-party host for CDN scripts, fonts and beacons.
 pub const CDN_HOST: &str = "cdn.test";
 
+/// Words each dependence ladder page shows once rendered (spec 014 US7).
+pub const US7_WORDS: usize = 100;
+
 /// The paths [`JsSiteBuilder::us3_pages`] serves (besides `/`), in link order.
 pub const US3_PATHS: [&str; 18] = [
     "/title-changed",
@@ -667,6 +670,70 @@ impl JsSiteBuilder {
         .page(
             "/steady",
             &page("Steady", "<h1>Steady</h1><p>Nothing goes wrong here.</p>", ""),
+        )
+    }
+
+    /// The pages of spec 014 US7: how much of a page's text a script adds.
+    ///
+    /// - `/dep-0`, `/dep-25`, `/dep-50`, `/dep-75`, `/dep-100`: each shows
+    ///   exactly 100 words once rendered, of which 0, 25, 50, 75 or 100 are
+    ///   added by a script. The raw words are all `stable`, the added ones
+    ///   all `added`, so the expected share is exact.
+    /// - `/shell`: an empty application shell with no title and no H1; a
+    ///   script adds the title `Shell app`, an H1 and 40 words of text.
+    /// - `/`: links to all of them, with no script.
+    pub fn us7_pages(self) -> Self {
+        let page = |title: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!("<script>{script}</script>")
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
+                 {script}</head><body>{body}</body></html>"
+            )
+        };
+        let on_ready = |js: &str| format!("document.addEventListener('DOMContentLoaded', () => {{ {js} }});");
+        let words = |word: &str, n: usize| vec![word; n].join(" ");
+        let mut links = String::new();
+        let mut site = self;
+        for pct in [0usize, 25, 50, 75, 100] {
+            let added = US7_WORDS * pct / 100;
+            let raw = US7_WORDS - added;
+            let body = if raw == 0 {
+                "<div id=\"app\"></div>".to_string()
+            } else {
+                format!("<p>{}</p><div id=\"app\"></div>", words("stable", raw))
+            };
+            let script = if added == 0 {
+                String::new()
+            } else {
+                on_ready(&format!(
+                    "document.getElementById('app').textContent = '{}';",
+                    words("added", added)
+                ))
+            };
+            let path = format!("/dep-{pct}");
+            links.push_str(&format!("<a href=\"{path}\">{pct}</a> "));
+            site = site.page(&path, &page("Ladder", &body, &script));
+        }
+        links.push_str("<a href=\"/shell\">Shell</a>");
+        site.page(
+            "/",
+            &page("Ladder home", &format!("<p>The ladder.</p>{links}"), ""),
+        )
+        .page(
+            "/shell",
+            &format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+                     <script>{}</script></head><body><div id=\"root\"></div></body></html>",
+                on_ready(&format!(
+                    "document.title = 'Shell app'; \
+                         document.getElementById('root').innerHTML = '<h1>Shell app</h1><p>{}</p>';",
+                    words("rendered", 40)
+                ))
+            ),
         )
     }
 
