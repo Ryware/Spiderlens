@@ -3,19 +3,19 @@
 /**
  * What an export would send, known before anything is sent (FR-030).
  */
-export type SheetsPlan = {
+export type SheetsPlan = { 
 /**
  * Data rows, without the header.
  */
-rows: number, columns: number,
+rows: number, columns: number, 
 /**
  * Header and data.
  */
-cells: number, capacity: number, fits: boolean,
+cells: number, capacity: number, fits: boolean, 
 /**
  * Data rows one spreadsheet holds next to its header.
  */
-rows_per_spreadsheet: number,
+rows_per_spreadsheet: number, 
 /**
  * Spreadsheets a split needs.
  */

@@ -1214,7 +1214,7 @@ impl CrawlArgs {
             c.accessibility.level = level.into();
         }
         if let Some(target) = &self.wcag {
-            c.accessibility.wcag = target.clone();
+            c.accessibility.wcag = *target;
         }
         if self.no_a11y_best_practice {
             c.accessibility.best_practice = false;

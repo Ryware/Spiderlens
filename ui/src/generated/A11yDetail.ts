@@ -4,11 +4,11 @@ import type { A11yCheckDetail } from "./A11yCheckDetail";
 /**
  * The Accessibility section of the detail pane (spec 026 FR-023).
  */
-export type A11yDetail = { static_state: string | null, full_state: string | null, full_reason: string | null,
+export type A11yDetail = { static_state: string | null, full_state: string | null, full_reason: string | null, 
 /**
  * Ordered by impact, then check.
  */
-checks: Array<A11yCheckDetail>,
+checks: Array<A11yCheckDetail>, 
 /**
  * Some check has more failing elements than are stored.
  */

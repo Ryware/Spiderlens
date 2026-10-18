@@ -368,6 +368,25 @@ fn stale<'p>(ordered: &[&'p dyn Pass], records: &Records, stamp: i64) -> Vec<&'p
     out
 }
 
+/// Drops `temp.<name>`, whether it is a table or a view: `DROP TABLE` on a
+/// view (and `DROP VIEW` on a table) is an error, and the reader points
+/// `link_metrics` at stored results with a view where a build makes a table.
+pub(crate) fn drop_temp(conn: &Connection, name: &str) -> rusqlite::Result<()> {
+    let kind: Option<String> = conn
+        .query_row(
+            "SELECT type FROM temp.sqlite_master WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match kind.as_deref() {
+        Some("view") => conn.execute_batch(&format!("DROP VIEW temp.{name};"))?,
+        Some("table") => conn.execute_batch(&format!("DROP TABLE temp.{name};"))?,
+        _ => {}
+    }
+    Ok(())
+}
+
 /// True when some pass of [`PASSES`] has not run on this crawl's data.
 pub fn needs_analysis(conn: &Connection) -> Result<bool> {
     let ordered = order(PASSES)?;

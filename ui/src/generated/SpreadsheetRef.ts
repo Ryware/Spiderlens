@@ -3,7 +3,7 @@
 /**
  * A spreadsheet an export created.
  */
-export type SpreadsheetRef = { spreadsheet_id: string, url: string, worksheet_id: number, title: string,
+export type SpreadsheetRef = { spreadsheet_id: string, url: string, worksheet_id: number, title: string, 
 /**
  * Data rows in it.
  */

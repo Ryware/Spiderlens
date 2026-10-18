@@ -1805,6 +1805,20 @@ async fn us4_the_page_sees_the_window_the_settings_ask_for() {
     assert_eq!((text.as_str(), w), ("innerWidth=800", 800));
 }
 
+/// Requests for `p` beyond the crawler's own check of the link (the
+/// crawler requests an `<img src>` once; the browser may too).
+fn browser_requests(store: &CrawlStore, site: &JsSite, p: &str) -> u64 {
+    let crawled: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM urls WHERE url = ?1 AND status IS NOT NULL",
+            [site.url(JS_HOST, p)],
+            |r| r.get(0),
+        )
+        .unwrap();
+    site.count(JS_HOST, p) - crawled as u64
+}
+
 /// US4 scenarios 3 and 4, FR-014 (T048).
 #[tokio::test]
 async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
@@ -1837,7 +1851,11 @@ async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
         ("/media/a.mp4", "/media/a.mp4"),
         ("/fonts/a.woff2", "/fonts/a.woff2"),
     ] {
-        assert_eq!(site.count(JS_HOST, host_path), 0, "{host_path} was requested");
+        assert_eq!(
+            browser_requests(&store, &site, host_path),
+            0,
+            "{host_path} was requested"
+        );
         assert_eq!(
             resource_outcome(&store, &site, "/resources", suffix).as_deref(),
             Some("blocked_setting"),
@@ -1872,7 +1890,7 @@ async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
         ("/fonts/a.woff2", "/fonts/a.woff2"),
     ] {
         assert!(
-            site.count(JS_HOST, host_path) >= 1,
+            browser_requests(&store, &site, host_path) >= 1,
             "{host_path} was not requested"
         );
         assert_ne!(

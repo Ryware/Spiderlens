@@ -1546,7 +1546,7 @@ impl Reader {
         };
         // The links of rendered pages (spec 014): the raw ones, the ones
         // JavaScript removed marked, and the ones found only after rendering.
-        let (source, origin) = if self.features.has(Need::Rendering) {
+        let (source, origin, order) = if self.features.has(Need::Rendering) {
             let raw_branch = format!(
                 "SELECT l.rowid AS ord, l.from_id, l.to_id, l.raw, l.kind, l.nofollow, l.followed, l.text, l.alt,
                         l.sponsored, l.ugc, l.pos,
@@ -1565,9 +1565,9 @@ impl Reader {
             } else {
                 format!("({raw_branch})")
             };
-            (src, "l.origin")
+            (src, "l.origin", "l.ord")
         } else {
-            ("links".to_string(), "NULL")
+            ("links".to_string(), "NULL", "l.rowid")
         };
         // The conditions are inside the branches already.
         let cond = if source == "links" {
@@ -1583,7 +1583,7 @@ impl Reader {
             None => format!("{cond} AND ?4 IS NULL"),
         };
         let total: i64 = self.conn.query_row(
-            &format!("SELECT COUNT(*) FROM links l WHERE {cond}"),
+            &format!("SELECT COUNT(*) FROM {source} l WHERE {cond}"),
             rusqlite::params![id, None::<i64>, None::<i64>, position],
             |r| r.get(0),
         )?;

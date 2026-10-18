@@ -5,11 +5,11 @@ import type { UrlSet } from "./UrlSet";
 /**
  * What a lab test run asks for (FR-026).
  */
-export type LabRequest = { strategy: StrategyChoice, urls: UrlSet,
+export type LabRequest = { strategy: StrategyChoice, urls: UrlSet, 
 /**
  * Keep only the first pages (shallowest first).
  */
-max: number | null,
+max: number | null, 
 /**
  * Ignore cached answers.
  */

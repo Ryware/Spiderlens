@@ -724,9 +724,10 @@ impl JsSiteBuilder {
             &page(
                 "Welcome",
                 "<h1>Welcome</h1><p>The real content is here for people who get past the check.</p>",
+                // Split strings: only the rendered page carries the markers.
                 &on_ready(
                     "document.title = 'Just a moment...'; \
-                     document.body.innerHTML = '<form id=\"challenge-form\" action=\"/cdn-cgi/challenge-platform/h/b\">\
+                     document.body.innerHTML = '<form id=\"challenge-' + 'form\" action=\"/cdn-cgi/' + 'challenge-platform/h/b\">\
                      <p>Checking your browser before accessing the site.</p></form>';",
                 ),
             ),
@@ -785,9 +786,13 @@ impl JsSiteBuilder {
                 "/settles",
                 &page(
                     "Settles",
-                    "<script>setTimeout(function () { document.body.insertAdjacentHTML('beforeend', \
-                     '<h2>Settled after two seconds</h2>'); }, 2000);</script>",
-                    "<h1>Settles</h1><p>A heading is added after two seconds.</p>",
+                    // A visible change every 250 ms keeps the page busy (a
+                    // silent timer would not) until the heading two seconds in.
+                    "<script>var t0 = Date.now(); var busy = setInterval(function () { \
+                     document.getElementById('n').textContent = Date.now() - t0; \
+                     if (Date.now() - t0 >= 2000) { clearInterval(busy); \
+                     document.body.insertAdjacentHTML('beforeend', '<h2>Settled after two seconds</h2>'); } }, 250);</script>",
+                    "<h1>Settles</h1><p>A heading is added after two seconds.</p><p id=\"n\">0</p>",
                 ),
             )
             .page(

@@ -181,7 +181,7 @@ impl Features {
             .unwrap_or_default();
         let a11y = stored
             .as_ref()
-            .map(|s| s.config.accessibility.clone())
+            .map(|s| s.config.accessibility)
             .unwrap_or_default();
         let robots_token = stored
             .and_then(|s| s.config.identity.user_agent.token())

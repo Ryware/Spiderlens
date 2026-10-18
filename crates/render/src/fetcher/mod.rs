@@ -307,7 +307,7 @@ async fn wait_for_connection(
     on_disk: u64,
     total: u64,
     lost_since: &mut Option<Instant>,
-    emit: &dyn Fn(u64, u64, bool),
+    emit: &(dyn Fn(u64, u64, bool) + Sync),
     message: &str,
 ) -> Result<(), DownloadError> {
     if on_disk == 0 && lost_since.is_none() {

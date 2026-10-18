@@ -94,11 +94,21 @@ pub fn rerun_static_cancellable(
         with_findings: 0,
         skipped_no_html: store.extracted_without_body()?.len() as u64,
     };
+    // Error pages are not the site's pages, as during the crawl.
+    let errors: std::collections::HashSet<i64> = (|| -> rusqlite::Result<_> {
+        let mut stmt = store.conn().prepare(
+            "SELECT b.url_id FROM bodies b JOIN urls u ON u.id = b.url_id \
+             WHERE u.internal = 1 AND COALESCE(u.status, 0) NOT BETWEEN 200 AND 299",
+        )?;
+        stmt.query_map([], |r| r.get(0))?.collect()
+    })()
+    .map_err(StoreError::from)?;
     let mut after = 0i64;
     while !cancel.load(Ordering::Relaxed) {
-        let batch = store.bodies_after(after, BATCH)?;
+        let mut batch = store.bodies_after(after, BATCH)?;
         let Some(last) = batch.last() else { break };
         after = last.url_id;
+        batch.retain(|b| !errors.contains(&b.url_id));
         let checked = check_batch(&batch, &token, workers);
         store.begin()?;
         for (id, found) in &checked {

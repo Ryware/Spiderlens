@@ -6,15 +6,15 @@ import type { IssueDelta } from "./IssueDelta";
 import type { MapRule } from "./MapRule";
 import type { Summary } from "./Summary";
 
-export type ComparisonReport = { summary: Summary,
+export type ComparisonReport = { summary: Summary, 
 /**
  * The ten comparable filters with the largest absolute change.
  */
-top_filters: Array<FilterDelta>, elements: Array<ElementReport>,
+top_filters: Array<FilterDelta>, elements: Array<ElementReport>, 
 /**
  * True when the issue deltas below were computed.
  */
-issues_available: boolean,
+issues_available: boolean, 
 /**
  * Comparable issues that changed, by priority.
  */

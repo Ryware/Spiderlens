@@ -250,6 +250,7 @@ pub struct Progress {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)] // Progress goes out about once a second.
 pub enum CrawlEvent {
     Progress(Progress),
     Warning(String),
@@ -826,6 +827,8 @@ async fn finish_page(
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
     let body_len = o.body.as_ref().map(|b| b.len() as u64);
     let truncated = o.body_problem.is_some();
+    // Error pages are not the site's pages: no accessibility rows for them.
+    let a11y = a11y && (200..300).contains(&o.status);
     let page = match o.body {
         Some(bytes) if is_html(o.content_type.as_deref(), &bytes) => {
             let kib = (bytes.len() / 1024 + 1).min(EXTRACT_BUDGET_KIB) as u32;
@@ -3262,7 +3265,7 @@ impl Run {
                     Some(FullOutcome::TimedOut { ms }) => {
                         store.set_a11y_state(id, "full", "timed_out", None, Some(*ms))?;
                     }
-                    Some(FullOutcome::NotChecked(reason)) => not_checked(*reason)?,
+                    Some(FullOutcome::NotChecked(reason)) => not_checked(reason)?,
                     None => not_checked("probe_failed")?,
                 }
             }

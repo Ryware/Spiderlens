@@ -189,7 +189,7 @@ pub fn closed_port() -> u16 {
     port
 }
 
-fn handle(mut client: TcpStream, state: &Arc<State>) -> std::io::Result<()> {
+fn handle(client: TcpStream, state: &Arc<State>) -> std::io::Result<()> {
     client.set_nodelay(true).ok();
     let mut first = [0u8; 1];
     if client.peek(&mut first)? == 0 {

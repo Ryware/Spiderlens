@@ -144,5 +144,7 @@ test("the_history_labels_a_scheduled_run_removal", async () => {
   const t = fakeTransport();
   t.files.history.unshift({ at: new Date().toISOString(), path: "/s/a.spiderlens", bytes: 10, reason: "schedule_retention" });
   await openStorage(t);
-  expect(panel().textContent).toContain("Scheduled run beyond its keep-last limit: moved to the Trash");
+  fireEvent.click(within(panel()).getByRole("button", { name: "Show history" }));
+  const table = await within(panel()).findByRole("table", { name: "Cleanup history" });
+  expect(table.textContent).toContain("Scheduled run beyond its keep-last limit: moved to the Trash");
 });

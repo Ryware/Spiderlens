@@ -361,12 +361,10 @@ impl Reader {
         if crate::analysis::stored_run(&self.conn, &self.features.link_settings)?.is_none() {
             return Ok(false);
         }
-        self.conn.execute_batch(
-            "DROP TABLE IF EXISTS temp.link_positions;
-             DROP TABLE IF EXISTS temp.link_metrics;
-             DROP VIEW IF EXISTS temp.link_metrics;
-             CREATE TEMP VIEW link_metrics AS SELECT * FROM main.link_score;",
-        )?;
+        crate::analysis::drop_temp(&self.conn, "link_positions")?;
+        crate::analysis::drop_temp(&self.conn, "link_metrics")?;
+        self.conn
+            .execute_batch("CREATE TEMP VIEW link_metrics AS SELECT * FROM main.link_score;")?;
         Ok(true)
     }
 
@@ -388,6 +386,8 @@ impl Reader {
     pub fn set_a11y_target(&mut self, wcag: spiderlens_config::WcagTarget) -> Result<()> {
         self.features.a11y.wcag = wcag;
         sql::register_a11y(&self.conn, &self.features.a11y)?;
+        // Rules that read the target are evaluated again.
+        self.derived.remove(&crate::tabs::Derived::IssueHits);
         self.bump_version();
         Ok(())
     }

@@ -603,7 +603,7 @@ fn execute(
         Err(code) => return code,
     };
     let ai_auto = crawler.config().ai_checks.auto;
-    let a11y_level = crawler.config().accessibility.level.clone();
+    let a11y_level = crawler.config().accessibility.level;
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();

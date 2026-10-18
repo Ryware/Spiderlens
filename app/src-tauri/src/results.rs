@@ -401,6 +401,7 @@ pub async fn agents_entry_points(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri commands take their arguments flat.
 pub async fn url_list(
     state: tauri::State<'_, State>,
     path: PathBuf,

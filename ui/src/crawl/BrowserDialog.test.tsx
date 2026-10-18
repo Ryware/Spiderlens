@@ -29,18 +29,18 @@ describe("BrowserDialog", () => {
     const { t } = setup();
     await screen.findByText(/about 124 MB/);
     expect(t.render.installs).toEqual([]);
-    await waitFor(() => expect(download()).toBeEnabled());
+    await waitFor(() => expect((download() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(download());
     await waitFor(() => expect(t.render.installs).toEqual([1]));
   });
 
   it("shows progress, then starts the crawl when the browser is installed", async () => {
     const { t, calls } = setup();
-    await waitFor(() => expect(download()).toBeEnabled());
+    await waitFor(() => expect((download() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(download());
     await waitFor(() => expect(t.render.installs).toHaveLength(1));
     act(() => t.render.progress({ bytes_done: 58_944_974 }));
-    expect(await screen.findByText("Downloading the browser: 59 of 124 MB")).toBeInTheDocument();
+    expect(await screen.findByText("Downloading the browser: 59 of 124 MB")).toBeTruthy();
     act(() => t.render.finish());
     await waitFor(() => expect(calls.ready).toBe(1));
   });
@@ -54,21 +54,21 @@ describe("BrowserDialog", () => {
 
   it("shows a failed download and lets the person try again", async () => {
     const { t, calls } = setup();
-    await waitFor(() => expect(download()).toBeEnabled());
+    await waitFor(() => expect((download() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(download());
     await waitFor(() => expect(t.render.installs).toHaveLength(1));
     act(() => t.render.finish("The downloaded browser does not match its expected checksum and was removed."));
-    expect(await screen.findByRole("alert")).toHaveTextContent("does not match its expected checksum");
+    expect((await screen.findByRole("alert")).textContent).toContain("does not match its expected checksum");
     expect(calls.ready).toBe(0);
-    expect(download()).toBeEnabled();
+    expect((download() as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("offline: says so, disables the download and keeps the raw fallback", async () => {
     const { t, calls } = setup();
     await waitFor(() => expect(t.render.watching).toBe(true));
     act(() => t.render.network(false));
-    expect(await screen.findByText("No internet connection: the browser can't be downloaded now")).toBeInTheDocument();
-    expect(download()).toBeDisabled();
+    expect(await screen.findByText("No internet connection: the browser can't be downloaded now")).toBeTruthy();
+    expect((download() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Crawl raw HTML instead" }));
     expect(calls.raw).toBe(1);
   });
@@ -79,34 +79,34 @@ describe("BrowserDialog", () => {
     act(() => t.render.network(false));
     await screen.findByText(/No internet connection/);
     act(() => t.render.network(true));
-    expect(await screen.findByText("Connection restored")).toBeInTheDocument();
-    expect(download()).toBeEnabled();
+    expect(await screen.findByText("Connection restored")).toBeTruthy();
+    expect((download() as HTMLButtonElement).disabled).toBe(false);
     expect(t.render.installs).toEqual([]);
   });
 
   it("lost mid-download: waits to resume, keeps the progress and does not fail", async () => {
     const { t, calls } = setup();
-    await waitFor(() => expect(download()).toBeEnabled());
+    await waitFor(() => expect((download() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(download());
     await waitFor(() => expect(t.render.installs).toHaveLength(1));
     act(() => t.render.progress({ bytes_done: 30_000_000 }));
     act(() => t.render.progress({ bytes_done: 30_000_000, waiting: true }));
-    expect(await screen.findByText("Connection lost, waiting to resume")).toBeInTheDocument();
+    expect(await screen.findByText("Connection lost, waiting to resume")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     act(() => t.render.progress({ bytes_done: 80_000_000 }));
-    expect(await screen.findByText("Downloading the browser: 80 of 124 MB")).toBeInTheDocument();
+    expect(await screen.findByText("Downloading the browser: 80 of 124 MB")).toBeTruthy();
     act(() => t.render.finish());
     await waitFor(() => expect(calls.ready).toBe(1));
   });
 
   it("cancels a running download", async () => {
     const { t } = setup();
-    await waitFor(() => expect(download()).toBeEnabled());
+    await waitFor(() => expect((download() as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(download());
     await waitFor(() => expect(t.render.installs).toHaveLength(1));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel download" }));
     await waitFor(() => expect(t.render.cancelled).toEqual([1]));
-    expect(download()).toBeEnabled();
+    expect((download() as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("uses a browser the person chose, and explains one that cannot be used", async () => {
@@ -115,7 +115,7 @@ describe("BrowserDialog", () => {
     const input = screen.getByLabelText("Browser path");
     fireEvent.change(input, { target: { value: "/opt/nope/chrome" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this browser" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("No browser at this path.");
+    expect((await screen.findByRole("alert")).textContent).toContain("No browser at this path.");
     expect(calls.ready).toBe(0);
     fireEvent.change(input, { target: { value: "/usr/bin/google-chrome" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this browser" }));
@@ -155,7 +155,7 @@ describe("starting a rendering crawl without a browser", () => {
 
   it("starts the rendering crawl once the browser is installed", async () => {
     const t = await startRendering();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Download and crawl" })).toBeEnabled());
+    await waitFor(() => expect((screen.getByRole("button", { name: "Download and crawl" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Download and crawl" }));
     await waitFor(() => expect(t.render.installs).toHaveLength(1));
     act(() => t.render.finish());

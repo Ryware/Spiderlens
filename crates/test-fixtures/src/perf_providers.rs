@@ -200,8 +200,7 @@ fn routes(state: Shared) -> Router {
 /// Pops an injected failure for `api`, then checks the key.
 fn gate(s: &Shared, api: &'static str, headers: &HeaderMap) -> Option<Response> {
     let mut g = s.lock().unwrap();
-    if g.failures.front().is_some_and(|f| f.0 == api) {
-        let (_, status, body) = g.failures.pop_front().expect("checked");
+    if let Some((_, status, body)) = g.failures.pop_front_if(|f| f.0 == api) {
         return Some((StatusCode::from_u16(status).unwrap(), body).into_response());
     }
     let key = headers

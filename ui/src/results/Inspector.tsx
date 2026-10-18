@@ -88,7 +88,7 @@ function A11yCheck({ check, capped }: { check: A11yCheckDetail; capped: boolean 
       <span className="flex flex-wrap items-center gap-1.5">
         <span className={cn("text-xs font-semibold", impactClass[impact] ?? "text-fg-2")}>{impact.charAt(0).toUpperCase() + impact.slice(1)}</span>
         <span className="text-sm font-medium">{check.title}</span>
-        {check.kind !== "violation" && <Badge tone="neutral">{check.kind === "incomplete" ? "Needs review" : check.kind}</Badge>}
+        {check.kind !== "violation" && <Badge tone="neutral">{check.kind === "needs_review" ? "Needs review" : check.kind}</Badge>}
       </span>
       <span className="text-xs text-fg-3">
         {check.wcag ? check.wcag.split(" ").join(", ") : "Best practice"} · {check.nodes_total.toLocaleString()} {check.nodes_total === 1 ? "element" : "elements"}
@@ -150,7 +150,7 @@ function MobileSection({ m }: { m: MobileDetail }) {
   ];
   return (
     <Section title="Mobile">
-      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm" data-selectable>
+      <dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-0.5 text-sm" data-selectable>
         {rows
           .filter(([, v]) => v !== null && v !== undefined && v !== "")
           .map(([k, v]) => (

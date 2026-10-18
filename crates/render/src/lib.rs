@@ -75,7 +75,7 @@ impl Browser {
         let Some(running) = &self.running else {
             return RenderOutcome::failed(FailedReason::RendererError, true, job.window);
         };
-        let (out, stuck) = page::render(&running.cdp, job, net, self.opts.heap_limit_mb).await;
+        let (out, stuck) = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb).await;
         if stuck {
             self.stuck.store(true, std::sync::atomic::Ordering::Relaxed);
         }

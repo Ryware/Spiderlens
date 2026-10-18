@@ -830,8 +830,8 @@ async fn us7_dependence_is_shown_filtered_and_exported() {
     }
     // Per-type shares: the text share equals the overall one; a page
     // without headings has no heading share.
-    let text = number(cell(&mut r, s, &all, "/dep-25", "js_dep_text"));
-    assert!((text - 25.0).abs() <= 2.0, "{text}");
+    let text_share = number(cell(&mut r, s, &all, "/dep-25", "js_dep_text"));
+    assert!((text_share - 25.0).abs() <= 2.0, "{text_share}");
     assert!(
         cell(&mut r, s, &all, "/dep-25", "js_dep_headings")
             .unwrap()

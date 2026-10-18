@@ -27,6 +27,16 @@ fn cli() -> Command {
 fn analyse_prints_the_reader_summary() {
     let dir = tempfile::tempdir().unwrap();
     let path = crawl_file(&dir, true);
+    // First run: the analysis is worked out, with progress. Later runs read
+    // the stored results.
+    cli()
+        .args(["links", "analyse", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Link Score worked out for"))
+        .stderr(predicates::str::contains("Analysing: Link positions 0%"))
+        .stderr(predicates::str::contains("Analysing: Link Score 100% ("));
+
     let out = cli()
         .args(["links", "analyse", path.to_str().unwrap(), "--json"])
         .output()
@@ -38,14 +48,6 @@ fn analyse_prints_the_reader_summary() {
     assert_eq!(got["links"], want.links);
     assert_eq!(got["rounds"], want.rounds);
     assert_eq!(got["pages_without_html"], 0);
-
-    cli()
-        .args(["links", "analyse", path.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("Link Score worked out for"))
-        .stderr(predicates::str::contains("Analysing: Link positions 0%"))
-        .stderr(predicates::str::contains("Analysing: Link Score 100% ("));
     cli()
         .args(["links", "analyse", path.to_str().unwrap(), "--quiet"])
         .assert()

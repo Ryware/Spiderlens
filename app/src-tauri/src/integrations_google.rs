@@ -26,7 +26,10 @@ pub async fn integrations_inspection_plan(
     account: Option<String>,
     request: InspectRequest,
 ) -> Cmd<InspectPlan> {
-    blocking(&state, move |h| h.inspection_plan(&path, account.as_deref(), &request)).await
+    blocking(&state, move |h| {
+        h.inspection_plan(&path, account.as_deref(), &request)
+    })
+    .await
 }
 
 /// Inspects the chosen crawled URLs with Google (US2).
@@ -53,7 +56,10 @@ pub async fn integrations_analytics_streams(
     account: Option<String>,
     path: Option<PathBuf>,
 ) -> Cmd<Vec<Ga4Stream>> {
-    blocking(&state, move |h| h.analytics_streams(account.as_deref(), path.as_deref())).await
+    blocking(&state, move |h| {
+        h.analytics_streams(account.as_deref(), path.as_deref())
+    })
+    .await
 }
 
 /// The default Analytics request for a stream: the last 28 days, query

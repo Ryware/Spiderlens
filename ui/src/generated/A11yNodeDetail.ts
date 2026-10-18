@@ -3,11 +3,11 @@
 /**
  * One failing element of an accessibility check.
  */
-export type A11yNodeDetail = { selector: string, excerpt: string,
+export type A11yNodeDetail = { selector: string, excerpt: string, 
 /**
  * Check-specific JSON, such as the colours of a contrast failure.
  */
-data: string | null,
+data: string | null, 
 /**
  * x, y, width and height in CSS pixels, when the page was rendered.
  */

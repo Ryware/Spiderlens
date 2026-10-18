@@ -4,15 +4,15 @@ import type { IssueSettingsChoice } from "./IssueSettingsChoice";
 /**
  * What the issue figures were computed with (FR-023, FR-024a).
  */
-export type IssueBasis = {
+export type IssueBasis = { 
 /**
  * The rule set both crawls were evaluated with.
  */
-rules_version: number,
+rules_version: number, 
 /**
  * Whose issue settings both crawls used.
  */
-settings: IssueSettingsChoice,
+settings: IssueSettingsChoice, 
 /**
  * Those settings differ from the defaults.
  */

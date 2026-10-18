@@ -4,15 +4,15 @@ import type { SpreadsheetRef } from "./SpreadsheetRef";
 /**
  * The result of an export (data-model.md `SheetExport`).
  */
-export type SheetExport = { spreadsheets: Array<SpreadsheetRef>,
+export type SheetExport = { spreadsheets: Array<SpreadsheetRef>, 
 /**
  * Data rows sent.
  */
-rows: number,
+rows: number, 
 /**
  * Data rows the view has.
  */
-total_rows: number,
+total_rows: number, 
 /**
  * Fewer rows were sent than the view has.
  */

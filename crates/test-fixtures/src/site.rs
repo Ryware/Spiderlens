@@ -511,9 +511,9 @@ impl Site {
     }
 }
 
-/// Per-host files that are not pages: robots.txt, the AI site files and the
-/// default sitemap locations the crawler tries when robots.txt lists none
-/// (spec 011 FR-001).
+/// Per-host files that are not pages: robots.txt, the AI site files, the
+/// agent entry points and the default sitemap locations the crawler tries
+/// when robots.txt lists none (spec 011 FR-001).
 const SITE_FILES: &[&str] = &[
     "/robots.txt",
     "/sitemap.xml",
@@ -521,4 +521,8 @@ const SITE_FILES: &[&str] = &[
     "/llms.txt",
     "/llms-full.txt",
     "/.well-known/tdmrep.json",
+    // Agent entry points (spec 016 FR-010).
+    "/.well-known/ai-catalog.json",
+    "/.well-known/api-catalog",
+    "/.well-known/agent-card.json",
 ];

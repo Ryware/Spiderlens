@@ -288,8 +288,7 @@ fn install(args: InstallArgs) -> ExitCode {
     }
     if !args.yes {
         eprint!(
-            "Download {} {} (about {} MB) from storage.googleapis.com? [y/N] ",
-            "chrome-headless-shell",
+            "Download chrome-headless-shell {} (about {} MB) from storage.googleapis.com? [y/N] ",
             plan.version,
             plan.bytes / 1_000_000
         );

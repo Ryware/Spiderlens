@@ -112,6 +112,7 @@ impl Pac {
     }
 
     /// A script given as text.
+    #[cfg(test)]
     pub(crate) fn from_script(script: &str) -> Result<Self, ProxyProblem> {
         Self::start("inline script", Origin::Inline(script.to_string()))
     }
