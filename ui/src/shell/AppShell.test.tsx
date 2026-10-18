@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../App";
-import { fakeTransport } from "../testing/fakeTransport";
+import { fakeReport, fakeTransport } from "../testing/fakeTransport";
+import type { Need } from "../generated/Need";
 import type { Transport } from "../transport";
 
 const renderApp = async (transport: Transport = fakeTransport()) => {
@@ -108,4 +109,50 @@ test("recent_commands_come_first", async () => {
   fireEvent.keyDown(window, { key: "k", code: "KeyK", ctrlKey: true });
   const recent = await screen.findByText("Recent");
   expect(recent.parentElement?.textContent).toContain("Brightness: Soft");
+});
+
+// Rendering an existing crawl (spec 014 FR-006, T073): the action is offered for a finished crawl whose
+// raw HTML is stored and that was not rendered, and for no other.
+async function finishedCrawl(features: Need[], requireBrowser = false) {
+  const t = fakeTransport();
+  t.results.features = features;
+  t.render.requireBrowser = requireBrowser;
+  render(<App transport={t} />);
+  fireEvent.change(await screen.findByLabelText("Start URL"), { target: { value: "example.com" } });
+  const start = await screen.findByRole("button", { name: /Start$/ });
+  await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(start);
+  await screen.findByRole("button", { name: /Pause/ });
+  await act(async () => t.crawls.finish({ report: fakeReport("completed", 7) }));
+  await screen.findByRole("button", { name: /Retry failed/ });
+  return t;
+}
+
+test("render_this_crawl_is_shown_for_a_finished_crawl_with_stored_html", async () => {
+  const t = await finishedCrawl(["base", "raw_html"]);
+  fireEvent.click(await screen.findByRole("button", { name: "Render this crawl" }));
+  await waitFor(() => expect(t.crawls.rendered).toHaveLength(1));
+  expect(t.crawls.rendered[0].path).toBe("/crawls/example.com.spiderlens");
+  expect(t.crawls.rendered[0].rendering.mode).toBe("javascript");
+  // It runs like a crawl: Pause is offered while it does.
+  await screen.findByRole("button", { name: /Pause/ });
+});
+
+test("render_this_crawl_is_hidden_for_rendered_crawls_and_crawls_without_html", async () => {
+  await finishedCrawl(["base", "raw_html", "rendering"]);
+  expect(screen.queryByRole("button", { name: "Render this crawl" })).toBeNull();
+});
+
+test("render_this_crawl_is_hidden_without_stored_html", async () => {
+  await finishedCrawl(["base"]);
+  expect(screen.queryByRole("button", { name: "Render this crawl" })).toBeNull();
+});
+
+test("rendering_a_crawl_without_a_browser_asks_to_download_one_and_has_no_raw_alternative", async () => {
+  const t = await finishedCrawl(["base", "raw_html"], true);
+  fireEvent.click(await screen.findByRole("button", { name: "Render this crawl" }));
+  await screen.findByText("JavaScript rendering needs a browser");
+  expect(screen.getByRole("button", { name: "Download and render" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Crawl raw HTML instead" })).toBeNull();
+  expect(t.crawls.rendered).toHaveLength(0);
 });

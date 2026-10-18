@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Transport } from "../transport";
+import type { RenderSettings } from "../generated/RenderSettings";
 import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
@@ -12,7 +13,7 @@ import { useSpelling } from "../spelling/useSpelling";
 import { SettingsSheet } from "../settings/SettingsSheet";
 import { IntegrationsView } from "../integrations/IntegrationsView";
 import { categories, type CategoryId } from "../settings/categories";
-import { cn } from "../components/ui";
+import { Button, cn, Notice } from "../components/ui";
 import { Toolbar } from "./Toolbar";
 import { reportTabs, resultTabs, Sidebar, vizTabs } from "./Sidebar";
 import { VizView, vizViews } from "../viz/VizView";
@@ -282,7 +283,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   );
   useEffect(() => {
     const m = /browser_unavailable: ([\s\S]*)$/.exec(crawl.error ?? "");
-    if (m && pendingStart.current) setBrowserAsk(m[1]);
+    if (m && (pendingStart.current || pendingRender.current)) setBrowserAsk(m[1]);
   }, [crawl.error]);
   const startCrawl = useCallback(async () => {
     if (starting.current || crawl.active) return;
@@ -296,6 +297,32 @@ export function AppShell({ transport }: { transport: Transport }) {
       starting.current = false;
     }
   }, [setup, crawl, runStart]);
+
+  // Rendering the open, finished crawl from its stored HTML (spec 014 FR-006): offered only when the
+  // file has the raw HTML and was not rendered. The browser question reuses the start dialog.
+  const pendingRender = useRef<RenderSettings | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const runRender = useCallback(
+    async (rendering: RenderSettings) => {
+      pendingRender.current = rendering;
+      setRenderError(null);
+      const id = await crawl.renderExisting(rendering);
+      if (id !== null) pendingRender.current = null;
+    },
+    [crawl],
+  );
+  useEffect(() => {
+    if (!pendingRender.current || !crawl.error || /browser_unavailable: /.test(crawl.error)) return;
+    // Refused: say why and forget it.
+    setRenderError(crawl.error);
+    pendingRender.current = null;
+  }, [crawl.error]);
+  const available = results.features?.available;
+  const canRender = crawl.path !== null && crawl.phase === "completed" && !!available?.includes("raw_html") && !available.includes("rendering");
+  const renderThisCrawl = useCallback(() => {
+    if (!setup.config) return;
+    void runRender({ ...setup.config.rendering, mode: "javascript" });
+  }, [setup.config, runRender]);
 
   const library = useCrawlLibrary(transport);
   const file = useCrawlFile(transport, crawl, {
@@ -365,6 +392,9 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "start", title: "Start crawl", group: "Crawl", shortcut: "Mod+Enter", enabled: hasInput && !crawl.active, run: startCrawl },
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: resume },
+      ...(canRender
+        ? [{ id: "render-crawl", title: "Render this crawl", group: "Crawl" as const, keywords: ["javascript", "browser", "rendered", "existing"], run: renderThisCrawl }]
+        : []),
       { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
       {
         id: "accessibility-run",
@@ -443,7 +473,7 @@ export function AppShell({ transport }: { transport: Transport }) {
       ...ACCENTS.map((p) => ({ id: `accent-${p.id}`, title: `Accent: ${p.name}`, group: "View" as const, keywords: ["theme", "appearance", "palette", "colour", "color"], run: () => updateUi({ accent: p.id }) })),
       { id: "about", title: "About SpiderLens", group: "Help", keywords: ["version", "build"], run: () => setAboutOpen(true) },
     ],
-    [setup, crawl, retry, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules, comparing, comparison],
+    [setup, crawl, retry, canRender, renderThisCrawl, hasInput, startCrawl, scheduleThisCrawl, openPicker, openFile, recentOpen, resume, analysis, saveAs, openSettings, ui, updateUi, systemDark, issues.rules, comparing, comparison],
   );
 
   const run = useCallback(
@@ -488,7 +518,15 @@ export function AppShell({ transport }: { transport: Transport }) {
         onAppearance={updateUi}
         retry={retry}
         onRetry={() => setRetryOpen(true)}
+        canRender={canRender}
+        onRender={renderThisCrawl}
       />
+      {renderError && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-line bg-chrome px-3 py-1.5">
+          <Notice kind="bad" role="alert" className="flex-1">{renderError}</Notice>
+          <Button variant="quiet" onClick={() => setRenderError(null)}>Dismiss</Button>
+        </div>
+      )}
       <div data-shell className="flex min-h-0 flex-1 bg-frame">
         <div data-region="chrome" className={cn("shrink-0 border-r border-line", sidebarIcons && "border-r")} style={{ width: sidebarIcons ? SIDEBAR.icons : ui.sidebarWidth }}>
           <Sidebar active={section} onSelect={setSection} collapsed={sidebarIcons} onAbout={() => setAboutOpen(true)} results={crawl.path !== null} counts={crawl.path ? results.counts : null} issues={issues.summary} comparison={comparing} counting={issues.counting} custom={results.tabs.filter((t) => isCustomTab(t.id))} />
@@ -666,16 +704,24 @@ export function AppShell({ transport }: { transport: Transport }) {
           onReady={() => {
             setBrowserAsk(null);
             if (pendingStart.current) void runStart(pendingStart.current);
+            else if (pendingRender.current) void runRender(pendingRender.current);
           }}
-          onRaw={() => {
-            setBrowserAsk(null);
-            const input = pendingStart.current;
-            setup.set((c) => ({ ...c, rendering: { ...c.rendering, mode: "raw" } }));
-            if (input) void runStart({ ...input, config: { ...input.config, rendering: { ...input.config.rendering, mode: "raw" } } });
-          }}
+          // Rendering an existing crawl has no raw alternative: it is already crawled raw.
+          onRaw={
+            pendingStart.current
+              ? () => {
+                  setBrowserAsk(null);
+                  const input = pendingStart.current;
+                  setup.set((c) => ({ ...c, rendering: { ...c.rendering, mode: "raw" } }));
+                  if (input) void runStart({ ...input, config: { ...input.config, rendering: { ...input.config.rendering, mode: "raw" } } });
+                }
+              : undefined
+          }
+          startLabel={pendingStart.current ? "Download and crawl" : "Download and render"}
           onClose={() => {
             setBrowserAsk(null);
             pendingStart.current = null;
+            pendingRender.current = null;
           }}
         />
       )}

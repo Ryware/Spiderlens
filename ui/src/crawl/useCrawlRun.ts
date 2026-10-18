@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PassProgress } from "../generated/PassProgress";
 import type { AuthMethod } from "../generated/AuthMethod";
 import type { CrawlConfig } from "../generated/CrawlConfig";
+import type { RenderSettings } from "../generated/RenderSettings";
 import type { RetrySettings } from "../generated/RetrySettings";
 import type { SpeedSettings } from "../generated/SpeedSettings";
 import type { CrawlFinished, CrawlProgress, CrawlReport, LocalError, PausedHost, ResumeOptions, SitePace, SpeedLimit, Transport } from "../transport";
@@ -199,6 +200,19 @@ export function useCrawlRun(transport: Transport) {
     [transport, begin, state.path, state.phase],
   );
 
+  /**
+   * Renders the finished crawl at `path` (the open one unless given) from its stored HTML, without
+   * requesting its pages again (spec 014 FR-006). Progress and the end arrive like a crawl's; a refusal
+   * leaves the crawl as it was and is left in `error`.
+   */
+  const renderExisting = useCallback(
+    (rendering: RenderSettings, path: string | null = state.path) => {
+      if (!path || state.phase !== "completed") return Promise.resolve(null);
+      return begin(() => transport.crawlRender(path, rendering), { report: null, local: null, path }, state.phase);
+    },
+    [transport, begin, state.path, state.phase],
+  );
+
   /** The crawl's file now lives at `path` (Save As). */
   const moved = useCallback((path: string) => setState((s) => ({ ...s, path })), []);
 
@@ -365,6 +379,7 @@ export function useCrawlRun(transport: Transport) {
     open,
     pause,
     resume,
+    renderExisting,
     stop,
     retryFailed,
     resumeHost,

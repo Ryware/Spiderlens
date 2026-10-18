@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use spiderlens_config::RenderSettings;
+use spiderlens_engine::crawl::{CrawlError, Crawler};
 use spiderlens_render::{
     BrowserInfo, BrowserSource, CancellationFlag, DownloadProgress, DownloadStage, FindOptions, NotUsable,
     data_dir, download, download_host_reachable, download_plan, find_browser,
@@ -307,6 +309,39 @@ pub fn render_browser_network_watch(app: AppHandle, state: tauri::State<'_, Stat
             tokio::time::sleep(WATCH_EVERY).await;
         }
     });
+}
+
+/// Renders an existing crawl from its stored HTML (spec 014 FR-006, T073).
+/// The main documents are not requested again. Refused with a message when
+/// the crawl is not finished, was already rendered or stored no HTML, before
+/// anything changes; `browser_unavailable: ...` when no browser is usable
+/// (the window answers with the download dialog and calls again). Progress
+/// and the end arrive as `crawl-progress` and `crawl-finished`, as for any
+/// crawl; a paused render continues when this is called again.
+#[tauri::command]
+pub async fn crawl_render(
+    app: AppHandle,
+    path: PathBuf,
+    rendering: RenderSettings,
+) -> Cmd<crate::crawl::Started> {
+    let check = path.clone();
+    tauri::async_runtime::spawn_blocking(move || Crawler::check_renderable(&check))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    // Before the file changes: no browser, nothing recorded.
+    let browser = find_for(&app).map_err(|e| format!("browser_unavailable: {}", problem_text(&e)))?;
+    let file = path.clone();
+    let crawler = tauri::async_runtime::spawn_blocking(move || Crawler::open_for_render(&file, rendering))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| match e {
+            CrawlError::NeedsUpgrade { .. } => format!("needs_upgrade: {e}"),
+            CrawlError::ReadOnly(_) => format!("read_only: {e}"),
+            CrawlError::Lock(l) => format!("in_use: {l}"),
+            other => other.to_string(),
+        })?;
+    crate::crawl::launch_prepared(app, path, crawler.with_browser(browser))
 }
 
 #[cfg(test)]

@@ -119,6 +119,7 @@ fn main() {
             settings::profile_import,
             crawl::crawl_start,
             crawl::crawl_resume,
+            render::crawl_render,
             render::render_browser_status,
             render::render_browser_install,
             render::render_browser_cancel,

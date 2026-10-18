@@ -479,6 +479,115 @@ fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
     }
 }
 
+// ---- `spiderlens render FILE` (T072, FR-006) ----
+
+fn raw_crawl_with_cli(site: &JsSite, file: &std::path::Path, extra: &[&str]) {
+    let out = spiderlens()
+        .args([
+            "crawl",
+            &site.local_url("/"),
+            "--speed",
+            "fast",
+            "--quiet",
+            "--out",
+        ])
+        .arg(file)
+        .args(extra)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn render_refuses_a_crawl_without_stored_html() {
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("no-html.spiderlens");
+    raw_crawl_with_cli(&site, &file, &["--no-store-html"]);
+    spiderlens()
+        .arg("render")
+        .arg(&file)
+        .assert()
+        .code(2)
+        .stderr(contains("did not store the HTML"));
+}
+
+#[test]
+fn render_refuses_bad_flags_before_touching_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("missing.spiderlens");
+    spiderlens()
+        .arg("render")
+        .arg(&file)
+        .args(["--render-timeout", "0"])
+        .assert()
+        .code(2)
+        .stderr(contains("must be between 1 and 60 seconds"));
+    spiderlens()
+        .arg("render")
+        .arg(&file)
+        .assert()
+        .code(2)
+        .stderr(contains("does not exist"));
+}
+
+#[test]
+fn render_renders_an_existing_crawl_without_requesting_its_pages_again() {
+    let Some(browser) = browser_path() else { return };
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("later.spiderlens");
+    raw_crawl_with_cli(&site, &file, &[]);
+    let before: Vec<(String, u64)> = {
+        let mut paths: Vec<String> = site.log().into_iter().map(|e| e.path).collect();
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .map(|p| {
+                let n = site.count(spiderlens_test_fixtures::js_site::JS_HOST, &p);
+                (p, n)
+            })
+            .collect()
+    };
+
+    let out = spiderlens()
+        .arg("render")
+        .arg(&file)
+        .args(["--browser", &browser, "--json", "--quiet"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let summary: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(summary["status"], "completed", "{summary}");
+    assert!(
+        summary["render"]["by_state"]["rendered"].as_u64().unwrap() >= 1,
+        "{summary}"
+    );
+    for (path, n) in &before {
+        assert_eq!(
+            site.count(spiderlens_test_fixtures::js_site::JS_HOST, path),
+            *n,
+            "{path} was requested again"
+        );
+    }
+
+    // Rendering it again is out of scope.
+    spiderlens()
+        .arg("render")
+        .arg(&file)
+        .args(["--browser", &browser])
+        .assert()
+        .code(2)
+        .stderr(contains("already rendered"));
+}
+
 /// US7 (T069): `page --json` reports the overall dependence and the share
 /// of each content type, and `export --tab javascript` lists the column.
 #[test]

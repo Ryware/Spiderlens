@@ -23,6 +23,7 @@ export function BrowserDialog({
   message,
   onReady,
   onRaw,
+  startLabel = "Download and crawl",
   onClose,
 }: {
   transport: Transport;
@@ -30,8 +31,10 @@ export function BrowserDialog({
   message: string;
   /** A browser is usable now: start the crawl again with rendering. */
   onReady: () => void;
-  /** Switch rendering off and start the crawl. */
-  onRaw: () => void;
+  /** Switch rendering off and start the crawl. Left out where there is no raw alternative (rendering an existing crawl). */
+  onRaw?: () => void;
+  /** The download button's words. */
+  startLabel?: string;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<BrowserStatus | null>(null);
@@ -162,9 +165,9 @@ export function BrowserDialog({
           ) : (
             <>
               {!choosing && <Button variant="quiet" onClick={() => setChoosing(true)}>Change browser</Button>}
-              <Button onClick={onRaw}>Crawl raw HTML instead</Button>
+              {onRaw && <Button onClick={onRaw}>Crawl raw HTML instead</Button>}
               <Button variant="primary" disabled={!download || offline} onClick={() => void install()}>
-                Download and crawl
+                {startLabel}
               </Button>
             </>
           )}
