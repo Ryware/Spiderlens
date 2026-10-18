@@ -75,6 +75,7 @@ export function VizView({
   live,
   focusId,
   onFocusId,
+  analysis = true,
 }: {
   transport: Transport;
   path: string;
@@ -82,6 +83,8 @@ export function VizView({
   live: boolean;
   focusId: number | null;
   onFocusId: (id: number | null) => void;
+  /** Crawl Analysis can have run: link positions exist (spec 023). */
+  analysis?: boolean;
 }) {
   const graph = view === "link_graph";
   const cloud = view === "anchors";
@@ -95,6 +98,8 @@ export function VizView({
   const [terms, setTerms] = useState<Terms>("words");
   const [stopWords, setStopWords] = useState(true);
   const [followedOnly, setFollowedOnly] = useState(false);
+  // Anchor text: links at one position; empty for all (FR-016).
+  const [position, setPosition] = useState("");
   const [distance, setDistance] = useState(1);
   const [pinned, setPinned] = useState<Record<string, [number, number]>>({});
   const [expanded, setExpanded] = useState<string[] | null>(null);
@@ -113,8 +118,8 @@ export function VizView({
   const colours = useTokenColours();
 
   const state: ViewState = useMemo(
-    () => ({ view, layout, colour, size, expanded, pages, budget: null, focus, distance, pinned, terms, stop_words: stopWords, followed_only: followedOnly }),
-    [view, layout, colour, size, expanded, pages, focus, distance, pinned, terms, stopWords, followedOnly],
+    () => ({ view, layout, colour, size, expanded, pages, budget: null, focus, distance, pinned, terms, stop_words: stopWords, followed_only: followedOnly, positions: cloud && analysis && position ? [position] : [] }),
+    [view, layout, colour, size, expanded, pages, focus, distance, pinned, terms, stopWords, followedOnly, cloud, analysis, position],
   );
   useEffect(() => {
     let off = false;
@@ -228,6 +233,22 @@ export function VizView({
               <Switch checked={followedOnly} onChange={(v) => (setSelected(null), setFollowedOnly(v))} label="Followed links only" />
               Followed only
             </label>
+            <Select
+              aria-label="Link position"
+              className="w-40"
+              value={analysis ? position : ""}
+              disabled={!analysis}
+              title={analysis ? undefined : "Link positions are worked out by Crawl Analysis, which has not run for this crawl."}
+              onChange={(e) => (setSelected(null), setPosition(e.target.value))}
+            >
+              <option value="">Position: all</option>
+              <option value="navigation">Navigation</option>
+              <option value="header">Header</option>
+              <option value="content">Content</option>
+              <option value="sidebar">Sidebar</option>
+              <option value="footer">Footer</option>
+              <option value="unknown">Unknown</option>
+            </Select>
           </>
         ) : graph ? (
           <>
@@ -271,6 +292,7 @@ export function VizView({
           options={[
             { value: "tree", label: "Tree" },
             { value: "radial", label: "Radial" },
+            { value: "force", label: "Force" },
           ]}
         />
         )}

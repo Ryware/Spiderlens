@@ -41,6 +41,20 @@ spiderlens export example.spiderlens --tab page-titles --filter duplicate --sort
 The CSV starts with a byte order mark so spreadsheet apps read non-Latin text
 correctly, and cells that a spreadsheet would run as a formula start with `'`.
 
+### Sitemaps and orphan pages
+
+```sh
+spiderlens sitemaps example.spiderlens                       # the sitemap files the crawl read, as a tree
+spiderlens sitemap generate example.spiderlens --out sitemaps # write XML sitemaps from the crawl
+spiderlens orphans example.spiderlens                        # sitemap URLs that no crawled page links to
+spiderlens orphans example.spiderlens --nofollow-only --csv  # pages linked only through nofollow links
+```
+
+`orphans` runs the crawl analysis first if it has not run (on a read-only file
+the results live only for that command) and says on stderr when the crawl did
+not reach every page. A List mode crawl follows no links, so it prints the
+reason and no rows. Details: [specs/011-sitemaps-orphan-pages](specs/011-sitemaps-orphan-pages/contracts/cli.md).
+
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
 Where crawls live and what cleanup does: [docs/crawl-storage.md](docs/crawl-storage.md).
