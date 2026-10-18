@@ -948,7 +948,7 @@ impl Crawler {
                     &format!("{{\"name\":\"axe-core\",\"version\":\"{}\"}}", AXE_VERSION),
                 )?;
             }
-            if config.accessibility.mobile {
+            if config.accessibility.mobile && config.accessibility.level != A11yLevel::Off {
                 features.push("mobile_layout");
             }
             store.add_data_features(&features)?;
@@ -2867,12 +2867,12 @@ impl Run {
                     Some(FullOutcome::TimedOut { ms }) => {
                         store.set_a11y_state(id, "full", "timed_out", None, Some(*ms))?;
                     }
-                    Some(FullOutcome::NotChecked(reason)) => not_checked(reason)?,
+                    Some(FullOutcome::NotChecked(reason)) => not_checked(*reason)?,
                     None => not_checked("probe_failed")?,
                 }
             }
         }
-        if a.mobile && matches!(r.outcome.state, RenderState::Rendered) && !r.bot_challenge {
+        if a.mobile && a.level != A11yLevel::Off && matches!(r.outcome.state, RenderState::Rendered) && !r.bot_challenge {
             if !r.outcome.window.mobile {
                 store.record_mobile(
                     id,

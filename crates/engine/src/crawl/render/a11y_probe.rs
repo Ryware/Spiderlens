@@ -43,6 +43,9 @@ const MOBILE_BUDGET: Duration = Duration::from_secs(1);
 pub(crate) fn probes_for(settings: &AccessibilitySettings, mobile_window: bool) -> (Vec<PageProbe>, Duration) {
     let total = Duration::from_secs(u64::from(settings.budget_secs.max(1)));
     let mut probes = Vec::new();
+    if settings.level == A11yLevel::Off {
+        return (probes, total);
+    }
     if settings.mobile && mobile_window {
         probes.push(PageProbe {
             name: PROBE_MOBILE.to_string(),
