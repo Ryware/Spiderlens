@@ -179,9 +179,10 @@ description: "Task list for spec 014, JavaScript rendering"
 
 **Purpose**: render a finished raw crawl later from its stored HTML (plan D11).
 
-- [ ] T071 Engine in `crates/engine/src/crawl/runner.rs` and `crates/engine/src/crawl/render/mod.rs`: `Crawler::open_for_render(path, RenderSettings)` refuses running crawls, already rendered crawls and crawls with no stored HTML (with the explanation); records `Change::Rendering`; enqueues eligible pages (`html_not_stored` where needed); runs the render stage with the fetch stage idle. Test: fixture page paths requested zero more times, subresources requested politely. Depends on T008.
-- [ ] T072 CLI `spiderlens render` in `crates/cli/src/main.rs` and `crates/cli/src/crawl_cmd.rs` per `contracts/cli.md`, with pause and resume; tests in `crates/cli/tests/render_cli.rs`.
-- [ ] T073 Desktop `crawl_render` in `app/src-tauri/src/render.rs` and a "Render this crawl" action in `ui/src/shell/commands.ts` and the results toolbar, using the same browser dialog and progress. Vitest in `ui/src/shell/AppShell.test.tsx`: action hidden for rendered crawls and crawls without HTML, shown otherwise.
+- [x] T071 Engine in `crates/engine/src/crawl/runner.rs` and `crates/engine/src/crawl/render/mod.rs`: `Crawler::open_for_render(path, RenderSettings)` refuses running crawls, already rendered crawls and crawls with no stored HTML (with the explanation); records `Change::Rendering`; enqueues eligible pages (`html_not_stored` where needed); runs the render stage with the fetch stage idle. Test: fixture page paths requested zero more times, subresources requested politely. Depends on T008.
+- [x] T071a Gap from spec 025 (FR-011 as amended): each page's clean browser context is seeded with the crawl's shared cookie jar and proxy. `CrawlJar::seed_for` in `crates/engine/src/net/jar.rs` returns the cookies the jar would send to that page and none for a host outside the crawl, `NetSession::browser_proxy` gives the fixed proxy, and `dispatch_renders` in `runner.rs` fills `RenderJob.cookies` and `RenderJob.proxy`; crawl cookies never reach a third-party host. Test in `crates/engine/tests/rendering.rs` (a page whose script reports `document.cookie`) and a unit test in `jar.rs`.
+- [x] T072 CLI `spiderlens render` in `crates/cli/src/main.rs` and `crates/cli/src/render_cmd.rs` per `contracts/cli.md`, with pause and resume; tests in `crates/cli/tests/render_cli.rs`.
+- [x] T073 Desktop `crawl_render` in `app/src-tauri/src/render.rs` and a "Render this crawl" action in `ui/src/shell/commands.ts` and the results toolbar, using the same browser dialog and progress. Vitest in `ui/src/shell/AppShell.test.tsx`: action hidden for rendered crawls and crawls without HTML, shown otherwise.
 
 ---
 
@@ -258,6 +259,6 @@ Each task is one reviewable change with its tests (constitution, Development Wor
 | 7 US5 (P2) | 9 (T056 to T064) |
 | 8 US6 (P3) | 3 (T065 to T067) |
 | 9 US7 (P3) | 3 (T068 to T070) |
-| 10 Render an existing crawl | 3 (T071 to T073) |
+| 10 Render an existing crawl | 4 (T071, T071a, T072, T073) |
 | 11 Polish | 10 (T074 to T083) |
 | **Total** | **83** |

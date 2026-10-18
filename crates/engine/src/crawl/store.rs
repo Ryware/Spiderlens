@@ -3277,6 +3277,15 @@ fn origin_at(o: Option<&Origins>, i: usize) -> &'static str {
         .as_str()
 }
 
+/// A fetched internal HTML page that may still be rendered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderCandidate {
+    pub id: i64,
+    pub url: String,
+    pub status: u16,
+    pub html_stored: bool,
+}
+
 /// Spec 014: the render queue and the rendered version of pages. Every table
 /// here comes from migration step 6 and stays empty when a crawl does not
 /// render.
@@ -3318,6 +3327,40 @@ impl CrawlStore {
                 .execute(params![url_id, body::CODEC, size as i64, packed])?;
         }
         Ok(added)
+    }
+
+    /// Internal HTML pages of a finished crawl that have no `renders` row
+    /// yet, after `after` (a url id), in id order: what rendering an
+    /// existing crawl looks at (spec 014 FR-006).
+    pub fn render_candidates(&self, after: i64, limit: usize) -> Result<Vec<RenderCandidate>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT u.id, u.url, u.status, p.html_stored FROM urls u
+             JOIN pages p ON p.url_id = u.id
+             WHERE u.id > ?1 AND u.internal = 1 AND u.check_only = 0 AND u.state = 'crawled'
+               AND u.status IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.url_id = u.id)
+             ORDER BY u.id LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![after, limit as i64], |r| {
+            Ok(RenderCandidate {
+                id: r.get(0)?,
+                url: r.get(1)?,
+                status: r.get(2)?,
+                html_stored: r.get::<_, i64>(3)? != 0,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Internal pages whose raw HTML is stored, which rendering an existing
+    /// crawl needs (FR-006).
+    pub fn stored_html_pages(&self) -> Result<u64> {
+        Ok(self.conn.query_row::<i64, _, _>(
+            "SELECT COUNT(*) FROM pages p JOIN urls u ON u.id = p.url_id
+             WHERE u.internal = 1 AND p.html_stored = 1",
+            [],
+            |r| r.get(0),
+        )? as u64)
     }
 
     /// Records a page that is not rendered at all (`outside_rules`,

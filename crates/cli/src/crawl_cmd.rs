@@ -210,7 +210,7 @@ pub struct ScopeTestArgs {
     crawl: CrawlArgs,
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
+pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -547,7 +547,7 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
 /// The second progress line of a crawl with rendering on (spec 014 FR-040):
 /// what is rendered, waiting and rendering, how fast, and why rendering is
 /// the slower stage, if it is.
-fn render_line(r: &spiderlens_engine::crawl::render::progress::RenderProgress) -> String {
+pub(crate) fn render_line(r: &spiderlens_engine::crawl::render::progress::RenderProgress) -> String {
     use spiderlens_engine::crawl::render::progress::RenderLimiting as L;
     let why = match r.limiting {
         Some(L::QueueFull) => "  (fetching is paused until fewer pages wait to be rendered)".to_string(),
@@ -760,7 +760,7 @@ struct SpeedSummary {
 }
 
 /// `42s`, `3m 05s`, `2h 10m`.
-fn duration(secs: u64) -> String {
+pub(crate) fn duration(secs: u64) -> String {
     match secs {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m {:02}s", s / 60, s % 60),
@@ -779,7 +779,7 @@ fn record_issue_settings(file: &Path) {
     }
 }
 
-fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
+pub(crate) fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
     if json {
         let mut v = serde_json::to_value(s).expect("summary serializes");
         v["file"] = serde_json::Value::String(file.display().to_string());

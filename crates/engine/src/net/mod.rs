@@ -134,6 +134,12 @@ impl NetSession {
         self.jar.as_deref()
     }
 
+    /// The crawl's proxy as a browser context takes it, if it has a fixed
+    /// one (spec 014 FR-011).
+    pub fn browser_proxy(&self) -> Option<String> {
+        self.proxy.as_ref().and_then(proxy::Resolved::browser_server)
+    }
+
     pub fn proxy_in_effect(&self) -> &ProxyInEffect {
         &self.proxy_in_effect
     }

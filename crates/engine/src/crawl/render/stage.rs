@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use spiderlens_config::{CrawlConfig, UaPreset, UrlFilter, WindowPreset};
 use spiderlens_render::{
     BlockSet, Browser, BrowserInfo, InternalHosts, LaunchError, LaunchOptions, MainResponse, Network,
-    PageProbe, RenderJob, RenderOutcome, ScreenshotOptions, Window,
+    PageProbe, RenderJob, RenderOutcome, ScreenshotOptions, SeedCookie, Window,
 };
 use tokio::sync::{RwLock, Semaphore};
 use url::Url;
@@ -113,6 +113,26 @@ pub(crate) enum Eligibility {
     /// Eligible but outside the rendering patterns: `not_rendered`.
     OutsideRules,
     Queue,
+}
+
+/// [`RenderStage::eligibility`] without a stage, for rendering an existing
+/// crawl before any browser starts.
+pub(crate) fn eligibility_of(
+    filter: &UrlFilter,
+    error_pages: bool,
+    url: &str,
+    internal_page: bool,
+    html: bool,
+    status: u16,
+) -> Eligibility {
+    let status_ok = (200..300).contains(&status) || (error_pages && status >= 400);
+    if !(internal_page && html && status_ok) {
+        Eligibility::No
+    } else if filter.decide(url).crawls() {
+        Eligibility::Queue
+    } else {
+        Eligibility::OutsideRules
+    }
 }
 
 /// The rendering window the settings ask for (FR-008): `auto` follows the
@@ -235,14 +255,7 @@ impl RenderStage {
     /// 2xx (or 4xx and 5xx when error pages are rendered), and inside the
     /// rendering patterns (FR-004, FR-005).
     pub(crate) fn eligibility(&self, url: &str, internal_page: bool, html: bool, status: u16) -> Eligibility {
-        let status_ok = (200..300).contains(&status) || (self.error_pages && status >= 400);
-        if !(internal_page && html && status_ok) {
-            Eligibility::No
-        } else if self.filter.decide(url).crawls() {
-            Eligibility::Queue
-        } else {
-            Eligibility::OutsideRules
-        }
+        eligibility_of(&self.filter, self.error_pages, url, internal_page, html, status)
     }
 
     /// Counts the queue and the finished renders already in the file (a
@@ -403,6 +416,8 @@ impl RenderStage {
         status: u16,
         headers: Vec<(String, String)>,
         raw_body: Vec<u8>,
+        cookies: Vec<SeedCookie>,
+        proxy: Option<String>,
         token: String,
         store_html: bool,
         budget: Arc<Semaphore>,
@@ -431,6 +446,8 @@ impl RenderStage {
         }
         let want_full = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_A11Y);
         let want_mobile = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_MOBILE);
+        job.cookies = cookies;
+        job.proxy = proxy;
         job.internal_hosts = t.internal.clone();
         job.screenshot = t.screenshot.then(ScreenshotOptions::default);
         let internal = t.internal.clone();

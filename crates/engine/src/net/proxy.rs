@@ -158,6 +158,19 @@ impl Resolved {
         format!("{}://{host}:{}", self.kind.scheme(), self.port)
     }
 
+    /// The `scheme://host:port` Chromium takes for a browser context (spec
+    /// 014 FR-011). `None` for a configuration script, which picks per
+    /// request and cannot be handed over as one address. Credentials are
+    /// not part of it: Chromium asks for them separately.
+    pub fn browser_server(&self) -> Option<String> {
+        if self.pac.is_some() {
+            return None;
+        }
+        let url = self.url();
+        // Chromium's SOCKS5 resolves names through the proxy already.
+        Some(url.replacen("socks5h://", "socks5://", 1))
+    }
+
     pub fn in_effect(&self, mode: ProxyMode) -> ProxyInEffect {
         if self.pac.is_some() {
             return ProxyInEffect {

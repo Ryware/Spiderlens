@@ -553,6 +553,38 @@ pub struct CrawlArgs {
     /// version next to the raw HTML (spec 014).
     #[arg(long, help_heading = "Rendering")]
     pub render: bool,
+    #[command(flatten)]
+    pub rendering: RenderingArgs,
+
+    /// Accessibility checks: off, static (from the HTML) or full (also in the
+    /// rendered page; needs --render). Default static.
+    #[arg(long, value_enum, value_name = "LEVEL", help_heading = "Accessibility")]
+    pub accessibility: Option<A11yArg>,
+    /// WCAG version and level to count against, such as 2.2-aa (the default).
+    #[arg(
+        long,
+        value_name = "TARGET",
+        value_parser = crate::accessibility_cmd::parse_wcag,
+        help_heading = "Accessibility"
+    )]
+    pub wcag: Option<spiderlens_config::WcagTarget>,
+    /// Leave best practice checks out of the accessibility results.
+    #[arg(long, help_heading = "Accessibility")]
+    pub no_a11y_best_practice: bool,
+    /// Do not measure mobile usability.
+    #[arg(long, help_heading = "Accessibility")]
+    pub no_a11y_mobile: bool,
+    /// Time limit for the full checks on one page, in seconds (1 to 30,
+    /// default 5).
+    #[arg(long, value_name = "SECONDS", help_heading = "Accessibility")]
+    pub a11y_budget: Option<u32>,
+}
+
+/// The rendering settings flags other than `--render`: shared by `crawl`
+/// (where they need `--render`) and `render FILE` (where rendering is the
+/// point).
+#[derive(Args, Debug, Default)]
+pub struct RenderingArgs {
     /// Longest time one page may render, in seconds (1 to 60, default 10).
     #[arg(long, value_name = "SECONDS", help_heading = "Rendering")]
     pub render_timeout: Option<f64>,
@@ -601,29 +633,78 @@ pub struct CrawlArgs {
     /// (default 50).
     #[arg(long, value_name = "PERCENT", help_heading = "Rendering")]
     pub js_hidden_threshold: Option<u32>,
+}
 
-    /// Accessibility checks: off, static (from the HTML) or full (also in the
-    /// rendered page; needs --render). Default static.
-    #[arg(long, value_enum, value_name = "LEVEL", help_heading = "Accessibility")]
-    pub accessibility: Option<A11yArg>,
-    /// WCAG version and level to count against, such as 2.2-aa (the default).
-    #[arg(
-        long,
-        value_name = "TARGET",
-        value_parser = crate::accessibility_cmd::parse_wcag,
-        help_heading = "Accessibility"
-    )]
-    pub wcag: Option<spiderlens_config::WcagTarget>,
-    /// Leave best practice checks out of the accessibility results.
-    #[arg(long, help_heading = "Accessibility")]
-    pub no_a11y_best_practice: bool,
-    /// Do not measure mobile usability.
-    #[arg(long, help_heading = "Accessibility")]
-    pub no_a11y_mobile: bool,
-    /// Time limit for the full checks on one page, in seconds (1 to 30,
-    /// default 5).
-    #[arg(long, value_name = "SECONDS", help_heading = "Accessibility")]
-    pub a11y_budget: Option<u32>,
+impl RenderingArgs {
+    /// The names of the flags that were given.
+    pub fn given(&self) -> Vec<&'static str> {
+        [
+            ("--render-timeout", self.render_timeout.is_some()),
+            ("--render-min-wait", self.render_min_wait.is_some()),
+            ("--render-window", self.render_window.is_some()),
+            ("--render-block", !self.render_block.is_empty()),
+            ("--render-include", !self.render_include.is_empty()),
+            ("--render-exclude", !self.render_exclude.is_empty()),
+            ("--render-error-pages", self.render_error_pages),
+            ("--render-tabs", self.render_tabs.is_some()),
+            ("--render-memory", self.render_memory.is_some()),
+            ("--screenshots", self.screenshots),
+            ("--js-content-threshold", self.js_content_threshold.is_some()),
+            ("--js-hidden-threshold", self.js_hidden_threshold.is_some()),
+        ]
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(n, _)| *n)
+        .collect()
+    }
+
+    /// Lays the flags over rendering settings (spec 014 contracts/cli.md).
+    pub fn apply(&self, r: &mut spiderlens_config::RenderSettings) -> Result<(), String> {
+        if let Some(v) = self.render_timeout {
+            r.max_render_secs = v;
+        }
+        if let Some(v) = self.render_min_wait {
+            r.min_wait_secs = v;
+        }
+        if let Some(w) = self.render_window {
+            r.window = w.0;
+        }
+        if !self.render_block.is_empty() {
+            let has = |b: BlockArg| self.render_block.contains(&b);
+            if has(BlockArg::None) && self.render_block.len() > 1 {
+                return Err("--render-block none cannot be combined with other types".into());
+            }
+            r.block = spiderlens_config::RenderBlock {
+                images: has(BlockArg::Images),
+                media: has(BlockArg::Media),
+                fonts: has(BlockArg::Fonts),
+                stylesheets: has(BlockArg::Stylesheets),
+                third_party: has(BlockArg::ThirdParty),
+            };
+        }
+        r.include.extend(self.render_include.iter().cloned());
+        r.exclude.extend(self.render_exclude.iter().cloned());
+        if self.render_error_pages {
+            r.render_error_pages = true;
+        }
+        if let Some(v) = self.render_tabs {
+            r.concurrency = v.0;
+        }
+        if let Some(v) = self.render_memory {
+            r.memory_budget_mb = v.0;
+        }
+        if self.screenshots {
+            r.screenshots = true;
+        }
+        if let Some(t) = self.js_content_threshold {
+            r.js_content_min_percent = t.percent;
+            r.js_content_min_words = t.words;
+        }
+        if let Some(v) = self.js_hidden_threshold {
+            r.hidden_content_percent = v;
+        }
+        Ok(())
+    }
 }
 
 /// `--render-window`: `auto`, `mobile`, `desktop` or `WIDTHxHEIGHT`.
@@ -895,25 +976,10 @@ impl CrawlArgs {
         Some(s)
     }
 
-    /// The rendering flags other than `--render` (spec 014 contracts/cli.md).
-    /// Given without `--render` they are an error, so a typo cannot quietly
-    /// produce a raw crawl.
+    /// The rendering flags other than `--render`. Given without `--render`
+    /// they are an error, so a typo cannot quietly produce a raw crawl.
     fn apply_rendering(&self, c: &mut CrawlConfig) -> Result<(), String> {
-        let given = [
-            ("--render-timeout", self.render_timeout.is_some()),
-            ("--render-min-wait", self.render_min_wait.is_some()),
-            ("--render-window", self.render_window.is_some()),
-            ("--render-block", !self.render_block.is_empty()),
-            ("--render-include", !self.render_include.is_empty()),
-            ("--render-exclude", !self.render_exclude.is_empty()),
-            ("--render-error-pages", self.render_error_pages),
-            ("--render-tabs", self.render_tabs.is_some()),
-            ("--render-memory", self.render_memory.is_some()),
-            ("--screenshots", self.screenshots),
-            ("--js-content-threshold", self.js_content_threshold.is_some()),
-            ("--js-hidden-threshold", self.js_hidden_threshold.is_some()),
-        ];
-        let names: Vec<&str> = given.iter().filter(|(_, on)| *on).map(|(n, _)| *n).collect();
+        let names = self.rendering.given();
         if names.is_empty() {
             return Ok(());
         }
@@ -921,51 +987,7 @@ impl CrawlArgs {
         if !c.rendering.is_on() {
             return Err(format!("{} need --render", names.join(", ")));
         }
-        let r = &mut c.rendering;
-        if let Some(v) = self.render_timeout {
-            r.max_render_secs = v;
-        }
-        if let Some(v) = self.render_min_wait {
-            r.min_wait_secs = v;
-        }
-        if let Some(w) = self.render_window {
-            r.window = w.0;
-        }
-        if !self.render_block.is_empty() {
-            let has = |b: BlockArg| self.render_block.contains(&b);
-            if has(BlockArg::None) && self.render_block.len() > 1 {
-                return Err("--render-block none cannot be combined with other types".into());
-            }
-            r.block = spiderlens_config::RenderBlock {
-                images: has(BlockArg::Images),
-                media: has(BlockArg::Media),
-                fonts: has(BlockArg::Fonts),
-                stylesheets: has(BlockArg::Stylesheets),
-                third_party: has(BlockArg::ThirdParty),
-            };
-        }
-        r.include.extend(self.render_include.iter().cloned());
-        r.exclude.extend(self.render_exclude.iter().cloned());
-        if self.render_error_pages {
-            r.render_error_pages = true;
-        }
-        if let Some(v) = self.render_tabs {
-            r.concurrency = v.0;
-        }
-        if let Some(v) = self.render_memory {
-            r.memory_budget_mb = v.0;
-        }
-        if self.screenshots {
-            r.screenshots = true;
-        }
-        if let Some(t) = self.js_content_threshold {
-            r.js_content_min_percent = t.percent;
-            r.js_content_min_words = t.words;
-        }
-        if let Some(v) = self.js_hidden_threshold {
-            r.hidden_content_percent = v;
-        }
-        Ok(())
+        self.rendering.apply(&mut c.rendering)
     }
 
     pub fn resolve(&self, mode: Mode) -> Result<Resolved, String> {
