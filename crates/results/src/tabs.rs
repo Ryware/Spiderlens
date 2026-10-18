@@ -56,6 +56,8 @@ pub enum Need {
     UrlInspection,
     /// Google Analytics 4 landing page data fetched after the crawl (spec 024 US4).
     Analytics,
+    /// Ahrefs, Majestic or Moz link metrics fetched after the crawl (spec 024).
+    LinkMetrics,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
     /// The `sitemap_audit` pass's problems (spec 011 part b), written once
@@ -114,6 +116,9 @@ impl Need {
             Self::Analytics => {
                 "No Analytics data in this crawl yet. Fetch it from Integrations after connecting your Google account."
             }
+            Self::LinkMetrics => {
+                "No link metrics in this crawl yet. Save an Ahrefs, Majestic or Moz key in Integrations and fetch them for this crawl."
+            }
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
@@ -153,6 +158,7 @@ impl Need {
             Self::SearchConsole => "search_console",
             Self::UrlInspection => "url_inspection",
             Self::Analytics => "analytics",
+            Self::LinkMetrics => "link_metrics",
             Self::SitemapEntries => "sitemap_entries",
             Self::SitemapAudit => "sitemap_audit",
             Self::Orphans => "orphans",
@@ -2085,6 +2091,7 @@ fn build_tabs() -> Vec<TabDef> {
         crate::google_tabs::index_status_tab(),
         crate::google_tabs::analytics_tab(),
         crate::page_experience::tab(),
+        crate::link_data::tab(),
         ai_search_tab(),
         near_dup_tab(),
     ]
@@ -2608,7 +2615,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 21);
+        assert_eq!(tab_ids.len(), 24);
     }
 
     #[test]

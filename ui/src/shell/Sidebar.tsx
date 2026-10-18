@@ -1,4 +1,4 @@
-import { Activity, Gauge, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, FileStack, SpellCheck, Zap, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Files, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Map as MapIcon, Search, Cable, Braces, TextSearch, type LucideIcon } from "lucide-react";
+import { Activity, Gauge, CircleHelp, ScrollText, FolderTree, GitFork, ExternalLink, FileText, FileStack, SpellCheck, Zap, Globe, Heading1, Heading2, Image, Link2, ListOrdered, Bot, Type, Code, Ban, Sparkles, Files, GitCompareArrows, Network, Waypoints, TextQuote, CalendarClock, Cookie, ListTree, Map as MapIcon, Search, Cable, Braces, Link as LinkIcon, TextSearch, type LucideIcon } from "lucide-react";
 import { cn, Tooltip } from "../components/ui";
 import type { IssuesSummary } from "../generated/IssuesSummary";
 import { IssuesNav } from "../issues/IssuesNav";
@@ -33,6 +33,7 @@ export const resultTabs: NavItem[] = [
   { id: "index-status", title: "Index status", icon: TextSearch },
   { id: "analytics", title: "Analytics", icon: Activity },
   { id: "page-experience", title: "Page experience", icon: Gauge },
+  { id: "link-metrics", title: "Link metrics", icon: LinkIcon },
   { id: "sitemaps", title: "Sitemaps", icon: MapIcon },
   { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];

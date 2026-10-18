@@ -24,7 +24,7 @@ mod perf;
 
 /// A run stopped at the provider's daily allowance; `resume` continues it
 /// after the reset time (contracts/cli.md).
-const QUOTA: u8 = 10;
+pub(crate) const QUOTA: u8 = 10;
 
 #[derive(Subcommand)]
 pub enum IntegrationsCommand {
@@ -100,6 +100,8 @@ pub enum IntegrationsCommand {
     /// The response cache outside crawl files.
     #[command(subcommand)]
     Cache(CacheCommand),
+    /// Export a results view to a new Google Sheet (and a Looker Studio link).
+    ExportSheets(crate::integrations_links_cmd::SheetsArgs),
 }
 
 #[derive(Subcommand)]
@@ -214,6 +216,8 @@ pub struct FetchArgs {
     /// Field data and lab tests: devices, pages and strategy.
     #[command(flatten)]
     perf: perf::PerfArgs,
+    #[command(flatten)]
+    links: crate::integrations_links_cmd::LinkArgs,
 }
 
 fn hub() -> Result<Hub, Error> {
@@ -237,7 +241,7 @@ fn fail(e: &Error) -> ExitCode {
     ExitCode::from(code(e))
 }
 
-fn print_json<T: serde::Serialize>(v: &T) {
+pub(crate) fn print_json<T: serde::Serialize>(v: &T) {
     println!("{}", serde_json::to_string_pretty(v).expect("serializes"));
 }
 
@@ -338,6 +342,7 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
             Ok(ExitCode::from(exit::FETCHED))
         }
         IntegrationsCommand::Fetch(a) => fetch(h, a),
+        IntegrationsCommand::ExportSheets(a) => crate::integrations_links_cmd::export_sheets(h, a),
         IntegrationsCommand::Resume { file, run, json } => {
             let control = pause_on_ctrl_c();
             let p = h.resume(&file, run, &control, &mut progress())?;
@@ -457,6 +462,10 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
         Provider::UrlInspection => return google::fetch_inspection(h, a),
         Provider::Analytics => return google::fetch_analytics(h, a),
         Provider::FieldData | Provider::LabTests => return perf::fetch(h, p, &a),
+        Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
+            let account = a.account.as_deref();
+            return crate::integrations_links_cmd::fetch_links(h, p, &a.file, account, &a.urls, &a.links, a.fresh, a.json);
+        }
         _ => {
             return Err(Error::Invalid(format!(
                 "{} is not available in this build yet",
@@ -492,7 +501,7 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
     Ok(finish(&r, a.json))
 }
 
-fn progress() -> impl FnMut(&RunProgress) {
+pub(crate) fn progress() -> impl FnMut(&RunProgress) {
     let mut last = Instant::now();
     move |p: &RunProgress| {
         if last.elapsed() >= Duration::from_millis(500) {
@@ -506,7 +515,7 @@ fn progress() -> impl FnMut(&RunProgress) {
     }
 }
 
-fn finish(p: &RunProgress, json: bool) -> ExitCode {
+pub(crate) fn finish(p: &RunProgress, json: bool) -> ExitCode {
     if json {
         print_json(p);
     } else {
@@ -547,14 +556,14 @@ fn url_id(file: &std::path::Path, url: &str) -> Result<i64, Error> {
 }
 
 /// Ctrl-C pauses the run; it can be resumed later.
-fn pause_on_ctrl_c() -> Control {
+pub(crate) fn pause_on_ctrl_c() -> Control {
     let control = Control::default();
     let c = control.clone();
     on_ctrl_c(move || c.pause());
     control
 }
 
-fn cancel_on_ctrl_c() -> Control {
+pub(crate) fn cancel_on_ctrl_c() -> Control {
     let control = Control::default();
     let c = control.clone();
     on_ctrl_c(move || c.cancel());
@@ -573,7 +582,7 @@ fn on_ctrl_c(f: impl FnOnce() + Send + 'static) {
     });
 }
 
-fn open_browser(url: &str) {
+pub(crate) fn open_browser(url: &str) {
     if !spiderlens_integrations::browser::open(url) {
         eprintln!("Could not open a browser; open the link above yourself.");
     }
@@ -666,6 +675,24 @@ mod test_hooks {
                     base: format!("{base}/psi/v5"),
                 },
             ),
+            Err(_) => h,
+        };
+        let h = match std::env::var("SPIDERLENS_TEST_LINKS") {
+            Ok(base) => h.with_links(spiderlens_integrations::links::Apis {
+                ahrefs: format!("{base}/ahrefs/v3"),
+                majestic: format!("{base}/majestic/api/json"),
+                moz: format!("{base}/moz/v2"),
+            }),
+            Err(_) => h,
+        };
+        let h = match std::env::var("SPIDERLENS_TEST_SHEETS") {
+            Ok(base) => h.with_sheets(spiderlens_integrations::sheets::Api {
+                base,
+                cell_capacity: std::env::var("SPIDERLENS_TEST_SHEETS_CAPACITY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(spiderlens_integrations::sheets::CELL_CAPACITY),
+            }),
             Err(_) => h,
         };
         match std::env::var("SPIDERLENS_TEST_GOOGLE") {

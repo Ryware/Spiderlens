@@ -415,7 +415,12 @@ async fn content_filters_list_exactly_the_seeded_pages() {
             // Integration data is fetched after a crawl (spec 024), not by it.
             if matches!(
                 f.need,
-                Need::SearchConsole | Need::UrlInspection | Need::Analytics | Need::FieldData | Need::LabTests
+                Need::SearchConsole
+                    | Need::UrlInspection
+                    | Need::Analytics
+                    | Need::FieldData
+                    | Need::LabTests
+                    | Need::LinkMetrics
             ) {
                 assert!(counts.counts[f.id.as_ref()].is_none());
                 continue;

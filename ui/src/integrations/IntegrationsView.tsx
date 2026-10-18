@@ -17,6 +17,7 @@ import type { Transport } from "../transport";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 import { InspectionPanel } from "./InspectionPanel";
 import { PageExperiencePanel } from "./PageExperiencePanel";
+import { LinkMetricsPanel } from "./LinkMetricsPanel";
 
 const STATE_LABEL: Record<RunState, string> = {
   queued: "Queued",
@@ -120,6 +121,14 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
               field={status.providers.find((p) => p.provider === "field_data")!}
               lab={status.providers.find((p) => p.provider === "lab_tests")!}
               keys={status.connections}
+              crawlRunning={crawlRunning}
+              onChanged={reload}
+              onDataChanged={onDataChanged}
+            />
+            <LinkMetricsPanel
+              transport={transport}
+              path={path}
+              status={status}
               crawlRunning={crawlRunning}
               onChanged={reload}
               onDataChanged={onDataChanged}
@@ -439,7 +448,7 @@ function SearchConsoleRun({
           {runs.filter((r) => r.provider === "search_console").map((r) => (
             <li key={r.id} data-run={r.id} className="flex flex-wrap items-center gap-2 text-sm text-fg-2">
               <Badge tone={STATE_TONE[r.state]}>{STATE_LABEL[r.state]}</Badge>
-              <span className="text-fg">{r.property}</span>
+              <span className="text-fg">{r.property ?? r.provider}</span>
               <span>
                 {n(r.done)} rows
                 {r.matched !== null && `, ${n(r.matched)} matched crawled pages`}

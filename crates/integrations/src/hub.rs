@@ -26,7 +26,10 @@ use crate::oauth::{self, Client, Endpoints, Session, StoredGoogle};
 use crate::run::{self, Control, Ctx};
 use crate::settings::{Connection, Folder, IntegrationSettings, ProviderSettings};
 use crate::store::{self, OrphanCandidate, RunProgress};
-use crate::{Error, Provider, Result};
+use crate::{Error, Provider, Result, links, sheets};
+
+mod link_runs;
+mod sheet_export;
 
 mod perf;
 
@@ -86,6 +89,10 @@ pub const AVAILABLE: &[Provider] = &[
     Provider::Analytics,
     Provider::FieldData,
     Provider::LabTests,
+    Provider::Ahrefs,
+    Provider::Majestic,
+    Provider::Moz,
+    Provider::Sheets,
 ];
 
 // URL Inspection and Analytics (spec 024 slices 2 and 4) live in their own
@@ -106,6 +113,8 @@ pub struct Hub {
     cache_path: Option<PathBuf>,
     built_in: Option<Client>,
     apis: GoogleApis,
+    links: links::Apis,
+    sheets: sheets::Api,
 }
 
 impl Hub {
@@ -131,6 +140,8 @@ impl Hub {
             cache_path,
             built_in: Client::built_in(),
             apis: GoogleApis::default(),
+            links: links::Apis::default(),
+            sheets: sheets::Api::default(),
         }
     }
 
@@ -491,6 +502,9 @@ impl Hub {
                 self.resume_google(crawl, &r, control, on_progress)
             }
             Provider::FieldData | Provider::LabTests => self.resume_perf(crawl, &r, control, on_progress),
+            Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
+                self.resume_link_run(crawl, &r, control, on_progress)
+            }
             p => Err(Error::Invalid(format!(
                 "{} is not available in this build",
                 p.label()

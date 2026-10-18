@@ -71,16 +71,16 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Slice 5: US5 Link metrics (P3)
 
-- [ ] T040 Fakes for Ahrefs, Majestic and Moz with metered units.
-- [ ] T041 Tests then code: `links::{ahrefs,majestic,moz}` batching, estimate, re-estimate after the first batch, cap stop, cache reuse (US5.1 to US5.3, FR-029, SC-006).
-- [ ] T042 `results` Link metrics tab with per-provider columns; Vitest + Playwright for the cost confirmation; CLI with `--cap` and `--yes`.
+- [x] T040 Fakes for Ahrefs, Majestic and Moz with metered units.
+- [x] T041 Tests then code: `links::{ahrefs,majestic,moz}` batching, estimate, re-estimate after the first batch, cap stop, cache reuse (US5.1 to US5.3, FR-029, SC-006).
+- [x] T042 `results` Link metrics tab with per-provider columns; Vitest + Playwright for the cost confirmation; CLI with `--cap` and `--yes`.
 
 ## Slice 6: US6 Sheets and Looker Studio (P3)
 
-- [ ] T043 Fake Sheets API with cell capacity.
-- [ ] T044 Tests then code: `sheets` export of a tab view (visible columns, filter, sort), batches, capacity warning, truncate and split (US6.1, US6.2, FR-030).
-- [ ] T045 Tests then code: `looker` link (US6.3, FR-031).
-- [ ] T046 Vitest + Playwright: Export to Google Sheets, Open in Looker Studio; CLI `export-sheets --looker`.
+- [x] T043 Fake Sheets API with cell capacity.
+- [x] T044 Tests then code: `sheets` export of a tab view (visible columns, filter, sort), batches, capacity warning, truncate and split (US6.1, US6.2, FR-030).
+- [x] T045 Tests then code: `looker` link (US6.3, FR-031).
+- [x] T046 Vitest + Playwright: Export to Google Sheets, Open in Looker Studio; CLI `export-sheets --looker`.
 
 ## Final phase: Polish
 

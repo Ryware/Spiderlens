@@ -19,6 +19,7 @@ mod export;
 mod features;
 mod google_tabs;
 pub mod issues;
+mod link_data;
 pub mod near_dup;
 mod page_experience;
 mod reader;

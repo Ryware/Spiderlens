@@ -154,7 +154,7 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
       sends,
       terms_url: "https://example.com/terms",
       uses_google_account: google,
-      available: ["search_console", "url_inspection", "analytics", "field_data", "lab_tests"].includes(provider),
+      available: ["search_console", "url_inspection", "analytics", "field_data", "lab_tests", "ahrefs", "majestic", "moz", "sheets"].includes(provider),
       settings: fi.settings[provider] ?? { enabled: false, per_minute: null, concurrency: null },
       per_minute: 600,
       concurrency: 4,
