@@ -12,7 +12,9 @@ pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFind
 pub use entry_points::{AgentEntryPoints, EntryPointRow, EntryProblem, Evaluated, evaluate};
 pub use pass::AgentScores;
 pub use score::{AgentPart, WEIGHTS_VERSION};
-pub use summary::{AgentFailedRule, AgentNotChecked, AgentPartScore, AgentsSummary};
+pub use summary::{
+    AgentAccessRow, AgentFailedRule, AgentNotChecked, AgentPartScore, AgentProbe, AgentRobots, AgentsSummary,
+};
 
 use std::borrow::Cow;
 

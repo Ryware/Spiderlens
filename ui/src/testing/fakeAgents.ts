@@ -112,6 +112,12 @@ export const fakeAgentsSummary: AgentsSummary = {
     { id: "agent-markdown-negotiation", name: "Markdown by content negotiation", reason: "Turned off in this crawl's settings." },
   ],
   weights_version: 1,
+  access: [
+    { bot: "ChatGPT-User", vendor: "OpenAI", purpose: "user_fetch", robots: "allowed", probe: "ok" },
+    { bot: "Claude-User", vendor: "Anthropic", purpose: "user_fetch", robots: "blocked", probe: "not_probed" },
+    { bot: "Perplexity-User", vendor: "Perplexity", purpose: "user_fetch", robots: "allowed", probe: "challenged" },
+    { bot: "Meta-ExternalFetcher", vendor: "Meta", purpose: "user_fetch", robots: "not_checked", probe: "blocked" },
+  ],
 };
 
 export const fakeAgentsUnavailable: AgentsSummary = {
@@ -123,6 +129,7 @@ export const fakeAgentsUnavailable: AgentsSummary = {
   top_failed: [],
   not_checked: [],
   weights_version: null,
+  access: [],
 };
 
 const wellKnown = { ai_catalog: "ai-catalog.json", api_catalog: "api-catalog", a2a_card: "agent-card.json" } as const;

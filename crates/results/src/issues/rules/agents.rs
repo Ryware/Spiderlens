@@ -14,8 +14,12 @@
 //! Not here, because the data they need is not stored yet:
 //! `form_rendered_only` (rendered `page_agent` rows are never written),
 //! `markdown_alternate_broken` (`md_outcome` is never filled),
-//! `search_action_out_of_scope`, `mcp_endpoint_unreachable`,
-//! `robots_blocks_agents`, `probe_blocked` and `prompt_injection_text`.
+//! `search_action_out_of_scope`, `mcp_endpoint_unreachable` and
+//! `prompt_injection_text`.
+//!
+//! `robots_blocks_agents` and `probe_blocked` read spec 015's stored robots
+//! evaluation (`aeo_bot_access`) and user agent probe (`aeo_probe`) for the
+//! crawlers the registry marks as user-fetch (`ai_bot_purpose`).
 
 use crate::agents::conditions as cond;
 use crate::issues::{Category::Agents as A, Priority::*, Rule, Scope, rule};
@@ -286,6 +290,50 @@ pub const RULES: &[Rule] = &[
     .explain(
         "The llms.txt file does not follow the llms.txt proposal (a title, an optional summary, then sections of links), so tools that read it may skip it or misread it.",
         "Fix the problems the AI search checks list for the file, or publish the draft SpiderLens generates.",
+    ),
+    rule(
+        "agents.robots_blocks_agents",
+        "robots.txt blocks AI agents acting for a person",
+        A,
+        High,
+        Scope::Known,
+        site!(
+            "EXISTS (SELECT 1 FROM aeo_bot_access b WHERE ai_bot_purpose(b.bot) = 'user_fetch' \
+             AND (b.home_verdict = 'blocked' OR b.urls_blocked > 0))"
+        ),
+    )
+    .site_wide()
+    .needs(Need::AiChecks)
+    .evidence(
+        "(SELECT 'robots.txt blocks ' || group_concat(n, ', ') FROM (SELECT DISTINCT ai_bot_name(b.bot) AS n \
+         FROM aeo_bot_access b WHERE ai_bot_purpose(b.bot) = 'user_fetch' \
+         AND (b.home_verdict = 'blocked' OR b.urls_blocked > 0) ORDER BY b.bot))",
+    )
+    .explain(
+        "robots.txt turns away at least one AI agent that fetches pages because a person asked an assistant to. The person gets no answer from your site, or an answer built from other sources.",
+        "Allow the user-fetch agents the evidence names in robots.txt, or keep the block on purpose and accept that assistants cannot open these pages for people.",
+    ),
+    rule(
+        "agents.probe_blocked",
+        "AI agents blocked when tested",
+        A,
+        High,
+        Scope::Known,
+        site!(
+            "EXISTS (SELECT 1 FROM aeo_probe p WHERE ai_bot_purpose(p.bot) = 'user_fetch' \
+             AND p.outcome IN ('blocked', 'challenge'))"
+        ),
+    )
+    .site_wide()
+    .needs(Need::AiChecks)
+    .evidence(
+        "(SELECT group_concat(n, ', ') FROM (SELECT DISTINCT ai_bot_name(p.bot) || CASE p.outcome \
+         WHEN 'challenge' THEN ' was challenged' ELSE ' was blocked' END AS n FROM aeo_probe p \
+         WHERE ai_bot_purpose(p.bot) = 'user_fetch' AND p.outcome IN ('blocked', 'challenge') ORDER BY p.bot))",
+    )
+    .explain(
+        "When SpiderLens fetched pages with the user agent of an AI agent that acts for a person, the site refused it or answered with a challenge page. Bot protection is turning these agents away whatever robots.txt says.",
+        "Let the agents the evidence names through your firewall or bot protection, using the vendor's published IP ranges, or serve them the page without a challenge.",
     ),
     rule(
         "agents.content_rendered_only",

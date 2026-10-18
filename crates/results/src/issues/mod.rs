@@ -29,7 +29,7 @@ use crate::tabs::{Derived, Need};
 
 /// Increases whenever a rule is added, removed or changes its condition
 /// (FR-003).
-pub const RULES_VERSION: u32 = 6;
+pub const RULES_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
