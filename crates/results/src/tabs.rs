@@ -2215,10 +2215,10 @@ pub fn build_derived(
         // Built by the reader or export, which know the issue settings.
         Derived::IssueHits => Ok(()),
         Derived::LinkMetrics => crate::analysis::Watch::quiet(|w| {
-            crate::analysis::link_metrics::build(conn, links.weighting.as_ref(), w).map(|_| ())
+            crate::analysis::link_metrics::build(conn, "temp", links.weighting.as_ref(), w).map(|_| ())
         }),
         Derived::LinkPositions => crate::analysis::Watch::quiet(|w| {
-            crate::analysis::link_positions::build(conn, &links.position_rules, w).map(|_| ())
+            crate::analysis::link_positions::build(conn, "temp", &links.position_rules, w).map(|_| ())
         }),
         Derived::VizCrawlTree => crate::viz::crawl_tree::build(conn),
         Derived::VizDirs => crate::viz::dirs::build(conn),
