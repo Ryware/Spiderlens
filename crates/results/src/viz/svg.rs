@@ -329,7 +329,7 @@ pub fn svg(scene: &Scene, palette: &Palette, colour: ColourBy, header: &Header) 
     for nd in nodes {
         let Some(p) = nd.parent else { continue };
         let p = &nodes[p as usize];
-        if scene.layout == Layout::Radial {
+        if matches!(scene.layout, Layout::Radial | Layout::Force) {
             let _ = write!(d, "M{} {}L{} {}", n(p.x), n(p.y), n(nd.x), n(nd.y));
         } else {
             let mx = (p.x + nd.x) / 2.0;

@@ -3,6 +3,7 @@
 //! See specs/001-project-foundation/contracts/cli.md and
 //! specs/002-crawl-configuration/contracts/cli.md.
 
+mod accessibility_cmd;
 mod aeo_cmd;
 mod browser;
 mod compare_cmd;
@@ -97,6 +98,8 @@ enum Command {
     Html(HtmlArgs),
     /// List the cookies the site set during a crawl (no values).
     Cookies(cookies_cmd::CookiesArgs),
+    /// Show a crawl file's accessibility results, or its mobile measures.
+    Accessibility(accessibility_cmd::AccessibilityArgs),
     /// List crawl files in a folder with their size and stored HTML.
     Files(files_cmd::FilesArgs),
     /// Remove the stored page HTML from a crawl file, keeping its results.
@@ -258,6 +261,7 @@ fn main() -> ExitCode {
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
         Command::Cookies(args) => cookies_cmd::run_cookies(args),
+        Command::Accessibility(args) => accessibility_cmd::run_accessibility(args),
         Command::Files(args) => files_cmd::run_files(args),
         Command::PurgeHtml(args) => files_cmd::run_purge_html(args),
         Command::Export(args) => export_cmd::run_export(*args),

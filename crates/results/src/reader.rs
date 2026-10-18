@@ -123,6 +123,7 @@ fn setup(
     let thresholds = Arc::new(RwLock::new(settings.thresholds()));
     sql::register_thresholds(&conn, thresholds.clone())?;
     let features = Features::detect(&conn)?;
+    sql::register_a11y(&conn, &features.a11y)?;
     let limit = features.redirect_limit;
     conn.create_scalar_function(
         "redirect_limit",
@@ -328,6 +329,15 @@ impl Reader {
     pub(crate) fn has_derived(&mut self, d: Derived) -> Result<bool> {
         self.version()?;
         Ok(self.derived.get(&d) == Some(&self.data_gen))
+    }
+
+    /// Counts accessibility results against another WCAG target without
+    /// checking again (spec 026 FR-020).
+    pub fn set_a11y_target(&mut self, wcag: spiderlens_config::WcagTarget) -> Result<()> {
+        self.features.a11y.wcag = wcag;
+        sql::register_a11y(&self.conn, &self.features.a11y)?;
+        self.bump_version();
+        Ok(())
     }
 
     pub fn link_settings(&self) -> &spiderlens_config::LinkAnalysisSettings {

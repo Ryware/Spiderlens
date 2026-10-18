@@ -709,6 +709,26 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             }
         }
     }
+    // Accessibility (spec 026)
+    let a = &c.accessibility;
+    for (name, value, lo, hi, text) in [
+        ("budget_secs", a.budget_secs, 1, 30, "The check time per page must be between 1 and 30 seconds."),
+        ("small_text_px", a.small_text_px, 6, 24, "The small text size must be between 6 and 24 pixels."),
+        ("small_text_share", a.small_text_share, 1, 100, "The small text share must be between 1 and 100 percent."),
+        ("tap_target_px", a.tap_target_px, 16, 64, "The tap target size must be between 16 and 64 pixels."),
+        ("overflow_px", a.overflow_px, 0, 100, "The allowed overflow must be between 0 and 100 pixels."),
+    ] {
+        if !(lo..=hi).contains(&value) {
+            i.error(format!("accessibility.{name}"), "out_of_range", text);
+        }
+    }
+    if a.level == crate::A11yLevel::Full && c.rendering.mode != crate::RenderMode::Javascript {
+        i.warn(
+            "accessibility.level",
+            "full_needs_rendering",
+            "Full accessibility checks need JavaScript rendering. Without it only the static checks run.",
+        );
+    }
     // Segments (spec 027 part B)
     i.0.extend(crate::segments::validate_segments(&c.segments));
 

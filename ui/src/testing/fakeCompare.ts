@@ -142,6 +142,8 @@ function detail(id: number, title: string): UrlDetail {
     cookies: [],
     unavailable: {},
     amp: null,
+    accessibility: null,
+    mobile: null,
     pdf: null,
     snippet: null,
     spelling: null,
