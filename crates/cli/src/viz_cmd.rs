@@ -31,6 +31,7 @@ pub enum ViewArg {
 pub enum LayoutArg {
     Tree,
     Radial,
+    Force,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -58,7 +59,7 @@ pub struct VizArgs {
     file: PathBuf,
     #[arg(long, value_enum)]
     view: ViewArg,
-    /// Trees only (the link graph is always force-directed).
+    /// Trees only (the link graph is always force-directed). Force uses the graph node budget.
     #[arg(long, value_enum, default_value = "tree")]
     layout: LayoutArg,
     #[arg(long, value_enum, default_value = "status")]
@@ -87,6 +88,11 @@ pub struct VizArgs {
     /// Anchor text: keep stop words.
     #[arg(long)]
     keep_stop_words: bool,
+    /// Anchor text: only links at these positions (navigation, header,
+    /// content, sidebar, footer, unknown); repeat or comma-separate.
+    /// Needs Crawl Analysis; ignored with a note when it has not run.
+    #[arg(long, value_name = "POSITION", value_delimiter = ',')]
+    position: Vec<String>,
     #[arg(long, value_enum, default_value = "light")]
     theme: ThemeArg,
     #[arg(long, value_name = "FILE")]
@@ -120,6 +126,10 @@ pub fn run_viz(a: VizArgs) -> ExitCode {
         eprintln!("error: --url is for --view anchors");
         return ExitCode::from(exit::USAGE);
     }
+    if !a.position.is_empty() && view != ViewKind::Anchors {
+        eprintln!("error: --position is for --view anchors");
+        return ExitCode::from(exit::USAGE);
+    }
     let mut r = match Reader::open(&a.file) {
         Ok(r) => r,
         Err(e) => {
@@ -149,6 +159,7 @@ pub fn run_viz(a: VizArgs) -> ExitCode {
             (ViewKind::Anchors, _) => Layout::Cloud,
             (_, LayoutArg::Tree) => Layout::Tree,
             (_, LayoutArg::Radial) => Layout::Radial,
+            (_, LayoutArg::Force) => Layout::Force,
         },
         colour: match a.colour {
             ColourArg::Status => ColourBy::Status,
@@ -164,6 +175,7 @@ pub fn run_viz(a: VizArgs) -> ExitCode {
         terms: if a.anchors { Terms::Whole } else { Terms::Words },
         stop_words: !a.keep_stop_words,
         followed_only: a.followed_only,
+        positions: a.position.iter().map(|p| p.trim().to_lowercase()).collect(),
         ..ViewState::default()
     };
     let scene = match r.viz_scene(&state).and_then(|s| Ok((s, r.viz_header()?))) {

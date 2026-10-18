@@ -28,7 +28,7 @@ use ts_rs::TS;
 
 use crate::Result;
 use crate::reader::Reader;
-use crate::tabs::Derived;
+use crate::tabs::{Derived, Need};
 
 /// Default and largest node budgets for the trees (plan D4).
 pub const TREE_BUDGET: u32 = 20_000;
@@ -124,6 +124,10 @@ pub struct ViewState {
     pub terms: Terms,
     pub stop_words: bool,
     pub followed_only: bool,
+    /// Anchor text: count only links at these positions (spec 023: the
+    /// `Position` names and "unknown"); empty for all (FR-016). Ignored,
+    /// with a note, when Crawl Analysis has not run.
+    pub positions: Vec<String>,
 }
 
 impl Default for ViewState {
@@ -142,6 +146,7 @@ impl Default for ViewState {
             terms: Terms::Words,
             stop_words: true,
             followed_only: false,
+            positions: Vec::new(),
         }
     }
 }
@@ -324,7 +329,15 @@ impl Reader {
                 let scores = self.has_derived(Derived::LinkMetrics)?;
                 return graph::scene(&self.conn, state, scores);
             }
-            ViewKind::Anchors => return anchors::scene(&self.conn, state),
+            ViewKind::Anchors => {
+                let (positions, ignored) = self.viz_positions(state)?;
+                let mut scene = anchors::scene(&self.conn, state, &positions)?;
+                if let Some(why) = ignored {
+                    let legend = scene.size_legend.get_or_insert_with(String::new);
+                    legend.push_str(&format!(". Position filter ignored: {why}"));
+                }
+                return Ok(scene);
+            }
         };
         self.ensure_derived([derived])?;
         // Link Score sizes and orders nodes only once worked out: a view
@@ -347,7 +360,30 @@ impl Reader {
         term: &str,
         limit: usize,
     ) -> Result<anchors::TermLinks> {
-        anchors::term_links(&self.conn, state, term, limit)
+        let (positions, _) = self.viz_positions(state)?;
+        anchors::term_links(&self.conn, state, &positions, term, limit)
+    }
+
+    /// The position filter to apply (checked names, empty for none) and,
+    /// when the user asked for one that cannot apply, why it is ignored.
+    /// Builds the link positions when they are needed (FR-016).
+    fn viz_positions(&mut self, state: &ViewState) -> Result<(Vec<String>, Option<&'static str>)> {
+        if state.positions.is_empty() {
+            return Ok((Vec::new(), None));
+        }
+        for p in &state.positions {
+            if p != "unknown" && !spiderlens_config::Position::ALL.iter().any(|x| x.as_str() == p) {
+                return Err(crate::Error::invalid(format!("unknown position {p}")));
+            }
+        }
+        if !self.features.has(Need::Analysis) {
+            return Ok((Vec::new(), Some(Need::Analysis.unavailable_reason())));
+        }
+        self.ensure_derived([Derived::LinkPositions])?;
+        let mut positions = state.positions.clone();
+        positions.sort();
+        positions.dedup();
+        Ok((positions, None))
     }
 }
 
