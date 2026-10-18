@@ -314,7 +314,71 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: SITEMAP_PASSES,
     },
+    // Spec 026: accessibility and mobile usability results.
+    Step {
+        version: 19,
+        additive: true,
+        sql: A11Y_TABLES,
+    },
 ];
+
+/// Step 19's tables (spec 026 data-model.md). They stay empty when the
+/// accessibility level is Off.
+const A11Y_TABLES: &str = "
+CREATE TABLE a11y_audits (
+    url_id INTEGER PRIMARY KEY,
+    static_state TEXT,
+    full_state TEXT,
+    full_reason TEXT,
+    check_ms INTEGER,
+    critical INTEGER,
+    serious INTEGER,
+    moderate INTEGER,
+    minor INTEGER,
+    needs_review INTEGER,
+    checks_failed INTEGER,
+    elements INTEGER,
+    lowest_level TEXT
+);
+CREATE TABLE a11y_results (
+    id INTEGER PRIMARY KEY,
+    url_id INTEGER NOT NULL,
+    check_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    impact TEXT,
+    wcag TEXT,
+    nodes_total INTEGER
+);
+CREATE INDEX a11y_results_url ON a11y_results(url_id);
+CREATE INDEX a11y_results_check ON a11y_results(check_id, kind);
+CREATE TABLE a11y_nodes (
+    result_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    selector TEXT,
+    excerpt TEXT,
+    data TEXT,
+    x REAL,
+    y REAL,
+    w REAL,
+    h REAL
+);
+CREATE INDEX a11y_nodes_result ON a11y_nodes(result_id);
+CREATE TABLE mobile_measures (
+    url_id INTEGER PRIMARY KEY,
+    viewport TEXT,
+    viewport_state TEXT,
+    plugins INTEGER,
+    window TEXT,
+    measured TEXT,
+    content_px REAL,
+    window_px REAL,
+    widest TEXT,
+    small_text_share REAL,
+    small_targets INTEGER,
+    examples TEXT
+);
+";
 
 /// Step 18's tables. The passes in `spiderlens-results`
 /// (`sitemaps::audit`, `sitemaps::orphans`) create the same two tables in

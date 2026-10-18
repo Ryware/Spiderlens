@@ -122,6 +122,46 @@ fn list_file_counts() {
 }
 
 #[test]
+fn list_sitemap_file_with_base_url() {
+    // Spec 011 FR-005: relative and absolute addresses of a local sitemap.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sitemap.xml");
+    std::fs::write(
+        &path,
+        "<urlset><url><loc>/one</loc></url><url><loc>https://example.com/two</loc></url>\
+         <url><loc>https://example.com/two</loc></url></urlset>",
+    )
+    .unwrap();
+    let arg = format!("{}=https://example.com/", path.display());
+    spiderlens()
+        .args(["config", "validate", "--list-sitemap", &arg])
+        .assert()
+        .code(0)
+        .stderr(contains("Read 1 sitemap file."))
+        .stderr(contains("list: 2 URLs to crawl, 1 duplicates removed, 0 invalid"));
+}
+
+#[test]
+fn list_sitemap_conflicts_with_list_file_and_missing_file_is_refused() {
+    spiderlens()
+        .args([
+            "config",
+            "validate",
+            "--list-sitemap",
+            "s.xml",
+            "--list",
+            "urls.txt",
+        ])
+        .assert()
+        .code(2);
+    spiderlens()
+        .args(["config", "validate", "--list-sitemap", "/no/such/sitemap.xml"])
+        .assert()
+        .code(2)
+        .stderr(contains("--list-sitemap"));
+}
+
+#[test]
 fn empty_list_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("urls.csv");

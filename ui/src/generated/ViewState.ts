@@ -37,4 +37,10 @@ pinned: Record<string, [number, number]>,
  * Anchor text: words or whole anchors, stop words left out, and
  * followed links only (FR-016, FR-017).
  */
-terms: Terms, stop_words: boolean, followed_only: boolean, };
+terms: Terms, stop_words: boolean, followed_only: boolean, 
+/**
+ * Anchor text: count only links at these positions (spec 023: the
+ * `Position` names and "unknown"); empty for all (FR-016). Ignored,
+ * with a note, when Crawl Analysis has not run.
+ */
+positions: Array<string>, };

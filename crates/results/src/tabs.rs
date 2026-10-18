@@ -70,6 +70,12 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
+    /// Static accessibility checks (spec 026).
+    AccessibilityStatic,
+    /// Full accessibility checks in the rendering stage (spec 026).
+    AccessibilityFull,
+    /// Mobile layout measures from a mobile-sized window (spec 026).
+    MobileLayout,
 }
 
 impl Need {
@@ -114,6 +120,15 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
+            Self::AccessibilityStatic => {
+                "This crawl did not check accessibility. Turn on accessibility checks in the crawl settings to check it."
+            }
+            Self::AccessibilityFull => {
+                "This crawl did not run the full accessibility checks. Choose Full in the accessibility settings and render pages to run them."
+            }
+            Self::MobileLayout => {
+                "This crawl did not measure mobile layout. Render pages with accessibility checks on to measure it."
+            }
         }
     }
 
@@ -141,6 +156,9 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
+            Self::AccessibilityStatic => "accessibility_static",
+            Self::AccessibilityFull => "accessibility_full",
+            Self::MobileLayout => "mobile_layout",
         }
     }
 }
@@ -673,15 +691,12 @@ macro_rules! amp_failed {
     };
 }
 
-/// An AMP page whose canonical page has no `amphtml` link back to it.
-const AMP_UNPAIRED: &str = "EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id AND ap.format = 'website') \
-     AND u.canonical IS NOT NULL AND u.canonical <> u.url \
-     AND NOT EXISTS (SELECT 1 FROM urls c JOIN links l ON l.from_id = c.id \
-         WHERE c.url = u.canonical AND l.kind = 'amphtml' AND l.to_id = u.id)";
+/// An AMP page whose canonical page has no `amphtml` link back to it (the
+/// rule's own condition, spec 009 FR-005).
+const AMP_UNPAIRED: &str = crate::issues::rules::amp::UNPAIRED;
 
 /// Reached through an `amphtml` link but not marked as AMP.
-const AMP_UNMARKED: &str = "NOT EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
-     AND EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml')";
+const AMP_UNMARKED: &str = crate::issues::rules::amp::NOT_MARKED;
 
 const fn amp_col(
     id: &'static str,
@@ -695,6 +710,77 @@ const fn amp_col(
 
 const fn amp_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     filter(id, label, cond).needs(Need::Amp)
+}
+
+/// Accessibility violations of `impact` inside the crawl's WCAG target
+/// (spec 026 FR-020).
+macro_rules! a11y_count {
+    ($impact:literal) => {
+        concat!(
+            "(SELECT COUNT(*) FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'violation' \
+             AND a.impact = '",
+            $impact,
+            "' AND wcag_in_target(a.wcag))"
+        )
+    };
+}
+
+/// A page with at least one violation of `impact` inside the target.
+macro_rules! a11y_has {
+    ($impact:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'violation' \
+             AND a.impact = '",
+            $impact,
+            "' AND wcag_in_target(a.wcag))"
+        )
+    };
+}
+
+const A11Y_NEEDS_REVIEW: &str =
+    "EXISTS (SELECT 1 FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'needs_review')";
+
+/// Neither the static nor the full checks ran on the page.
+const A11Y_NOT_CHECKED: &str = "NOT EXISTS (SELECT 1 FROM a11y_audits d WHERE d.url_id = u.id \
+     AND (d.static_state = 'checked' OR d.full_state = 'checked'))";
+
+const fn a11y_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::AccessibilityStatic)
+}
+
+const fn a11y_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::AccessibilityStatic)
+}
+
+const fn mobile_col(
+    id: &'static str,
+    label: &'static str,
+    expr: &'static str,
+    kind: ValueKind,
+    width: u16,
+) -> ColumnDef {
+    col(id, label, expr, kind, width).needs(Need::MobileLayout)
+}
+
+const fn mobile_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::MobileLayout)
+}
+
+/// A value of the page's `mobile_measures` row.
+macro_rules! mobile_value {
+    ($expr:literal) => {
+        concat!(
+            "(SELECT ",
+            $expr,
+            " FROM mobile_measures m WHERE m.url_id = u.id)"
+        )
+    };
 }
 
 pub(crate) const fn filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
@@ -1346,6 +1432,12 @@ fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
         Directives => "directives",
         Url => "url",
         Sitemaps => "sitemaps",
+        Serp => "page-titles",
+        Pdf => "pdfs",
+        Spelling => "spelling",
+        Amp => "amp",
+        Accessibility => "accessibility",
+        Mobile => "mobile",
         _ => return None,
     })
 }
@@ -1435,7 +1527,9 @@ fn build_tabs() -> Vec<TabDef> {
     use ValueKind::*;
     // Filters that test what an issue rule tests share its condition
     // (spec 009 FR-005).
-    use crate::issues::rules::{canonicals as ca, headings as hd, images as im, meta as me, url as ur};
+    use crate::issues::rules::{
+        canonicals as ca, headings as hd, images as im, meta as me, serp as sp, url as ur,
+    };
     vec![
         TabDef {
             id: Cow::Borrowed("internal"),
@@ -1677,8 +1771,8 @@ fn build_tabs() -> Vec<TabDef> {
                 col("title_length", "Title length", "x.len", Int, 100),
                 col("occurrences", "Occurrences", "x.n", Int, 110),
                 col("title_px", "Title pixels", TITLE_PX, Int, 100),
-                col("title_cut_desktop", "Cut on desktop", concat!("(", px!("u.title", "title"), " > 600)"), Bool, 120),
-                col("title_cut_mobile", "Cut on mobile", concat!("(", px!("u.title", "title"), " > 580)"), Bool, 120),
+                col("title_cut_desktop", "Cut on desktop", "(px_width(u.title, 'title') > thr('serp.title_over_desktop'))", Bool, 120),
+                col("title_cut_mobile", "Cut on mobile", "(px_width(u.title, 'title') > thr('serp.title_over_mobile'))", Bool, 120),
                 ext(
                     "title_2",
                     "Title (second)",
@@ -1703,11 +1797,13 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
                 filter("duplicate", "Duplicate", "x.n > 1"),
                 filter("over_60", "Over 60 characters", "x.len > thr('title.over')").thr("title.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 600 pixels (desktop)", concat!(px!("u.title", "title"), " > 600")),
-                filter("px_over_mobile", "Over 580 pixels (mobile)", concat!(px!("u.title", "title"), " > 580")),
+                filter("px_over_desktop", "Over 600 pixels (desktop)", sp::TITLE_OVER_DESKTOP)
+                    .thr("serp.title_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 580 pixels (mobile)", sp::TITLE_OVER_MOBILE)
+                    .thr("serp.title_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < thr('title.below')")
                     .thr("title.below", "Below {n} characters"),
-                filter("px_below", "Below 200 pixels", concat!("x.t <> '' AND ", px!("u.title", "title"), " < 200")),
+                filter("px_below", "Below 200 pixels", sp::TITLE_BELOW).thr("serp.title_below", "Below {n} pixels"),
                 filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
                 filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
@@ -1723,8 +1819,8 @@ fn build_tabs() -> Vec<TabDef> {
                 ext("meta_description", "Meta description", MD, Text, 360),
                 ext("length", "Length", "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))", Int, 80),
                 ext("desc_px", "Pixels", DESC_PX, Int, 90),
-                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > 990)"), Bool, 120),
-                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > 680)"), Bool, 120),
+                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_desktop'))"), Bool, 120),
+                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_mobile'))"), Bool, 120),
                 ext(
                     "occurrences",
                     "Occurrences",
@@ -1738,8 +1834,10 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", me::MISSING),
                 filter("duplicate", "Duplicate", me::DUPLICATE).reads(Derived::OccMeta),
                 filter("over_155", "Over 155 characters", me::OVER).thr("meta.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 990 pixels (desktop)", concat!(px!(md_expr!(), "desc"), " > 990")),
-                filter("px_over_mobile", "Over 680 pixels (mobile)", concat!(px!(md_expr!(), "desc"), " > 680")),
+                filter("px_over_desktop", "Over 990 pixels (desktop)", sp::DESC_OVER_DESKTOP)
+                    .thr("serp.desc_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 680 pixels (mobile)", sp::DESC_OVER_MOBILE)
+                    .thr("serp.desc_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_70", "Below 70 characters", me::BELOW).thr("meta.below", "Below {n} characters"),
                 filter("multiple", "Multiple", me::MULTIPLE),
             ],
@@ -1970,6 +2068,161 @@ fn build_tabs() -> Vec<TabDef> {
                 amp_filter("author_script", "Author scripts", amp_failed!("author_script")),
                 amp_filter("style_size", "Custom CSS over 75,000 bytes", amp_failed!("style_size")),
                 amp_filter("disallowed", "Disallowed elements", amp_failed!("disallowed")),
+            ],
+            search_column: None,
+            scoped: false,
+            rows: None,
+        },
+        TabDef {
+            id: Cow::Borrowed("accessibility"),
+            title: Cow::Borrowed("Accessibility"),
+            // Every internal HTML page; pages the checks did not reach are
+            // listed as not checked.
+            eligible: Cow::Borrowed(HTML_OK),
+            columns: vec![
+                c::ADDRESS,
+                a11y_col("a11y_critical", "Critical", a11y_count!("critical"), Int, 80),
+                a11y_col("a11y_serious", "Serious", a11y_count!("serious"), Int, 80),
+                a11y_col("a11y_moderate", "Moderate", a11y_count!("moderate"), Int, 90),
+                a11y_col("a11y_minor", "Minor", a11y_count!("minor"), Int, 70),
+                a11y_col(
+                    "a11y_needs_review",
+                    "Needs review",
+                    "(SELECT COUNT(*) FROM a11y_results a WHERE a.url_id = u.id AND a.kind = 'needs_review')",
+                    Int,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_checks_failed",
+                    "Checks failed",
+                    "(SELECT COUNT(DISTINCT a.check_id) FROM a11y_results a WHERE a.url_id = u.id \
+                     AND a.kind = 'violation' AND wcag_in_target(a.wcag))",
+                    Int,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_elements",
+                    "Elements",
+                    "(SELECT COALESCE(SUM(a.nodes_total), 0) FROM a11y_results a WHERE a.url_id = u.id \
+                     AND a.kind = 'violation' AND wcag_in_target(a.wcag))",
+                    Int,
+                    90,
+                ),
+                a11y_col(
+                    "a11y_lowest_level",
+                    "Lowest level failed",
+                    "(SELECT CASE d.lowest_level WHEN 'best_practice' THEN 'Best practice' \
+                     ELSE replace(upper(d.lowest_level), '-', ' ') END \
+                     FROM a11y_audits d WHERE d.url_id = u.id)",
+                    Text,
+                    140,
+                ),
+                a11y_col(
+                    "a11y_static_state",
+                    "Static checks",
+                    "COALESCE((SELECT CASE d.static_state WHEN 'checked' THEN 'Checked' END \
+                     FROM a11y_audits d WHERE d.url_id = u.id), 'Not checked')",
+                    Text,
+                    110,
+                ),
+                a11y_col(
+                    "a11y_full_state",
+                    "Full checks",
+                    "(SELECT CASE d.full_state WHEN 'checked' THEN 'Checked' WHEN 'timed_out' THEN 'Timed out' \
+                     WHEN 'not_checked' THEN 'Not checked' || COALESCE(' (' || replace(d.full_reason, '_', ' ') || ')', '') \
+                     END FROM a11y_audits d WHERE d.url_id = u.id)",
+                    Text,
+                    180,
+                ),
+                c::STATUS_CODE.hidden(),
+                c::INDEXABILITY.hidden(),
+            ],
+            filters: vec![
+                a11y_filter("all", "All", "1"),
+                a11y_filter("critical", "Critical", a11y_has!("critical")),
+                a11y_filter("serious", "Serious", a11y_has!("serious")),
+                a11y_filter("moderate", "Moderate", a11y_has!("moderate")),
+                a11y_filter("minor", "Minor", a11y_has!("minor")),
+                a11y_filter("needs_review", "Needs review", A11Y_NEEDS_REVIEW),
+                a11y_filter("not_checked", "Not checked", A11Y_NOT_CHECKED),
+            ],
+            search_column: None,
+            scoped: false,
+            rows: None,
+        },
+        TabDef {
+            id: Cow::Borrowed("mobile"),
+            title: Cow::Borrowed("Mobile"),
+            eligible: Cow::Borrowed(HTML_OK),
+            columns: vec![
+                c::ADDRESS,
+                a11y_col("mobile_viewport", "Viewport", mobile_value!("m.viewport"), Text, 220),
+                a11y_col(
+                    "mobile_viewport_state",
+                    "Viewport state",
+                    "COALESCE((SELECT CASE m.viewport_state WHEN 'ok' THEN 'OK' WHEN 'missing' THEN 'Missing' \
+                     WHEN 'not_device_width' THEN 'Not device width' WHEN 'zoom_disabled' THEN 'Zoom disabled' END \
+                     FROM mobile_measures m WHERE m.url_id = u.id), 'Not checked')",
+                    Text,
+                    140,
+                ),
+                a11y_col("mobile_plugins", "Plugins", mobile_value!("m.plugins"), Int, 80),
+                a11y_col(
+                    "mobile_measured",
+                    "Measured",
+                    "COALESCE((SELECT CASE m.measured WHEN 'yes' THEN 'Yes' WHEN 'desktop_window' THEN 'No: desktop window' \
+                     WHEN 'not_rendered' THEN 'No: not rendered' WHEN 'timed_out' THEN 'No: timed out' END \
+                     FROM mobile_measures m WHERE m.url_id = u.id), 'No')",
+                    Text,
+                    150,
+                ),
+                mobile_col(
+                    "mobile_content_px",
+                    "Content width",
+                    mobile_value!("CAST(ROUND(m.content_px) AS INTEGER)"),
+                    Int,
+                    110,
+                ),
+                mobile_col(
+                    "mobile_window_px",
+                    "Window width",
+                    mobile_value!("CAST(ROUND(m.window_px) AS INTEGER)"),
+                    Int,
+                    110,
+                ),
+                mobile_col("mobile_widest", "Widest element", mobile_value!("m.widest"), Text, 220),
+                mobile_col(
+                    "mobile_small_text",
+                    "Small text share",
+                    mobile_value!("m.small_text_share"),
+                    Percent,
+                    120,
+                ),
+                mobile_col(
+                    "mobile_small_targets",
+                    "Small tap targets",
+                    mobile_value!("m.small_targets"),
+                    Int,
+                    120,
+                ),
+                c::STATUS_CODE.hidden(),
+                c::INDEXABILITY.hidden(),
+            ],
+            filters: vec![
+                a11y_filter("all", "All", "1"),
+                a11y_filter(
+                    "viewport_issues",
+                    "Viewport issues",
+                    "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state <> 'ok')",
+                ),
+                mobile_filter("content_wider", "Content wider", crate::issues::rules::mobile::CONTENT_WIDER),
+                mobile_filter("small_text", "Small text", crate::issues::rules::mobile::SMALL_TEXT),
+                mobile_filter("small_targets", "Small targets", crate::issues::rules::mobile::SMALL_TARGETS),
+                mobile_filter(
+                    "not_measured",
+                    "Not measured",
+                    "NOT EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.measured = 'yes')",
+                ),
             ],
             search_column: None,
             scoped: false,
@@ -2583,7 +2836,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 20);
+        assert_eq!(tab_ids.len(), 22);
     }
 
     #[test]

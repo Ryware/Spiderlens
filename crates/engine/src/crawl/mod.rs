@@ -21,6 +21,7 @@ mod runner;
 pub mod scope;
 pub mod site_files;
 pub mod sitemap;
+pub mod sitemap_list;
 mod speed;
 mod spelling;
 pub mod store;

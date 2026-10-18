@@ -21,13 +21,17 @@ use crate::{exit, print_issues, print_json, read_input};
 #[derive(Args)]
 pub struct CrawlCmd {
     /// Start URL (Spider mode).
-    #[arg(required_unless_present_any = ["list", "resume"])]
+    #[arg(required_unless_present_any = ["list", "list_sitemap", "resume"])]
     url: Option<String>,
     /// URL list file, text or CSV (List mode).
     #[arg(long, value_name = "FILE", conflicts_with = "url")]
     list: Option<PathBuf>,
+    /// Sitemap address or file whose page URLs are the list (List mode); a
+    /// file may be followed by =BASE-URL for relative addresses.
+    #[arg(long, value_name = "URL-OR-PATH[=BASE-URL]", conflicts_with_all = ["url", "list"])]
+    list_sitemap: Option<String>,
     /// Continue a paused or stopped crawl with its stored settings.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "out"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "list_sitemap", "out"])]
     resume: Option<PathBuf>,
     /// Crawl file to create [default: <host>-<time>.spiderlens].
     #[arg(long, value_name = "FILE")]
@@ -352,7 +356,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     } else {
-        let mode = if cmd.list.is_some() {
+        let mode = if cmd.list.is_some() || cmd.list_sitemap.is_some() {
             spiderlens_config::Mode::List
         } else {
             spiderlens_config::Mode::Spider
@@ -367,10 +371,15 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         for n in &resolved.notices {
             eprintln!("notice: {n}");
         }
-        let input = match read_input(cmd.url.as_deref(), cmd.list.as_deref()) {
+        let input = match read_input(
+            cmd.url.as_deref(),
+            cmd.list.as_deref(),
+            cmd.list_sitemap.as_deref(),
+            &resolved.config,
+        ) {
             Ok(Some(i)) => i,
             Ok(None) => {
-                eprintln!("error: give a start URL or --list FILE");
+                eprintln!("error: give a start URL, --list FILE or --list-sitemap URL-OR-PATH");
                 return ExitCode::from(exit::USAGE);
             }
             Err(code) => return code,
@@ -571,6 +580,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool, near_dup: b
         Err(code) => return code,
     };
     let ai_auto = crawler.config().ai_checks.auto;
+    let a11y_level = crawler.config().accessibility.level.clone();
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -664,6 +674,9 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool, near_dup: b
             "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
             file.display()
         );
+    }
+    if !json && !quiet {
+        crate::accessibility_cmd::print_crawl_summary(&file, &a11y_level);
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);

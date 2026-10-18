@@ -56,6 +56,8 @@ pub struct ListInput {
     pub invalid_sample: Vec<InvalidLine>,
     /// Notes about how the input was read, for example a fallback encoding.
     pub notices: Vec<String>,
+    /// The sitemap the list was read from, when it came from one (spec 011).
+    pub sitemap: Option<String>,
 }
 
 struct Builder {
@@ -89,6 +91,36 @@ impl Builder {
             });
         }
     }
+}
+
+/// One address read from somewhere that is not a text file, with where it
+/// was found, for example a sitemap entry (spec 011 FR-005).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListEntry {
+    pub url: String,
+    /// The file the address was read from.
+    pub place: String,
+    /// Position in that file, from 1.
+    pub position: u64,
+}
+
+/// Builds a list from addresses already read: the same normalization,
+/// de-duplication and invalid counting as a text list. An invalid entry is
+/// kept with its file and position as its text.
+pub fn list_from_urls(entries: impl IntoIterator<Item = ListEntry>, notices: Vec<String>) -> ListInput {
+    let mut b = Builder::new();
+    for e in entries {
+        match normalize_url(e.url.trim()) {
+            Ok(url) => b.valid(url.into()),
+            Err(err) => b.invalid(
+                e.position,
+                &format!("{} #{}: {}", e.place, e.position, e.url),
+                err.0,
+            ),
+        }
+    }
+    b.out.notices = notices;
+    b.out
 }
 
 /// Parses pasted text (one URL per line). Blank lines are skipped.
@@ -198,6 +230,29 @@ mod tests {
         assert_eq!(r.invalid_sample[0].line, 10);
         assert_eq!(r.invalid_sample[0].text, "ht!tp//bad");
         assert_eq!(r.urls[2], "https://a.test/3");
+    }
+
+    #[test]
+    fn list_from_urls_counts_like_text() {
+        let e = |url: &str, position: u64| ListEntry {
+            url: url.into(),
+            place: "https://a.test/s.xml".into(),
+            position,
+        };
+        let r = list_from_urls(
+            vec![
+                e("https://a.test/1", 1),
+                e("https://A.test/1#x", 2),
+                e("ht!tp//bad", 3),
+            ],
+            vec!["note".into()],
+        );
+        assert_eq!(r.urls, vec!["https://a.test/1"]);
+        assert_eq!(r.duplicates, 1);
+        assert_eq!(r.invalid_count, 1);
+        assert_eq!(r.invalid_sample[0].line, 3);
+        assert!(r.invalid_sample[0].text.starts_with("https://a.test/s.xml #3"));
+        assert_eq!(r.notices, vec!["note"]);
     }
 
     #[test]

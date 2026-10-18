@@ -237,6 +237,32 @@ async fn radial_shows_the_same_nodes() {
     assert_eq!(pos(&tree), pos(&again));
 }
 
+#[tokio::test]
+async fn force_trees_show_the_same_nodes_with_the_root_at_the_centre() {
+    let c = crawl().await;
+    let mut r = Reader::open(&c.path).unwrap();
+    let tree = r.viz_scene(&ViewState::default()).unwrap();
+    let state = ViewState {
+        layout: Layout::Force,
+        ..ViewState::default()
+    };
+    let force = r.viz_scene(&state).unwrap();
+    let keys = |s: &Scene| s.nodes.iter().map(|n| n.key.clone()).collect::<Vec<_>>();
+    assert_eq!(keys(&tree), keys(&force));
+    assert_eq!(force.layout, Layout::Force);
+    assert_eq!((force.nodes[0].x, force.nodes[0].y), (0.0, 0.0));
+    assert!(force.nodes.iter().all(|n| n.x.is_finite() && n.y.is_finite()));
+    // Seeded from the crawl: the same state gives the same positions.
+    let again = r.viz_scene(&state).unwrap();
+    let pos = |s: &Scene| {
+        s.nodes
+            .iter()
+            .map(|n| (n.x.to_bits(), n.y.to_bits()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pos(&force), pos(&again));
+}
+
 /// Two cliques of five pages joined by one link (a1 -> b1); the home page
 /// links into the first.
 fn clusters() -> Site {
@@ -525,6 +551,20 @@ async fn anchor_clouds_count_terms_and_list_their_links() {
     );
     let (_, all_words) = cloud(&mut r, &s, Some("/shoes"), |v| v.stop_words = false);
     assert!(all_words.nodes.iter().any(|n| n.label == "here"));
+
+    // A position filter naming every position keeps every link (FR-016);
+    // a name that is not a position is refused.
+    let every: Vec<String> = ["navigation", "header", "content", "sidebar", "footer", "unknown"]
+        .map(String::from)
+        .into();
+    let (every_state, everywhere) = cloud(&mut r, &s, Some("/shoes"), |v| v.positions = every.clone());
+    assert_eq!(counts(&everywhere), counts(&shoes));
+    assert_eq!(r.viz_term_links(&every_state, "running", 100).unwrap().total, 3);
+    let bad = ViewState {
+        positions: vec!["middle".into()],
+        ..every_state
+    };
+    assert!(r.viz_scene(&bad).is_err());
 
     // Hebrew stop words for a Hebrew page.
     let (_, he) = cloud(&mut r, &s, Some("/he"), |_| {});
