@@ -655,8 +655,13 @@ fn execute(
                                 Some(l) if !p.waiting_for_host => format!("  ({})", l.message),
                                 _ => String::new(),
                             };
+                            let a11y = match (p.a11y_checked, p.a11y_avg_ms) {
+                                (0, _) => String::new(),
+                                (n, Some(ms)) => format!("  accessibility checked {n} (full checks {ms} ms each)"),
+                                (n, None) => format!("  accessibility checked {n}"),
+                            };
                             eprintln!(
-                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{limit}",
+                                "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{a11y}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
                             if let Some(r) = &p.render {

@@ -96,6 +96,7 @@ import type { Dictionaries } from "./generated/Dictionaries";
 import type { Installed } from "./generated/Installed";
 import type { SpellingSettings } from "./generated/SpellingSettings";
 import type { SpellSummary } from "./generated/SpellSummary";
+import type { RerunSummary } from "./generated/RerunSummary";
 
 /** A spelling check's progress, then its end (spec 027 part D). */
 export interface SpellProgress {
@@ -202,6 +203,10 @@ export interface CrawlProgress {
   /** Requests finished per second over the last 5 seconds (spec 008). */
   urls_per_sec: number;
   avg_urls_per_sec: number;
+  /** Pages with an accessibility check result so far (spec 026). */
+  a11y_checked: number;
+  /** Average full-check time per page in milliseconds, when full checks ran. */
+  a11y_avg_ms: number | null;
   /** Seconds left for the URLs queued now; rises while discovery outpaces crawling. */
   eta_secs: number | null;
   /** Time spent crawling, pauses excluded, across every run of this file (spec 007). */
@@ -952,6 +957,8 @@ export interface Transport {
   assistantsActivity(limit: number): Promise<ActivityEntry[]>;
   assistantsActivityClear(): Promise<void>;
 
+  /** Re-runs the static accessibility checks on a crawl's stored HTML (spec 026). */
+  accessibilityRun(path: string): Promise<RerunSummary>;
   // Spelling (spec 027 part D)
   spellDictionaries(): Promise<Dictionaries>;
   /** Downloads a listed dictionary, checked against its published checksum. */
@@ -1233,6 +1240,7 @@ export const tauriTransport: Transport = {
   assistantsTest: () => invoke("assistants_test"),
   assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
   assistantsActivityClear: () => invoke("assistants_activity_clear"),
+  accessibilityRun: (path) => invoke("accessibility_run", { path }),
   spellDictionaries: () => invoke("spell_dictionaries"),
   spellDownload: (lang) => invoke("spell_download", { lang }),
   pickDictionaryFiles: async () => {

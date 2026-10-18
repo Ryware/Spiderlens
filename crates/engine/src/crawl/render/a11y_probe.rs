@@ -307,3 +307,187 @@ pub(crate) fn digest(probes: Vec<(String, ProbeOutcome)>, bot_challenge: bool) -
     }
     report
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A11Y_JSON: &str = r##"{
+      "engine": "4.14.0",
+      "ms": 412.4,
+      "results": [
+        {
+          "id": "color-contrast", "kind": "violation", "impact": "serious",
+          "tags": ["cat.color", "wcag2aa", "wcag143"], "total": 3,
+          "nodes": [
+            { "selector": "main > p.note", "excerpt": "<p class=\"note\">",
+              "data": { "fg": "#999999", "bg": "#ffffff", "ratio": 2.85, "expected": 4.5 },
+              "box": [16, 820, 380, 40] },
+            { "selector": "main > p.other", "excerpt": "<p>" }
+          ]
+        },
+        { "id": "region", "kind": "needs_review", "impact": null, "tags": ["best-practice"], "total": 1,
+          "nodes": [] }
+      ]
+    }"##;
+
+    const MOBILE_JSON: &str = r#"{ "window_px": 411, "content_px": 1200, "widest": "table#prices",
+      "small_text_share": 62.5, "small_targets": 14,
+      "examples": [ { "selector": "nav a:nth-child(3)", "w": 16, "h": 16 } ] }"#;
+
+    fn settings(level: A11yLevel) -> AccessibilitySettings {
+        AccessibilitySettings {
+            level,
+            ..AccessibilitySettings::default()
+        }
+    }
+
+    #[test]
+    fn the_axe_json_becomes_results_with_tags_nodes_and_boxes() {
+        let a = parse_a11y(A11Y_JSON).unwrap();
+        assert_eq!(a.ms, 412);
+        assert_eq!(a.results.len(), 2);
+        let cc = &a.results[0];
+        assert_eq!(cc.id, "color-contrast");
+        assert_eq!(cc.kind, "violation");
+        assert_eq!(cc.impact.as_deref(), Some("serious"));
+        // Only the WCAG tags and best practice are kept.
+        assert_eq!(cc.wcag, "wcag2aa wcag143");
+        assert_eq!(cc.total, 3);
+        assert_eq!(cc.nodes.len(), 2);
+        assert_eq!(cc.nodes[0].selector, "main > p.note");
+        assert_eq!(cc.nodes[0].excerpt, "<p class=\"note\">");
+        assert_eq!(cc.nodes[0].bbox, Some([16.0, 820.0, 380.0, 40.0]));
+        let data: serde_json::Value = serde_json::from_str(cc.nodes[0].data.as_deref().unwrap()).unwrap();
+        assert_eq!(data["ratio"], 2.85);
+        assert_eq!(cc.nodes[1].data, None);
+        assert_eq!(cc.nodes[1].bbox, None);
+
+        let region = &a.results[1];
+        assert_eq!(region.kind, "needs_review");
+        assert_eq!(region.impact, None);
+        assert_eq!(region.wcag, "best-practice");
+    }
+
+    #[test]
+    fn a_result_converts_to_the_row_the_store_writes() {
+        let a = parse_a11y(A11Y_JSON).unwrap();
+        let row = a.results[0].as_row();
+        assert_eq!(row.check_id, "color-contrast");
+        assert_eq!((row.kind, row.source, row.impact), ("violation", "full", Some("serious")));
+        assert_eq!(row.nodes_total, 3);
+        assert_eq!(row.nodes.len(), 2);
+        assert_eq!(row.nodes[0].bbox, Some([16.0, 820.0, 380.0, 40.0]));
+    }
+
+    #[test]
+    fn an_unknown_kind_is_a_review_and_missing_fields_default() {
+        let a = parse_a11y(r#"{"results":[{"id":"x","kind":"incomplete"}]}"#).unwrap();
+        assert_eq!(a.ms, 0);
+        assert_eq!(a.results[0].kind, "needs_review");
+        assert_eq!(a.results[0].total, 0);
+        assert!(a.results[0].nodes.is_empty());
+        assert!(parse_a11y("not json").is_err());
+        assert!(parse_a11y(r#"{"results":[{"kind":"violation"}]}"#).is_err());
+    }
+
+    #[test]
+    fn the_mobile_json_is_parsed_with_its_examples_kept_as_json() {
+        let m = parse_mobile(MOBILE_JSON).unwrap();
+        assert_eq!((m.window_px, m.content_px), (411.0, 1200.0));
+        assert_eq!(m.widest.as_deref(), Some("table#prices"));
+        assert_eq!((m.small_text_share, m.small_targets), (62.5, 14));
+        let examples: Vec<serde_json::Value> = serde_json::from_str(&m.examples).unwrap();
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0]["selector"], "nav a:nth-child(3)");
+        assert_eq!(examples[0]["w"], 16.0);
+
+        let bare = parse_mobile(r#"{"window_px":411,"content_px":411}"#).unwrap();
+        assert_eq!((bare.widest, bare.small_targets, bare.examples.as_str()), (None, 0, "[]"));
+        assert!(parse_mobile(r#"{"content_px":1}"#).is_err());
+    }
+
+    #[test]
+    fn off_gives_no_probes() {
+        for mobile_window in [false, true] {
+            let (probes, _) = probes_for(&settings(A11yLevel::Off), mobile_window);
+            assert!(probes.is_empty(), "mobile window: {mobile_window}");
+        }
+    }
+
+    #[test]
+    fn static_gives_only_the_mobile_probe_and_only_in_a_mobile_window() {
+        let (probes, _) = probes_for(&settings(A11yLevel::Static), false);
+        assert!(probes.is_empty());
+        let (probes, _) = probes_for(&settings(A11yLevel::Static), true);
+        let names: Vec<&str> = probes.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, [PROBE_MOBILE]);
+        assert!(probes[0].args_json.contains("\"small_text_px\":12"));
+        assert!(probes[0].args_json.contains("\"tap_target_px\":24"));
+
+        let mut no_mobile = settings(A11yLevel::Static);
+        no_mobile.mobile = false;
+        assert!(probes_for(&no_mobile, true).0.is_empty());
+    }
+
+    #[test]
+    fn full_gives_the_a11y_probe_and_the_mobile_probe_in_a_mobile_window() {
+        let s = settings(A11yLevel::Full);
+        let (probes, total) = probes_for(&s, false);
+        let names: Vec<&str> = probes.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, [PROBE_A11Y]);
+        assert_eq!(total, Duration::from_secs(5));
+        assert_eq!(probes[0].budget, Duration::from_secs(5));
+        assert!(probes[0].args_json.contains("\"node_cap\":20"));
+
+        let (probes, _) = probes_for(&s, true);
+        let names: Vec<&str> = probes.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, [PROBE_MOBILE, PROBE_A11Y]);
+        assert!(probes[0].budget <= Duration::from_secs(1));
+
+        let longer = AccessibilitySettings {
+            budget_secs: 12,
+            ..s
+        };
+        let (probes, total) = probes_for(&longer, false);
+        assert_eq!(total, Duration::from_secs(12));
+        assert_eq!(probes[0].budget, Duration::from_secs(12));
+    }
+
+    #[test]
+    fn digest_turns_outcomes_into_a_report_and_drops_data_on_a_bot_challenge() {
+        let both = || {
+            vec![
+                (PROBE_A11Y.to_string(), ProbeOutcome::Ok(A11Y_JSON.to_string())),
+                (PROBE_MOBILE.to_string(), ProbeOutcome::Ok(MOBILE_JSON.to_string())),
+            ]
+        };
+        let report = digest(both(), false);
+        assert!(matches!(report.full, Some(FullOutcome::Checked(ref a)) if a.results.len() == 2));
+        assert!(matches!(report.mobile, Some(MobileOutcome::Measured(ref m)) if m.small_targets == 14));
+
+        let report = digest(
+            vec![
+                (
+                    PROBE_A11Y.to_string(),
+                    ProbeOutcome::TimedOut {
+                        spent: Duration::from_millis(5000),
+                    },
+                ),
+                (PROBE_MOBILE.to_string(), ProbeOutcome::Failed("boom".into())),
+            ],
+            false,
+        );
+        assert_eq!(report.full, Some(FullOutcome::TimedOut { ms: 5000 }));
+        assert_eq!(report.mobile, Some(MobileOutcome::Failed));
+
+        let report = digest(vec![(PROBE_A11Y.to_string(), ProbeOutcome::TooLarge)], false);
+        assert_eq!(report.full, Some(FullOutcome::NotChecked("too_large")));
+        let report = digest(vec![(PROBE_A11Y.to_string(), ProbeOutcome::Ok("{".into()))], false);
+        assert_eq!(report.full, Some(FullOutcome::NotChecked("probe_failed")));
+
+        let report = digest(both(), true);
+        assert_eq!(report.full, Some(FullOutcome::NotChecked("bot_challenge")));
+        assert_eq!(report.mobile, None);
+    }
+}

@@ -92,6 +92,12 @@ export function StatusBar({ setup, run, analysis }: { setup: CrawlSetup; run: Cr
           <span className="font-medium text-fg-2">{n}</span> {label}
         </span>
       ))}
+      {setup.config && setup.config.accessibility.level !== "off" && p && (
+        <span data-figure="accessibility">
+          Accessibility: <span className="font-medium text-fg-2">{count(p.a11y_checked)}</span> checked
+          {p.a11y_avg_ms != null && <> · avg {Math.round(p.a11y_avg_ms).toLocaleString()} ms</>}
+        </span>
+      )}
       {analysis && <AnalysisStatus analysis={analysis} />}
       <PausedSites run={run} />
       <CrawlSpeed run={run} />

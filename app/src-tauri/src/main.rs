@@ -4,6 +4,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accessibility;
 mod aeo;
 mod assistants;
 mod compare;
@@ -200,6 +201,7 @@ fn main() {
             near_dup::run_near_dup,
             near_dup::cancel_near_dup,
             near_dup::export_near_dup,
+            accessibility::accessibility_run,
             spelling::spell_dictionaries,
             spelling::spell_download,
             spelling::spell_add,

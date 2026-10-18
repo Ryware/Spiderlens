@@ -238,6 +238,10 @@ pub struct Progress {
     pub sites: Vec<SitePace>,
     /// How many sites have work in progress in all.
     pub sites_total: u32,
+    /// Pages whose accessibility was checked so far (spec 026).
+    pub a11y_checked: u64,
+    /// Average time of a page's full accessibility checks, in milliseconds.
+    pub a11y_avg_ms: Option<u32>,
     /// Rendering progress (spec 014 D13); absent for crawls that do not
     /// render, so their progress payload is unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1681,6 +1685,7 @@ impl Run {
                     .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
             let load = self.load.load(Instant::now());
             let (limit, sites, sites_total) = self.pace(urls_per_sec, load);
+            let (a11y_checked, a11y_avg_ms) = self.c.store.a11y_live();
             let fetching_done = self.fetch_completed;
             let render = self.render.as_mut().map(|r| r.progress(fetching_done));
             self.emit(CrawlEvent::Progress(Progress {
@@ -1700,6 +1705,8 @@ impl Run {
                 limit,
                 sites,
                 sites_total,
+                a11y_checked,
+                a11y_avg_ms,
                 render,
             }));
         }
