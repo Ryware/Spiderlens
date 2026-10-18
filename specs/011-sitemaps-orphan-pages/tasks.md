@@ -15,43 +15,43 @@ description: "Task list for spec 011, sitemaps and orphan pages"
 ## Phase 1: Setup
 
 - [ ] T001 Baseline: on the merge base, run the spec 008 100,000-page bench 5 times with sitemaps off and record median time, URLs/s and peak RSS in `specs/011-sitemaps-orphan-pages/benchmarks.md` (SC-002 baseline).
-- [ ] T002 [P] Move `quick-xml` and `flate2` to `[workspace.dependencies]`; use them from `spiderlens-engine` and `spiderlens-results`.
-- [ ] T003 [P] Bundle the protocol XSDs under `specs/011-sitemaps-orphan-pages/xsd/` with their source URLs and licences in a README (research R6).
+- [x] T002 [P] Move `quick-xml` and `flate2` to `[workspace.dependencies]`; use them from `spiderlens-engine` and `spiderlens-results`.
+- [x] T003 [P] Bundle the protocol XSDs under `specs/011-sitemaps-orphan-pages/xsd/` with their source URLs and licences in a README (research R6).
 - [ ] T004 [P] Sitemap fixture site `crates/test-fixtures/src/sitemaps.rs` and bin `sitemap-site` (port 8711): robots.txt with an index of two sitemaps (one gzip), the seeded pages and files of US1 to US4 and US6 (redirect, 404, 500, noindex, canonicalised, robots-blocked, excluded, linked-but-unlisted, orphan, nofollow-only, redirect-reached, self-linked, oversized file, HTML file, 404 file, relative and cross-host `loc`, duplicates, bad and future `lastmod`, identical-`lastmod` file, `Last-Modified` headers, images and hreflang in entries), plus a generator for N entries in M files (benchmark).
 
 ## Phase 2: Foundational (engine and storage)
 
 - [ ] T005 Migration step in `crates/engine/src/crawl/migrate.rs`: `sitemap_files`, `sitemap_entries`, `sitemap_refs`, `sitemap_problems`, `orphans`, `url_sources` and indexes from data-model.md; version = main's `LATEST + 1` at merge. Test: a format-2 file upgrades, gap test passes, older-reader `read_compat` unchanged.
-- [ ] T006 Streaming parser in `crates/engine/src/crawl/sitemap.rs`: `read(bytes, on_entry) -> Result<FileFacts, FileError>` with `lastmod`, `changefreq`, `priority`, `image:image/image:loc`, `xhtml:link` (namespace by URI, not prefix), error line from the reader position, stop after 50,000 entries with `over_limit`. Keep the existing tests; add property tests (any generated urlset round-trips) and the edge cases of the spec (whitespace, entities, CDATA, news and video namespaces ignored).
-- [ ] T007 [P] W3C datetime parser (`sitemap::parse_lastmod`, research R3) with unit and property tests (all six forms, invalid months and days, leap years, offsets).
-- [ ] T008 Store writes in `crates/engine/src/crawl/store.rs`: `upsert_sitemap_file`, `insert_sitemap_entries(batch)`, `insert_sitemap_refs`; keep writing the base `sitemaps` row; add `sitemap_entries` to `data_features`.
-- [ ] T009 `NotCrawledReason::SitemapOnly` in `reason.rs` with `can_upgrade() = true`, label "Found only in sitemap"; update the FR-038 order test and the 007 reason labels.
+- [x] T006 Streaming parser in `crates/engine/src/crawl/sitemap.rs`: `read(bytes, on_entry) -> Result<FileFacts, FileError>` with `lastmod`, `changefreq`, `priority`, `image:image/image:loc`, `xhtml:link` (namespace by URI, not prefix), error line from the reader position, stop after 50,000 entries with `over_limit`. Keep the existing tests; add property tests (any generated urlset round-trips) and the edge cases of the spec (whitespace, entities, CDATA, news and video namespaces ignored).
+- [x] T007 [P] W3C datetime parser (`sitemap::parse_lastmod`, research R3) with unit and property tests (all six forms, invalid months and days, leap years, offsets).
+- [x] T008 Store writes in `crates/engine/src/crawl/store.rs`: `upsert_sitemap_file`, `insert_sitemap_entries(batch)`, `insert_sitemap_refs`; keep writing the base `sitemaps` row; add `sitemap_entries` to `data_features`.
+- [x] T009 `NotCrawledReason::SitemapOnly` in `reason.rs` with `can_upgrade() = true`, label "Found only in sitemap"; update the FR-038 order test and the 007 reason labels.
 
 ## Phase 3: Sources and settings (US6, US3 sources)
 
-- [ ] T010 [US6] `SitemapSettings` and `LocalSitemap` in `crates/config/src/model.rs` with old-key mapping (research R10) and validation in `validate.rs`; tests: old profile on/off maps to both flags, new defaults, invalid URLs and missing files reported.
-- [ ] T011 [US6] `SitemapJob` loop in the runner replacing `maybe_start_sitemaps`: sources robots.txt, defaults (`/sitemap.xml`, `/sitemap_index.xml` when robots lists none, research R9), user URLs, local files (read with `spawn_blocking`); `Msg::SitemapEntries` batches of 1,000; per-file facts; index depth and loop detection; per-host rate limit and robots.txt applied to sitemap requests. Tests US3 scenarios 1, 7, 8 and US6 scenarios 1, 2.
-- [ ] T012 [US6] `crawl_sitemap_only = false` path: sitemap-only URLs recorded with `SitemapOnly`, upgraded when linked. Tests US6 scenario 3 and US2 scenario 7.
-- [ ] T013 [US6] Image and hreflang refs from entries: discovered under scope rules (images as status checks per spec 003 FR-033, alternates with source `sitemap`); refs stored with `url_id`. Test: FR-008.
+- [x] T010 [US6] `SitemapSettings` and `LocalSitemap` in `crates/config/src/model.rs` with old-key mapping (research R10) and validation in `validate.rs`; tests: old profile on/off maps to both flags, new defaults, invalid URLs and missing files reported.
+- [x] T011 [US6] `SitemapJob` loop in the runner replacing `maybe_start_sitemaps`: sources robots.txt, defaults (`/sitemap.xml`, `/sitemap_index.xml` when robots lists none, research R9), user URLs, local files (read with `spawn_blocking`); `Msg::SitemapEntries` batches of 1,000; per-file facts; index depth and loop detection; per-host rate limit and robots.txt applied to sitemap requests. Tests US3 scenarios 1, 7, 8 and US6 scenarios 1, 2.
+- [x] T012 [US6] `crawl_sitemap_only = false` path: sitemap-only URLs recorded with `SitemapOnly`, upgraded when linked. Tests US6 scenario 3 and US2 scenario 7.
+- [x] T013 [US6] Image and hreflang refs from entries: discovered under scope rules (images as status checks per spec 003 FR-033, alternates with source `sitemap`); refs stored with `url_id`. Test: FR-008.
 - [ ] T014 [US6] List mode sitemap source (`ListInput::Sitemap`): the runner reads the sitemap (and children) and uses the page URLs as the list. Test US6 scenario 5.
 - [ ] T015 [P] [US6] CLI crawl flags from contracts/cli.md in `crates/cli/src/options.rs`, with tests.
-- [ ] T016 [P] [US6] Settings › Scope › Sitemaps group `ui/src/settings/SitemapSources.tsx` (two switches, URL list, local files with base URL and file picker), wired into `categories.tsx`; Vitest tests for every control, validation messages, keyboard order; Playwright: toggle, add URL, add file, save profile.
+- [x] T016 [P] [US6] Settings › Scope › Sitemaps group `ui/src/settings/SitemapSources.tsx` (two switches, URL list, local files with base URL and file picker), wired into `categories.tsx`; Vitest tests for every control, validation messages, keyboard order; Playwright: toggle, add URL, add file, save profile.
 
 ## Phase 4: Sitemap files view (US3)
 
-- [ ] T017 [US3] `crates/results/src/sitemaps/mod.rs`: `Need::SitemapEntries`, `sitemap_files()` tree with problem counts (ingestion-time problems now, pass problems once phase 6 lands), fallback to the base `sitemaps` table for older files; tests including US6 scenario 4.
+- [x] T017 [US3] `crates/results/src/sitemaps/mod.rs`: `Need::SitemapEntries`, `sitemap_files()` tree with problem counts (ingestion-time problems now, pass problems once phase 6 lands), fallback to the base `sitemaps` table for older files; tests including US6 scenario 4.
 - [ ] T018 [US3] Tauri command `sitemap_files` in `app/src-tauri/src/results.rs` and `view` support for `sitemap_file`; fake transport entries in `ui/src/testing/fakeTransport.ts`.
-- [ ] T019 [US3] `ui/src/sitemaps/SitemapFiles.tsx`: virtualised tree panel from the sidebar, source badges, status, entries, problems, selection filters the Sitemaps tab; Vitest (tree keyboard navigation, `aria-expanded`, older-file notice, every palette via the token test) and Playwright (open, expand, select a file).
-- [ ] T020 [P] [US3] CLI `spiderlens sitemaps` (plain tree and `--json`) in `crates/cli/src/sitemap_cmd.rs` with tests.
+- [x] T019 [US3] `ui/src/sitemaps/SitemapFiles.tsx`: virtualised tree panel from the sidebar, source badges, status, entries, problems, selection filters the Sitemaps tab; Vitest (tree keyboard navigation, `aria-expanded`, older-file notice, every palette via the token test) and Playwright (open, expand, select a file).
+- [x] T020 [P] [US3] CLI `spiderlens sitemaps` (plain tree and `--json`) in `crates/cli/src/sitemap_cmd.rs` with tests.
 
 ## Phase 5: Generation (US5)
 
-- [ ] T021 [US5] `crates/results/src/sitemaps/generate.rs`: `GenerateOptions`, selection query (FR-020), pattern filter in Rust, `FileSplitter` (count and byte limits), index file, `lastmod`, `changefreq`, `priority`, deterministic gzip (research R7), temp-file-and-rename sink, dry-run sink. Tests US5 scenarios 1, 2, 5, 6.
-- [ ] T022 [US5] Images (inline and separate, 1,000 per page cap, other hosts opt-in) and hreflang alternates restricted to selected pages, in `generate.rs`. Tests US5 scenarios 3, 4 and canonical-pair edge case.
+- [x] T021 [US5] `crates/results/src/sitemaps/generate.rs`: `GenerateOptions`, selection query (FR-020), pattern filter in Rust, `FileSplitter` (count and byte limits), index file, `lastmod`, `changefreq`, `priority`, deterministic gzip (research R7), temp-file-and-rename sink, dry-run sink. Tests US5 scenarios 1, 2, 5, 6.
+- [x] T022 [US5] Images (inline and separate, 1,000 per page cap, other hosts opt-in) and hreflang alternates restricted to selected pages, in `generate.rs`. Tests US5 scenarios 3, 4 and canonical-pair edge case.
 - [ ] T023 [US5] Structural validator (`sitemaps/xml.rs` test helper) on all OSes and `xmllint --schema` in the Linux CI job (`.github/workflows/ci.yml`, install `libxml2-utils` if missing); round-trip test (generated files read back by the T006 parser give exactly the selected pages) and byte-identical rerun test (SC-006).
-- [ ] T024 [P] [US5] CLI `spiderlens sitemap generate` with every option, `--dry-run`, `--force`, exit codes; test that CLI and library output match (US5 scenario 8).
-- [ ] T025 [US5] Tauri commands `sitemap_preview` and `sitemap_generate` (refused while running), options saved per profile.
-- [ ] T026 [US5] `ui/src/sitemaps/GenerateSheet.tsx`: option groups, live counts with debounce, base URL and folder picker, replace confirmation, result summary with the equivalent CLI line, unavailable state while running; command palette and crawl menu entries. Vitest for every option, counts, confirm, running state; Playwright: open from ⌘K, change options, generate with the fake transport.
+- [x] T024 [P] [US5] CLI `spiderlens sitemap generate` with every option, `--dry-run`, `--force`, exit codes; test that CLI and library output match (US5 scenario 8).
+- [x] T025 [US5] Tauri commands `sitemap_preview` and `sitemap_generate` (refused while running), options saved per profile.
+- [x] T026 [US5] `ui/src/sitemaps/GenerateSheet.tsx`: option groups, live counts with debounce, base URL and folder picker, replace confirmation, result summary with the equivalent CLI line, unavailable state while running; command palette and crawl menu entries. Vitest for every option, counts, confirm, running state; Playwright: open from ⌘K, change options, generate with the fake transport.
 - [ ] T027 [US5] Generation benchmark: 1,000,000 pages with images and hreflang on the generated fixture file, record in benchmarks.md (SC-005).
 
 **Checkpoint (PR 011a)**: entries stored, sources and settings work, Sitemap files view and generation shipped, CLI `sitemaps` and `sitemap generate`; crawl bench within SC-002 and SC-003 (T028).
@@ -77,5 +77,5 @@ description: "Task list for spec 011, sitemaps and orphan pages"
 
 ## Phase 9: Polish
 
-- [ ] T037 Update spec 003 docs (FR-034 note pointing at spec 011) and the CLI docs in `README.md`.
+- [x] T037 Update spec 003 docs (FR-034 note pointing at spec 011) and the CLI docs in `README.md`.
 - [ ] T038 Run quickstart end to end on Linux; `/speckit-converge` until Converged; CI green on all three OSes.

@@ -206,7 +206,7 @@ The user turns on "Use sitemaps from robots.txt". SpiderLens reads the `Sitemap:
 **Discovery sources and sitemaps**
 
 - **FR-033**: System MUST add to the frontier, subject to all scope rules, URLs discovered from: anchor links, redirect targets, canonical URLs (HTML and HTTP header), hreflang alternate URLs, and (when enabled) sitemaps. Image URLs are recorded and status-checked like external URLs by default but their content is not parsed for links.
-- **FR-034**: Users MUST be able to turn on "Use sitemaps from robots.txt" (default off). When on, System MUST read every `Sitemap:` URL listed in the start host's robots.txt, follow sitemap index files (up to 3 levels), read compressed sitemaps, and add listed URLs to the queue at depth 1 unless a shorter depth is found through links.
+- **FR-034**: Users MUST be able to turn on "Use sitemaps from robots.txt" (default off). When on, System MUST read every `Sitemap:` URL listed in the start host's robots.txt, follow sitemap index files (up to 3 levels), read compressed sitemaps, and add listed URLs to the queue at depth 1 unless a shorter depth is found through links. *Superseded in part by [spec 011](../011-sitemaps-orphan-pages/spec.md): the setting is now two switches (read sitemaps, crawl URLs only a sitemap lists), on by default, with user-added sitemap URLs and local files; `use_sitemaps` in older profiles maps to both.*
 - **FR-035**: System MUST record for every URL how it was first discovered (start URL, list, link from a named page, redirect, canonical, hreflang, or sitemap) and whether it also appeared in a sitemap.
 - **FR-036**: Sitemap fetch or parse failures MUST NOT stop the crawl; each failure is recorded with its error class and shown in the crawl summary.
 

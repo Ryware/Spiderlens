@@ -298,13 +298,34 @@ pub struct OrphansArgs {
 /// (spec 011 FR-014, contracts/cli.md). Notes go to stderr so the output
 /// stays a clean list.
 pub fn run_orphans(a: &OrphansArgs) -> ExitCode {
-    let reader = match Reader::open(&a.file) {
+    let mut reader = match Reader::open(&a.file) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(exit::USAGE);
         }
     };
+    // Stale analysis passes run first (contracts/cli.md): saved into the
+    // file when it can be written, else into this session's temp tables.
+    // A crawl that is still running is left alone.
+    let running = reader.orphan_summary().is_ok_and(|s| s.provisional);
+    if !running && spiderlens_results::analysis::needs_analysis(reader.connection()).unwrap_or(false) {
+        match crate::issues_cmd::analyse(&a.file, false) {
+            Ok(_) => match Reader::open(&a.file) {
+                Ok(r) => reader = r,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(exit::USAGE);
+                }
+            },
+            Err(_) => {
+                let never = std::sync::atomic::AtomicBool::new(false);
+                if let Err(e) = reader.analyse_in_session(&mut |_| {}, &never) {
+                    eprintln!("warning: crawl analysis did not finish: {e}");
+                }
+            }
+        }
+    }
     let (summary, rows) = match reader
         .orphan_summary()
         .and_then(|s| reader.orphan_rows(a.nofollow_only).map(|r| (s, r)))
@@ -333,14 +354,14 @@ pub fn run_orphans(a: &OrphansArgs) -> ExitCode {
     if a.csv {
         let mut w = csv::Writer::from_writer(std::io::stdout().lock());
         let mut write = || -> csv::Result<()> {
-            w.write_record(["url", "class", "sources", "status", "state", "sitemap"])?;
+            w.write_record(["url", "class", "sources", "status", "indexability", "sitemap"])?;
             for r in &rows {
                 w.write_record([
                     r.url.as_str(),
                     r.class.as_str(),
                     &r.sources.join(","),
                     &r.status.map(|s| s.to_string()).unwrap_or_default(),
-                    r.state.as_str(),
+                    r.indexability.as_deref().unwrap_or(""),
                     r.sitemap.as_deref().unwrap_or(""),
                 ])?;
             }
@@ -355,7 +376,15 @@ pub fn run_orphans(a: &OrphansArgs) -> ExitCode {
     }
     for r in &rows {
         let status = r.status.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
-        println!("{}  {}  {}  {}", r.url, status, r.sources.join(","), r.state);
+        println!(
+            "{}  {}  {}  {}  {}  {}",
+            r.url,
+            r.class,
+            r.sources.join(","),
+            status,
+            r.indexability.as_deref().unwrap_or("-"),
+            r.sitemap.as_deref().unwrap_or("-")
+        );
     }
     ExitCode::from(exit::FETCHED)
 }
