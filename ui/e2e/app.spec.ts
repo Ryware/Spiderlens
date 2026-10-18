@@ -675,6 +675,95 @@ test("integrations_fetch_search_console_for_the_open_crawl", async ({ page }) =>
   expect(scrollH).toBeLessThanOrEqual(innerH);
 });
 
+test("integrations_inspect_index_status_and_fetch_analytics_for_the_open_crawl", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  await page.getByRole("button", { name: "Connect Google account" }).click();
+  await expect(page.getByRole("list", { name: "Google accounts" })).toContainText("ana@example.com");
+
+  // URL Inspection: the count against today's allowance is shown before the run.
+  await page.locator('[data-provider="url_inspection"]').getByRole("switch").click();
+  await expect(page.getByRole("status", { name: "Inspection allowance" })).toContainText("2,000 left of 2,000");
+  await page.getByRole("button", { name: "Inspect index status" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Inspection runs" })).toContainText("Finished");
+
+  // Analytics: asks for its own access, then offers the stream matching the site.
+  await page.locator('[data-provider="analytics"]').getByRole("switch").click();
+  await page.getByRole("button", { name: "Allow Google Analytics access" }).click();
+  await expect(page.getByLabel("Data stream")).toHaveValue("properties/123/456");
+  await page.getByRole("button", { name: "Fetch Analytics data" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Analytics runs" })).toContainText("Finished");
+
+  // The screen scrolls inside the main pane, never the window.
+  const { scrollW, innerW, scrollH, innerH } = await page.evaluate(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    innerW: window.innerWidth,
+    scrollH: document.documentElement.scrollHeight,
+    innerH: window.innerHeight,
+  }));
+  expect(scrollW).toBeLessThanOrEqual(innerW);
+  expect(scrollH).toBeLessThanOrEqual(innerH);
+});
+
+test("integrations_page_experience_estimate_run_and_finish", async ({ page }) => {
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await page.getByLabel("API key").fill("AIza-test");
+  await page.getByRole("button", { name: "Save key to keychain" }).click();
+  await page.locator('[data-provider="field_data"]').getByRole("switch").click();
+  await expect(page.getByRole("status", { name: "Field data estimate" })).toContainText("requests for");
+  await page.getByRole("button", { name: "Fetch field data" }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.evaluate(() => window.spiderlens.integrations.finishRun());
+  await expect(page.getByRole("list", { name: "Page experience runs" })).toContainText("Finished");
+});
+
+test("link_metrics_show_the_cost_before_a_run_and_the_dialog_fits_the_window", async ({ page }) => {
+  await page.evaluate(() => {
+    const fi = window.spiderlens.integrations;
+    fi.connections = [{ kind: "ahrefs", label: "Agency", scopes: [], created_at: "", store: "keychain" }];
+    fi.settings.ahrefs = { enabled: true, per_minute: null, concurrency: null };
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await page.getByRole("button", { name: "Estimate cost" }).click();
+  const dialog = page.getByRole("dialog", { name: "Confirm link metrics run" });
+  await expect(dialog).toContainText("480 API units");
+  const box = await dialog.boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(await page.evaluate(() => window.spiderlens.linkMetrics.runs.length)).toBe(0);
+  await dialog.getByRole("button", { name: "Start run" }).click();
+  await expect(page.getByText(/120 of 120 pages fetched/)).toBeVisible();
+});
+
+test("export_the_view_to_google_sheets_and_open_looker_studio_fits_the_window", async ({ page }) => {
+  await page.evaluate(() => {
+    const fi = window.spiderlens.integrations;
+    fi.connections = [{ kind: "google", label: "ana@example.com", scopes: ["sheets"], created_at: "", store: "keychain" }];
+    fi.settings.sheets = { enabled: true, per_minute: null, concurrency: null };
+  });
+  await openInternal(page);
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Export to Google Sheets/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("will be sent to a new spreadsheet in ana@example.com");
+  await dialog.getByRole("button", { name: "Export", exact: true }).click();
+  await expect(dialog.getByRole("list", { name: "Spreadsheets" })).toContainText("SpiderLens - Internal");
+  await dialog.getByRole("button", { name: "Open in Looker Studio" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.linkMetrics.opened.length)).toBe(1);
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
   await crawl(page);
   await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));
@@ -1056,6 +1145,17 @@ test("ai_assistants_settings_from_the_palette_fit_and_save", async ({ page }) =>
   await expect(panel.getByLabel("Claude Code configuration")).toContainText("claude mcp add spiderlens --");
   await panel.getByRole("button", { name: "Test" }).click();
   await expect(panel.getByRole("status")).toContainText("The server works: 8 tools");
+  // Crawling is a separate switch, off by default; profiles that ignore robots.txt cannot be allowed.
+  const crawl = panel.getByRole("switch", { name: "Allow AI assistants to start crawls" });
+  await expect(crawl).toHaveAttribute("aria-checked", "false");
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toBeDisabled();
+  await crawl.click();
+  await expect(crawl).toHaveAttribute("aria-checked", "true");
+  await panel.getByRole("switch", { name: "Allow Polite" }).click();
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("switch", { name: "Allow Stress test" })).toBeDisabled();
+  await expect(panel.getByRole("list", { name: "Allowed profiles" })).toContainText("Ignores robots.txt");
+  expect(await page.evaluate(() => window.spiderlens.assistants.settings.allowed_profiles)).toEqual(["Polite"]);
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
 });

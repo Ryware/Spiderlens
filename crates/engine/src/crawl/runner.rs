@@ -21,6 +21,7 @@ use spiderlens_config::{
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
 
+use super::agent_checks;
 use super::file::{self, LocalError, LockError, WriterLock};
 use super::health::Transition;
 use super::hosts::{Host, RobotsState};
@@ -338,6 +339,10 @@ pub struct RenderSummary {
     pub failed_resources: u64,
     pub blocked_resources: u64,
     pub renderer: Option<RendererInfo>,
+    /// The rendering settings stored in the crawl file, so a reopened crawl
+    /// shows what it was rendered with (US4 scenario 9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<spiderlens_config::RenderSettings>,
 }
 
 impl RenderSummary {
@@ -467,6 +472,10 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
                 renderer: store
                     .meta("renderer")?
                     .and_then(|r| serde_json::from_str(&r).ok()),
+                settings: store
+                    .meta("config")?
+                    .and_then(|c| serde_json::from_str::<StoredCrawlConfig>(&c).ok())
+                    .map(|c| c.config.rendering),
             }),
             None => None,
         },
@@ -538,6 +547,15 @@ enum Msg {
         read: pdf::pool::Read,
     },
     SiteFile(SiteFileRow),
+    /// A Markdown alternate was requested (spec 016 FR-012): what it
+    /// answered, for every page pointing at it.
+    AgentMd {
+        url_ids: Vec<i64>,
+        status: Option<u16>,
+        outcome: &'static str,
+    },
+    /// An MCP endpoint's discovery answer (spec 016 FR-011).
+    AgentMcp(agent_checks::McpRow),
     SiteFilesFinished,
     /// The signed-out check's answer (spec 025 FR-012).
     SessionCheck {
@@ -3491,19 +3509,41 @@ impl Run {
 
     /// Fetches each internal host's AI site files, one at a time per host
     /// and spaced by its crawl-delay, honouring robots.txt for our own token.
+    /// With agent entry points on, the same task then verifies the host's
+    /// Markdown alternates and sends one discovery request to each MCP
+    /// endpoint its catalog or cards list (spec 016 FR-011, FR-012), all
+    /// after the last page and without cookies.
     fn start_site_files(&mut self) -> Result<(), CrawlError> {
         let mut wanted: Vec<&'static str> = Vec::new();
         if self.c.config.ai_checks.site_files {
             wanted.extend(site_files::PATHS);
         }
-        if self.c.config.agents.entry_points {
+        let agents = self.c.config.agents.entry_points;
+        if agents {
             wanted.extend(site_files::AGENT_PATHS);
         }
         if wanted.is_empty() {
             self.site_files = SiteFiles::Done;
             return Ok(());
         }
+        // Pages pointing at an alternate beyond the cap are listed as not
+        // verified right away; the rest are requested below.
+        let mut md = agent_checks::MdPlan::new(self.c.config.agents.markdown_alternates_max as usize);
+        if agents {
+            self.c
+                .store
+                .for_each_md_alternate(|id, page, host, alt| md.add(id, page, host, alt))?;
+            self.c
+                .store
+                .record_md_check(&std::mem::take(&mut md.unverified), None, "not_verified")?;
+        }
+        let mcp = agents && self.c.config.agents.mcp_discovery;
+        let mut md_jobs: HashMap<String, Vec<agent_checks::MdJob>> = HashMap::new();
+        for job in std::mem::take(&mut md.jobs) {
+            md_jobs.entry(job.host_key.clone()).or_default().push(job);
+        }
         let mut jobs = Vec::new();
+        let mut known: HashMap<String, (Option<Arc<RobotsPolicy>>, bool)> = HashMap::new();
         for key in self.c.store.internal_hosts()? {
             let host = self.hosts.get(&key);
             let delay = host.and_then(|h| h.delay).unwrap_or(Duration::ZERO);
@@ -3513,6 +3553,7 @@ impl Run {
             };
             // A host the crawl gave up on gets no more requests (spec 004).
             let given_up = host.is_some_and(|h| h.health.is_given_up());
+            known.insert(key.clone(), (policy.clone(), given_up));
             let paths: Vec<(String, Option<String>)> = wanted
                 .iter()
                 .map(|path| {
@@ -3532,13 +3573,33 @@ impl Run {
                     ((*path).to_string(), blocked)
                 })
                 .collect();
-            jobs.push((key, delay, paths));
+            let md = md_jobs.remove(&key).unwrap_or_default();
+            jobs.push((key, delay, paths, md));
         }
         self.site_files = SiteFiles::Pending;
         let client = self.client.clone();
+        // Requests that must carry no cookies.
+        let plain = if agents {
+            self.net.plain_client().map_err(CrawlError::Client)?
+        } else {
+            client.clone()
+        };
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            for (key, delay, paths) in jobs {
+            // Whether a request to `url` may be sent: its host is one of
+            // this crawl's, was not given up on, and robots.txt allows it.
+            let allowed = |url: &Url| -> bool {
+                let Some((policy, given_up)) = known.get(&host_key(url)) else {
+                    return false;
+                };
+                !*given_up
+                    && !policy
+                        .as_ref()
+                        .is_some_and(|p| matches!(p.check(url), RobotsVerdict::Disallowed(_)))
+            };
+            for (key, delay, paths, md) in jobs {
+                let mut docs: Vec<(Url, Vec<u8>)> = Vec::new();
+                let mut sent = false;
                 for (i, (path, blocked)) in paths.into_iter().enumerate() {
                     let row = match blocked {
                         Some(why) => SiteFileRow::skipped(&key, &path, &why),
@@ -3546,10 +3607,57 @@ impl Run {
                             if i > 0 && !delay.is_zero() {
                                 tokio::time::sleep(delay).await;
                             }
+                            sent = true;
                             site_files::fetch(&client, &key, &path).await
                         }
                     };
+                    if mcp && site_files::MCP_CARD_PATHS.contains(&path.as_str()) && row.outcome == "ok" {
+                        let base = row.final_url.as_deref().and_then(|u| Url::parse(u).ok());
+                        let bytes =
+                            row.body.as_deref().zip(row.size).and_then(|(b, n)| {
+                                crate::extract::body::decompress(b, n.max(0) as usize).ok()
+                            });
+                        if let (Some(base), Some(bytes)) = (base, bytes) {
+                            docs.push((base, bytes));
+                        }
+                    }
                     let _ = tx.send(Msg::SiteFile(row));
+                }
+                for job in md {
+                    let (status, outcome) = if allowed(&job.url) {
+                        if sent && !delay.is_zero() {
+                            tokio::time::sleep(delay).await;
+                        }
+                        sent = true;
+                        agent_checks::fetch_markdown(&plain, &job.url).await
+                    } else {
+                        (None, "not_verified")
+                    };
+                    let _ = tx.send(Msg::AgentMd {
+                        url_ids: job.url_ids,
+                        status,
+                        outcome,
+                    });
+                }
+                let mut endpoints: Vec<Url> = Vec::new();
+                for (base, bytes) in &docs {
+                    for url in agent_checks::mcp_endpoints(base, bytes) {
+                        if !endpoints.contains(&url) {
+                            endpoints.push(url);
+                        }
+                    }
+                }
+                endpoints.truncate(agent_checks::MCP_PER_HOST);
+                for url in endpoints {
+                    if !allowed(&url) {
+                        continue;
+                    }
+                    if sent && !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    sent = true;
+                    let row = agent_checks::probe_mcp(&plain, &key, &url).await;
+                    let _ = tx.send(Msg::AgentMcp(row));
                 }
             }
             let _ = tx.send(Msg::SiteFilesFinished);
@@ -3780,6 +3888,12 @@ impl Run {
                 Ok(())
             }
             Msg::SiteFile(row) => Ok(self.c.store.record_site_file(&row)?),
+            Msg::AgentMd {
+                url_ids,
+                status,
+                outcome,
+            } => Ok(self.c.store.record_md_check(&url_ids, status, outcome)?),
+            Msg::AgentMcp(row) => Ok(self.c.store.record_mcp_check(&row)?),
             Msg::SessionCheck { signed_out } => {
                 let Some(check) = &mut self.session_check else {
                     return Ok(());

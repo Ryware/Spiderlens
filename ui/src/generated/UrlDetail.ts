@@ -6,6 +6,7 @@ import type { LinkMetrics } from "./LinkMetrics";
 import type { MobileDetail } from "./MobileDetail";
 import type { PdfDetail } from "./PdfDetail";
 import type { RedirectHop } from "./RedirectHop";
+import type { RenderDetail } from "./RenderDetail";
 import type { Snippet } from "./Snippet";
 import type { SpellDetail } from "./SpellDetail";
 
@@ -94,6 +95,10 @@ snippet: Snippet | null,
  * Spelling results, when the page was checked.
  */
 spelling: SpellDetail | null, 
+/**
+ * Rendering (spec 014): for a page that has a `renders` row.
+ */
+render: RenderDetail | null, 
 /**
  * Fields and sections this file has no data for, with the reason.
  */

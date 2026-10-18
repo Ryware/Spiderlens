@@ -8,7 +8,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use spiderlens_config::{AppDirs, AssistantSettings, AssistantStore};
+use spiderlens_config::{
+    AppDirs, AssistantProfile, AssistantSettings, AssistantStore, ProfileStore, assistant_profiles,
+};
 use spiderlens_mcp::activity::{Entry, Log};
 use spiderlens_mcp::snippets::{Snippet, snippets};
 
@@ -29,6 +31,11 @@ impl State {
         AssistantStore::open(&self.dirs.config).map_err(|e| e.to_string())
     }
 
+    /// The saved profiles, where the profile manager keeps them.
+    fn profiles(&self) -> Cmd<ProfileStore> {
+        ProfileStore::open(self.dirs.config.join("profiles")).map_err(|e| e.to_string())
+    }
+
     fn log(&self) -> Log {
         Log::new(&self.dirs.data)
     }
@@ -39,6 +46,8 @@ pub struct AssistantsView {
     settings: AssistantSettings,
     executable: PathBuf,
     snippets: Vec<Snippet>,
+    /// Saved profiles and whether an assistant may crawl with each.
+    profiles: Vec<AssistantProfile>,
 }
 
 fn executable() -> Cmd<PathBuf> {
@@ -51,13 +60,14 @@ pub fn assistants_get(state: tauri::State<'_, State>) -> Cmd<AssistantsView> {
     Ok(AssistantsView {
         settings: state.store()?.load(),
         snippets: snippets(&exe),
+        profiles: assistant_profiles(&state.profiles()?),
         executable: exe,
     })
 }
 
 #[tauri::command]
 pub fn assistants_set(state: tauri::State<'_, State>, settings: AssistantSettings) -> Cmd<AssistantSettings> {
-    let settings = settings.checked()?;
+    let settings = settings.checked(&state.profiles()?)?;
     state.store()?.save(&settings).map_err(|e| e.to_string())?;
     Ok(settings)
 }

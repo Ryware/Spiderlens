@@ -2,7 +2,7 @@
 // the table, copy and export.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Play, Search, SearchX } from "lucide-react";
+import { Download, FileCode, Play, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
@@ -25,6 +25,7 @@ import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
+import { SheetsExport } from "./SheetsExport";
 import { useExport } from "./useExport";
 import { useView } from "./useView";
 import { type CustomRun, runOutcomeText } from "./useCustomRun";
@@ -260,6 +261,8 @@ export function ResultsView({
   );
 
   const exp = useExport(transport);
+  // Spec 024 US6: the same view as a Google spreadsheet, or a Looker Studio report on one.
+  const [sheetsDialog, setSheetsDialog] = useState<"sheets" | "looker" | null>(null);
   const selected = count(selection.ranges);
 
   const copy = async () => {
@@ -304,6 +307,22 @@ export function ResultsView({
   const a11yTab = tab.id === "accessibility" || tab.id === "mobile";
   const noA11yTitle = activeFilter && !available(activeFilter.need) && activeFilter.need === "accessibility_full" ? "Full checks need JavaScript rendering" : "This crawl has no accessibility data";
   const totalText = view.ready ? view.total.toLocaleString() : `${view.total.toLocaleString()}+`;
+
+  // FR-034: a crawl that was not rendered has nothing to list here.
+  if (tab.id === "javascript" && features && !available("rendering")) {
+    return (
+      <section aria-label={tab.title} className="flex h-full min-w-0 flex-col">
+        <header className="flex items-center gap-2 border-b border-line bg-bg px-3 pt-2.5 pb-2">
+          <h1 className="m-0 truncate text-md font-semibold tracking-tight">{tab.title}</h1>
+        </header>
+        <div className="min-h-0 flex-1">
+          <EmptyState icon={<FileCode className="size-6" />} title="This crawl was not rendered">
+            The JavaScript tab compares each page as the server sent it with the page after its scripts ran. This crawl read the raw HTML only. Crawl with JavaScript rendering turned on in the crawl settings to see what JavaScript changes.
+          </EmptyState>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label={tab.title} className="flex h-full min-w-0 flex-col">
@@ -379,6 +398,8 @@ export function ResultsView({
                 { label: view.ready ? `Export ${view.total.toLocaleString()} rows as CSV…` : "Export rows as CSV…", onSelect: () => void startExport(false), disabled: view.view === null },
                 { label: `Export ${selected.toLocaleString()} selected as CSV…`, onSelect: () => void startExport(true), disabled: selected === 0 },
                 ...allValuesItems,
+                { label: "Export to Google Sheets…", onSelect: () => setSheetsDialog("sheets"), disabled: view.view === null },
+                { label: "Open in Looker Studio…", onSelect: () => setSheetsDialog("looker"), disabled: view.view === null },
               ]}
             />
           </div>
@@ -392,6 +413,20 @@ export function ResultsView({
           <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
         )}
       </header>
+
+      {sheetsDialog && (
+        <SheetsExport
+          transport={transport}
+          path={path}
+          query={query}
+          columns={prefs.order}
+          segments={segmentCounts?.segments}
+          title={tab.title}
+          looker={sheetsDialog === "looker"}
+          open
+          onOpenChange={(o) => !o && setSheetsDialog(null)}
+        />
+      )}
 
       <div className="min-h-0 flex-1">
         {view.error ? (

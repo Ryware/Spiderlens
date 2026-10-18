@@ -34,6 +34,7 @@ const link = (i: number, kind = "a"): LinkRow => ({
   sponsored: false,
   ugc: false,
   position: null,
+  origin: null,
 });
 
 test("nothing_selected_shows_an_empty_state", () => {
@@ -141,7 +142,7 @@ test("link_list_switches_between_in_out_and_images", async () => {
   t.urlList = async (_p, _id, kind, from) => {
     asked.push(kind);
     const n = kind === "inlinks" ? 1 : kind === "outlinks" ? 2 : 1;
-    return { total: n, from, rows: Array.from({ length: n }, (_, i) => ({ ...link(i), url: `https://example.com/${kind}-${i}` })), headings: [], unavailable: null };
+    return { total: n, from, rows: Array.from({ length: n }, (_, i) => ({ ...link(i), url: `https://example.com/${kind}-${i}` })), headings: [], resources: [], console: [], unavailable: null };
   };
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
@@ -177,7 +178,7 @@ test("empty_link_list_says_none", async () => {
 
 test("nofollow_links_are_marked", async () => {
   const t = withDetail({ inlinks: 2 });
-  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [{ ...link(0), nofollow: true }, { ...link(1), followed: false }], headings: [], unavailable: null });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [{ ...link(0), nofollow: true }, { ...link(1), followed: false }], headings: [], resources: [], console: [], unavailable: null });
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
   expect(await within(details()).findByText("nofollow")).toBeTruthy();
@@ -191,6 +192,8 @@ test("link_positions_show_once_worked_out", async () => {
     from,
     rows: [{ ...link(0), position: "footer" }, { ...link(1), position: "unknown" }, link(2)],
     headings: [],
+    resources: [],
+    console: [],
     unavailable: null,
   });
   render(<Inspector transport={t} path={PATH} id={2} />);
@@ -212,7 +215,7 @@ test("link_lists_filter_by_position", async () => {
   t.urlList = async (_p, _id, _kind, from, _count, position) => {
     asked.push(position);
     const rows = all.filter((r) => !position || r.position === position);
-    return { total: rows.length, from, rows, headings: [], unavailable: null };
+    return { total: rows.length, from, rows, headings: [], resources: [], console: [], unavailable: null };
   };
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
@@ -230,7 +233,7 @@ test("link_lists_filter_by_position", async () => {
 
 test("no_position_filter_before_positions_are_worked_out", async () => {
   const t = withDetail({ inlinks: 2 });
-  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [link(0), link(1)], headings: [], unavailable: null });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 2, from, rows: [link(0), link(1)], headings: [], resources: [], console: [], unavailable: null });
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
   await within(details()).findAllByRole("listitem");
@@ -243,7 +246,7 @@ test("show_more_pages_in_the_rest_of_the_list", async () => {
   t.urlList = async (_p, _id, _kind, from, count) => {
     calls.push([from, count]);
     const rows = Array.from({ length: Math.min(count, 150 - from) }, (_, i) => link(from + i));
-    return { total: 150, from, rows, headings: [], unavailable: null };
+    return { total: 150, from, rows, headings: [], resources: [], console: [], unavailable: null };
   };
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
@@ -272,7 +275,7 @@ test("link_list_error_shows_the_message", async () => {
 
 test("link_list_unavailable_explains_why", async () => {
   const t = fakeTransport();
-  t.urlList = async (_p, _id, _kind, from) => ({ total: 0, from, rows: [], headings: [], unavailable: "Links are not stored in this file." });
+  t.urlList = async (_p, _id, _kind, from) => ({ total: 0, from, rows: [], headings: [], resources: [], console: [], unavailable: "Links are not stored in this file." });
   render(<Inspector transport={t} path={PATH} id={2} />);
   await loaded();
   expect(await within(details()).findByText("Links are not stored in this file.")).toBeTruthy();

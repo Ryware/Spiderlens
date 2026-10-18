@@ -57,15 +57,15 @@ description: "Task list for spec 016, AI agents"
 - [x] T035 [US2] `PageAgentFindings` in `crates/results/src/agents/detail.rs`, desktop command `agents_page`, MCP tool `page_agent_findings`. Tests.
 - [x] T036 [US2] Inspector "Agents" section in `ui/src/results/Inspector.tsx` (forms with fields and raw/rendered badges, actions without a link, declared tools, markdown alternate, score placeholder until T053). Vitest.
 - [ ] T037 [US2] Re-run collection from stored HTML for older files (`agents check`, `agents_run_checks`): parse stored raw (and rendered) HTML with `extract_page`, write only agent rows. Test on a file made before the migration step.
-- [ ] T038 [US2] **(needs 014)** Rendered agent rows from 014's rendered extraction; "Form only after JavaScript" condition (rendered form with no raw form of the same method and resolved action); filters with rendering on and off (acceptance scenario 1). Tests.
+- [x] T038 [US2] **(needs 014)** Rendered agent rows from 014's rendered extraction; "Form only after JavaScript" condition (rendered form with no raw form of the same method and resolved action); filters with rendering on and off (acceptance scenario 1). Tests.
 - [ ] T039 [US2] Playwright: Agents tab with fake data, select a filter, open a page, inspect its forms.
 
 ## Phase 5: User Story 3, machine-readable entry points (P2)
 
 - [ ] T040 [US3] Host-file queue `crawl/host_files.rs` (shared with 015 FR-010; if 015 already built it, add paths to it instead): per internal host after robots.txt, robots.txt check per path, host rate allowance, Retry-After, crawl-delay, 5 MB cap, drained before the crawl completes, counted in the summary. Test with the fixture request log: exact request count per host (FR-009), page fetching not delayed.
 - [ ] T041 [P] [US3] Parsers in `crawl/entry_points.rs`: AI Catalog (draft, version recorded), RFC 9727 API catalog (linkset JSON), A2A agent card, MCP server card (SEP-2127 schema snapshot), OpenAPI presence; problems with codes. Unit tests with valid, invalid, unknown-version and oversized inputs.
-- [ ] T042 [US3] MCP discovery request (plan D4): `server/discover`, fallback `initialize`, 401 handling, nothing else; never sends credentials. Test against the fixture's two endpoints and one that hangs (timeout).
-- [ ] T043 [US3] Markdown alternates verification (max per host) and the opt-in `Accept: text/markdown` sample; `md_status` and `md_outcome`. Tests.
+- [x] T042 [US3] MCP discovery request (plan D4): `server/discover`, fallback `initialize`, 401 handling, nothing else; never sends credentials. Test against the fixture's two endpoints and one that hangs (timeout).
+- [ ] T043 [US3] Markdown alternates verification (max per host) and the opt-in `Accept: text/markdown` sample; `md_status` and `md_outcome`. Tests. Partly done: alternates are verified (max per host, `md_outcome`); the opt-in `Accept: text/markdown` sample is not built.
 - [ ] T044 [US3] `host_entry_points` MCP tool, entry points in `AgentsSummary`, and the "checks off" state (acceptance scenario 5). Tests.
 - [ ] T045 [US3] Speed with entry points on (SC-001): rerun the 100k bench, record in benchmarks.md.
 
@@ -80,14 +80,14 @@ description: "Task list for spec 016, AI agents"
 
 ## Phase 7: User Story 5, agents at the door (P3)
 
-- [ ] T060 [US5] **(needs 015)** Read 015's registry filtered to user-fetch agents and 015's robots evaluation; add user-fetch agents to the probe's choices if missing (coordinate with the 015 thread); rules `agents.robots_blocks_agents` and `agents.probe_blocked` read 015's stored results. Tests with the fixture that blocks one agent.
-- [ ] T061 [US5] Agent access block in the Agents summary (UI and MCP), Vitest.
+- [ ] T060 [US5] **(needs 015)** Read 015's registry filtered to user-fetch agents and 015's robots evaluation; add user-fetch agents to the probe's choices if missing (coordinate with the 015 thread); rules `agents.robots_blocks_agents` and `agents.probe_blocked` read 015's stored results. Tests with the fixture that blocks one agent. Partly done: both rules read 015's stored results; 015's probe itself is not built, so `probe_blocked` stays not checked.
+- [x] T061 [US5] Agent access block in the Agents summary (UI and MCP), Vitest.
 
 ## Phase 8: User Story 6, let my assistant start a crawl (P3)
 
-- [ ] T070 [US6] Crawl tools in `crates/mcp/src/crawl_tools.rs`, listed only when allowed (`ttlMs` 10 s), profile allow-list and robots refusal, crawl in-process through the CLI's engine call, recent entry and `events` row marked `assistant:<client>`, clean pause when stdin closes. Tests: refused when off (SC-009), full crawl through the scripted client equals a CLI crawl.
-- [ ] T071 [US6] App side: "started by an AI assistant" badge in recent crawls; pause and stop from the app through spec 006's lock-holder channel (or the meta stop request, decided after reading 006's merged code, plan D10). Vitest.
-- [ ] T072 [US6] Settings crawl section enabled: switch, allowed profiles picker (profiles that ignore robots.txt disabled with a reason). Vitest and a Playwright step.
+- [ ] T070 [US6] Crawl tools in `crates/mcp/src/crawl_tools.rs`, listed only when allowed (`ttlMs` 10 s), profile allow-list and robots refusal, crawl in-process through the CLI's engine call, recent entry and `events` row marked `assistant:<client>`, clean pause when stdin closes. Tests: refused when off (SC-009), full crawl through the scripted client equals a CLI crawl. Partly done: tools, allow-list, robots refusal, recent entry, meta `started_by`, pause on disconnect and refusal tests are built; no `events` row and no full-crawl comparison test.
+- [ ] T071 [US6] App side: "started by an AI assistant" badge in recent crawls; pause and stop from the app through spec 006's lock-holder channel (or the meta stop request, decided after reading 006's merged code, plan D10). Vitest. Partly done: the badge is built; pause and stop from the app are not.
+- [x] T072 [US6] Settings crawl section enabled: switch, allowed profiles picker (profiles that ignore robots.txt disabled with a reason). Vitest and a Playwright step.
 
 ## Phase 9: Polish
 

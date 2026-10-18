@@ -7,11 +7,13 @@ import type { JsonValue } from "./serde_json/JsonValue";
  */
 export type EntryPointRow = { id: number, host_key: string,
 /**
- * ai_catalog, api_catalog, a2a_card, service_desc or service_doc.
+ * ai_catalog, api_catalog, a2a_card, service_desc, service_doc or
+ * mcp_server.
  */
 kind: string, url: string,
 /**
- * well_known, page_link or link_header.
+ * well_known, page_link or link_header; for an `mcp_server`, the kind of
+ * the catalog or card that named it.
  */
 found_via: string,
 /**
@@ -28,6 +30,7 @@ outcome: string, content_type: string | null, size: number | null, convention_ve
  */
 summary: JsonValue | null,
 /**
- * Reserved for the MCP discovery request (spec 016 FR-011).
+ * What the MCP discovery request found (spec 016 FR-011): answered,
+ * protocol_versions, requires_sign_in and error.
  */
 mcp_discovery: JsonValue | null, };

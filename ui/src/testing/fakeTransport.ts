@@ -17,6 +17,7 @@ import type { RerunSummary } from "../generated/RerunSummary";
 import { fakeAgentsTransport, type FakeAssistants } from "./fakeAgents";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
+import { fakeLinksTransport, type FakeLinks } from "./fakeLinks";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeSegmentOf, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import { fakeAuditTransport, type FakeAudit } from "./fakeAudit";
@@ -120,7 +121,7 @@ export function defaultConfig(): CrawlConfig {
       proxy: { mode: "none", kind: "http", host: "", port: 0, user: null, password: { secret: true }, bypass: [] },
     },
     ai_checks: { auto: true, site_files: true },
-    agents: { entry_points: true },
+    agents: { entry_points: true, markdown_alternates_max: 50, mcp_discovery: true },
     segments: [],
     spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
     accessibility: { level: "static", wcag: { version: "2.2", level: "aa" }, best_practice: true, mobile: true, budget_secs: 5, small_text_px: 12, small_text_share: 40, tap_target_px: 24, overflow_px: 5 },
@@ -309,7 +310,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender; linkMetrics: FakeLinks } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, orphans: fakeOrphanSummary(), entries: new Map(), existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -371,6 +372,7 @@ export function fakeTransport(
   const resultsApi = fakeResultsTransport(urls);
   const compareApi = fakeCompareTransport(resultsApi.results.progress);
   const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
+  const { api: linksApi, linkMetrics } = fakeLinksTransport(integrations);
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   const agentsApi = fakeAgentsTransport(
@@ -391,6 +393,8 @@ export function fakeTransport(
     ...fakeCustomTransport(),
     ...integrationsApi,
     integrations,
+    ...linksApi,
+    linkMetrics,
     ...aeoApi,
     ...schedulesApi,
     schedules,
@@ -467,6 +471,19 @@ export function fakeTransport(
       }
       if (!(config.rendering.max_render_secs >= 1 && config.rendering.max_render_secs <= 60)) {
         issues.push({ path: "rendering.max_render_secs", severity: "error", code: "out_of_range", message: "The maximum render time must be between 1 and 60 seconds." });
+      }
+      const rs = config.rendering;
+      if (!(rs.min_wait_secs >= 0 && rs.min_wait_secs <= rs.max_render_secs)) {
+        issues.push({ path: "rendering.min_wait_secs", severity: "error", code: "out_of_range", message: "The minimum wait must be between 0 seconds and the maximum render time." });
+      }
+      if (rs.window.preset === "custom" && !(rs.window.width !== null && rs.window.width >= 320 && rs.window.width <= 3840)) {
+        issues.push({ path: "rendering.window.width", severity: "error", code: "out_of_range", message: "A custom window width must be between 320 and 3,840 pixels." });
+      }
+      if (rs.concurrency !== null && !(rs.concurrency >= 1 && rs.concurrency <= 16)) {
+        issues.push({ path: "rendering.concurrency", severity: "error", code: "out_of_range", message: "Pages rendered at once must be between 1 and 16. Leave it blank for automatic." });
+      }
+      if (!(rs.hidden_content_percent >= 1 && rs.hidden_content_percent <= 100)) {
+        issues.push({ path: "rendering.hidden_content_percent", severity: "error", code: "out_of_range", message: "The hidden content threshold must be between 1 and 100 percent." });
       }
       config.segments.forEach((seg, i) => {
         if (!seg.name.trim()) issues.push({ path: `segments[${i}].name`, severity: "error", code: "segment_name_empty", message: "Give the segment a name." });

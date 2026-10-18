@@ -17,8 +17,9 @@ use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError,
-    Features, FilterCounts, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage, SegmentCounts, TabCounts,
-    TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in, issue_tabs, tabs,
+    Features, FilterCounts, HtmlDiff, HtmlVersion, ListKind, ListPage, PageHtml, PageScreenshot, Reader,
+    Refresh, RowPage, SegmentCounts, TabCounts, TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery,
+    export_file_in, issue_tabs, tabs,
 };
 use spiderlens_results::{
     GenerateError, GenerateReport, OrphanSummary, SitemapFiles, SitemapOutput, UrlSitemapEntry,
@@ -408,10 +409,12 @@ pub async fn url_list(
     from: u32,
     count: u32,
     position: Option<String>,
+    values: Option<Values>,
 ) -> Cmd<ListPage> {
     state
         .with(&path, move |r| {
-            r.list_at(id, kind, position.as_deref(), from, count).map_err(err)
+            r.list_values(id, kind, position.as_deref(), values, from, count)
+                .map_err(err)
         })
         .await
 }
@@ -625,10 +628,43 @@ pub async fn cookie_urls(
         .await
 }
 
-/// A page's stored HTML for the source viewer (T029).
+/// A page's stored HTML for the source viewer (T029): the raw version, or
+/// the rendered one with `version` (spec 014 FR-032).
 #[tauri::command]
-pub async fn url_html(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageHtml> {
-    state.with(&path, move |r| r.page_html(id).map_err(err)).await
+pub async fn url_html(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    id: i64,
+    version: Option<HtmlVersion>,
+) -> Cmd<PageHtml> {
+    state
+        .with(&path, move |r| {
+            r.page_html_version(id, version.unwrap_or_default()).map_err(err)
+        })
+        .await
+}
+
+/// A rendered page's stored screenshot (spec 014 FR-033).
+#[tauri::command]
+pub async fn url_screenshot(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageScreenshot> {
+    state
+        .with(&path, move |r| r.page_screenshot(id).map_err(err))
+        .await
+}
+
+/// The differences between a page's normalised raw and rendered HTML:
+/// `max_hunks` hunks from hunk `from_hunk` (spec 014 FR-028).
+#[tauri::command]
+pub async fn url_html_diff(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+    id: i64,
+    from_hunk: u32,
+    max_hunks: u32,
+) -> Cmd<HtmlDiff> {
+    state
+        .with(&path, move |r| r.html_diff(id, from_hunk, max_hunks).map_err(err))
+        .await
 }
 
 /// The tabs that list URL `id` unfiltered, for "show in table".

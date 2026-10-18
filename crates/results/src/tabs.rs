@@ -52,6 +52,12 @@ pub enum Need {
     Readability,
     /// Search Console page data fetched after the crawl (spec 024).
     SearchConsole,
+    /// URL Inspection results fetched after the crawl (spec 024 US2).
+    UrlInspection,
+    /// Google Analytics 4 landing page data fetched after the crawl (spec 024 US4).
+    Analytics,
+    /// Ahrefs, Majestic or Moz link metrics fetched after the crawl (spec 024).
+    LinkMetrics,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
     /// The `sitemap_audit` pass's problems (spec 011 part b), written once
@@ -70,6 +76,10 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
+    /// Chrome UX Report field data fetched after the crawl (spec 024).
+    FieldData,
+    /// PageSpeed Insights lab tests run after the crawl (spec 024).
+    LabTests,
     /// Static accessibility checks (spec 026).
     AccessibilityStatic,
     /// Full accessibility checks in the rendering stage (spec 026).
@@ -106,6 +116,15 @@ impl Need {
             Self::SearchConsole => {
                 "No Search Console data in this crawl yet. Fetch it from Integrations after connecting your Google account."
             }
+            Self::UrlInspection => {
+                "No URL Inspection results in this crawl yet. Choose Inspect index status in Integrations after connecting your Google account."
+            }
+            Self::Analytics => {
+                "No Analytics data in this crawl yet. Fetch it from Integrations after connecting your Google account."
+            }
+            Self::LinkMetrics => {
+                "No link metrics in this crawl yet. Save an Ahrefs, Majestic or Moz key in Integrations and fetch them for this crawl."
+            }
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
@@ -120,6 +139,10 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
+            Self::FieldData => {
+                "No field data in this crawl yet. Save a Google API key and fetch field data from Integrations."
+            }
+            Self::LabTests => "No lab test results in this crawl yet. Run lab tests from Integrations.",
             Self::AccessibilityStatic => {
                 "This crawl did not check accessibility. Turn on accessibility checks in the crawl settings to check it."
             }
@@ -148,6 +171,9 @@ impl Need {
             Self::Pdf => "pdf",
             Self::Readability => "readability",
             Self::SearchConsole => "search_console",
+            Self::UrlInspection => "url_inspection",
+            Self::Analytics => "analytics",
+            Self::LinkMetrics => "link_metrics",
             Self::SitemapEntries => "sitemap_entries",
             Self::SitemapAudit => "sitemap_audit",
             Self::Orphans => "orphans",
@@ -156,6 +182,8 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
+            Self::FieldData => "field_data",
+            Self::LabTests => "lab_tests",
             Self::AccessibilityStatic => "accessibility_static",
             Self::AccessibilityFull => "accessibility_full",
             Self::MobileLayout => "mobile_layout",
@@ -813,7 +841,14 @@ impl FilterDef {
         match self.threshold {
             Some((rule, template)) => values.get(rule).map_or_else(
                 || self.label.to_string(),
-                |v| template.replace("{n}", &crate::issues::fmt_num(*v)),
+                |v| {
+                    let mut label = template.replace("{n}", &crate::issues::fmt_num(*v));
+                    // A second value, for labels with two (spec 014 FR-027).
+                    if let Some(w) = values.get(format!("{rule}.2").as_str()) {
+                        label = label.replace("{w}", &crate::issues::fmt_num(*w));
+                    }
+                    label
+                },
             ),
             None => self.label.to_string(),
         }
@@ -2313,8 +2348,13 @@ fn build_tabs() -> Vec<TabDef> {
             scoped: false,
             rows: None,
         },
+        crate::google_tabs::index_status_tab(),
+        crate::google_tabs::analytics_tab(),
+        crate::page_experience::tab(),
+        crate::link_data::tab(),
         ai_search_tab(),
         near_dup_tab(),
+        javascript_tab(),
     ]
 }
 
@@ -2812,6 +2852,336 @@ fn occ(conn: &rusqlite::Connection, table: &str, field: &str) -> rusqlite::Resul
     ))
 }
 
+/// One value from a page's `renders` row (spec 014).
+macro_rules! rx {
+    ($field:literal) => {
+        concat!("(SELECT r.", $field, " FROM renders r WHERE r.url_id = u.id)")
+    };
+}
+
+/// A share stored as 0 to 1 in `render_comparisons`, shown as a percentage.
+macro_rules! dep_pct {
+    ($field:literal) => {
+        concat!(
+            "(SELECT round(c.",
+            $field,
+            " * 100, 1) FROM render_comparisons c WHERE c.url_id = u.id)"
+        )
+    };
+}
+
+/// One value from a page's `render_comparisons` row (spec 014).
+macro_rules! cx {
+    ($field:literal) => {
+        concat!(
+            "(SELECT c.",
+            $field,
+            " FROM render_comparisons c WHERE c.url_id = u.id)"
+        )
+    };
+}
+
+/// A condition on a page's `renders` row.
+macro_rules! on_render {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM renders r WHERE r.url_id = u.id AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+/// A condition on a page's `render_comparisons` row.
+macro_rules! on_cmp {
+    ($cond:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM render_comparisons c WHERE c.url_id = u.id AND ",
+            $cond,
+            ")"
+        )
+    };
+}
+
+/// The rows of the JavaScript tab: pages with a `renders` row (spec 014
+/// FR-025). Reads no rendered values, so it ignores the Raw / Rendered
+/// switch.
+const JS_ELIGIBLE: &str = "EXISTS (SELECT 1 FROM renders r WHERE r.url_id = u.id)";
+
+/// "Contains JavaScript content": rendered words exceed the raw count by
+/// the stored percentage and word count (FR-027).
+const JS_CONTENT: &str = on_cmp!(
+    "c.words_rendered - c.words_raw >= js_content_words() \
+     AND c.words_rendered * 100 > c.words_raw * (100 + js_content_percent())"
+);
+
+/// "Content hidden from non-rendering crawlers": dependence over the stored
+/// percentage, or a title or first H1 that exists only after rendering
+/// (FR-030).
+const JS_HIDDEN: &str =
+    on_cmp!("(c.dependence > hidden_content_percent() OR c.title_diff = 'added' OR c.h1_diff = 'added')");
+
+/// The JavaScript tab: what rendering changed on each rendered page (spec
+/// 014 FR-025 and FR-026).
+fn javascript_tab() -> TabDef {
+    use ValueKind::*;
+    let js_col = |id, label, expr, kind, width| col(id, label, expr, kind, width).needs(Need::Rendering);
+    let js_filter = |id, label, cond| filter(id, label, cond).needs(Need::Rendering);
+    TabDef {
+        id: Cow::Borrowed("javascript"),
+        title: Cow::Borrowed("JavaScript"),
+        eligible: Cow::Borrowed(JS_ELIGIBLE),
+        columns: vec![
+            c::ADDRESS,
+            js_col(
+                "render_status",
+                "Rendering status",
+                "(SELECT CASE r.state WHEN 'rendered' THEN 'Rendered' WHEN 'timed_out' THEN 'Timed out' \
+                 WHEN 'failed' THEN 'Failed' WHEN 'not_rendered' THEN 'Not rendered' \
+                 WHEN 'queued' THEN 'Queued' WHEN 'rendering' THEN 'Rendering' ELSE r.state END \
+                 || CASE WHEN r.reason IS NULL THEN '' ELSE ' (' || replace(r.reason, '_', ' ') || ')' END \
+                 FROM renders r WHERE r.url_id = u.id)",
+                Text,
+                190,
+            ),
+            js_col("render_time", "Render time", rx!("render_ms"), Ms, 110),
+            js_col("words_raw", "Word count (raw)", cx!("words_raw"), Int, 130),
+            js_col(
+                "words_rendered",
+                "Word count (rendered)",
+                cx!("words_rendered"),
+                Int,
+                160,
+            ),
+            js_col("words_change", "Word count change", cx!("words_change"), Int, 140),
+            js_col("links_raw", "Links (raw)", cx!("links_raw"), Int, 100),
+            js_col(
+                "links_rendered",
+                "Links (rendered)",
+                cx!("links_rendered"),
+                Int,
+                130,
+            ),
+            js_col(
+                "js_links",
+                "JavaScript-only links",
+                cx!("links_rendered_only"),
+                Int,
+                150,
+            ),
+            js_col(
+                "js_dependence",
+                "JavaScript dependence",
+                "(SELECT round(c.dependence, 1) FROM render_comparisons c WHERE c.url_id = u.id)",
+                Percent,
+                150,
+            ),
+            // Shares of each content type that exist only in the rendered
+            // page, as percentages; empty when the rendered page has none of
+            // that type (spec 014 FR-029).
+            js_col(
+                "js_dep_text",
+                "JavaScript dependence (text)",
+                dep_pct!("dep_text"),
+                Percent,
+                190,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_headings",
+                "JavaScript dependence (headings)",
+                dep_pct!("dep_headings"),
+                Percent,
+                210,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_links",
+                "JavaScript dependence (internal links)",
+                dep_pct!("dep_internal_links"),
+                Percent,
+                240,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_structured",
+                "JavaScript dependence (structured data)",
+                dep_pct!("dep_structured"),
+                Percent,
+                250,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_images",
+                "JavaScript dependence (images)",
+                dep_pct!("dep_images"),
+                Percent,
+                200,
+            )
+            .hidden(),
+            js_col("js_errors", "JavaScript errors", rx!("console_errors"), Int, 130),
+            js_col(
+                "blocked_resources",
+                "Blocked resources",
+                rx!("resources_blocked"),
+                Int,
+                130,
+            ),
+            js_col(
+                "failed_resources",
+                "Failed resources",
+                rx!("resources_failed"),
+                Int,
+                130,
+            )
+            .hidden(),
+            js_col(
+                "js_warnings",
+                "JavaScript warnings",
+                rx!("console_warnings"),
+                Int,
+                140,
+            )
+            .hidden(),
+            js_col("js_redirect", "JavaScript redirect", rx!("js_redirect"), Url, 320).hidden(),
+            js_col(
+                "bot_challenge",
+                "Possible bot challenge",
+                rx!("bot_challenge"),
+                Bool,
+                150,
+            )
+            .hidden(),
+        ],
+        filters: vec![
+            js_filter("all", "All", "1"),
+            js_filter("rendered", "Rendered", on_render!("r.state = 'rendered'")),
+            js_filter(
+                "not_rendered",
+                "Not rendered",
+                on_render!("r.state = 'not_rendered'"),
+            ),
+            js_filter(
+                "timed_out",
+                "Render timed out",
+                on_render!("r.state = 'timed_out'"),
+            ),
+            js_filter("failed", "Render failed", on_render!("r.state = 'failed'")),
+            js_filter(
+                "js_links",
+                "Contains JavaScript links",
+                on_cmp!("c.links_rendered_only > 0"),
+            ),
+            js_filter("js_content", "Contains JavaScript content", JS_CONTENT).thr(
+                "render.js_content",
+                "Contains JavaScript content (over {n}% and {w} words)",
+            ),
+            js_filter(
+                "title_only_rendered",
+                "Title only in rendered HTML",
+                on_cmp!("c.title_diff = 'added'"),
+            ),
+            js_filter(
+                "title_updated",
+                "Title updated by JavaScript",
+                on_cmp!("c.title_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "description_only_rendered",
+                "Meta description only in rendered HTML",
+                on_cmp!("c.description_diff = 'added'"),
+            ),
+            js_filter(
+                "description_updated",
+                "Meta description updated by JavaScript",
+                on_cmp!("c.description_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "h1_only_rendered",
+                "H1 only in rendered HTML",
+                on_cmp!("c.h1_diff = 'added'"),
+            ),
+            js_filter(
+                "h1_updated",
+                "H1 updated by JavaScript",
+                on_cmp!("c.h1_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "canonical_only_rendered",
+                "Canonical only in rendered HTML",
+                on_cmp!("c.canonical_diff = 'added'"),
+            ),
+            js_filter(
+                "canonical_mismatch",
+                "Canonical mismatch",
+                on_cmp!("c.canonical_diff IN ('changed', 'removed')"),
+            ),
+            js_filter(
+                "noindex_only_original",
+                "Noindex only in original HTML",
+                on_cmp!("c.noindex_diff = 'removed'"),
+            ),
+            js_filter(
+                "noindex_only_rendered",
+                "Noindex only in rendered HTML",
+                on_cmp!("c.noindex_diff = 'added'"),
+            ),
+            js_filter(
+                "nofollow_only_original",
+                "Nofollow only in original HTML",
+                on_cmp!("c.nofollow_diff = 'removed'"),
+            ),
+            js_filter(
+                "nofollow_only_rendered",
+                "Nofollow only in rendered HTML",
+                on_cmp!("c.nofollow_diff = 'added'"),
+            ),
+            js_filter(
+                "structured_only_rendered",
+                "Structured data only in rendered HTML",
+                on_cmp!("c.structured_rendered_only > 0"),
+            ),
+            js_filter(
+                "js_redirect",
+                "JavaScript redirect",
+                on_render!("r.js_redirect IS NOT NULL"),
+            ),
+            js_filter(
+                "js_errors",
+                "JavaScript errors",
+                on_render!("r.console_errors > 0"),
+            ),
+            js_filter(
+                "failed_resources",
+                "Has failed resources",
+                on_render!("r.resources_failed > 0"),
+            ),
+            js_filter(
+                "blocked_resources",
+                "Has blocked resources",
+                on_render!("r.resources_blocked > 0"),
+            ),
+            js_filter(
+                "bot_challenge",
+                "Possible bot challenge",
+                on_render!("r.bot_challenge = 1"),
+            ),
+            js_filter(
+                "hidden_content",
+                "Content hidden from non-rendering crawlers",
+                JS_HIDDEN,
+            )
+            .thr(
+                "render.hidden",
+                "Content hidden from non-rendering crawlers (over {n}%)",
+            ),
+        ],
+        search_column: Some(Cow::Borrowed("address")),
+        scoped: false,
+        rows: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2836,7 +3206,37 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 22);
+        assert_eq!(tab_ids.len(), 27);
+    }
+
+    #[test]
+    fn javascript_tab_has_the_26_filters_with_thresholds_in_labels() {
+        // FR-026, FR-027, FR-030.
+        let t = tab("javascript").unwrap();
+        // The 26 of FR-026, plus the "With issues" filter every tab has.
+        assert_eq!(t.filters.len(), 27);
+        let mut values = crate::features::RenderThresholds::default().as_map();
+        let label = |id: &str, values: &crate::sql::Thresholds| t.filter(id).unwrap().label_with(values);
+        assert_eq!(
+            label("js_content", &values),
+            "Contains JavaScript content (over 20% and 50 words)"
+        );
+        assert_eq!(
+            label("hidden_content", &values),
+            "Content hidden from non-rendering crawlers (over 50%)"
+        );
+        values.insert("render.js_content", 35.0);
+        values.insert("render.js_content.2", 120.0);
+        assert_eq!(
+            label("js_content", &values),
+            "Contains JavaScript content (over 35% and 120 words)"
+        );
+        assert_eq!(label("rendered", &values), "Rendered");
+        assert!(
+            t.filters
+                .iter()
+                .all(|f| f.id == "with_issues" || f.need == Need::Rendering)
+        );
     }
 
     #[test]

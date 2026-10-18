@@ -118,6 +118,9 @@ pub struct RecentRow {
     entry: RecentEntry,
     available: bool,
     unsaved: bool,
+    /// Who started the crawl when it was not the user, for example
+    /// `assistant:claude-code` (spec 016 US6).
+    started_by: Option<String>,
 }
 
 fn row(state: &State, mut e: RecentEntry) -> RecentRow {
@@ -130,6 +133,11 @@ fn row(state: &State, mut e: RecentEntry) -> RecentRow {
         e.recovered = file::read_meta(&e.path, "recovered").as_deref() == Some("1");
     }
     RecentRow {
+        started_by: if available {
+            file::read_meta(&e.path, "started_by")
+        } else {
+            None
+        },
         unsaved: state.is_unsaved(&e.path),
         entry: e,
         available,
@@ -143,6 +151,7 @@ fn info_value(state: &State, info: CrawlInfo) -> serde_json::Value {
     let mut v = serde_json::to_value(&info).expect("info serializes");
     v["config"] = serde_json::to_value(effective).expect("config serializes");
     v["unsaved"] = serde_json::Value::Bool(unsaved);
+    v["started_by"] = file::read_meta(&info.path, "started_by").map_or(serde_json::Value::Null, Into::into);
     v
 }
 

@@ -25,9 +25,12 @@ import type { NearDupStatus } from "./generated/NearDupStatus";
 import type { PairsPage } from "./generated/PairsPage";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
+import type { HtmlDiff } from "./generated/HtmlDiff";
+import type { HtmlVersion } from "./generated/HtmlVersion";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
 import type { PageHtml } from "./generated/PageHtml";
+import type { PageScreenshot } from "./generated/PageScreenshot";
 import type { Refresh } from "./generated/Refresh";
 import type { RowPage } from "./generated/RowPage";
 import type { TabCounts } from "./generated/TabCounts";
@@ -38,13 +41,27 @@ import type { ViewQuery } from "./generated/ViewQuery";
 import type { Values } from "./generated/Values";
 import type { CacheInfo } from "./generated/CacheInfo";
 import type { Connection } from "./generated/Connection";
+import type { FieldRequest } from "./generated/FieldRequest";
+import type { LabRequest } from "./generated/LabRequest";
+import type { PerfEstimate } from "./generated/PerfEstimate";
 import type { OrphanPage } from "./generated/OrphanPage";
+import type { Ga4Request } from "./generated/Ga4Request";
+import type { Ga4Stream } from "./generated/Ga4Stream";
+import type { InspectPlan } from "./generated/InspectPlan";
+import type { InspectRequest } from "./generated/InspectRequest";
 import type { PageRequest } from "./generated/PageRequest";
 import type { Property } from "./generated/Property";
 import type { ProviderSettings } from "./generated/ProviderSettings";
 import type { ProviderStatus } from "./generated/ProviderStatus";
 import type { QueryRow } from "./generated/QueryRow";
 import type { RunProgress } from "./generated/RunProgress";
+import type { LinkEstimate } from "./generated/LinkEstimate";
+import type { LinkRequest } from "./generated/LinkRequest";
+import type { MetricInfo } from "./generated/MetricInfo";
+import type { Overflow } from "./generated/Overflow";
+import type { SheetExport } from "./generated/SheetExport";
+import type { SheetsPlan } from "./generated/SheetsPlan";
+import type { SpreadsheetRef } from "./generated/SpreadsheetRef";
 import type { Status as IntegrationStatus } from "./generated/Status";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
@@ -65,6 +82,7 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantProfile } from "./generated/AssistantProfile";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
 import type { AgentsSummary } from "./generated/AgentsSummary";
@@ -478,6 +496,8 @@ export interface CrawlInfo {
   status: CrawlStatus;
   pause_reason: string | null;
   recovered: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
   mode: "spider" | "list";
   start_url: string | null;
   /** The stored configuration; null when the file has none it can read. */
@@ -504,6 +524,8 @@ export interface RecentEntry {
   last_used: string;
   available: boolean;
   unsaved: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
 }
 
 export interface UnsavedCrawls {
@@ -676,6 +698,8 @@ export interface AssistantsView {
   settings: AssistantSettings;
   executable: string;
   snippets: AssistantSnippet[];
+  /** Saved profiles, with whether an assistant may crawl with each. */
+  profiles: AssistantProfile[];
 }
 
 /** What `<app> mcp --self-test` printed: the tools an assistant would see. */
@@ -765,6 +789,12 @@ export interface CrawlRule {
   last_run_at: string | null;
   run_pages: number | null;
   run_state: "crawl" | "complete" | "partial" | "stale" | null;
+}
+
+/** Rows sent to a new spreadsheet so far. */
+export interface SheetsProgress {
+  sent: number;
+  total: number;
 }
 
 export interface CustomRunProgress {
@@ -928,8 +958,8 @@ export interface Transport {
   segmentsCounts(path: string): Promise<SegmentCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  /** `position` keeps only links at that position (spec 023 FR-024). */
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). `values`: raw or rendered lists of a rendered crawl (spec 014); omitted means rendered when the crawl has rendering. */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null, values?: Values): Promise<ListPage>;
   // Site login and proxy (spec 025, contracts/desktop-commands.md).
   /** Opens the login page in a private window; its addresses arrive through onLoginNavigated. */
   loginOpen(loginUrl: string, internalHosts: string[], userAgent: string | null): Promise<void>;
@@ -964,8 +994,12 @@ export interface Transport {
   cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
   /** The URLs that set one cookie, in crawl order. */
   cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
-  /** The page's stored HTML, or why there is none. */
-  urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The page's stored HTML, or why there is none. `version`: the HTML as received (default) or as rendered (spec 014 FR-032). */
+  urlHtml(path: string, id: number, version?: HtmlVersion): Promise<PageHtml>;
+  /** The rendered page's stored screenshot, or why there is none (spec 014 FR-033). */
+  urlScreenshot(path: string, id: number): Promise<PageScreenshot>;
+  /** The normalised raw and rendered HTML compared: `maxHunks` differences from number `fromHunk` (spec 014 FR-028). Rejects when either version is not stored. */
+  urlHtmlDiff(path: string, id: number, fromHunk: number, maxHunks: number): Promise<HtmlDiff>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
   urlTabs(path: string, id: number): Promise<string[]>;
   /** Puts one value on the clipboard. */
@@ -1110,7 +1144,32 @@ export interface Transport {
   integrationsCacheInfo(): Promise<CacheInfo>;
   integrationsCacheClear(provider: string | null): Promise<number>;
   integrationsOpenTerms(provider: string): Promise<void>;
+  /** Spec 024 slice 2: URL Inspection. */
+  integrationsDefaultInspectRequest(property: string): Promise<InspectRequest>;
+  integrationsInspectionPlan(path: string, account: string | null, request: InspectRequest): Promise<InspectPlan>;
+  integrationsRunInspection(path: string, account: string | null, request: InspectRequest): Promise<RunProgress>;
+  /** Spec 024 slice 4: Google Analytics 4. */
+  integrationsAnalyticsStreams(account: string | null, path: string | null): Promise<Ga4Stream[]>;
+  integrationsDefaultAnalyticsRequest(property: string, stream: string): Promise<Ga4Request>;
+  integrationsRunAnalytics(path: string, account: string | null, request: Ga4Request): Promise<RunProgress>;
+  /** Link metrics (spec 024 US5): what a provider offers, the cost before a run, and the run. */
+  integrationsLinkMetrics(provider: string): Promise<MetricInfo[]>;
+  integrationsLinkEstimate(path: string, label: string | null, request: LinkRequest): Promise<LinkEstimate>;
+  integrationsRunLinks(path: string, label: string | null, request: LinkRequest): Promise<RunProgress>;
+  /** Google Sheets and Looker Studio (spec 024 US6): size of the view's export, the export, the links. */
+  integrationsSheetsPlan(path: string, query: ViewQuery, columns: string[], segments?: Segment[]): Promise<SheetsPlan>;
+  integrationsExportSheets(path: string, query: ViewQuery, columns: string[], segments: Segment[] | undefined, title: string, worksheet: string, account: string | null, overflow: Overflow): Promise<SheetExport>;
+  integrationsOpenLooker(sheet: SpreadsheetRef): Promise<string>;
+  integrationsLookerLink(sheet: SpreadsheetRef): Promise<string>;
+  onSheetsProgress(cb: (p: SheetsProgress) => void): Promise<() => void>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
+  // Field data and lab tests (spec 024 US3).
+  /** Saves one Google API key in the keychain for field data and lab tests. */
+  integrationsSaveGoogleKey(label: string, key: string): Promise<Connection[]>;
+  integrationsEstimateFieldData(path: string, request: FieldRequest): Promise<PerfEstimate>;
+  integrationsEstimateLabTests(path: string, request: LabRequest): Promise<PerfEstimate>;
+  integrationsRunFieldData(path: string, keyLabel: string | null, request: FieldRequest): Promise<RunProgress>;
+  integrationsRunLabTests(path: string, keyLabel: string | null, request: LabRequest): Promise<RunProgress>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
   aeoRun(path: string): Promise<{ run_id: number }>;
@@ -1253,7 +1312,7 @@ export const tauriTransport: Transport = {
   segmentsCounts: (path) => invoke("segments_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  urlList: (path, id, kind, from, count, position, values) => invoke("url_list", { path, id, kind, from, count, position: position ?? null, values: values ?? null }),
   loginOpen: (loginUrl, internalHosts, userAgent) => invoke("login_open", { loginUrl, internalHosts, userAgent }),
   loginDone: () => invoke("login_done"),
   loginCancel: () => invoke("login_cancel"),
@@ -1276,7 +1335,9 @@ export const tauriTransport: Transport = {
   proxyTest: (proxy, probeUrl) => invoke("proxy_test", { proxy, probeUrl }),
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
-  urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlHtml: (path, id, version) => invoke("url_html", { path, id, version: version ?? null }),
+  urlScreenshot: (path, id) => invoke("url_screenshot", { path, id }),
+  urlHtmlDiff: (path, id, fromHunk, maxHunks) => invoke("url_html_diff", { path, id, fromHunk, maxHunks }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),
@@ -1391,7 +1452,27 @@ export const tauriTransport: Transport = {
   integrationsCacheInfo: () => invoke("integrations_cache_info"),
   integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
   integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  integrationsDefaultInspectRequest: (property) => invoke("integrations_default_inspect_request", { property }),
+  integrationsInspectionPlan: (path, account, request) => invoke("integrations_inspection_plan", { path, account, request }),
+  integrationsRunInspection: (path, account, request) => invoke("integrations_run_inspection", { path, account, request }),
+  integrationsAnalyticsStreams: (account, path) => invoke("integrations_analytics_streams", { account, path }),
+  integrationsDefaultAnalyticsRequest: (property, stream) => invoke("integrations_default_analytics_request", { property, stream }),
+  integrationsRunAnalytics: (path, account, request) => invoke("integrations_run_analytics", { path, account, request }),
+  integrationsLinkMetrics: (provider) => invoke("integrations_link_metrics", { providerId: provider }),
+  integrationsLinkEstimate: (path, label, request) => invoke("integrations_link_estimate", { path, label, request }),
+  integrationsRunLinks: (path, label, request) => invoke("integrations_run_links", { path, label, request }),
+  integrationsSheetsPlan: (path, query, columns, segments) => invoke("integrations_sheets_plan", { path, query, columns, segments: segments ?? null }),
+  integrationsExportSheets: (path, query, columns, segments, title, worksheet, account, overflow) =>
+    invoke("integrations_export_sheets", { path, query, columns, segments: segments ?? null, title, worksheet, account, overflow }),
+  integrationsOpenLooker: (sheet) => invoke("integrations_open_looker", { sheet }),
+  integrationsLookerLink: (sheet) => invoke("integrations_looker_link", { sheet }),
+  onSheetsProgress: (cb) => listen<SheetsProgress>("integrations://sheets-progress", (e) => cb(e.payload)),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
+  integrationsSaveGoogleKey: (label, key) => invoke("integrations_save_google_key", { label, key }),
+  integrationsEstimateFieldData: (path, request) => invoke("integrations_estimate_field_data", { path, request }),
+  integrationsEstimateLabTests: (path, request) => invoke("integrations_estimate_lab_tests", { path, request }),
+  integrationsRunFieldData: (path, keyLabel, request) => invoke("integrations_run_field_data", { path, keyLabel, request }),
+  integrationsRunLabTests: (path, keyLabel, request) => invoke("integrations_run_lab_tests", { path, keyLabel, request }),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
   aeoSummary: (path) => invoke("aeo_summary", { path }),

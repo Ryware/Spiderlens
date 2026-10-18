@@ -14,6 +14,7 @@ mod duplicates_cmd;
 mod export_cmd;
 mod files_cmd;
 mod integrations_cmd;
+mod integrations_links_cmd;
 mod issues_cmd;
 mod links_cmd;
 mod options;
@@ -32,7 +33,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
-use crawl_cmd::{CrawlCmd, HtmlArgs, InfoArgs, PageArgs, ReportArgs, RetryArgs, ScopeTestArgs};
+use crawl_cmd::{
+    CrawlCmd, HtmlArgs, InfoArgs, PageArgs, ReportArgs, RetryArgs, ScopeTestArgs, ScreenshotArgs,
+};
 use options::{CrawlArgs, IdentityArgs, NetworkArgs};
 use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
@@ -98,6 +101,8 @@ enum Command {
     Page(PageArgs),
     /// Write the stored raw HTML of one page of a crawl file.
     Html(HtmlArgs),
+    /// Write the stored screenshot (WebP) of one rendered page of a crawl file.
+    Screenshot(ScreenshotArgs),
     /// List the cookies the site set during a crawl (no values).
     Cookies(cookies_cmd::CookiesArgs),
     /// Show a crawl file's accessibility results, or its mobile measures.
@@ -271,6 +276,7 @@ fn main() -> ExitCode {
         Command::Info(args) => crawl_cmd::run_info(args),
         Command::Page(args) => crawl_cmd::run_page(args),
         Command::Html(args) => crawl_cmd::run_html(args),
+        Command::Screenshot(args) => crawl_cmd::run_screenshot(args),
         Command::Cookies(args) => cookies_cmd::run_cookies(args),
         Command::Accessibility(args) => accessibility_cmd::run_accessibility(args),
         Command::Files(args) => files_cmd::run_files(args),

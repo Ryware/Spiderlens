@@ -12,6 +12,7 @@ mod crawl;
 mod custom;
 mod files;
 mod integrations;
+mod integrations_links;
 mod login;
 mod manage;
 mod near_dup;
@@ -196,6 +197,8 @@ fn main() {
             crawl::proxy_test,
             results::cookie_urls,
             results::url_html,
+            results::url_html_diff,
+            results::url_screenshot,
             results::url_tabs,
             results::copy_text,
             results::copy_rows,
@@ -268,6 +271,24 @@ fn main() {
             integrations::integrations_cache_info,
             integrations::integrations_cache_clear,
             integrations::integrations_open_terms,
+            integrations::google::integrations_default_inspect_request,
+            integrations::google::integrations_inspection_plan,
+            integrations::google::integrations_run_inspection,
+            integrations::google::integrations_analytics_streams,
+            integrations::google::integrations_default_analytics_request,
+            integrations::google::integrations_run_analytics,
+            integrations::perf::integrations_save_google_key,
+            integrations::perf::integrations_estimate_field_data,
+            integrations::perf::integrations_estimate_lab_tests,
+            integrations::perf::integrations_run_field_data,
+            integrations::perf::integrations_run_lab_tests,
+            integrations_links::integrations_link_metrics,
+            integrations_links::integrations_link_estimate,
+            integrations_links::integrations_run_links,
+            integrations_links::integrations_sheets_plan,
+            integrations_links::integrations_export_sheets,
+            integrations_links::integrations_open_looker,
+            integrations_links::integrations_looker_link,
             results::sitemap_files,
             results::orphan_summary,
             results::sitemap_entries_for_url,

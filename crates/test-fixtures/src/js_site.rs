@@ -31,6 +31,31 @@ pub const JS_HOST: &str = "js.test";
 /// A third-party host for CDN scripts, fonts and beacons.
 pub const CDN_HOST: &str = "cdn.test";
 
+/// Words each dependence ladder page shows once rendered (spec 014 US7).
+pub const US7_WORDS: usize = 100;
+
+/// The paths [`JsSiteBuilder::us3_pages`] serves (besides `/`), in link order.
+pub const US3_PATHS: [&str; 18] = [
+    "/title-changed",
+    "/title-added",
+    "/description-added",
+    "/description-changed",
+    "/h1-removed",
+    "/h1-added",
+    "/h1-changed",
+    "/canonical-changed",
+    "/canonical-added",
+    "/noindex-added",
+    "/noindex-removed",
+    "/nofollow-added",
+    "/nofollow-removed",
+    "/links-added",
+    "/text-grown",
+    "/jsonld-added",
+    "/hreflang-changed",
+    "/unchanged",
+];
+
 /// A smallest valid PNG (1 x 1, transparent).
 const PNG_1X1: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00,
@@ -346,6 +371,286 @@ impl JsSiteBuilder {
         )
     }
 
+    /// The difference pages of spec 014 user story 3 (task T039), linked
+    /// from `/`. Each page is described by the raw HTML first, then by what a
+    /// script changes. Paths are listed in [`US3_PATHS`].
+    ///
+    /// - `/title-changed`: title `Loading` becomes `Red Shoes | Shop`.
+    /// - `/title-added`: no title; a script adds `Added title`.
+    /// - `/description-added`: no description; a script adds one.
+    /// - `/description-changed`: a description a script replaces.
+    /// - `/h1-removed`: an H1 a script removes.
+    /// - `/h1-added`: no H1; a script adds one.
+    /// - `/h1-changed`: an H1 a script rewrites.
+    /// - `/canonical-changed`: canonical to itself; a script points it to `/`.
+    /// - `/canonical-added`: no canonical; a script adds one to itself.
+    /// - `/noindex-added`, `/noindex-removed`, `/nofollow-added`,
+    ///   `/nofollow-removed`: a robots meta tag a script adds or removes.
+    /// - `/links-added`: 28 anchors in the HTML and 12 more from a script
+    ///   (40 after rendering).
+    /// - `/text-grown`: 50 words in the HTML, about 900 after rendering.
+    /// - `/jsonld-added`: a script adds a JSON-LD `Product` block.
+    /// - `/hreflang-changed`: two alternates; a script adds a third.
+    /// - `/unchanged`: a script that changes nothing extracted.
+    pub fn us3_pages(self) -> Self {
+        let page = |head: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<script>document.addEventListener('DOMContentLoaded', () => {{ {script} }});</script>"
+                )
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">{head}{script}</head>\
+                 <body>{body}</body></html>"
+            )
+        };
+        let text = "<p>This paragraph keeps the page long enough that a heading does not dominate it, \
+                    so small changes stay small.</p>";
+        let add_meta = |name: &str, content: &str| {
+            format!(
+                "const m = document.createElement('meta'); m.name = '{name}'; m.content = '{content}'; \
+                 document.head.appendChild(m);"
+            )
+        };
+        let remove_meta = |name: &str| format!("document.querySelector('meta[name={name}]').remove();");
+        let anchors: String = (0..28)
+            .map(|i| format!("<a href=\"/links-added#l{i}\">go</a> "))
+            .collect();
+        let raw_words = "alpha ".repeat(50);
+        let links: String = US3_PATHS
+            .iter()
+            .map(|p| format!("<a href=\"{p}\">{}</a> ", p.trim_start_matches('/')))
+            .collect();
+        self.page(
+            "/",
+            &page(
+                "<title>Home</title>",
+                &format!("<h1>Home</h1><p>The difference pages.</p>{links}"),
+                "",
+            ),
+        )
+        .page(
+            "/title-changed",
+            &page(
+                "<title>Loading</title>",
+                &format!("<h1>Red shoes</h1>{text}"),
+                "document.title = 'Red Shoes | Shop';",
+            ),
+        )
+        .page(
+            "/title-added",
+            &page(
+                "",
+                &format!("<h1>Untitled</h1>{text}"),
+                "document.title = 'Added title';",
+            ),
+        )
+        .page(
+            "/description-added",
+            &page(
+                "<title>Description added</title>",
+                &format!("<h1>Description added</h1>{text}"),
+                &add_meta("description", "Added by a script"),
+            ),
+        )
+        .page(
+            "/description-changed",
+            &page(
+                "<title>Description changed</title><meta name=\"description\" content=\"Old description\">",
+                &format!("<h1>Description changed</h1>{text}"),
+                "document.querySelector('meta[name=description]').content = 'New description';",
+            ),
+        )
+        .page(
+            "/h1-removed",
+            &page(
+                "<title>H1 removed</title>",
+                &format!("<h1>Old heading</h1>{text}"),
+                "document.querySelector('h1').remove();",
+            ),
+        )
+        .page(
+            "/h1-added",
+            &page(
+                "<title>H1 added</title>",
+                text,
+                "const h = document.createElement('h1'); h.textContent = 'Added heading'; \
+                 document.body.insertBefore(h, document.body.firstChild);",
+            ),
+        )
+        .page(
+            "/h1-changed",
+            &page(
+                "<title>H1 changed</title>",
+                &format!("<h1>Old heading</h1>{text}"),
+                "document.querySelector('h1').textContent = 'New heading';",
+            ),
+        )
+        .page(
+            "/canonical-changed",
+            &page(
+                "<title>Canonical changed</title><link rel=\"canonical\" href=\"/canonical-changed\">",
+                &format!("<h1>Canonical changed</h1>{text}"),
+                "document.querySelector('link[rel=canonical]').href = '/';",
+            ),
+        )
+        .page(
+            "/canonical-added",
+            &page(
+                "<title>Canonical added</title>",
+                &format!("<h1>Canonical added</h1>{text}"),
+                "const l = document.createElement('link'); l.rel = 'canonical'; l.href = '/canonical-added'; \
+                 document.head.appendChild(l);",
+            ),
+        )
+        .page(
+            "/noindex-added",
+            &page(
+                "<title>Noindex added</title>",
+                &format!("<h1>Noindex added</h1>{text}"),
+                &add_meta("robots", "noindex"),
+            ),
+        )
+        .page(
+            "/noindex-removed",
+            &page(
+                "<title>Noindex removed</title><meta name=\"robots\" content=\"noindex\">",
+                &format!("<h1>Noindex removed</h1>{text}"),
+                &remove_meta("robots"),
+            ),
+        )
+        .page(
+            "/nofollow-added",
+            &page(
+                "<title>Nofollow added</title>",
+                &format!("<h1>Nofollow added</h1>{text}"),
+                &add_meta("robots", "nofollow"),
+            ),
+        )
+        .page(
+            "/nofollow-removed",
+            &page(
+                "<title>Nofollow removed</title><meta name=\"robots\" content=\"nofollow\">",
+                &format!("<h1>Nofollow removed</h1>{text}"),
+                &remove_meta("robots"),
+            ),
+        )
+        .page(
+            "/links-added",
+            &page(
+                "<title>Links added</title>",
+                &format!("<h1>Links added</h1>{text}<div id=\"more\"></div>{anchors}"),
+                "const d = document.getElementById('more'); \
+                 for (let i = 28; i < 40; i++) { const a = document.createElement('a'); \
+                 a.href = '/links-added#l' + i; a.textContent = 'go'; d.appendChild(a); }",
+            ),
+        )
+        .page(
+            "/text-grown",
+            &page(
+                "<title>Text grown</title>",
+                &format!("<p>{raw_words}</p>"),
+                "const p = document.createElement('p'); p.textContent = 'alpha '.repeat(850); \
+                 document.body.appendChild(p);",
+            ),
+        )
+        .page(
+            "/jsonld-added",
+            &page(
+                "<title>Product</title>",
+                &format!("<h1>Product</h1>{text}"),
+                "const s = document.createElement('script'); s.type = 'application/ld+json'; \
+                 s.textContent = JSON.stringify({'@context': 'https://schema.org', '@type': 'Product', \
+                 name: 'Red Shoes'}); document.head.appendChild(s);",
+            ),
+        )
+        .page(
+            "/hreflang-changed",
+            &page(
+                "<title>Hreflang changed</title>\
+                 <link rel=\"alternate\" hreflang=\"en\" href=\"/\">\
+                 <link rel=\"alternate\" hreflang=\"de\" href=\"/unchanged\">",
+                &format!("<h1>Hreflang changed</h1>{text}"),
+                "const l = document.createElement('link'); l.rel = 'alternate'; l.hreflang = 'fr'; \
+                 l.href = '/title-changed'; document.head.appendChild(l);",
+            ),
+        )
+        .page(
+            "/unchanged",
+            &page(
+                "<title>Unchanged</title><meta name=\"description\" content=\"Nothing changes\">",
+                &format!("<h1>Unchanged</h1>{text}"),
+                "document.body.setAttribute('data-ready', '1');",
+            ),
+        )
+    }
+
+    /// The pages of spec 014 US7: how much of a page's text a script adds.
+    ///
+    /// - `/dep-0`, `/dep-25`, `/dep-50`, `/dep-75`, `/dep-100`: each shows
+    ///   exactly 100 words once rendered, of which 0, 25, 50, 75 or 100 are
+    ///   added by a script. The raw words are all `stable`, the added ones
+    ///   all `added`, so the expected share is exact.
+    /// - `/shell`: an empty application shell with no title and no H1; a
+    ///   script adds the title `Shell app`, an H1 and 40 words of text.
+    /// - `/`: links to all of them, with no script.
+    pub fn us7_pages(self) -> Self {
+        let page = |title: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!("<script>{script}</script>")
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
+                 {script}</head><body>{body}</body></html>"
+            )
+        };
+        let on_ready = |js: &str| format!("document.addEventListener('DOMContentLoaded', () => {{ {js} }});");
+        let words = |word: &str, n: usize| vec![word; n].join(" ");
+        let mut links = String::new();
+        let mut site = self;
+        for pct in [0usize, 25, 50, 75, 100] {
+            let added = US7_WORDS * pct / 100;
+            let raw = US7_WORDS - added;
+            let body = if raw == 0 {
+                "<div id=\"app\"></div>".to_string()
+            } else {
+                format!("<p>{}</p><div id=\"app\"></div>", words("stable", raw))
+            };
+            let script = if added == 0 {
+                String::new()
+            } else {
+                on_ready(&format!(
+                    "document.getElementById('app').textContent = '{}';",
+                    words("added", added)
+                ))
+            };
+            let path = format!("/dep-{pct}");
+            links.push_str(&format!("<a href=\"{path}\">{pct}</a> "));
+            site = site.page(&path, &page("Ladder", &body, &script));
+        }
+        links.push_str("<a href=\"/shell\">Shell</a>");
+        site.page(
+            "/",
+            &page("Ladder home", &format!("<p>The ladder.</p>{links}"), ""),
+        )
+        .page(
+            "/shell",
+            &format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+                     <script>{}</script></head><body><div id=\"root\"></div></body></html>",
+                on_ready(&format!(
+                    "document.title = 'Shell app'; \
+                         document.getElementById('root').innerHTML = '<h1>Shell app</h1><p>{}</p>';",
+                    words("rendered", 40)
+                ))
+            ),
+        )
+    }
+
     /// Pages for failure handling (spec 014 US5, T056). The home page
     /// links to all of them:
     ///
@@ -430,6 +735,201 @@ impl JsSiteBuilder {
             "/steady",
             &page("Steady", "<h1>Steady</h1><p>Nothing goes wrong here.</p>", ""),
         )
+    }
+
+    /// The pages of spec 014 user story 4 (task T046), linked from `/`. Pass
+    /// a rendering include pattern to render only the one under test.
+    ///
+    /// - `/settles`: a heading appears after 2 s.
+    /// - `/polls`: asks `/api/poll.json` every 200 ms and rewrites the
+    ///   page, forever.
+    /// - `/resources`: an image, a font, a video, a stylesheet, a script of
+    ///   its own, a third-party script on `cdn.test` and `/private/app.js`,
+    ///   which the fixture's robots.txt disallows.
+    /// - `/products/`, `/products/a`, `/products/b`: a section.
+    /// - `/width`: writes `window.innerWidth` into its `<h1>` as
+    ///   `innerWidth=N` (raw text `raw`).
+    /// - `/retry`: its first script answers 429 with `Retry-After: 2`; when
+    ///   that fails, a second script is asked for.
+    /// - `/many`: eight scripts of `/many/N.js`, each answered after 300 ms.
+    /// - `/plain`, `/other`: nothing happens.
+    pub fn us4_pages(mut self) -> Self {
+        let page = |title: &str, head: &str, body: &str| {
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+                 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+                 <title>{title}</title>{head}</head><body>{body}</body></html>"
+            )
+        };
+        let many: String = (0..8)
+            .map(|n| format!("<script src=\"/many/{n}.js\"></script>"))
+            .collect();
+        let mut retry = Resource::new("text/javascript", "");
+        retry.status = 429;
+        self = self
+            .robots(JS_HOST, "User-agent: *\nDisallow: /private/\n")
+            .page(
+                "/",
+                &page(
+                    "Rendering settings",
+                    "",
+                    "<h1>Rendering settings</h1><p>Pages for the rendering settings.</p>\
+                     <a href=\"/settles\">Settles</a> <a href=\"/polls\">Polls</a> \
+                     <a href=\"/resources\">Resources</a> <a href=\"/products/\">Products</a> \
+                     <a href=\"/products/a\">A</a> <a href=\"/products/b\">B</a> \
+                     <a href=\"/width\">Width</a> <a href=\"/retry\">Retry</a> \
+                     <a href=\"/many\">Many</a> <a href=\"/plain\">Plain</a> <a href=\"/other\">Other</a>",
+                ),
+            )
+            .page(
+                "/settles",
+                &page(
+                    "Settles",
+                    "<script>setTimeout(function () { document.body.insertAdjacentHTML('beforeend', \
+                     '<h2>Settled after two seconds</h2>'); }, 2000);</script>",
+                    "<h1>Settles</h1><p>A heading is added after two seconds.</p>",
+                ),
+            )
+            .page(
+                "/polls",
+                &page(
+                    "Polls",
+                    "<script>var n = 0; setInterval(function () { n++; \
+                     fetch('/api/poll.json?n=' + n).then(function (r) { return r.text(); }).then(function (t) { \
+                     document.getElementById('t').textContent = t + n; }); }, 200);</script>",
+                    "<h1>Polls</h1><p id=\"t\">0</p>",
+                ),
+            )
+            .json(JS_HOST, "/api/poll.json", "{}")
+            .cache_control(JS_HOST, "/api/poll.json", "no-store")
+            .page(
+                "/resources",
+                &page(
+                    "Resources",
+                    "<link rel=\"stylesheet\" href=\"/css/site.css\">\
+                     <script src=\"/js/own.js\"></script>\
+                     <script src=\"{base:cdn.test}/cdn/lib.js\"></script>\
+                     <script src=\"/private/app.js\"></script>\
+                     <script>new FontFace('Fixture', 'url(/fonts/a.woff2)').load().catch(function () {});</script>",
+                    "<h1>Resources</h1><img src=\"/img/a.png\" alt=\"a\">\
+                     <video src=\"/media/a.mp4\" preload=\"auto\" muted></video>",
+                ),
+            )
+            .stylesheet(JS_HOST, "/css/site.css", "h1 { color: green; }")
+            .script(JS_HOST, "/js/own.js", "window.own = 1;")
+            .script(CDN_HOST, "/cdn/lib.js", "window.cdn = 1;")
+            .script(JS_HOST, "/private/app.js", "window.privateApp = 1;")
+            .image(JS_HOST, "/img/a.png")
+            .font(JS_HOST, "/fonts/a.woff2")
+            .media(JS_HOST, "/media/a.mp4")
+            .page(
+                "/products/",
+                &page("Products", "", "<h1>Products</h1><p>The products section.</p>"),
+            )
+            .page(
+                "/products/a",
+                &page("Product A", "", "<h1>Product A</h1><p>The first product.</p>"),
+            )
+            .page(
+                "/products/b",
+                &page("Product B", "", "<h1>Product B</h1><p>The second product.</p>"),
+            )
+            .page(
+                "/width",
+                &page(
+                    "Width",
+                    "<script>document.addEventListener('DOMContentLoaded', function () { \
+                     document.getElementById('w').textContent = 'innerWidth=' + window.innerWidth; });</script>",
+                    "<h1 id=\"w\">raw</h1>",
+                ),
+            )
+            .page(
+                "/retry",
+                &page(
+                    "Retry",
+                    "<script>function loadB() { var s = document.createElement('script'); \
+                     s.src = '/retry/b.js'; document.head.appendChild(s); }</script>\
+                     <script src=\"/retry/a.js\" onerror=\"loadB()\"></script>",
+                    "<h1>Retry</h1><p>A script is asked to wait.</p>",
+                ),
+            )
+            .resource(JS_HOST, "/retry/a.js", retry)
+            .header(JS_HOST, "/retry/a.js", "Retry-After", "2")
+            .script(JS_HOST, "/retry/b.js", "window.retryB = 1;")
+            .page(
+                "/many",
+                &page("Many", &many, "<h1>Many</h1><p>Eight scripts at once.</p>"),
+            )
+            .page("/plain", &page("Plain", "", "<h1>Plain</h1><p>Nothing happens.</p>"))
+            .page("/other", &page("Other", "", "<h1>Other</h1><p>Nothing happens.</p>"));
+        for n in 0..8 {
+            self = self
+                .script(JS_HOST, &format!("/many/{n}.js"), "window.many = 1;")
+                .delay(JS_HOST, &format!("/many/{n}.js"), Duration::from_millis(300));
+        }
+        self
+    }
+
+    /// `pages` pages `/slow/0` .. `/slow/{pages-1}`, linked from `/`, each
+    /// with its own script answered after 600 ms (the concurrency test, T051).
+    pub fn us4_slow_pages(mut self, pages: u64) -> Self {
+        let links: String = (0..pages)
+            .map(|n| format!("<a href=\"/slow/{n}\">Slow {n}</a> "))
+            .collect();
+        self = self.page(
+            "/",
+            &format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Slow</title></head>\
+                 <body><h1>Slow</h1><p>Slow pages.</p>{links}</body></html>"
+            ),
+        );
+        for n in 0..pages {
+            self = self
+                .page(
+                    &format!("/slow/{n}"),
+                    &format!(
+                        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Slow {n}</title>\
+                         <script src=\"/slow/{n}.js\"></script></head>\
+                         <body><h1>Slow {n}</h1><p>Waits for its script.</p></body></html>"
+                    ),
+                )
+                .script(JS_HOST, &format!("/slow/{n}.js"), "window.slow = 1;")
+                .delay(JS_HOST, &format!("/slow/{n}.js"), Duration::from_millis(600));
+        }
+        self
+    }
+
+    /// `pages` pages `/c/0` .. `/c/{pages-1}`, linked from `/`, all loading
+    /// `/shared/max-age.js` (`Cache-Control: max-age=3600`) and
+    /// `/shared/no-store.js` (`no-store`) (the cache test, T055).
+    pub fn us4_cache_pages(mut self, pages: u64) -> Self {
+        let links: String = (0..pages)
+            .map(|n| format!("<a href=\"/c/{n}\">Page {n}</a> "))
+            .collect();
+        self = self
+            .page(
+                "/",
+                &format!(
+                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Cache</title></head>\
+                     <body><h1>Cache</h1><p>Pages sharing scripts.</p>{links}</body></html>"
+                ),
+            )
+            .script(JS_HOST, "/shared/max-age.js", "window.cached = 1;")
+            .cache_control(JS_HOST, "/shared/max-age.js", "max-age=3600")
+            .script(JS_HOST, "/shared/no-store.js", "window.fresh = 1;")
+            .cache_control(JS_HOST, "/shared/no-store.js", "no-store");
+        for n in 0..pages {
+            self = self.page(
+                &format!("/c/{n}"),
+                &format!(
+                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Page {n}</title>\
+                     <script src=\"/shared/max-age.js\"></script>\
+                     <script src=\"/shared/no-store.js\"></script></head>\
+                     <body><h1>Page {n}</h1><p>Two shared scripts.</p></body></html>"
+                ),
+            );
+        }
+        self
     }
 
     /// Starts on a random loopback port.

@@ -25,7 +25,10 @@ mod stored;
 mod url_norm;
 mod validate;
 
-pub use assistants::{APP_IDENTIFIER, AppDirs, AssistantSettings, AssistantStore};
+pub use assistants::{
+    APP_IDENTIFIER, AppDirs, AssistantProfile, AssistantSettings, AssistantStore, assistant_profiles,
+    crawl_profile_problem,
+};
 pub use compare::{CompareSettings, CompareSettingsError, ElementSetting, IssueSettingsChoice, MapRule};
 pub use custom::{
     CustomRules, ElementKind, ElementLimit, ExtractMode, Extractor, ExtractorKind, Search, SearchCondition,

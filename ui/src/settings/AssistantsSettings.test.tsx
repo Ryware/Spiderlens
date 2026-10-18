@@ -95,3 +95,65 @@ test("activity_lists_recent_calls_and_clears", async () => {
   fireEvent.click(within(panel).getByRole("button", { name: "Clear activity" }));
   expect(await within(panel).findByText("No assistant has used SpiderLens yet.")).toBeTruthy();
 });
+
+// Spec 016 US6 (FR-026): assistants starting crawls.
+const crawlSwitch = (panel: HTMLElement) => within(panel).getByRole("switch", { name: "Allow AI assistants to start crawls" });
+
+test("starting_crawls_is_off_by_default_with_a_plain_risk_note_and_profiles_locked", async () => {
+  const { panel, transport } = await openAssistants();
+  expect(crawlSwitch(panel).getAttribute("aria-checked")).toBe("false");
+  expect(within(panel).getByText(/send requests to websites from this computer/)).toBeTruthy();
+  expect(within(panel).getByText(/marked “Started by an AI assistant”/)).toBeTruthy();
+  const list = within(panel).getByRole("list", { name: "Allowed profiles" });
+  for (const sw of within(list).getAllByRole("switch")) expect((sw as HTMLButtonElement).disabled || sw.getAttribute("data-disabled") !== null).toBe(true);
+  expect(transport.assistants.saves).toEqual([]);
+});
+
+test("turning_crawling_on_and_allowing_a_profile_saves_both", async () => {
+  const { panel, transport } = await openAssistants();
+  fireEvent.click(crawlSwitch(panel));
+  await waitFor(() => expect(transport.assistants.settings.allow_crawl).toBe(true));
+  fireEvent.click(within(panel).getByRole("switch", { name: "Allow Polite" }));
+  await waitFor(() => expect(transport.assistants.settings.allowed_profiles).toEqual(["Polite"]));
+  expect(within(panel).getByRole("switch", { name: "Allow Polite" }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(within(panel).getByRole("switch", { name: "Allow Polite" }));
+  await waitFor(() => expect(transport.assistants.settings.allowed_profiles).toEqual([]));
+});
+
+test("a_profile_that_ignores_robots_txt_is_disabled_with_the_reason", async () => {
+  const { panel, transport } = await openAssistants();
+  fireEvent.click(crawlSwitch(panel));
+  await waitFor(() => expect(transport.assistants.settings.allow_crawl).toBe(true));
+  const rude = within(panel).getByRole("switch", { name: "Allow Stress test" });
+  expect(rude.hasAttribute("disabled") || rude.getAttribute("data-disabled") !== null).toBe(true);
+  expect(rude.closest("li")?.textContent).toContain("Ignores robots.txt");
+  fireEvent.click(rude);
+  expect(transport.assistants.settings.allowed_profiles).toEqual([]);
+});
+
+test("a_refusal_from_the_app_is_shown_and_the_switch_goes_back", async () => {
+  const transport = fakeTransport();
+  // The app refuses a profile that was changed to ignore robots.txt after it was allowed.
+  transport.assistants.settings = { allow_read: false, allowed_folders: [], allow_crawl: false, allowed_profiles: ["Stress test"] };
+  const { panel } = await openAssistants(transport);
+  fireEvent.click(crawlSwitch(panel));
+  expect((await within(panel).findByRole("alert")).textContent).toContain('The profile "Stress test" ignores robots.txt');
+  await waitFor(() => expect(crawlSwitch(panel).getAttribute("aria-checked")).toBe("false"));
+  expect(transport.assistants.settings.allow_crawl).toBe(false);
+});
+
+test("without_saved_profiles_the_picker_says_so", async () => {
+  const transport = fakeTransport();
+  transport.assistants.profiles = [];
+  const { panel } = await openAssistants(transport);
+  expect(within(panel).getByText(/No saved profiles yet/)).toBeTruthy();
+  expect(within(panel).queryByRole("list", { name: "Allowed profiles" })).toBeNull();
+});
+
+test("the_test_reports_the_crawl_tools_when_crawling_is_on", async () => {
+  const { panel, transport } = await openAssistants();
+  fireEvent.click(crawlSwitch(panel));
+  await waitFor(() => expect(transport.assistants.settings.allow_crawl).toBe(true));
+  fireEvent.click(within(panel).getByRole("button", { name: "Test" }));
+  expect((await within(panel).findByRole("status")).textContent).toMatch(/13 tools.*Starting crawls is on/);
+});

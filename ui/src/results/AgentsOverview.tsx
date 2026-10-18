@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import type { AgentAccessRow } from "../generated/AgentAccessRow";
 import type { AgentPart } from "../generated/AgentPart";
 import type { AgentsSummary } from "../generated/AgentsSummary";
 import type { EntryPointRow } from "../generated/EntryPointRow";
@@ -41,6 +42,45 @@ const outcomeLabels: Record<string, [string, Tone]> = {
   wrong_type: ["Wrong content type", "warn"],
   not_fetched: ["Not fetched", "neutral"],
 };
+
+const robotsLabels: Record<AgentAccessRow["robots"], [string, Tone]> = {
+  allowed: ["Allowed", "ok"],
+  blocked: ["Blocked", "bad"],
+  not_checked: ["Not checked", "neutral"],
+};
+
+const probeLabels: Record<AgentAccessRow["probe"], [string, Tone]> = {
+  ok: ["Reached", "ok"],
+  blocked: ["Blocked", "bad"],
+  challenged: ["Challenged", "warn"],
+  not_probed: ["Not tested", "neutral"],
+};
+
+function AgentAccess({ rows }: { rows: AgentAccessRow[] }) {
+  return (
+    <section aria-label="AI agent access" className="flex flex-col gap-1">
+      <h3 className="m-0 text-xs font-semibold text-fg-3">AI agents acting for a person</h3>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm">
+        {rows.map((r) => {
+          const [robots, rt] = robotsLabels[r.robots];
+          const [probe, pt] = probeLabels[r.probe];
+          return (
+            <li key={`${r.vendor}/${r.bot}`} className="flex items-center gap-2">
+              <span className="font-medium">{r.bot}</span>
+              <span className="text-fg-3">{r.vendor}</span>
+              <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                <span className="text-fg-3">robots.txt</span>
+                <Badge tone={rt}>{robots}</Badge>
+                <span className="text-fg-3">Test</span>
+                <Badge tone={pt}>{probe}</Badge>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 function EntryPoints({ rows }: { rows: EntryPointRow[] }) {
   const hosts = new Map<string, EntryPointRow[]>();
@@ -183,7 +223,10 @@ export function AgentsOverview({ transport, path }: { transport: Transport; path
               </section>
             )}
           </div>
-          <EntryPoints rows={entries} />
+          <div className="flex flex-col gap-3">
+            {summary.access.length > 0 && <AgentAccess rows={summary.access} />}
+            <EntryPoints rows={entries} />
+          </div>
         </div>
       )}
     </section>

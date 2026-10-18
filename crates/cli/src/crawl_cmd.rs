@@ -909,6 +909,44 @@ fn print_render_summary(out: &mut impl Write, r: &RenderSummary) {
     if let Some(b) = &r.renderer {
         let _ = writeln!(out, "  {:<32} {} {}", "Renderer", b.name, b.version);
     }
+    if let Some(c) = &r.settings {
+        let auto = |v: Option<u32>| v.map_or_else(|| "auto".to_string(), |v| v.to_string());
+        let _ = writeln!(
+            out,
+            "  {:<32} up to {} s, at least {} s, {} at once, memory {}",
+            "Settings",
+            c.max_render_secs,
+            c.min_wait_secs,
+            auto(c.concurrency),
+            auto(c.memory_budget_mb)
+        );
+        let window = match c.window.preset {
+            spiderlens_config::WindowPreset::Auto => "auto".to_string(),
+            spiderlens_config::WindowPreset::Mobile => "mobile".to_string(),
+            spiderlens_config::WindowPreset::Desktop => "desktop".to_string(),
+            spiderlens_config::WindowPreset::Custom => format!(
+                "{}x{}",
+                c.window.width.unwrap_or_default(),
+                c.window.height.unwrap_or_default()
+            ),
+        };
+        let blocked: Vec<&str> = [
+            ("images", c.block.images),
+            ("media", c.block.media),
+            ("fonts", c.block.fonts),
+            ("stylesheets", c.block.stylesheets),
+            ("third-party", c.block.third_party),
+        ]
+        .into_iter()
+        .filter_map(|(n, on)| on.then_some(n))
+        .collect();
+        let blocked = if blocked.is_empty() {
+            "none".to_string()
+        } else {
+            blocked.join(", ")
+        };
+        let _ = writeln!(out, "  {:<32} window {window}, blocked: {blocked}", "");
+    }
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
@@ -1085,6 +1123,24 @@ pub struct HtmlArgs {
     /// URL as crawled.
     url: String,
     /// Write to this file instead of standard output.
+    #[arg(long, value_name = "PATH")]
+    out: Option<PathBuf>,
+    /// The stored rendered HTML, as the browser serialised it.
+    #[arg(long, conflicts_with = "diff")]
+    rendered: bool,
+    /// The differences between the normalised raw and rendered HTML, as a
+    /// unified diff.
+    #[arg(long)]
+    diff: bool,
+}
+
+#[derive(Args)]
+pub struct ScreenshotArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// URL as crawled.
+    url: String,
+    /// Write the WebP image to this file instead of standard output.
     #[arg(long, value_name = "PATH")]
     out: Option<PathBuf>,
 }
@@ -1267,10 +1323,65 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
         Ok(Some(id)) => id,
         _ => return ExitCode::FAILURE,
     };
-    let html = match store.page_html(id) {
-        Ok(Some(h)) => h,
+    let html = if args.diff {
+        let diff =
+            spiderlens_results::Reader::open(&args.file).and_then(|mut reader| reader.html_unified(id));
+        match diff {
+            Ok(d) => d.into_bytes(),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        let stored = if args.rendered {
+            store.rendered_html(id)
+        } else {
+            store.page_html(id)
+        };
+        match stored {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                let which = if args.rendered { "rendered HTML" } else { "HTML" };
+                eprintln!("error: this crawl did not store the {which} of {url}");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    let written = match &args.out {
+        Some(path) => std::fs::write(path, &html),
+        None => std::io::stdout().lock().write_all(&html),
+    };
+    match written {
+        Ok(()) => ExitCode::from(exit::FETCHED),
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `spiderlens screenshot` (spec 014 FR-033): the stored WebP screenshot of
+/// one rendered page.
+pub fn run_screenshot(args: ScreenshotArgs) -> ExitCode {
+    let (store, url) = match open_for_page(&args.file, &args.url) {
+        Ok(x) => x,
+        Err(code) => return code,
+    };
+    let id = match store.id_of(&url) {
+        Ok(Some(id)) => id,
+        _ => return ExitCode::FAILURE,
+    };
+    let image = match store.screenshot(id) {
+        Ok(Some((image, _, _))) => image,
         Ok(None) => {
-            eprintln!("error: this crawl did not store the HTML of {url}");
+            eprintln!(
+                "error: this crawl has no screenshot of {url}; crawl with --render and --screenshots to take them"
+            );
             return ExitCode::FAILURE;
         }
         Err(e) => {
@@ -1279,8 +1390,8 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
         }
     };
     let written = match &args.out {
-        Some(path) => std::fs::write(path, &html),
-        None => std::io::stdout().lock().write_all(&html),
+        Some(path) => std::fs::write(path, &image),
+        None => std::io::stdout().lock().write_all(&image),
     };
     match written {
         Ok(()) => ExitCode::from(exit::FETCHED),
