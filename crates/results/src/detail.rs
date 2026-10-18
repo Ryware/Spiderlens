@@ -21,6 +21,116 @@ pub struct RedirectHop {
     pub final_state: String,
 }
 
+/// What automated accessibility checks can and cannot tell (spec 026
+/// FR-025). Shown wherever accessibility results are: the tab, the detail
+/// pane, the command line and the exports.
+pub const A11Y_DISCLAIMER: &str = "Automated checks find only part of the accessibility problems. \
+A page without violations is not necessarily accessible.";
+
+/// One failing element of an accessibility check.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct A11yNodeDetail {
+    pub selector: String,
+    pub excerpt: String,
+    /// Check-specific JSON, such as the colours of a contrast failure.
+    pub data: Option<String>,
+    /// x, y, width and height in CSS pixels, when the page was rendered.
+    pub bbox: Option<Vec<f64>>,
+}
+
+/// One check's result on the page.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct A11yCheckDetail {
+    pub check_id: String,
+    pub title: String,
+    /// violation | needs_review
+    pub kind: String,
+    /// static | full
+    pub source: String,
+    pub impact: Option<String>,
+    /// Space-separated WCAG tags as the checks write them.
+    pub wcag: Option<String>,
+    /// Failing elements before the cap.
+    pub nodes_total: u32,
+    /// The rule's public documentation; None for the static checks.
+    pub help_url: Option<String>,
+    pub nodes: Vec<A11yNodeDetail>,
+}
+
+/// The Accessibility section of the detail pane (spec 026 FR-023).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct A11yDetail {
+    pub static_state: Option<String>,
+    pub full_state: Option<String>,
+    pub full_reason: Option<String>,
+    /// Ordered by impact, then check.
+    pub checks: Vec<A11yCheckDetail>,
+    /// Some check has more failing elements than are stored.
+    pub capped: bool,
+    pub disclaimer: String,
+}
+
+/// An element that failed a mobile measure.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MobileExample {
+    pub selector: String,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The Mobile section of the detail pane (spec 026 FR-023).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct MobileDetail {
+    pub viewport: Option<String>,
+    pub viewport_state: Option<String>,
+    pub plugins: Option<u32>,
+    pub window: Option<String>,
+    pub measured: Option<String>,
+    pub content_px: Option<f64>,
+    pub window_px: Option<f64>,
+    pub widest: Option<String>,
+    pub small_text_share: Option<f64>,
+    pub small_targets: Option<u32>,
+    pub examples: Vec<MobileExample>,
+}
+
+/// A readable name for a check id.
+fn a11y_title(check_id: &str) -> String {
+    if let Some(id) = check_id.strip_prefix("static.") {
+        let title = match id {
+            "form_label" => "Form field without a label",
+            "button_name" => "Button without a name",
+            "link_name" => "Link without a name",
+            "frame_title" => "Frame without a title",
+            "lang_invalid" => "Invalid page language",
+            "element_lang_invalid" => "Invalid language on an element",
+            "zoom_disabled" => "Pinch zoom is disabled",
+            "viewport_missing" => "No viewport meta tag",
+            "viewport_width" => "Viewport is not the device width",
+            "tabindex_positive" => "Positive tabindex",
+            "accesskey_duplicate" => "Duplicate accesskey",
+            "meta_refresh_delay" => "Timed page refresh",
+            "deprecated_element" => "Blinking or scrolling element",
+            "plugin_element" => "Uses object, embed or applet",
+            "area_alt" => "Image map area without alt text",
+            "input_image_alt" => "Image button without alt text",
+            other => return other.replace('_', " "),
+        };
+        return title.to_string();
+    }
+    let spaced = check_id.replace('-', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => spaced,
+    }
+}
+
 /// One failed AMP check (spec 027 part E).
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -155,6 +265,10 @@ pub struct UrlDetail {
     pub manual_retry: bool,
     /// AMP checks, for AMP pages of a crawl that checked AMP.
     pub amp: Option<AmpDetail>,
+    /// Accessibility results, for pages a crawl checked (spec 026).
+    pub accessibility: Option<A11yDetail>,
+    /// Mobile measures, for pages a crawl checked (spec 026).
+    pub mobile: Option<MobileDetail>,
     /// What was read from the document, for a PDF the crawl read.
     pub pdf: Option<PdfDetail>,
     /// Title and meta description as served, for the search preview (spec
@@ -538,6 +652,16 @@ impl Reader {
         } else {
             None
         };
+        let accessibility = if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::AccessibilityFull) {
+            self.accessibility(id)?
+        } else {
+            None
+        };
+        let mobile = if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::MobileLayout) {
+            self.mobile(id)?
+        } else {
+            None
+        };
         let reason_label = reason.as_deref().and_then(|r| {
             spiderlens_engine::crawl::NotCrawledReason::parse(r).map(|r| r.label().to_string())
         });
@@ -583,11 +707,126 @@ impl Reader {
             error_reason,
             manual_retry,
             amp,
+            accessibility,
+            mobile,
             pdf,
             snippet,
             spelling,
             unavailable,
         })
+    }
+
+    fn accessibility(&self, id: i64) -> Result<Option<A11yDetail>> {
+        let audit = self
+            .conn
+            .query_row(
+                "SELECT static_state, full_state, full_reason FROM a11y_audits WHERE url_id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, check_id, kind, source, impact, wcag, nodes_total FROM a11y_results WHERE url_id = ?1 \
+             ORDER BY CASE impact WHEN 'critical' THEN 0 WHEN 'serious' THEN 1 WHEN 'moderate' THEN 2 \
+             WHEN 'minor' THEN 3 ELSE 4 END, check_id, kind",
+        )?;
+        let rows = stmt
+            .query_map([id], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    A11yCheckDetail {
+                        check_id: r.get(1)?,
+                        title: String::new(),
+                        kind: r.get(2)?,
+                        source: r.get(3)?,
+                        impact: r.get(4)?,
+                        wcag: r.get(5)?,
+                        nodes_total: r.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                        help_url: None,
+                        nodes: Vec::new(),
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if audit.is_none() && rows.is_empty() {
+            return Ok(None);
+        }
+        let mut nodes = self.conn.prepare_cached(
+            "SELECT selector, excerpt, data, x, y, w, h FROM a11y_nodes WHERE result_id = ?1 ORDER BY pos",
+        )?;
+        let mut checks = Vec::with_capacity(rows.len());
+        let mut capped = false;
+        for (result_id, mut check) in rows {
+            check.nodes = nodes
+                .query_map([result_id], |r| {
+                    let bbox = match (
+                        r.get::<_, Option<f64>>(3)?,
+                        r.get::<_, Option<f64>>(4)?,
+                        r.get::<_, Option<f64>>(5)?,
+                        r.get::<_, Option<f64>>(6)?,
+                    ) {
+                        (Some(x), Some(y), Some(w), Some(h)) => Some(vec![x, y, w, h]),
+                        _ => None,
+                    };
+                    Ok(A11yNodeDetail {
+                        selector: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        excerpt: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        data: r.get(2)?,
+                        bbox,
+                    })
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            capped |= check.nodes_total as usize > check.nodes.len();
+            check.title = a11y_title(&check.check_id);
+            check.help_url = (!check.check_id.starts_with("static.")).then(|| {
+                format!("https://dequeuniversity.com/rules/axe/4.14/{}", check.check_id)
+            });
+            checks.push(check);
+        }
+        let (static_state, full_state, full_reason) = audit.unwrap_or((None, None, None));
+        Ok(Some(A11yDetail {
+            static_state,
+            full_state,
+            full_reason,
+            checks,
+            capped,
+            disclaimer: A11Y_DISCLAIMER.to_string(),
+        }))
+    }
+
+    fn mobile(&self, id: i64) -> Result<Option<MobileDetail>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT viewport, viewport_state, plugins, \"window\", measured, content_px, window_px, widest, \
+                 small_text_share, small_targets, examples FROM mobile_measures WHERE url_id = ?1",
+                [id],
+                |r| {
+                    let examples: Option<String> = r.get(10)?;
+                    Ok(MobileDetail {
+                        viewport: r.get(0)?,
+                        viewport_state: r.get(1)?,
+                        plugins: r.get::<_, Option<i64>>(2)?.and_then(|n| u32::try_from(n).ok()),
+                        window: r.get(3)?,
+                        measured: r.get(4)?,
+                        content_px: r.get(5)?,
+                        window_px: r.get(6)?,
+                        widest: r.get(7)?,
+                        small_text_share: r.get(8)?,
+                        small_targets: r.get::<_, Option<i64>>(9)?.and_then(|n| u32::try_from(n).ok()),
+                        examples: examples
+                            .and_then(|e| serde_json::from_str(&e).ok())
+                            .unwrap_or_default(),
+                    })
+                },
+            )
+            .optional()?)
     }
 
     fn amp(&self, id: i64) -> Result<Option<AmpDetail>> {
