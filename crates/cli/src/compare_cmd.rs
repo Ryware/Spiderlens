@@ -140,6 +140,12 @@ pub fn run_compare(a: CompareArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
+    // A warning only: the run goes on.
+    if let Ok(setup) = spiderlens_compare::setup(&previous, &current)
+        && let Some(w) = setup.disk_warning
+    {
+        eprintln!("warning: {w}");
+    }
     let cancel = AtomicBool::new(false);
     let mut c = match Comparison::run(&previous, &current, settings, None, &cancel, &mut |_| {}) {
         Ok(c) => c,

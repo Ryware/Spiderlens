@@ -1,21 +1,26 @@
 //! Crawl Analysis: whole-crawl computations that run after fetching ends
 //! (spec 009 plan D12, specs 022 and 023).
 //!
-//! Two parts live here. Link positions and Link Score (spec 023 stage 1) are
-//! built by the reader in its `temp` schema on demand, like the other derived
-//! tables (plan D6). Columns name the tables unqualified, so a stored copy in
-//! `main` and a fresh copy in `temp` are read the same way (plan D5).
+//! Two parts live here. The shared runner from spec 009 (plan D12): each
+//! global computation is a [`Pass`] listed in [`PASSES`]; the runner orders
+//! them by their dependencies, reruns the stale ones, records each in the
+//! `analysis` meta key and reports progress. Passes run when a crawl ends,
+//! by the process that wrote it, and on demand for an opened file; on a
+//! read-only file they run into the reader connection's `temp` schema.
 //!
-//! The shared runner from spec 009 (plan D12) follows: each global
-//! computation is a [`Pass`] listed in [`PASSES`]; the runner orders them by
-//! their dependencies, reruns the stale ones, records each in the `analysis`
-//! meta key and reports progress. Passes run when a crawl ends, by the
-//! process that wrote it, and on demand for an opened file; on a read-only
-//! file they run into the reader connection's `temp` schema. Moving Link
-//! Score onto it is spec 023 stage 2.
+//! Link positions and Link Score (spec 023) are two of those passes, stored
+//! in the file (stage 2). When the file holds current results for the
+//! settings the reader shows, the reader reads them as they are; otherwise
+//! it builds the same tables in its `temp` schema on demand, like the other
+//! derived tables (plan D5, D6). Columns name the tables unqualified, so a
+//! stored copy in `main` and a fresh copy in `temp` are read the same way.
 
 pub mod link_metrics;
+mod link_passes;
 pub mod link_positions;
+
+pub use link_passes::{LINK_PASSES, LinkMetrics, LinkPositions, auto_skips};
+pub(crate) use link_passes::stored_run;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -117,8 +122,9 @@ pub struct AnalysisRun {
 }
 
 impl Reader {
-    /// Runs Crawl Analysis now (stage 1: into this reader's temp tables):
-    /// link positions, then Link Score and the link counts.
+    /// Runs Crawl Analysis now: link positions, then Link Score and the link
+    /// counts. Stored results that are current are returned as they are;
+    /// otherwise the tables are built in this reader's temp schema.
     pub fn analyse(&mut self) -> Result<AnalysisRun> {
         let never = AtomicBool::new(false);
         let run = self.analyse_with(&mut |_| {}, &never)?;
@@ -136,6 +142,11 @@ impl Reader {
         if !self.features.has(Need::Analysis) {
             return Err(Error::invalid(Need::Analysis.unavailable_reason()));
         }
+        // The crawl-end run already did this (spec 023 plan D5).
+        if let Some(run) = stored_run(&self.conn, &self.features.link_settings)? {
+            self.ensure_derived([Derived::LinkPositions, Derived::LinkMetrics])?;
+            return Ok(Some(run.into()));
+        }
         let started = std::time::Instant::now();
         let mut watch = Watch::new(on, cancel);
         // One savepoint around both tables: a cancelled run rolls back to
@@ -143,8 +154,8 @@ impl Reader {
         let conn = &self.conn;
         let settings = &self.features.link_settings;
         let built = Watch::savepoint(conn, "analysis", || {
-            let positions = link_positions::build(conn, &settings.position_rules, &mut watch)?;
-            let metrics = link_metrics::build(conn, settings.weighting.as_ref(), &mut watch)?;
+            let positions = link_positions::build(conn, "temp", &settings.position_rules, &mut watch)?;
+            let metrics = link_metrics::build(conn, "temp", settings.weighting.as_ref(), &mut watch)?;
             Ok((positions, metrics))
         });
         let (positions, metrics) = match built {
@@ -202,6 +213,8 @@ impl Reader {
 pub static PASSES: &[&dyn Pass] = &[
     &crate::sitemaps::SitemapAudit,
     &crate::sitemaps::Orphans,
+    &LinkPositions,
+    &LinkMetrics,
     &crate::agents::AgentEntryPoints,
     &crate::agents::AgentScores,
 ];
@@ -368,9 +381,38 @@ pub fn analyse_file(
     progress: &mut dyn FnMut(PassProgress),
     cancel: &AtomicBool,
 ) -> Result<AnalysisReport> {
+    analyse_file_with(path, &[], progress, cancel)
+}
+
+/// [`analyse_file`] leaving out the passes named in `skip` and any pass that
+/// reads one of them (a crawl with automatic link analysis off, FR-012).
+pub fn analyse_file_with(
+    path: &Path,
+    skip: &[&str],
+    progress: &mut dyn FnMut(PassProgress),
+    cancel: &AtomicBool,
+) -> Result<AnalysisReport> {
     let conn = crate::reader::connect_writable(path)?;
     crate::sql::register(&conn)?;
-    run(&conn, "main", PASSES, progress, cancel)
+    run(&conn, "main", &without(PASSES, skip), progress, cancel)
+}
+
+/// `passes` minus those named in `skip` and, transitively, those that read
+/// a left-out pass.
+fn without<'p>(passes: &[&'p dyn Pass], skip: &[&str]) -> Vec<&'p dyn Pass> {
+    let mut left: HashSet<&str> = skip.iter().copied().collect();
+    loop {
+        let before = left.len();
+        for p in passes {
+            if p.after().iter().any(|d| left.contains(d)) {
+                left.insert(p.id());
+            }
+        }
+        if left.len() == before {
+            break;
+        }
+    }
+    passes.iter().copied().filter(|p| !left.contains(p.id())).collect()
 }
 
 /// Runs `passes` (the stale ones) on `conn` into `schema`. Each pass and its
@@ -473,13 +515,14 @@ fn log_time(conn: &Connection, pass: &str, ms: u64) -> Result<()> {
 impl crate::Reader {
     /// Runs every pass into this connection's `temp` schema, for a file this
     /// session cannot write (a read-only viewer): results show until the
-    /// file is closed.
+    /// file is closed. The link passes are left to the on-demand build,
+    /// which works with the settings this reader shows.
     pub fn analyse_in_session(
         &mut self,
         progress: &mut dyn FnMut(PassProgress),
         cancel: &AtomicBool,
     ) -> Result<AnalysisReport> {
-        let report = run(&self.conn, "temp", PASSES, progress, cancel)?;
+        let report = run(&self.conn, "temp", &without(PASSES, &LINK_PASSES), progress, cancel)?;
         if !report.ran.is_empty() {
             for n in crate::features::pass_needs(&self.conn)? {
                 if !self.features.available.contains(&n) {

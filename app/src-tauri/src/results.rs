@@ -852,19 +852,29 @@ struct IssuesPartial {
 /// Runs the Crawl Analysis passes that have not run on `path` (spec 009
 /// plan D12), sending `passes-progress` events. `cancel` stops it between
 /// batches; finished passes stay.
-pub fn analyse(app: &AppHandle, path: &Path, cancel: &AtomicBool) -> Result<AnalysisReport, String> {
+pub fn analyse(
+    app: &AppHandle,
+    path: &Path,
+    skip: &[&str],
+    cancel: &AtomicBool,
+) -> Result<AnalysisReport, String> {
     let mut progress = |p: PassProgress| {
         let _ = app.emit("passes-progress", p);
     };
-    spiderlens_results::analysis::analyse_file(path, &mut progress, cancel).map_err(|e| e.to_string())
+    spiderlens_results::analysis::analyse_file_with(path, skip, &mut progress, cancel)
+        .map_err(|e| e.to_string())
 }
 
 /// Analyses an opened file whose passes are missing or stale.
 #[tauri::command]
 pub async fn passes_run(app: AppHandle, path: PathBuf) -> Cmd<AnalysisReport> {
-    tauri::async_runtime::spawn_blocking(move || analyse(&app, &path, &AtomicBool::new(false)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        // Link analysis only when the file's settings run it automatically.
+        let skip = spiderlens_results::analysis::auto_skips(&path).unwrap_or_default();
+        analyse(&app, &path, &skip, &AtomicBool::new(false))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The issues of one URL with evidence (FR-016).

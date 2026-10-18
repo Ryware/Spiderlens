@@ -343,9 +343,23 @@ pub fn ranks(scores: &[f64]) -> Vec<u32> {
     out
 }
 
-/// Builds `temp.link_metrics` (data model) from the crawl on `conn`.
+/// The table Link Score is written to in `schema`. The file keeps it as
+/// `link_score` because `link_metrics` is the spec 024 provider table in
+/// `main`; the reader's `temp` copy (or view over the file's) is named
+/// `link_metrics`, which the column expressions read.
+fn table(schema: &str) -> &'static str {
+    if schema == "main" {
+        "main.link_score"
+    } else {
+        "temp.link_metrics"
+    }
+}
+
+/// Builds the Link Score table (data model) in `schema` from the crawl on
+/// `conn`.
 pub fn build(
     conn: &Connection,
+    schema: &str,
     weighting: Option<&PositionWeights>,
     watch: &mut Watch<'_>,
 ) -> rusqlite::Result<Stats> {
@@ -365,13 +379,16 @@ pub fn build(
     let scores = scale(&g, &r);
     let rank = ranks(&scores);
     lap("rank");
-    conn.execute_batch(
-        "DROP TABLE IF EXISTS temp.link_metrics;
-         CREATE TEMP TABLE link_metrics (
+    let t = table(schema);
+    // The reader may have a view over the file's copy here.
+    conn.execute_batch("DROP VIEW IF EXISTS temp.link_metrics;")?;
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {t} (
            url_id INTEGER PRIMARY KEY, score REAL NOT NULL, rank INTEGER NOT NULL,
            unique_inlinks INTEGER NOT NULL, followed_inlinks INTEGER NOT NULL, all_inlinks INTEGER NOT NULL,
-           unique_outlinks INTEGER NOT NULL, external_outlinks INTEGER NOT NULL, pct_linking REAL NOT NULL);",
-    )?;
+           unique_outlinks INTEGER NOT NULL, external_outlinks INTEGER NOT NULL, pct_linking REAL NOT NULL);
+         DELETE FROM {t};"
+    ))?;
     let pages: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM urls u WHERE {}", crate::tabs::HTML_OK),
         [],
@@ -379,7 +396,7 @@ pub fn build(
     )?;
     Watch::savepoint(conn, "metrics", || {
         let mut ins =
-            conn.prepare("INSERT INTO temp.link_metrics VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")?;
+            conn.prepare(&format!("INSERT INTO {t} VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"))?;
         for (i, &id) in g.ids.iter().enumerate() {
             let pct = if pages > 0 {
                 f64::from(g.unique_in[i]) * 100.0 / pages as f64

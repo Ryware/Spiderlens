@@ -310,7 +310,7 @@ pub fn run_orphans(a: &OrphansArgs) -> ExitCode {
     // A crawl that is still running is left alone.
     let running = reader.orphan_summary().is_ok_and(|s| s.provisional);
     if !running && spiderlens_results::analysis::needs_analysis(reader.connection()).unwrap_or(false) {
-        match crate::issues_cmd::analyse(&a.file, false) {
+        match crate::issues_cmd::analyse(&a.file, false, &[]) {
             Ok(_) => match Reader::open(&a.file) {
                 Ok(r) => reader = r,
                 Err(e) => {

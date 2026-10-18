@@ -286,6 +286,10 @@ impl Reader {
                 self.ensure_derived([Derived::LinkPositions])?;
             }
             if self.derived.get(&d) != Some(&g) {
+                if matches!(d, Derived::LinkPositions | Derived::LinkMetrics) && self.use_stored_links()? {
+                    self.derived.insert(d, g);
+                    continue;
+                }
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
                 } else {
@@ -300,6 +304,23 @@ impl Reader {
             }
         }
         Ok(())
+    }
+
+    /// When the file holds current Link Score results for the settings shown
+    /// (spec 023 plan D5), points the unqualified `link_positions` and
+    /// `link_metrics` at them and builds nothing. Any temp copy from an
+    /// earlier build is dropped so it cannot shadow the file's.
+    fn use_stored_links(&self) -> Result<bool> {
+        if crate::analysis::stored_run(&self.conn, &self.features.link_settings)?.is_none() {
+            return Ok(false);
+        }
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS temp.link_positions;
+             DROP TABLE IF EXISTS temp.link_metrics;
+             DROP VIEW IF EXISTS temp.link_metrics;
+             CREATE TEMP VIEW link_metrics AS SELECT * FROM main.link_score;",
+        )?;
+        Ok(true)
     }
 
     /// Records that a derived table was just built for the current data.

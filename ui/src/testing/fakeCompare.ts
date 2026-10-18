@@ -226,6 +226,7 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
         current: s.current,
         config_diffs: s.config_diffs,
         suggested_mapping: prevOrigin === "https://example.com" ? null : { find: `${prevOrigin}/`, replace: "https://example.com/", regex: false },
+        disk_warning: null,
       };
     },
     compareTestMapping: async (_p, _c, rules, samples) =>

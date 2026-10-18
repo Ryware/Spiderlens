@@ -320,6 +320,16 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: A11Y_TABLES,
     },
+    // Spec 023 stage 2 (data-model.md): the outputs of the `link_positions`
+    // and `link_metrics` Crawl Analysis passes. `IF NOT EXISTS` because a
+    // pass creates its table itself when it runs on a file from before this
+    // step. Link Score is stored as `link_score`: `link_metrics` is already
+    // the spec 024 provider table in `main`.
+    Step {
+        version: 20,
+        additive: true,
+        sql: LINK_PASSES,
+    },
 ];
 
 /// Step 19's tables (spec 026 data-model.md). They stay empty when the
@@ -377,6 +387,31 @@ CREATE TABLE mobile_measures (
     small_text_share REAL,
     small_targets INTEGER,
     examples TEXT
+);
+";
+
+/// Step 20's tables. The passes in `spiderlens-results`
+/// (`analysis::link_positions`, `analysis::link_metrics`) create the same
+/// two tables in `temp` (Link Score as `link_metrics`, which the column
+/// expressions name) for a file they cannot write.
+const LINK_PASSES: &str = "
+CREATE TABLE IF NOT EXISTS link_positions (
+    from_id INTEGER NOT NULL,
+    pos INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    rule INTEGER,
+    PRIMARY KEY (from_id, pos)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS link_score (
+    url_id INTEGER PRIMARY KEY,
+    score REAL NOT NULL,
+    rank INTEGER NOT NULL,
+    unique_inlinks INTEGER NOT NULL,
+    followed_inlinks INTEGER NOT NULL,
+    all_inlinks INTEGER NOT NULL,
+    unique_outlinks INTEGER NOT NULL,
+    external_outlinks INTEGER NOT NULL,
+    pct_linking REAL NOT NULL
 );
 ";
 
