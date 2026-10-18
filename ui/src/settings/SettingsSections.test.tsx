@@ -154,7 +154,27 @@ test("limits_reach_the_crawl_and_blank_max_urls_means_no_limit", async () => {
   fireEvent.change(input("Max depth"), { target: { value: "3" } });
   expect(input("List depth").disabled).toBe(true);
   const config = await startCrawl(t);
-  expect(config.limits).toEqual({ max_urls: null, max_depth: 3, list_depth: 0 });
+  expect(config.limits).toEqual({
+    max_urls: null,
+    max_depth: 3,
+    list_depth: 0,
+    max_urls_per_subdomain: null,
+    max_urls_per_depth: null,
+    max_folder_depth: null,
+    max_query_params: null,
+  });
+});
+
+test("extra_limits_reach_the_crawl_and_blank_means_no_limit", async () => {
+  const t = await setup();
+  await openSettings("Limits");
+  fireEvent.change(input("Max URLs per subdomain"), { target: { value: "50" } });
+  fireEvent.change(input("Max URLs per depth"), { target: { value: "20" } });
+  fireEvent.change(input("Max folder depth"), { target: { value: "3" } });
+  fireEvent.change(input("Max query parameters"), { target: { value: "0" } });
+  fireEvent.change(input("Max URLs per depth"), { target: { value: "" } });
+  const config = await startCrawl(t);
+  expect(config.limits).toMatchObject({ max_urls_per_subdomain: 50, max_urls_per_depth: null, max_folder_depth: 3, max_query_params: 0 });
 });
 
 test("list_depth_is_enabled_in_list_mode_and_reaches_the_crawl", async () => {
@@ -175,6 +195,20 @@ test("list_depth_is_enabled_in_list_mode_and_reaches_the_crawl", async () => {
   expect(t.crawls.started[0].startUrl).toBeNull();
   expect(t.crawls.started[0].config.mode).toBe("list");
   expect(t.crawls.started[0].config.limits.list_depth).toBe(2);
+});
+
+test("rewrite_rules_are_added_edited_and_removed_and_reach_the_crawl", async () => {
+  const t = await setup();
+  await openSettings("Scope");
+  fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+  fireEvent.change(screen.getByLabelText("Rewrite 1 pattern"), { target: { value: "^http://" } });
+  fireEvent.change(screen.getByLabelText("Rewrite 1 replacement"), { target: { value: "https://" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+  fireEvent.change(screen.getByLabelText("Rewrite 2 pattern"), { target: { value: "/old/" } });
+  fireEvent.click(screen.getByRole("button", { name: "Remove rewrite 2" }));
+  expect(screen.queryByLabelText("Rewrite 2 pattern")).toBeNull();
+  const config = await startCrawl(t);
+  expect(config.scope.rewrite).toEqual([{ pattern: "^http://", replace: "https://" }]);
 });
 
 // ---------------------------------------------------------------- identity
@@ -304,7 +338,21 @@ test("robots_mode_and_crawl_delay_reach_the_crawl_and_status_bar", async () => {
   fireEvent.click(sw("Honour crawl-delay"));
   await waitFor(() => expect(sw("Honour crawl-delay").getAttribute("aria-checked")).toBe("false"));
   const config = await startCrawl(t);
-  expect(config.robots).toEqual({ mode: "ignore_report", honour_crawl_delay: false });
+  expect(config.robots).toEqual({ mode: "ignore_report", honour_crawl_delay: false, custom: [] });
+});
+
+test("custom_robots_entries_are_added_edited_and_removed", async () => {
+  const t = await setup();
+  await openSettings("robots.txt");
+  fireEvent.click(screen.getByRole("button", { name: "Add custom robots.txt" }));
+  fireEvent.change(screen.getByLabelText("Custom robots.txt 1 host"), { target: { value: "example.com" } });
+  fireEvent.change(screen.getByLabelText("Custom robots.txt 1 text"), { target: { value: "User-agent: *\nDisallow: /x/" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add custom robots.txt" }));
+  fireEvent.change(screen.getByLabelText("Custom robots.txt 2 host"), { target: { value: "other.test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Remove custom robots.txt 2" }));
+  expect(screen.queryByLabelText("Custom robots.txt 2 host")).toBeNull();
+  const config = await startCrawl(t);
+  expect(config.robots.custom).toEqual([{ host: "example.com", text: "User-agent: *\nDisallow: /x/" }]);
 });
 
 // ---------------------------------------------------------------- network

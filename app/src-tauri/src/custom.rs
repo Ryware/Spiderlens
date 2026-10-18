@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use spiderlens_config::custom::check_rules;
-use spiderlens_config::{CrawlConfig, CustomRules, RobotsMode, export_rules, import_rules};
+use spiderlens_config::{CrawlConfig, CustomRules, export_rules, import_rules};
 use spiderlens_engine::CheckOptions;
 use spiderlens_engine::crawl::CrawlStore;
 use spiderlens_engine::crawl::store::custom::read_rules;
@@ -160,8 +160,7 @@ pub async fn custom_test_url(rules: CustomRules, url: String, config: CrawlConfi
     let started = Instant::now();
     let c = compiled(&rules)?;
     let opts = CheckOptions::from(&config);
-    let respect = config.robots.mode == RobotsMode::Respect;
-    let t = tester::test_url(&url, &opts, respect, &c)
+    let t = tester::test_url(&url, &opts, &config.robots, &c)
         .await
         .map_err(|e| e.message)?;
     Ok(TestOutcome {

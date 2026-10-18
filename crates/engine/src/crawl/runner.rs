@@ -511,6 +511,15 @@ pub fn host_key(url: &Url) -> String {
     )
 }
 
+/// The host name of a host key (`https://example.com:443`), as `Url` writes
+/// it, so http and https of one host count together.
+fn host_name(key: &str) -> Option<String> {
+    Url::parse(&format!("{key}/"))
+        .ok()?
+        .host_str()
+        .map(str::to_string)
+}
+
 /// A cut, a requested wait, the allowance after them, and the site's typical
 /// and usual response times.
 type SpeedEvent = (Option<Cut>, Option<Duration>, u32, (Option<f64>, Option<f64>));
@@ -1591,6 +1600,10 @@ struct Run {
     /// `meta.fetch_completed_at` was written in this run.
     fetch_completed: bool,
     pages_started: u64,
+    /// Pages started per host name and per depth, kept only while the
+    /// matching limit is set (spec 002 follow-up).
+    started_by_host: HashMap<String, u64>,
+    started_by_depth: HashMap<u32, u64>,
     limit_reached: bool,
     sitemaps_pending: bool,
     /// Ids of the sitemap files stored so far, by location.
@@ -1701,7 +1714,7 @@ impl Run {
         let mut hosts = HashMap::new();
         for h in c.store.hosts()? {
             let policy = match h.robots_status.as_str() {
-                "ok" => RobotsTxt::parse(h.robots_txt.as_deref().unwrap_or("").as_bytes())
+                "ok" | "custom" => RobotsTxt::parse(h.robots_txt.as_deref().unwrap_or("").as_bytes())
                     .for_agent(&opts.robots_token),
                 "unavailable" => RobotsPolicy::disallow_all(),
                 _ => RobotsPolicy::allow_all(),
@@ -1712,6 +1725,19 @@ impl Run {
             hosts.insert(h.host_key, host);
         }
         let pages_started = c.store.pages_started()?;
+        let mut started_by_host: HashMap<String, u64> = HashMap::new();
+        if c.config.limits.max_urls_per_subdomain.is_some() {
+            for (key, n) in c.store.pages_started_by_host()? {
+                if let Some(name) = host_name(&key) {
+                    *started_by_host.entry(name).or_default() += n;
+                }
+            }
+        }
+        let started_by_depth: HashMap<u32, u64> = if c.config.limits.max_urls_per_depth.is_some() {
+            c.store.pages_started_by_depth()?.into_iter().collect()
+        } else {
+            HashMap::new()
+        };
         let limit_reached = c.store.meta("url_limit_reached")?.as_deref() == Some("true");
         let by_state = c.store.counts()?.by_state;
         let discovered = by_state.iter().map(|(_, n)| n).sum();
@@ -1814,6 +1840,8 @@ impl Run {
             render: None,
             fetch_completed: false,
             pages_started,
+            started_by_host,
+            started_by_depth,
             limit_reached,
             sitemaps_pending: false,
             sitemap_ids: HashMap::new(),
@@ -2734,6 +2762,17 @@ impl Run {
                 self.block(e, NotCrawledReason::SessionGuard, format!("matches \"{p}\""))?;
                 continue;
             }
+            // Pages per subdomain and per depth, after robots.txt in the
+            // FR-038 order (spec 002 follow-up).
+            if !e.check_only
+                && let Some((reason, max)) = self.over_started_limit(&url, e.depth)
+            {
+                self.window.remove(e.key());
+                self.c
+                    .store
+                    .set_not_crawled(e.id, reason, Some(&max.to_string()))?;
+                continue;
+            }
             if self.next_global > now {
                 if self.c.config.speed.max_urls_per_sec.is_some() {
                     self.rate_held_at = Some(now);
@@ -2761,12 +2800,28 @@ impl Run {
                 crawl_delay_ms: None,
                 robots_txt: None,
             })?;
+        } else if let Some(text) = self.custom_robots(&key) {
+            // The host's own robots.txt is not requested (spec 002
+            // follow-up); the text the user gave takes its place.
+            let policy = RobotsTxt::parse(text.as_bytes()).for_agent(&self.opts.robots_token);
+            self.finish_robots(key, policy, "custom", None, None, Some(text))?;
         } else if self.in_flight < speed.max_concurrent {
             let host = self.hosts.entry(key.clone()).or_insert_with(|| Host::new(&speed));
             host.robots = RobotsState::Fetching;
             self.spawn_robots(key);
         }
         Ok(())
+    }
+
+    /// The custom robots.txt text for the host of `key`, when robots.txt is
+    /// read at all.
+    fn custom_robots(&self, key: &str) -> Option<String> {
+        let robots = &self.c.config.robots;
+        if robots.custom.is_empty() || robots.mode == RobotsMode::Ignore {
+            return None;
+        }
+        let name = host_name(key)?;
+        robots.custom_for(&name).map(str::to_string)
     }
 
     /// Grants every waiting resource permit that may go now (spec 014 D4).
@@ -2793,8 +2848,8 @@ impl Run {
             for key in served.need_robots {
                 self.ensure_robots(key)?;
             }
-            // Hosts marked ignored can be served at once.
-            if self.c.config.robots.mode == RobotsMode::Ignore {
+            // Hosts marked ignored or given a custom file can be served at once.
+            if self.c.config.robots.mode == RobotsMode::Ignore || !self.c.config.robots.custom.is_empty() {
                 wake = Some(Instant::now());
             }
         }
@@ -3358,6 +3413,9 @@ impl Run {
         self.in_flight += 1;
 
         let url = Url::parse(&e.url).expect("stored URLs parse");
+        if !e.check_only {
+            self.note_started(&url, e.depth);
+        }
         let internal = !e.check_only && self.c.rules.is_internal(&url);
         let net = Arc::clone(&self.net);
         let headers = self.headers.clone();
@@ -3436,6 +3494,41 @@ impl Run {
             }
         }
         Ok(())
+    }
+
+    /// Whether starting a page at `depth` on `url`'s host would pass the
+    /// per-subdomain or per-depth limit, and the limit it passes. Costs
+    /// nothing when neither limit is set.
+    fn over_started_limit(&self, url: &Url, depth: u32) -> Option<(NotCrawledReason, u64)> {
+        let limits = &self.c.config.limits;
+        if let Some(max) = limits.max_urls_per_subdomain
+            && self
+                .started_by_host
+                .get(url.host_str().unwrap_or_default())
+                .is_some_and(|n| *n >= max)
+        {
+            return Some((NotCrawledReason::OverSubdomainLimit, max));
+        }
+        if let Some(max) = limits.max_urls_per_depth
+            && self.started_by_depth.get(&depth).is_some_and(|n| *n >= max)
+        {
+            return Some((NotCrawledReason::OverDepthUrlLimit, max));
+        }
+        None
+    }
+
+    /// Counts a page that is about to start against the limits above.
+    fn note_started(&mut self, url: &Url, depth: u32) {
+        let limits = &self.c.config.limits;
+        if limits.max_urls_per_subdomain.is_some() {
+            *self
+                .started_by_host
+                .entry(url.host_str().unwrap_or_default().to_string())
+                .or_default() += 1;
+        }
+        if limits.max_urls_per_depth.is_some() {
+            *self.started_by_depth.entry(depth).or_default() += 1;
+        }
     }
 
     /// FR-019: no new page requests; every queued page gets "Over URL limit",
@@ -4226,6 +4319,21 @@ impl Run {
                 None,
             ),
         };
+        self.finish_robots(key, policy, status, http, error, text)
+    }
+
+    /// Records what is known of a host's robots.txt, fetched or custom:
+    /// the crawl-delay, the stored row, the policy, and the sitemaps the
+    /// file lists.
+    fn finish_robots(
+        &mut self,
+        key: String,
+        policy: RobotsPolicy,
+        status: &str,
+        http: Option<u16>,
+        error: Option<String>,
+        text: Option<String>,
+    ) -> Result<(), CrawlError> {
         let delay = honoured_delay(&self.c.config, policy.crawl_delay);
         if let Some(d) = policy.crawl_delay
             && d >= LONG_CRAWL_DELAY

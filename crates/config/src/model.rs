@@ -265,6 +265,18 @@ pub struct Limits {
     /// List mode only: how many clicks to follow from listed URLs. 0 means
     /// links are recorded but not followed (spec 003 FR-041).
     pub list_depth: u32,
+    /// Most pages requested from one host (subdomain); blank means no limit.
+    #[ts(type = "number | null")]
+    pub max_urls_per_subdomain: Option<u64>,
+    /// Most pages requested at one crawl depth; blank means no limit.
+    #[ts(type = "number | null")]
+    pub max_urls_per_depth: Option<u64>,
+    /// Most folders in a URL path: `/a/b/page` has 2. Deeper URLs are not
+    /// crawled. Seeds are exempt.
+    pub max_folder_depth: Option<u32>,
+    /// Most query parameters in a URL; 0 means no query strings. Seeds are
+    /// exempt.
+    pub max_query_params: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -285,6 +297,18 @@ pub struct Scope {
     pub max_url_length: u32,
     /// Where sitemaps come from and what is done with their URLs (spec 011).
     pub sitemaps: SitemapSettings,
+    /// Regex replacements applied in order to every discovered link after
+    /// normalization (spec 002 follow-up).
+    pub rewrite: Vec<RewriteRule>,
+}
+
+/// One URL rewrite: `pattern` is a regex, `replace` may use `$1` or `${name}`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RewriteRule {
+    pub pattern: String,
+    pub replace: String,
 }
 
 /// Spec 011 FR-001, FR-002, FR-009.
@@ -353,6 +377,7 @@ struct ScopeWire {
     max_url_length: u32,
     sitemaps: Option<SitemapSettings>,
     use_sitemaps: Option<bool>,
+    rewrite: Vec<RewriteRule>,
 }
 
 impl Default for ScopeWire {
@@ -370,6 +395,7 @@ impl Default for ScopeWire {
             max_url_length: d.max_url_length,
             sitemaps: None,
             use_sitemaps: None,
+            rewrite: d.rewrite,
         }
     }
 }
@@ -398,6 +424,7 @@ impl From<ScopeWire> for Scope {
             query_params: f.query_params,
             max_url_length: f.max_url_length,
             sitemaps,
+            rewrite: f.rewrite,
         }
     }
 }
@@ -415,6 +442,7 @@ impl Default for Scope {
             query_params: QueryParams::default(),
             max_url_length: 2000,
             sitemaps: SitemapSettings::default(),
+            rewrite: Vec::new(),
         }
     }
 }
@@ -639,6 +667,9 @@ impl From<SpeedWire> for SpeedSettings {
 pub struct RobotsSettings {
     pub mode: RobotsMode,
     pub honour_crawl_delay: bool,
+    /// robots.txt text used instead of a host's own file (spec 002
+    /// follow-up). The site's file is then not requested.
+    pub custom: Vec<CustomRobots>,
 }
 
 impl Default for RobotsSettings {
@@ -646,7 +677,28 @@ impl Default for RobotsSettings {
         Self {
             mode: RobotsMode::Respect,
             honour_crawl_delay: true,
+            custom: Vec::new(),
         }
+    }
+}
+
+/// A custom robots.txt for one host, `example.com` or `shop.example.com`;
+/// it applies to http and https and every port of that host.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct CustomRobots {
+    pub host: String,
+    pub text: String,
+}
+
+impl RobotsSettings {
+    /// The custom robots.txt text for `host`, matched without case.
+    pub fn custom_for(&self, host: &str) -> Option<&str> {
+        self.custom
+            .iter()
+            .find(|c| c.host.trim().eq_ignore_ascii_case(host))
+            .map(|c| c.text.as_str())
     }
 }
 
@@ -1522,7 +1574,11 @@ mod tests {
             Limits {
                 max_urls: None,
                 max_depth: None,
-                list_depth: 0
+                list_depth: 0,
+                max_urls_per_subdomain: None,
+                max_urls_per_depth: None,
+                max_folder_depth: None,
+                max_query_params: None,
             }
         );
         assert!(c.scope.include.is_empty() && c.scope.exclude.is_empty());

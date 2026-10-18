@@ -13,4 +13,22 @@ max_depth: number | null,
  * List mode only: how many clicks to follow from listed URLs. 0 means
  * links are recorded but not followed (spec 003 FR-041).
  */
-list_depth: number, };
+list_depth: number, 
+/**
+ * Most pages requested from one host (subdomain); blank means no limit.
+ */
+max_urls_per_subdomain: number | null, 
+/**
+ * Most pages requested at one crawl depth; blank means no limit.
+ */
+max_urls_per_depth: number | null, 
+/**
+ * Most folders in a URL path: `/a/b/page` has 2. Deeper URLs are not
+ * crawled. Seeds are exempt.
+ */
+max_folder_depth: number | null, 
+/**
+ * Most query parameters in a URL; 0 means no query strings. Seeds are
+ * exempt.
+ */
+max_query_params: number | null, };

@@ -8,8 +8,8 @@
 
 use serde::Serialize;
 use spiderlens_config::{
-    CrawlConfig, Decision, InternalHosts, LinkProblem, Mode, QueryParams, RobotsMode, UrlFilter,
-    apply_query_rules, normalize_link,
+    CompiledRewrites, CrawlConfig, Decision, InternalHosts, LinkProblem, Mode, QueryParams, RobotsMode,
+    UrlFilter, apply_query_rules, normalize_link,
 };
 use url::Url;
 
@@ -68,7 +68,13 @@ pub struct ScopeRules {
     /// Path prefix for "stay inside start folder", e.g. `/docs/`.
     folder: Option<String>,
     max_depth: Option<u32>,
+    /// Most folders in a path and most query parameters (spec 002
+    /// follow-up). Seeds are exempt.
+    max_folder_depth: Option<u32>,
+    max_query_params: Option<u32>,
     query: QueryParams,
+    /// Regex rewrites of discovered links; empty means none.
+    rewrite: CompiledRewrites,
     max_url_length: usize,
     check_external: bool,
     follow_internal_nofollow: bool,
@@ -87,6 +93,7 @@ impl ScopeRules {
                 .collect::<Vec<_>>()
                 .join("; ")
         })?;
+        let rewrite = CompiledRewrites::new(&s.rewrite)?;
         let first_host = seeds.first().and_then(Url::host_str).unwrap_or_default();
         let mut internal = InternalHosts::new(s.subdomains, first_host);
         for seed in seeds.iter().skip(1) {
@@ -109,7 +116,10 @@ impl ScopeRules {
             exclude: s.exclude.clone(),
             folder,
             max_depth,
+            max_folder_depth: config.limits.max_folder_depth,
+            max_query_params: config.limits.max_query_params,
             query: s.query_params.clone(),
+            rewrite,
             max_url_length: s.max_url_length as usize,
             check_external: s.check_external,
             follow_internal_nofollow: s.follow_internal_nofollow,
@@ -119,7 +129,42 @@ impl ScopeRules {
 
     /// Resolves and normalizes a link found on a page (FR-001..FR-006).
     pub fn normalize(&self, base: &Url, href: &str) -> Result<Url, LinkProblem> {
-        normalize_link(base, href, &self.query, self.max_url_length)
+        if self.rewrite.is_empty() {
+            return normalize_link(base, href, &self.query, self.max_url_length);
+        }
+        // The length limit applies to the rewritten URL, not the original.
+        let url = normalize_link(base, href, &self.query, usize::MAX)?;
+        let rewritten = self.rewrite.apply(url.as_str());
+        let mut url = if rewritten == url.as_str() {
+            url
+        } else {
+            Url::parse(&rewritten).map_err(|_| LinkProblem::Malformed {
+                raw: href.to_string(),
+                message: "rewrite gave an invalid URL".into(),
+            })?
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(LinkProblem::UnsupportedScheme {
+                url: url.to_string(),
+                scheme: url.scheme().to_string(),
+            });
+        }
+        if url.host().is_none() {
+            return Err(LinkProblem::Malformed {
+                raw: href.to_string(),
+                message: "rewrite gave an invalid URL".into(),
+            });
+        }
+        url.set_fragment(None);
+        apply_query_rules(&mut url, &self.query);
+        let length = url.as_str().len();
+        if length > self.max_url_length {
+            return Err(LinkProblem::TooLong {
+                url: url.to_string(),
+                length,
+            });
+        }
+        Ok(url)
     }
 
     /// Applies the query rules to a seed URL, which was normalized on input.
@@ -175,6 +220,18 @@ impl ScopeRules {
             Decision::NotIncluded if !c.seed => return Verdict::not(NotCrawledReason::NotIncluded, None),
             _ => {}
         }
+        if !c.seed {
+            if let Some(max) = self.max_folder_depth
+                && folder_depth(url) > max as usize
+            {
+                return Verdict::not(NotCrawledReason::OverFolderDepth, max.to_string());
+            }
+            if let Some(max) = self.max_query_params
+                && query_params(url) > max as usize
+            {
+                return Verdict::not(NotCrawledReason::OverQueryLimit, max.to_string());
+            }
+        }
         if let Some(max) = self.max_depth
             && c.depth > max
             && !c.seed
@@ -216,6 +273,18 @@ pub fn problem_verdict(problem: &LinkProblem) -> Option<(String, Verdict)> {
             ),
         )),
     }
+}
+
+/// How many folders a path has: `/` and `/page` have 0, `/a/` 1 and
+/// `/a/b/page` 2.
+fn folder_depth(url: &Url) -> usize {
+    url.path().matches('/').count().saturating_sub(1)
+}
+
+/// How many query parameters a URL has: the non-empty `&` separated pairs.
+fn query_params(url: &Url) -> usize {
+    url.query()
+        .map_or(0, |q| q.split('&').filter(|p| !p.is_empty()).count())
 }
 
 /// The folder of a start URL: its path up to and including the last `/`.
@@ -425,6 +494,119 @@ mod tests {
             follow.classify(&url("https://example.com/x"), &nf),
             Verdict::Crawl { via_nofollow: true }
         );
+    }
+
+    #[test]
+    fn folder_depth_and_query_limits_spare_seeds() {
+        let r = rules(|c| {
+            c.limits.max_folder_depth = Some(1);
+            c.limits.max_query_params = Some(1);
+        });
+        for ok in [
+            "https://example.com/",
+            "https://example.com/page",
+            "https://example.com/a/",
+            "https://example.com/a/page?x=1",
+            "https://example.com/a/page?x=1&",
+        ] {
+            assert!(
+                matches!(r.classify(&url(ok), &link(1)), Verdict::Crawl { .. }),
+                "{ok}"
+            );
+        }
+        assert_eq!(
+            r.classify(&url("https://example.com/a/b/page"), &link(1)),
+            Verdict::NotCrawled {
+                reason: NotCrawledReason::OverFolderDepth,
+                detail: Some("1".into())
+            }
+        );
+        assert_eq!(
+            reason(r.classify(&url("https://example.com/a/b/"), &link(1))),
+            NotCrawledReason::OverFolderDepth
+        );
+        assert_eq!(
+            r.classify(&url("https://example.com/p?a=1&b=2"), &link(1)),
+            Verdict::NotCrawled {
+                reason: NotCrawledReason::OverQueryLimit,
+                detail: Some("1".into())
+            }
+        );
+        let seed = Candidate {
+            depth: 0,
+            seed: true,
+            nofollow: None,
+        };
+        assert!(matches!(
+            r.classify(&url("https://example.com/a/b/c/?a=1&b=2"), &seed),
+            Verdict::Crawl { .. }
+        ));
+        // Zero means no folders and no query strings.
+        let none = rules(|c| {
+            c.limits.max_folder_depth = Some(0);
+            c.limits.max_query_params = Some(0);
+        });
+        assert!(matches!(
+            none.classify(&url("https://example.com/page"), &link(1)),
+            Verdict::Crawl { .. }
+        ));
+        assert_eq!(
+            reason(none.classify(&url("https://example.com/a/page"), &link(1))),
+            NotCrawledReason::OverFolderDepth
+        );
+        assert_eq!(
+            reason(none.classify(&url("https://example.com/page?x"), &link(1))),
+            NotCrawledReason::OverQueryLimit
+        );
+    }
+
+    #[test]
+    fn rewrites_apply_to_links_but_not_seeds() {
+        use spiderlens_config::RewriteRule;
+        let r = rules(|c| {
+            c.scope.rewrite = vec![
+                RewriteRule {
+                    pattern: r"/old/(\w+)".into(),
+                    replace: "/new/$1".into(),
+                },
+                RewriteRule {
+                    pattern: r"\?utm=\w+$".into(),
+                    replace: String::new(),
+                },
+            ];
+        });
+        let base = url("https://example.com/docs/");
+        assert_eq!(
+            r.normalize(&base, "/old/page?utm=x").unwrap().as_str(),
+            "https://example.com/new/page"
+        );
+        assert_eq!(
+            r.normalize(&base, "/plain").unwrap().as_str(),
+            "https://example.com/plain"
+        );
+        assert_eq!(
+            r.normalize_seed(&url("https://example.com/old/page")).as_str(),
+            "https://example.com/old/page"
+        );
+        let bad = rules(|c| {
+            c.scope.rewrite = vec![RewriteRule {
+                pattern: r"^https://example\.com/x$".into(),
+                replace: "::::".into(),
+            }];
+        });
+        assert!(matches!(
+            bad.normalize(&base, "/x"),
+            Err(LinkProblem::Malformed { .. })
+        ));
+        let invalid = {
+            let mut c = CrawlConfig::default();
+            c.scope.rewrite = vec![RewriteRule {
+                pattern: "(".into(),
+                replace: String::new(),
+            }];
+            ScopeRules::new(&c, &[url("https://example.com/")])
+        };
+        assert!(invalid.is_err());
     }
 
     #[test]

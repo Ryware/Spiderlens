@@ -302,6 +302,67 @@ fn sitemap_flags() {
         .code(2);
 }
 
+#[test]
+fn extra_limit_rewrite_and_robots_file_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let robots = dir.path().join("robots.txt");
+    std::fs::write(&robots, "User-agent: *\nDisallow: /private/\n").unwrap();
+    let file_arg = format!("example.com={}", robots.display());
+    let (c, code) = json(&[
+        "config",
+        "show",
+        "--json",
+        "--max-urls-per-subdomain",
+        "50",
+        "--max-urls-per-depth",
+        "20",
+        "--max-folder-depth",
+        "3",
+        "--max-query-params",
+        "0",
+        "--rewrite",
+        "/old/(.*)=>/new/$1",
+        "--rewrite",
+        "^http://=>https://",
+        "--robots-file",
+        &file_arg,
+    ]);
+    assert_eq!(code, 0);
+    let l = &c["config"]["limits"];
+    assert_eq!(l["max_urls_per_subdomain"], 50);
+    assert_eq!(l["max_urls_per_depth"], 20);
+    assert_eq!(l["max_folder_depth"], 3);
+    assert_eq!(l["max_query_params"], 0);
+    let rewrite = &c["config"]["scope"]["rewrite"];
+    assert_eq!(rewrite[0]["pattern"], "/old/(.*)");
+    assert_eq!(rewrite[0]["replace"], "/new/$1");
+    assert_eq!(rewrite[1]["replace"], "https://");
+    let custom = &c["config"]["robots"]["custom"][0];
+    assert_eq!(custom["host"], "example.com");
+    assert_eq!(custom["text"], "User-agent: *\nDisallow: /private/\n");
+
+    spiderlens()
+        .args(["config", "show", "--rewrite", "no-arrow"])
+        .assert()
+        .code(2)
+        .stderr(contains("PATTERN=>REPLACEMENT"));
+    spiderlens()
+        .args(["config", "show", "--robots-file", "example.com"])
+        .assert()
+        .code(2)
+        .stderr(contains("HOST=PATH"));
+    spiderlens()
+        .args([
+            "config",
+            "show",
+            "--robots-file",
+            "example.com=/no/such/robots.txt",
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("cannot read robots.txt file"));
+}
+
 /// Spec 014 US4 scenario 9 and FR-047: the CLI defaults are the app's.
 #[test]
 fn rendering_defaults_equal_the_apps() {

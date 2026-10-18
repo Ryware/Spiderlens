@@ -500,7 +500,7 @@ const EXTERNAL: &str = "u.internal = 0 AND u.state IN ('crawled', 'not_crawled')
 /// rules (Assumptions: blocked URLs are listed here, not counted as errors).
 pub(crate) const RESPONSES: &str = "u.state = 'crawled' \
      OR (u.check_only = 1 AND u.state = 'not_crawled' AND (u.fetched_at IS NOT NULL OR u.reason_detail IS NOT NULL)) \
-     OR u.reason IN ('blocked_by_robots', 'robots_unavailable', 'excluded', 'not_included', 'outside_start_folder')";
+     OR u.reason IN ('blocked_by_robots', 'robots_unavailable', 'excluded', 'not_included', 'outside_start_folder', 'over_folder_depth', 'over_query_limit')";
 
 /// Image URLs: found in img elements first, or answering with an image type.
 pub(crate) const IMAGES: &str = "(u.source = 'image' OR content_kind(u.content_type) = 'image') AND u.state IN ('crawled', 'not_crawled')";
@@ -1721,7 +1721,7 @@ fn build_tabs() -> Vec<TabDef> {
                 filter(
                     "blocked_config",
                     "Blocked by configuration",
-                    "u.reason IN ('excluded', 'not_included', 'outside_start_folder')",
+                    "u.reason IN ('excluded', 'not_included', 'outside_start_folder', 'over_folder_depth', 'over_query_limit')",
                 ),
                 filter("no_response", "No response", "u.error_class IS NOT NULL"),
                 filter("success", "Success (2xx)", "u.error_class IS NULL AND u.status BETWEEN 200 AND 299"),

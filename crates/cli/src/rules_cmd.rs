@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use spiderlens_config::{CustomRules, Mode, RobotsMode, import_rules, validate_config};
+use spiderlens_config::{CustomRules, Mode, import_rules, validate_config};
 use spiderlens_engine::CheckOptions;
 use spiderlens_engine::crawl::CrawlStore;
 use spiderlens_engine::custom::rerun::{RerunError, RerunState, Which, rerun, test_stored_page};
@@ -212,7 +212,6 @@ fn run_test(args: TestArgs) -> ExitCode {
             }
         };
         let opts = CheckOptions::from(&resolved.config);
-        let respect = resolved.config.robots.mode == RobotsMode::Respect;
         let url = args.url.as_deref().expect("clap requires --url or --crawl");
         let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
             Ok(rt) => rt,
@@ -221,7 +220,7 @@ fn run_test(args: TestArgs) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        match rt.block_on(tester::test_url(url, &opts, respect, &compiled)) {
+        match rt.block_on(tester::test_url(url, &opts, &resolved.config.robots, &compiled)) {
             Ok(t) => {
                 if !args.json {
                     println!("{} ({})", t.final_url, t.status);

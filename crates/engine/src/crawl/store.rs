@@ -2299,6 +2299,30 @@ impl CrawlStore {
         )? as u64)
     }
 
+    /// Pages started so far per host key (scheme, host and port), for the
+    /// per-subdomain limit on resume. Counts like `pages_started`.
+    pub fn pages_started_by_host(&self) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT host_key, COUNT(*) FROM urls
+             WHERE state IN ('crawled', 'in_flight', 'waiting') AND check_only = 0 GROUP BY host_key",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Pages started so far per crawl depth, for the per-depth limit on
+    /// resume. Counts like `pages_started`.
+    pub fn pages_started_by_depth(&self) -> Result<Vec<(u32, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT depth, COUNT(*) FROM urls
+             WHERE state IN ('crawled', 'in_flight', 'waiting') AND check_only = 0 GROUP BY depth",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     pub fn has_queued(&self) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM urls WHERE state = 'queued')",
@@ -4214,6 +4238,23 @@ mod tests {
         let s = CrawlStore::open(&path).unwrap();
         assert_eq!(s.requeue_for_resume().unwrap(), 2);
         assert_eq!(s.queued_after(None, 10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn started_pages_are_counted_by_host_and_depth() {
+        let (_d, mut s) = store();
+        let a = s.record(&disc("https://a.test/a", 0, QUEUE)).unwrap().id();
+        let b = s.record(&disc("https://a.test/b", 1, QUEUE)).unwrap().id();
+        s.record(&disc("https://a.test/c", 1, QUEUE)).unwrap();
+        s.mark_in_flight(a).unwrap();
+        s.mark_in_flight(b).unwrap();
+        assert_eq!(
+            s.pages_started_by_host().unwrap(),
+            vec![("https://a.test:443".to_string(), 2)]
+        );
+        let mut by_depth = s.pages_started_by_depth().unwrap();
+        by_depth.sort_unstable();
+        assert_eq!(by_depth, vec![(0, 1), (1, 1)]);
     }
 
     #[test]

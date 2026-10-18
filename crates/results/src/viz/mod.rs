@@ -219,7 +219,7 @@ pub(crate) const CATEGORY_SQL: &str = "CASE \
 /// The URLs the trees show: internal ones that were crawled, or were
 /// meant to be and were held back (queued, blocked, over a limit).
 pub(crate) const TREE_URLS: &str = "u.internal = 1 AND (u.state <> 'not_crawled' OR u.reason IN \
-    ('blocked_by_robots', 'robots_unavailable', 'over_url_limit', 'over_depth_limit', 'crawl_stopped'))";
+    ('blocked_by_robots', 'robots_unavailable', 'over_url_limit', 'over_depth_limit', 'over_subdomain_limit', 'over_depth_url_limit', 'crawl_stopped'))";
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]

@@ -179,7 +179,7 @@ pub fn analyze_open(
     let mut summaries: BTreeMap<String, HostSummary> = BTreeMap::new();
     for (i, h) in hosts.iter().enumerate() {
         let source = match h.robots_status.as_str() {
-            "ok" => RobotsSource::Ok(h.robots_txt.as_deref().unwrap_or("")),
+            "ok" | "custom" => RobotsSource::Ok(h.robots_txt.as_deref().unwrap_or("")),
             "unavailable" => RobotsSource::Unavailable,
             "ignored" => RobotsSource::NotFetched,
             _ => RobotsSource::Missing,

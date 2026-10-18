@@ -411,6 +411,18 @@ pub struct CrawlArgs {
     /// List mode: clicks to follow from listed URLs [default: 0].
     #[arg(long, value_name = "N", help_heading = "Limits")]
     pub list_depth: Option<u32>,
+    /// Most pages requested from one host (subdomain).
+    #[arg(long, value_name = "N", help_heading = "Limits")]
+    pub max_urls_per_subdomain: Option<u64>,
+    /// Most pages requested at one crawl depth.
+    #[arg(long, value_name = "N", help_heading = "Limits")]
+    pub max_urls_per_depth: Option<u64>,
+    /// Most folders in a URL path: /a/b/page has 2. Deeper URLs are not crawled.
+    #[arg(long, value_name = "N", help_heading = "Limits")]
+    pub max_folder_depth: Option<u32>,
+    /// Most query parameters in a URL (0 = no query strings).
+    #[arg(long, value_name = "N", help_heading = "Limits")]
+    pub max_query_params: Option<u32>,
 
     /// Crawl only URLs matching this regex. Repeatable.
     #[arg(long, value_name = "REGEX", help_heading = "Scope")]
@@ -447,6 +459,10 @@ pub struct CrawlArgs {
     /// Sort query parameters by name.
     #[arg(long, help_heading = "Scope")]
     pub sort_params: bool,
+    /// Rewrite every discovered link: replace regex matches, in order. Use
+    /// $1 for groups. Repeatable.
+    #[arg(long = "rewrite", value_name = "PATTERN=>REPLACEMENT", value_parser = parse_rewrite, help_heading = "Scope")]
+    pub rewrites: Vec<spiderlens_config::RewriteRule>,
     /// Read sitemaps and crawl the URLs only they list (the default; kept
     /// from spec 003).
     #[arg(long, help_heading = "Sitemaps")]
@@ -489,6 +505,10 @@ pub struct CrawlArgs {
     pub robots: Option<RobotsArg>,
     #[arg(long, help_heading = "Robots")]
     pub ignore_crawl_delay: bool,
+    /// Use this robots.txt file for HOST instead of the site's own, which is
+    /// then not requested. Repeatable.
+    #[arg(long = "robots-file", value_name = "HOST=PATH", value_parser = parse_robots_file, help_heading = "Robots")]
+    pub robots_files: Vec<RobotsFile>,
 
     #[command(flatten)]
     pub network: NetworkArgs,
@@ -1016,6 +1036,18 @@ impl CrawlArgs {
         if let Some(v) = self.max_depth {
             c.limits.max_depth = Some(v);
         }
+        if let Some(v) = self.max_urls_per_subdomain {
+            c.limits.max_urls_per_subdomain = Some(v);
+        }
+        if let Some(v) = self.max_urls_per_depth {
+            c.limits.max_urls_per_depth = Some(v);
+        }
+        if let Some(v) = self.max_folder_depth {
+            c.limits.max_folder_depth = Some(v);
+        }
+        if let Some(v) = self.max_query_params {
+            c.limits.max_query_params = Some(v);
+        }
         c.scope.include.extend(self.include.iter().cloned());
         c.scope.exclude.extend(self.exclude.iter().cloned());
         if self.all_subdomains {
@@ -1057,6 +1089,7 @@ impl CrawlArgs {
         if self.sort_params {
             c.scope.query_params.sort = true;
         }
+        c.scope.rewrite.extend(self.rewrites.iter().cloned());
         let sm = &mut c.scope.sitemaps;
         if self.use_sitemaps {
             sm.read = true;
@@ -1104,6 +1137,14 @@ impl CrawlArgs {
         }
         if self.ignore_crawl_delay {
             c.robots.honour_crawl_delay = false;
+        }
+        for f in &self.robots_files {
+            let text = std::fs::read_to_string(&f.path)
+                .map_err(|e| format!("cannot read robots.txt file {}: {e}", f.path.display()))?;
+            c.robots.custom.push(spiderlens_config::CustomRobots {
+                host: f.host.clone(),
+                text,
+            });
         }
 
         self.network.apply(&mut c);
@@ -1192,6 +1233,38 @@ impl CrawlArgs {
         }
         Ok(Resolved { config: c, notices })
     }
+}
+
+/// `PATTERN=>REPLACEMENT` for `--rewrite`. The split is at the first `=>`,
+/// so the replacement may contain one.
+fn parse_rewrite(s: &str) -> Result<spiderlens_config::RewriteRule, String> {
+    let (pattern, replace) = s
+        .split_once("=>")
+        .ok_or_else(|| "expected PATTERN=>REPLACEMENT, for example /old/(.*)=>/new/$1".to_string())?;
+    Ok(spiderlens_config::RewriteRule {
+        pattern: pattern.to_string(),
+        replace: replace.to_string(),
+    })
+}
+
+/// A custom robots.txt file for one host (`--robots-file`).
+#[derive(Debug, Clone)]
+pub struct RobotsFile {
+    host: String,
+    path: PathBuf,
+}
+
+/// `HOST=PATH` for `--robots-file`. The split is at the first `=`: a host
+/// name has none.
+fn parse_robots_file(s: &str) -> Result<RobotsFile, String> {
+    let (host, path) = s
+        .split_once('=')
+        .filter(|(h, p)| !h.trim().is_empty() && !p.is_empty())
+        .ok_or_else(|| "expected HOST=PATH, for example example.com=robots.txt".to_string())?;
+    Ok(RobotsFile {
+        host: host.trim().to_string(),
+        path: PathBuf::from(path),
+    })
 }
 
 /// `PATH=BASE-URL` for `--sitemap-file`. The split is at the last `=` that

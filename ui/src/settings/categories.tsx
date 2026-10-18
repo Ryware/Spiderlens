@@ -12,6 +12,8 @@ import { LoginPanel } from "./LoginPanel";
 import { ProxyPanel } from "./ProxyPanel";
 import { originOf, SignInsEditor } from "./SignInsEditor";
 import { HeadersEditor } from "./HeadersEditor";
+import { RewriteEditor } from "./RewriteEditor";
+import { CustomRobotsEditor } from "./CustomRobotsEditor";
 import { IssueSettingsPanel } from "../issues/IssueSettingsPanel";
 import { LinkAnalysisBody } from "./LinkAnalysisSettings";
 import { ListInputPanel } from "./ListInputPanel";
@@ -180,6 +182,20 @@ export function CategoryBody({
               />
             )}
           </Row>
+          <Row label="Max URLs per subdomain" help="Blank means no limit. Counts the pages requested from each host." issues={at("limits.max_urls_per_subdomain")}>
+            {(i) => (
+              <NumberInput id={i} optional value={config.limits.max_urls_per_subdomain} onChange={(v) => set((c) => ({ ...c, limits: { ...c.limits, max_urls_per_subdomain: v } }))} placeholder="No limit" />
+            )}
+          </Row>
+          <Row label="Max URLs per depth" help="Blank means no limit. Counts the pages requested at each click depth." issues={at("limits.max_urls_per_depth")}>
+            {(i) => <NumberInput id={i} optional value={config.limits.max_urls_per_depth} onChange={(v) => set((c) => ({ ...c, limits: { ...c.limits, max_urls_per_depth: v } }))} placeholder="No limit" />}
+          </Row>
+          <Row label="Max folder depth" help="Folders in the URL path: /a/b/page has 2. Deeper links are not crawled; the start URL is exempt. Blank means no limit." issues={at("limits.max_folder_depth")}>
+            {(i) => <NumberInput id={i} optional value={config.limits.max_folder_depth} onChange={(v) => set((c) => ({ ...c, limits: { ...c.limits, max_folder_depth: v } }))} placeholder="No limit" />}
+          </Row>
+          <Row label="Max query parameters" help="0 skips every link with a query string. Blank means no limit." issues={at("limits.max_query_params")}>
+            {(i) => <NumberInput id={i} optional value={config.limits.max_query_params} onChange={(v) => set((c) => ({ ...c, limits: { ...c.limits, max_query_params: v } }))} placeholder="No limit" />}
+          </Row>
         </Group>
       );
 
@@ -267,6 +283,15 @@ export function CategoryBody({
               {(i) => <NumberInput id={i} value={config.scope.max_url_length} onChange={(v) => set((c) => ({ ...c, scope: { ...c.scope, max_url_length: v ?? NaN } }))} />}
             </Row>
           </Group>
+          <Group title="URL rewriting">
+            <Row
+              label="Rewrite rules"
+              stacked
+              help="Regex replacements applied to every discovered link, in order. Use $1 for groups."
+            >
+              {() => <RewriteEditor rules={config.scope.rewrite} issues={at("scope.rewrite")} onChange={(rewrite) => set((c) => ({ ...c, scope: { ...c.scope, rewrite } }))} />}
+            </Row>
+          </Group>
           <Group title="Test URLs">
             <Row label="Try the whole scope" stacked help="Paste URLs to see whether the crawl would request them, and which setting decides.">
               {() => <ScopeTester transport={transport} config={config} startUrl={setup.validation?.normalized_start_url ?? null} />}
@@ -352,7 +377,7 @@ export function CategoryBody({
     case "robots":
       return (
         <Group>
-          <Row label="robots.txt behaviour" issues={at("robots")}>
+          <Row label="robots.txt behaviour" issues={at("robots").filter((x) => !x.path.startsWith("robots.custom"))}>
             {(i) => (
               <Select id={i} className="w-48" value={config.robots.mode} onChange={(e) => set((c) => ({ ...c, robots: { ...c.robots, mode: e.target.value as RobotsMode } }))}>
                 <option value="respect">Respect</option>
@@ -363,6 +388,14 @@ export function CategoryBody({
           </Row>
           <Row label="Honour crawl-delay" help="Wait as long between requests as the site asks.">
             {(_, l) => <Switch labelledBy={l} checked={config.robots.honour_crawl_delay} onChange={(v) => set((c) => ({ ...c, robots: { ...c.robots, honour_crawl_delay: v } }))} />}
+          </Row>
+          <Row
+            label="Custom robots.txt"
+            stacked
+            help="Use this text instead of a host's own robots.txt, which is then not requested. Enter a host such as example.com."
+            issues={at("robots.custom").filter((x) => x.path === "robots.custom")}
+          >
+            {() => <CustomRobotsEditor entries={config.robots.custom} issues={at("robots.custom")} onChange={(custom) => set((c) => ({ ...c, robots: { ...c.robots, custom } }))} />}
           </Row>
         </Group>
       );

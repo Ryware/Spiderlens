@@ -79,7 +79,7 @@ export function defaultGenerateOptions(): SitemapGenerateOptions {
 export function defaultConfig(): CrawlConfig {
   return {
     mode: "spider",
-    limits: { max_urls: null, max_depth: null, list_depth: 0 },
+    limits: { max_urls: null, max_depth: null, list_depth: 0, max_urls_per_subdomain: null, max_urls_per_depth: null, max_folder_depth: null, max_query_params: null },
     scope: {
       include: [],
       exclude: [],
@@ -91,10 +91,11 @@ export function defaultConfig(): CrawlConfig {
       query_params: { mode: "keep", names: [], sort: false },
       max_url_length: 2000,
       sitemaps: { read: true, crawl_sitemap_only: true, urls: [], files: [] },
+      rewrite: [],
     },
     identity: { user_agent: { preset: "spiderlens", custom_string: null, robots_token: null }, headers: [] },
     speed: { ...polite, preset: "polite" },
-    robots: { mode: "respect", honour_crawl_delay: true },
+    robots: { mode: "respect", honour_crawl_delay: true, custom: [] },
     network: { connect_timeout_secs: 10, read_timeout_secs: 30, max_redirects: 10, max_body_mb: 50 },
     retry: {
       attempts: 3,
