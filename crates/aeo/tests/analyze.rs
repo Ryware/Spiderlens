@@ -214,7 +214,13 @@ async fn analysis_of_a_crawled_site() {
     assert_eq!(
         outcomes,
         [
-            ("/.well-known/tdmrep.json".to_string(), "not_found".to_string()),
+            (
+                "/.well-known/agent-card.json".to_string(),
+                "not_found".to_string()
+            ),
+            ("/.well-known/ai-catalog.json".into(), "not_found".into()),
+            ("/.well-known/api-catalog".into(), "not_found".into()),
+            ("/.well-known/tdmrep.json".into(), "not_found".into()),
             ("/llms-full.txt".into(), "not_found".into()),
             ("/llms.txt".into(), "ok".into()),
         ]
