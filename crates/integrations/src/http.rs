@@ -93,29 +93,42 @@ impl Http {
 
     /// Sends and returns the JSON body, mapping failures to [`HttpError`].
     pub async fn json(&self, provider: &str, req: RequestBuilder) -> Result<Value, HttpError> {
+        self.json_with_headers(provider, req).await.map(|(v, _)| v)
+    }
+
+    /// [`Http::json`] that also returns the response headers, where link-data
+    /// providers report the units a request used. Error messages never carry
+    /// the request URL, which may hold an API key.
+    pub async fn json_with_headers(
+        &self,
+        provider: &str,
+        req: RequestBuilder,
+    ) -> Result<(Value, reqwest::header::HeaderMap), HttpError> {
         let resp = req.send().await.map_err(|e| HttpError::Network {
             provider: provider.into(),
-            message: e.to_string(),
+            message: e.without_url().to_string(),
         })?;
         let status = resp.status();
-        let retry_after = resp
-            .headers()
+        let headers = resp.headers().clone();
+        let retry_after = headers
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<u64>().ok())
             .map(Duration::from_secs);
         let body = resp.bytes().await.map_err(|e| HttpError::Network {
             provider: provider.into(),
-            message: e.to_string(),
+            message: e.without_url().to_string(),
         })?;
         if status.is_success() {
             if body.is_empty() {
-                return Ok(Value::Null);
+                return Ok((Value::Null, headers));
             }
-            return serde_json::from_slice(&body).map_err(|e| HttpError::Decode {
-                provider: provider.into(),
-                message: e.to_string(),
-            });
+            return serde_json::from_slice(&body)
+                .map(|v| (v, headers))
+                .map_err(|e| HttpError::Decode {
+                    provider: provider.into(),
+                    message: e.to_string(),
+                });
         }
         Err(classify(provider, status, retry_after, &body))
     }

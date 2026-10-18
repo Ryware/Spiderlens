@@ -14,6 +14,7 @@ mod duplicates_cmd;
 mod export_cmd;
 mod files_cmd;
 mod integrations_cmd;
+mod integrations_links_cmd;
 mod issues_cmd;
 mod links_cmd;
 mod options;

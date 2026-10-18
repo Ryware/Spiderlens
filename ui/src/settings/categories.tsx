@@ -23,6 +23,7 @@ import { SegmentsSettings } from "../segments/SegmentsSettings";
 import { SitemapSources } from "./SitemapSources";
 import { StorageSettings } from "./StorageSettings";
 import { AccessibilitySettings } from "../accessibility/AccessibilitySettings";
+import { RenderingSettings } from "./RenderingSettings";
 
 export type CategoryId = "list" | "limits" | "scope" | "identity" | "speed" | "robots" | "network" | "access" | "extraction" | "content" | "segments" | "links" | "issues" | "custom" | "storage" | "spelling" | "rendering" | "accessibility" | "appearance" | "assistants";
 
@@ -522,31 +523,7 @@ export function CategoryBody({
     }
 
     case "rendering":
-      return (
-        <Group>
-          <Row
-            label="Mode"
-            help={
-              config.rendering.mode === "javascript"
-                ? "Each HTML page is fetched as usual, then rendered in a browser; the tabs show the rendered values."
-                : "Pages are read from their HTML as served. No browser is started."
-            }
-            issues={at("rendering.mode")}
-          >
-            {() => (
-              <Segmented
-                label="Rendering mode"
-                value={config.rendering.mode}
-                options={[
-                  { value: "raw", label: "Raw HTML" },
-                  { value: "javascript", label: "JavaScript rendering" },
-                ]}
-                onChange={(v) => set((c) => ({ ...c, rendering: { ...c.rendering, mode: v } }))}
-              />
-            )}
-          </Row>
-        </Group>
-      );
+      return <RenderingSettings config={config} set={set} at={at} transport={transport} />;
     case "accessibility":
       return <AccessibilitySettings config={config} set={set} at={at} onOpenRendering={onCategory ? () => onCategory("rendering") : undefined} />;
     case "extraction": {

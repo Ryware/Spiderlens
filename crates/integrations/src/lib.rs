@@ -13,21 +13,35 @@
 //! - `run` and `store`: resumable runs inside the crawl file (D7, D8).
 //! - `matching`: provider URLs to crawled URLs (D9).
 //! - `gsc`: Search Console (D10).
+//! - `inspect`: URL Inspection (D10).
+//! - `ga4`: Google Analytics 4 landing pages (D10).
+//! - `perf`, `crux`, `psi`: field data and lab tests (D10).
+//! - `links`: Ahrefs, Majestic and Moz link metrics with cost control (D10).
+//! - `sheets` and `looker`: export a results view to Google Sheets, open it in Looker Studio (D10).
 //! - `hub`: the one entry point the app and the CLI share.
 
 pub mod browser;
 pub mod cache;
 pub mod credentials;
+pub mod crux;
 mod error;
+pub mod ga4;
+mod gcall;
 pub mod gsc;
 pub mod http;
 pub mod hub;
+pub mod inspect;
 pub mod limits;
+pub mod links;
+pub mod looker;
 pub mod matching;
 pub mod oauth;
+pub mod perf;
 mod provider;
+pub mod psi;
 pub mod run;
 pub mod settings;
+pub mod sheets;
 pub mod store;
 
 pub use error::{Error, Result};

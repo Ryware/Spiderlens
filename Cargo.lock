@@ -6251,6 +6251,7 @@ name = "spiderlens-integrations"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "csv",
  "getrandom 0.3.4",
  "jiff",
  "keyring",

@@ -17,15 +17,21 @@ use spiderlens_integrations::store::RunProgress;
 use spiderlens_integrations::{Provider, browser};
 use tauri::{AppHandle, Emitter, Manager};
 
-type Cmd<T> = Result<T, String>;
+pub(crate) mod perf;
+
+pub(crate) type Cmd<T> = Result<T, String>;
+
+// URL Inspection and Analytics commands (spec 024 slices 2 and 4).
+#[path = "integrations_google.rs"]
+pub(crate) mod google;
 
 /// The progress event, at most every 200 ms and once at the end.
 pub const PROGRESS: &str = "integrations://progress";
 
 pub struct State {
-    hub: Arc<Hub>,
+    pub(crate) hub: Arc<Hub>,
     /// The running run's control, if any.
-    run: Mutex<Option<Control>>,
+    pub(crate) run: Mutex<Option<Control>>,
     /// The sign-in waiting for the browser, if any.
     sign_in: Mutex<Option<Control>>,
 }
@@ -40,12 +46,12 @@ impl State {
     }
 }
 
-fn err(e: impl std::fmt::Display) -> String {
+pub(crate) fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
 /// Runs `f` with the hub on its own thread.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     state: &State,
     f: impl FnOnce(&Hub) -> spiderlens_integrations::Result<T> + Send + 'static,
 ) -> Cmd<T> {
@@ -61,7 +67,7 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| "The integrations worker stopped.".to_string())?
 }
 
-fn provider(id: &str) -> Cmd<Provider> {
+pub(crate) fn provider(id: &str) -> Cmd<Provider> {
     Provider::from_id(id).ok_or_else(|| format!("Unknown provider {id}"))
 }
 
@@ -162,7 +168,7 @@ pub fn integrations_default_request(property: String) -> PageRequest {
     PageRequest::last_28_days(property)
 }
 
-fn refused_while_crawling(app: &AppHandle, path: &std::path::Path) -> Cmd<()> {
+pub(crate) fn refused_while_crawling(app: &AppHandle, path: &std::path::Path) -> Cmd<()> {
     if app.state::<crate::crawl::State>().active_path().as_deref() == Some(path) {
         return Err(
             "This crawl is still running. Fetch external data when it has finished or paused.".into(),
@@ -171,7 +177,7 @@ fn refused_while_crawling(app: &AppHandle, path: &std::path::Path) -> Cmd<()> {
     Ok(())
 }
 
-async fn run(
+pub(crate) async fn run(
     app: AppHandle,
     state: &State,
     path: PathBuf,

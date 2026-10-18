@@ -14,6 +14,10 @@ import type { RunProgress } from "../generated/RunProgress";
 import type { RunState } from "../generated/RunState";
 import type { Status } from "../generated/Status";
 import type { Transport } from "../transport";
+import { AnalyticsPanel } from "./AnalyticsPanel";
+import { InspectionPanel } from "./InspectionPanel";
+import { PageExperiencePanel } from "./PageExperiencePanel";
+import { LinkMetricsPanel } from "./LinkMetricsPanel";
 
 const STATE_LABEL: Record<RunState, string> = {
   queued: "Queued",
@@ -49,6 +53,8 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
 
   if (!status) return <div className="p-6 text-sm text-fg-3">{error ?? "Loading…"}</div>;
   const sc = status.providers.find((p) => p.provider === "search_console")!;
+  const inspection = status.providers.find((p) => p.provider === "url_inspection")!;
+  const analytics = status.providers.find((p) => p.provider === "analytics")!;
   const google = status.connections.filter((c) => c.kind === "google");
 
   return (
@@ -89,6 +95,45 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
           />
         ) : (
           <Notice>Open or finish a crawl to fetch Search Console data for it.</Notice>
+        )}
+        {path && (
+          <>
+            <InspectionPanel
+              transport={transport}
+              path={path}
+              provider={inspection}
+              account={google.find((c) => c.scopes.includes("search_console"))?.label ?? null}
+              crawlRunning={crawlRunning}
+              onDataChanged={onDataChanged}
+            />
+            <AnalyticsPanel
+              transport={transport}
+              path={path}
+              provider={analytics}
+              account={google.find((c) => c.scopes.includes("analytics"))?.label ?? null}
+              crawlRunning={crawlRunning}
+              onDataChanged={onDataChanged}
+              onConnected={() => void reload()}
+            />
+            <PageExperiencePanel
+              transport={transport}
+              path={path}
+              field={status.providers.find((p) => p.provider === "field_data")!}
+              lab={status.providers.find((p) => p.provider === "lab_tests")!}
+              keys={status.connections}
+              crawlRunning={crawlRunning}
+              onChanged={reload}
+              onDataChanged={onDataChanged}
+            />
+            <LinkMetricsPanel
+              transport={transport}
+              path={path}
+              status={status}
+              crawlRunning={crawlRunning}
+              onChanged={reload}
+              onDataChanged={onDataChanged}
+            />
+          </>
         )}
       </div>
     </div>
@@ -398,12 +443,12 @@ function SearchConsoleRun({
       )}
       {error && <Notice kind="bad" role="alert">{error}</Notice>}
 
-      {runs.length > 0 && (
+      {runs.some((r) => r.provider === "search_console") && (
         <ul aria-label="Runs" className="m-0 flex list-none flex-col gap-1 p-0">
-          {runs.map((r) => (
+          {runs.filter((r) => r.provider === "search_console").map((r) => (
             <li key={r.id} data-run={r.id} className="flex flex-wrap items-center gap-2 text-sm text-fg-2">
               <Badge tone={STATE_TONE[r.state]}>{STATE_LABEL[r.state]}</Badge>
-              <span className="text-fg">{r.property}</span>
+              <span className="text-fg">{r.property ?? r.provider}</span>
               <span>
                 {n(r.done)} rows
                 {r.matched !== null && `, ${n(r.matched)} matched crawled pages`}

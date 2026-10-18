@@ -553,6 +553,54 @@ pub struct CrawlArgs {
     /// version next to the raw HTML (spec 014).
     #[arg(long, help_heading = "Rendering")]
     pub render: bool,
+    /// Longest time one page may render, in seconds (1 to 60, default 10).
+    #[arg(long, value_name = "SECONDS", help_heading = "Rendering")]
+    pub render_timeout: Option<f64>,
+    /// Seconds to wait before the page may count as settled (default 0).
+    #[arg(long, value_name = "SECONDS", help_heading = "Rendering")]
+    pub render_min_wait: Option<f64>,
+    /// Window size: auto (the default), mobile, desktop or WIDTHxHEIGHT.
+    #[arg(long, value_name = "SIZE", help_heading = "Rendering")]
+    pub render_window: Option<WindowArg>,
+    /// Resource types that are not loaded: a comma list of images, media,
+    /// fonts, stylesheets and third-party, or none (default
+    /// images,media,fonts).
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        value_name = "TYPES",
+        help_heading = "Rendering"
+    )]
+    pub render_block: Vec<BlockArg>,
+    /// Render only pages whose address matches this regular expression.
+    /// Repeatable.
+    #[arg(long, value_name = "REGEX", help_heading = "Rendering")]
+    pub render_include: Vec<String>,
+    /// Do not render pages whose address matches this regular expression.
+    /// Repeatable.
+    #[arg(long, value_name = "REGEX", help_heading = "Rendering")]
+    pub render_exclude: Vec<String>,
+    /// Also render internal 4xx and 5xx HTML pages.
+    #[arg(long, help_heading = "Rendering")]
+    pub render_error_pages: bool,
+    /// Pages rendered at once, 1 to 16, or auto (total memory in GB / 4).
+    #[arg(long, value_name = "N|auto", help_heading = "Rendering")]
+    pub render_tabs: Option<AutoNumber>,
+    /// Browser memory budget in MB, or auto (total memory / 8).
+    #[arg(long, value_name = "MB|auto", help_heading = "Rendering")]
+    pub render_memory: Option<AutoNumber>,
+    /// Store a screenshot of every rendered page.
+    #[arg(long, help_heading = "Rendering")]
+    pub screenshots: bool,
+    /// When a page "contains JavaScript content": share of new text in
+    /// percent, then words added (default 20,50).
+    #[arg(long, value_name = "PERCENT,WORDS", help_heading = "Rendering")]
+    pub js_content_threshold: Option<ContentThreshold>,
+    /// Share of text hidden from crawlers that do not render, in percent
+    /// (default 50).
+    #[arg(long, value_name = "PERCENT", help_heading = "Rendering")]
+    pub js_hidden_threshold: Option<u32>,
 
     /// Accessibility checks: off, static (from the HTML) or full (also in the
     /// rendered page; needs --render). Default static.
@@ -576,6 +624,86 @@ pub struct CrawlArgs {
     /// default 5).
     #[arg(long, value_name = "SECONDS", help_heading = "Accessibility")]
     pub a11y_budget: Option<u32>,
+}
+
+/// `--render-window`: `auto`, `mobile`, `desktop` or `WIDTHxHEIGHT`.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowArg(pub spiderlens_config::RenderWindow);
+
+impl std::str::FromStr for WindowArg {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        use spiderlens_config::{RenderWindow, WindowPreset};
+        let preset = |preset| {
+            Ok(Self(RenderWindow {
+                preset,
+                width: None,
+                height: None,
+            }))
+        };
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => preset(WindowPreset::Auto),
+            "mobile" => preset(WindowPreset::Mobile),
+            "desktop" => preset(WindowPreset::Desktop),
+            other => {
+                let bad = || format!("{s:?} is not a window; use auto, mobile, desktop or WIDTHxHEIGHT");
+                let (w, h) = other.split_once('x').ok_or_else(bad)?;
+                Ok(Self(RenderWindow {
+                    preset: WindowPreset::Custom,
+                    width: Some(w.trim().parse().map_err(|_| bad())?),
+                    height: Some(h.trim().parse().map_err(|_| bad())?),
+                }))
+            }
+        }
+    }
+}
+
+/// `--render-block` items.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum BlockArg {
+    Images,
+    Media,
+    Fonts,
+    Stylesheets,
+    ThirdParty,
+    None,
+}
+
+/// `--render-tabs` and `--render-memory`: a number or `auto` (stored as
+/// no value).
+#[derive(Clone, Copy, Debug)]
+pub struct AutoNumber(pub Option<u32>);
+
+impl std::str::FromStr for AutoNumber {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        if s.trim().eq_ignore_ascii_case("auto") {
+            return Ok(Self(None));
+        }
+        s.trim()
+            .parse::<u32>()
+            .map(|v| Self(Some(v)))
+            .map_err(|_| "expected a whole number or \"auto\"".into())
+    }
+}
+
+/// `--js-content-threshold PERCENT,WORDS`.
+#[derive(Clone, Copy, Debug)]
+pub struct ContentThreshold {
+    pub percent: u32,
+    pub words: u32,
+}
+
+impl std::str::FromStr for ContentThreshold {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        let bad = || format!("{s:?} is not PERCENT,WORDS, for example 20,50");
+        let (p, w) = s.split_once(',').ok_or_else(bad)?;
+        Ok(Self {
+            percent: p.trim().parse().map_err(|_| bad())?,
+            words: w.trim().parse().map_err(|_| bad())?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -767,6 +895,79 @@ impl CrawlArgs {
         Some(s)
     }
 
+    /// The rendering flags other than `--render` (spec 014 contracts/cli.md).
+    /// Given without `--render` they are an error, so a typo cannot quietly
+    /// produce a raw crawl.
+    fn apply_rendering(&self, c: &mut CrawlConfig) -> Result<(), String> {
+        let given = [
+            ("--render-timeout", self.render_timeout.is_some()),
+            ("--render-min-wait", self.render_min_wait.is_some()),
+            ("--render-window", self.render_window.is_some()),
+            ("--render-block", !self.render_block.is_empty()),
+            ("--render-include", !self.render_include.is_empty()),
+            ("--render-exclude", !self.render_exclude.is_empty()),
+            ("--render-error-pages", self.render_error_pages),
+            ("--render-tabs", self.render_tabs.is_some()),
+            ("--render-memory", self.render_memory.is_some()),
+            ("--screenshots", self.screenshots),
+            ("--js-content-threshold", self.js_content_threshold.is_some()),
+            ("--js-hidden-threshold", self.js_hidden_threshold.is_some()),
+        ];
+        let names: Vec<&str> = given.iter().filter(|(_, on)| *on).map(|(n, _)| *n).collect();
+        if names.is_empty() {
+            return Ok(());
+        }
+        // A profile that already turns rendering on counts.
+        if !c.rendering.is_on() {
+            return Err(format!("{} need --render", names.join(", ")));
+        }
+        let r = &mut c.rendering;
+        if let Some(v) = self.render_timeout {
+            r.max_render_secs = v;
+        }
+        if let Some(v) = self.render_min_wait {
+            r.min_wait_secs = v;
+        }
+        if let Some(w) = self.render_window {
+            r.window = w.0;
+        }
+        if !self.render_block.is_empty() {
+            let has = |b: BlockArg| self.render_block.contains(&b);
+            if has(BlockArg::None) && self.render_block.len() > 1 {
+                return Err("--render-block none cannot be combined with other types".into());
+            }
+            r.block = spiderlens_config::RenderBlock {
+                images: has(BlockArg::Images),
+                media: has(BlockArg::Media),
+                fonts: has(BlockArg::Fonts),
+                stylesheets: has(BlockArg::Stylesheets),
+                third_party: has(BlockArg::ThirdParty),
+            };
+        }
+        r.include.extend(self.render_include.iter().cloned());
+        r.exclude.extend(self.render_exclude.iter().cloned());
+        if self.render_error_pages {
+            r.render_error_pages = true;
+        }
+        if let Some(v) = self.render_tabs {
+            r.concurrency = v.0;
+        }
+        if let Some(v) = self.render_memory {
+            r.memory_budget_mb = v.0;
+        }
+        if self.screenshots {
+            r.screenshots = true;
+        }
+        if let Some(t) = self.js_content_threshold {
+            r.js_content_min_percent = t.percent;
+            r.js_content_min_words = t.words;
+        }
+        if let Some(v) = self.js_hidden_threshold {
+            r.hidden_content_percent = v;
+        }
+        Ok(())
+    }
+
     pub fn resolve(&self, mode: Mode) -> Result<Resolved, String> {
         let mut notices = Vec::new();
         let mut c = match &self.profile {
@@ -945,6 +1146,7 @@ impl CrawlArgs {
         if self.render {
             c.rendering.mode = spiderlens_config::RenderMode::Javascript;
         }
+        self.apply_rendering(&mut c)?;
         if let Some(level) = self.accessibility {
             c.accessibility.level = level.into();
         }

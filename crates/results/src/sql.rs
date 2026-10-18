@@ -103,6 +103,22 @@ pub fn register_a11y(
     })
 }
 
+/// The registry's purpose of the crawler with this robots.txt token, as the
+/// snake case word the stored data and the UI use.
+fn ai_bot_purpose(token: &str) -> Option<String> {
+    use spiderlens_config::ai_bots::BotPurpose;
+    let b = spiderlens_config::ai_bots::by_token(token)?;
+    Some(
+        match b.purpose {
+            BotPurpose::Training => "training",
+            BotPurpose::Search => "search",
+            BotPurpose::UserFetch => "user_fetch",
+            BotPurpose::Other => "other",
+        }
+        .to_string(),
+    )
+}
+
 pub fn register(conn: &Connection) -> rusqlite::Result<()> {
     conn.create_scalar_function("has_header", 2, FLAGS, |ctx| {
         let headers: Option<String> = ctx.get(0)?;
@@ -174,6 +190,18 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
             .map(|b| b.name.as_str())
             .collect();
         Ok(Some(names.join(", ")))
+    })?;
+    // Spec 016 FR-013: what a stored crawler token is for (`user_fetch` for
+    // agents that fetch a page because a person asked), and its name. Both
+    // read the shared registry; a token it does not know (a user's own
+    // entry) gives NULL.
+    conn.create_scalar_function("ai_bot_purpose", 1, FLAGS, |ctx| {
+        let token: Option<String> = ctx.get(0)?;
+        Ok(token.and_then(|t| ai_bot_purpose(&t)))
+    })?;
+    conn.create_scalar_function("ai_bot_name", 1, FLAGS, |ctx| {
+        let token: Option<String> = ctx.get(0)?;
+        Ok(token.and_then(|t| spiderlens_config::ai_bots::by_token(&t).map(|b| b.name.clone())))
     })?;
     conn.create_scalar_function("px_width", 2, FLAGS, |ctx| {
         let text: Option<String> = ctx.get(0)?;
@@ -687,6 +715,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn ai_bot_purpose_comes_from_the_registry() {
+        let conn = Connection::open_in_memory().unwrap();
+        register(&conn).unwrap();
+        let user_fetch = spiderlens_config::ai_bots::active()
+            .find(|b| b.purpose == spiderlens_config::ai_bots::BotPurpose::UserFetch)
+            .expect("the registry has a user-fetch agent");
+        let get = |sql: &str, token: &str| -> Option<String> {
+            conn.query_row(sql, [token], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(
+            get("SELECT ai_bot_purpose(?1)", &user_fetch.token).as_deref(),
+            Some("user_fetch")
+        );
+        assert_eq!(
+            get("SELECT ai_bot_purpose(?1)", &user_fetch.token.to_uppercase()).as_deref(),
+            Some("user_fetch")
+        );
+        assert_eq!(
+            get("SELECT ai_bot_name(?1)", &user_fetch.token),
+            Some(user_fetch.name.clone())
+        );
+        assert_eq!(get("SELECT ai_bot_purpose(?1)", "not-a-registered-bot"), None);
+        assert_eq!(get("SELECT ai_bot_name(?1)", "not-a-registered-bot"), None);
+        let null: Option<String> = conn
+            .query_row("SELECT ai_bot_purpose(NULL)", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(null, None);
+    }
 
     #[test]
     fn natural_order() {

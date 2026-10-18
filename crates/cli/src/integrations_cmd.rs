@@ -16,9 +16,15 @@ use spiderlens_integrations::{Error, Provider};
 
 use crate::exit;
 
+// `--provider url-inspection` and `--provider analytics` (spec 024 slices 2
+// and 4) live in their own file.
+#[path = "integrations_google_cmd.rs"]
+mod google;
+mod perf;
+
 /// A run stopped at the provider's daily allowance; `resume` continues it
 /// after the reset time (contracts/cli.md).
-const QUOTA: u8 = 10;
+pub(crate) const QUOTA: u8 = 10;
 
 #[derive(Subcommand)]
 pub enum IntegrationsCommand {
@@ -45,8 +51,11 @@ pub enum IntegrationsCommand {
         #[arg(long)]
         label: String,
     },
-    /// List the Search Console properties a Google account can read.
+    /// List the Search Console properties, or the Analytics data streams, a Google account can read.
     Properties {
+        /// `search-console` (default) or `analytics`.
+        #[arg(long, value_enum)]
+        provider: Option<ProviderArg>,
         /// The Google account to use when several are connected.
         #[arg(long)]
         account: Option<String>,
@@ -91,6 +100,8 @@ pub enum IntegrationsCommand {
     /// The response cache outside crawl files.
     #[command(subcommand)]
     Cache(CacheCommand),
+    /// Export a results view to a new Google Sheet (and a Looker Studio link).
+    ExportSheets(crate::integrations_links_cmd::SheetsArgs),
 }
 
 #[derive(Subcommand)]
@@ -145,7 +156,8 @@ pub enum GoogleFeature {
 
 #[derive(Args)]
 pub struct ConnectArgs {
-    /// `google`, or a key provider: field-data, lab-tests, ahrefs, majestic, moz.
+    /// `google`, `google-key` (one Google API key for field-data and lab-tests), or a key provider:
+    /// field-data, lab-tests, ahrefs, majestic, moz.
     target: String,
     /// Google: what to allow. Repeatable; default search-console.
     #[arg(long, value_enum)]
@@ -164,9 +176,25 @@ pub struct FetchArgs {
     file: PathBuf,
     #[arg(long, value_enum)]
     provider: ProviderArg,
-    /// Search Console property (default: the one covering the crawled site).
+    /// Search Console property (default: the one covering the crawled site);
+    /// for analytics, the GA4 property id.
     #[arg(long)]
     property: Option<String>,
+    /// URL Inspection: `indexable` (default), `all`, or text the address contains.
+    #[arg(long, default_value = "indexable")]
+    urls: String,
+    /// URL Inspection: inspect at most this many URLs.
+    #[arg(long)]
+    max: Option<u32>,
+    /// Analytics: the web data stream id (default: the one matching the crawled site).
+    #[arg(long)]
+    stream: Option<String>,
+    /// Analytics: report landing pages that differ by query string apart.
+    #[arg(long)]
+    keep_query: bool,
+    /// Analytics: the last N days up to yesterday, such as 28d.
+    #[arg(long, conflicts_with_all = ["from", "to"])]
+    last: Option<String>,
     /// The Google account to use when several are connected.
     #[arg(long)]
     account: Option<String>,
@@ -185,6 +213,11 @@ pub struct FetchArgs {
     /// Print the final run as JSON.
     #[arg(long)]
     json: bool,
+    /// Field data and lab tests: devices, pages and strategy.
+    #[command(flatten)]
+    perf: perf::PerfArgs,
+    #[command(flatten)]
+    links: crate::integrations_links_cmd::LinkArgs,
 }
 
 fn hub() -> Result<Hub, Error> {
@@ -208,7 +241,7 @@ fn fail(e: &Error) -> ExitCode {
     ExitCode::from(code(e))
 }
 
-fn print_json<T: serde::Serialize>(v: &T) {
+pub(crate) fn print_json<T: serde::Serialize>(v: &T) {
     println!("{}", serde_json::to_string_pretty(v).expect("serializes"));
 }
 
@@ -275,7 +308,29 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
             }
             Ok(ExitCode::from(exit::FETCHED))
         }
-        IntegrationsCommand::Properties { account, crawl, json } => {
+        IntegrationsCommand::Properties {
+            provider,
+            account,
+            crawl,
+            json,
+        } => {
+            if matches!(provider, Some(ProviderArg::Analytics)) {
+                let streams = h.analytics_streams(account.as_deref(), crawl.as_deref())?;
+                if json {
+                    print_json(&streams);
+                } else {
+                    for s in streams {
+                        println!(
+                            "{} --property {} --stream {}{}",
+                            s.display,
+                            s.property,
+                            s.stream,
+                            if s.suggested { "  (suggested)" } else { "" }
+                        );
+                    }
+                }
+                return Ok(ExitCode::from(exit::FETCHED));
+            }
             let props = h.properties(account.as_deref(), crawl.as_deref())?;
             if json {
                 print_json(&props);
@@ -287,6 +342,7 @@ fn go(h: &Hub, cmd: IntegrationsCommand) -> Result<ExitCode, Error> {
             Ok(ExitCode::from(exit::FETCHED))
         }
         IntegrationsCommand::Fetch(a) => fetch(h, a),
+        IntegrationsCommand::ExportSheets(a) => crate::integrations_links_cmd::export_sheets(h, a),
         IntegrationsCommand::Resume { file, run, json } => {
             let control = pause_on_ctrl_c();
             let p = h.resume(&file, run, &control, &mut progress())?;
@@ -378,6 +434,9 @@ fn connect(h: &Hub, a: ConnectArgs) -> Result<ExitCode, Error> {
         println!("Connected {} ({}).", c.label, c.scopes.join(", "));
         return Ok(ExitCode::from(exit::FETCHED));
     }
+    if a.target == "google-key" {
+        return perf::connect_key(h, a.label.as_deref());
+    }
     let p = Provider::from_id(&a.target.replace('-', "_"))
         .filter(|p| !p.uses_google_account())
         .ok_or_else(|| Error::Invalid(format!("unknown provider {}", a.target)))?;
@@ -398,11 +457,23 @@ fn connect(h: &Hub, a: ConnectArgs) -> Result<ExitCode, Error> {
 
 fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
     let p = Provider::from(a.provider);
-    if p != Provider::SearchConsole {
-        return Err(Error::Invalid(format!(
-            "{} is not available in this build yet",
-            p.label()
-        )));
+    match p {
+        Provider::SearchConsole => {}
+        Provider::UrlInspection => return google::fetch_inspection(h, a),
+        Provider::Analytics => return google::fetch_analytics(h, a),
+        Provider::FieldData | Provider::LabTests => return perf::fetch(h, p, &a),
+        Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
+            let account = a.account.as_deref();
+            return crate::integrations_links_cmd::fetch_links(
+                h, p, &a.file, account, &a.urls, &a.links, a.fresh, a.json,
+            );
+        }
+        _ => {
+            return Err(Error::Invalid(format!(
+                "{} is not available in this build yet",
+                p.label()
+            )));
+        }
     }
     let property = match a.property {
         Some(p) => p,
@@ -432,17 +503,21 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
     Ok(finish(&r, a.json))
 }
 
-fn progress() -> impl FnMut(&RunProgress) {
+pub(crate) fn progress() -> impl FnMut(&RunProgress) {
     let mut last = Instant::now();
     move |p: &RunProgress| {
         if last.elapsed() >= Duration::from_millis(500) {
             last = Instant::now();
-            eprintln!("{} rows read", p.done);
+            if p.provider == Provider::UrlInspection {
+                eprintln!("{} of {} URLs inspected", p.done, p.requested);
+            } else {
+                eprintln!("{} rows read", p.done);
+            }
         }
     }
 }
 
-fn finish(p: &RunProgress, json: bool) -> ExitCode {
+pub(crate) fn finish(p: &RunProgress, json: bool) -> ExitCode {
     if json {
         print_json(p);
     } else {
@@ -467,7 +542,7 @@ fn finish(p: &RunProgress, json: bool) -> ExitCode {
         RunState::Finished => ExitCode::from(exit::FETCHED),
         RunState::PausedQuota => {
             if let Some(at) = &p.resume_at {
-                eprintln!("Daily allowance used; resume after {at} with `spiderlens integrations resume`.");
+                eprintln!("Allowance used up; resume after {at} with `spiderlens integrations resume`.");
             }
             ExitCode::from(QUOTA)
         }
@@ -483,14 +558,14 @@ fn url_id(file: &std::path::Path, url: &str) -> Result<i64, Error> {
 }
 
 /// Ctrl-C pauses the run; it can be resumed later.
-fn pause_on_ctrl_c() -> Control {
+pub(crate) fn pause_on_ctrl_c() -> Control {
     let control = Control::default();
     let c = control.clone();
     on_ctrl_c(move || c.pause());
     control
 }
 
-fn cancel_on_ctrl_c() -> Control {
+pub(crate) fn cancel_on_ctrl_c() -> Control {
     let control = Control::default();
     let c = control.clone();
     on_ctrl_c(move || c.cancel());
@@ -509,7 +584,7 @@ fn on_ctrl_c(f: impl FnOnce() + Send + 'static) {
     });
 }
 
-fn open_browser(url: &str) {
+pub(crate) fn open_browser(url: &str) {
     if !spiderlens_integrations::browser::open(url) {
         eprintln!("Could not open a browser; open the link above yourself.");
     }
@@ -526,10 +601,13 @@ mod test_hooks {
 
     use secrecy::{ExposeSecret, SecretString};
     use spiderlens_integrations::credentials::{CredentialId, CredentialStore, StoreKind};
+    use spiderlens_integrations::ga4::Ga4Api;
     use spiderlens_integrations::gsc::Api;
-    use spiderlens_integrations::hub::Hub;
+    use spiderlens_integrations::hub::{GoogleApis, Hub};
+    use spiderlens_integrations::inspect::InspectApi;
     use spiderlens_integrations::oauth::{Client, Endpoints};
     use spiderlens_integrations::settings::Folder;
+    use spiderlens_integrations::{crux, psi};
 
     struct FileStore(PathBuf);
 
@@ -577,6 +655,48 @@ mod test_hooks {
         let _ = std::fs::create_dir_all(&home);
         let store = Arc::new(FileStore(home.join("test-keychain.json")));
         let h = Hub::new(Folder::new(&home), store, Some(home.join("cache.sqlite")));
+        // Fake URL Inspection and Analytics services (spec 024 slices 2 and 4).
+        let mut apis = GoogleApis::default();
+        if let Ok(base) = std::env::var("SPIDERLENS_TEST_INSPECTION") {
+            apis.inspection = InspectApi { base };
+        }
+        if let Ok(base) = std::env::var("SPIDERLENS_TEST_ANALYTICS") {
+            apis.analytics = Ga4Api {
+                admin_base: base.clone(),
+                data_base: base,
+            };
+        }
+        let h = h.with_google_apis(apis);
+        // Field data and lab tests have their own fake (SPIDERLENS_TEST_PERF).
+        let h = match std::env::var("SPIDERLENS_TEST_PERF") {
+            Ok(base) => h.with_perf(
+                crux::Api {
+                    base: format!("{base}/crux/v1"),
+                },
+                psi::Api {
+                    base: format!("{base}/psi/v5"),
+                },
+            ),
+            Err(_) => h,
+        };
+        let h = match std::env::var("SPIDERLENS_TEST_LINKS") {
+            Ok(base) => h.with_links(spiderlens_integrations::links::Apis {
+                ahrefs: format!("{base}/ahrefs/v3"),
+                majestic: format!("{base}/majestic/api/json"),
+                moz: format!("{base}/moz/v2"),
+            }),
+            Err(_) => h,
+        };
+        let h = match std::env::var("SPIDERLENS_TEST_SHEETS") {
+            Ok(base) => h.with_sheets(spiderlens_integrations::sheets::Api {
+                base,
+                cell_capacity: std::env::var("SPIDERLENS_TEST_SHEETS_CAPACITY")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(spiderlens_integrations::sheets::CELL_CAPACITY),
+            }),
+            Err(_) => h,
+        };
         match std::env::var("SPIDERLENS_TEST_GOOGLE") {
             Ok(base) => h.with_google(
                 Endpoints {

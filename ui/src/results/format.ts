@@ -113,6 +113,9 @@ export const needReason: Record<Need, string> = {
   pdf: "This crawl did not read PDFs. Turn on Crawl PDFs in the crawl settings to read them.",
   readability: "Not collected: this crawl file was made before SpiderLens counted sentences and syllables.",
   search_console: "No Search Console data yet. Connect Search Console in Integrations and fetch data for this crawl.",
+  url_inspection: "No URL Inspection results yet. Connect Search Console in Integrations and choose Inspect index status for this crawl.",
+  analytics: "No Analytics data yet. Allow Google Analytics access in Integrations and fetch data for this crawl.",
+  link_metrics: "No link metrics yet. Save an Ahrefs, Majestic or Moz key in Integrations and fetch them for this crawl.",
   sitemap_entries: "Not recorded: this crawl file was made before SpiderLens kept sitemap entries.",
   sitemap_audit: "Checked when the crawl ends.",
   orphans: "Found when the crawl ends. Orphan pages need a Spider mode crawl that read sitemaps.",
@@ -121,4 +124,6 @@ export const needReason: Record<Need, string> = {
   ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
   spelling: "Spelling has not been checked for this crawl. Use Check spelling on the Spelling tab.",
   near_dup: "Not analysed: this crawl file was made before SpiderLens compared page content.",
+  field_data: "No field data yet. Save a Google API key in Integrations and fetch field data for this crawl.",
+  lab_tests: "No lab test results yet. Run lab tests for this crawl from Integrations.",
 };

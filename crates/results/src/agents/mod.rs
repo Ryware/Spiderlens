@@ -12,7 +12,9 @@ pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFind
 pub use entry_points::{AgentEntryPoints, EntryPointRow, EntryProblem, Evaluated, evaluate};
 pub use pass::AgentScores;
 pub use score::{AgentPart, WEIGHTS_VERSION};
-pub use summary::{AgentFailedRule, AgentNotChecked, AgentPartScore, AgentsSummary};
+pub use summary::{
+    AgentAccessRow, AgentFailedRule, AgentNotChecked, AgentPartScore, AgentProbe, AgentRobots, AgentsSummary,
+};
 
 use std::borrow::Cow;
 
@@ -49,12 +51,23 @@ pub mod conditions {
     pub const DECLARED_TOOLS: &str = any_raw!("declared_tools");
     pub const TOOLS_MISSING_DESCRIPTION: &str = any_raw!("tools_missing_description");
     pub const HAS_MARKDOWN: &str = concat!(raw!("md_alternate"), " IS NOT NULL");
+    /// Pages whose Markdown alternate failed to load or is not Markdown.
+    pub const MARKDOWN_BROKEN: &str = "EXISTS (SELECT 1 FROM page_agent a WHERE a.url_id = u.id AND a.source = 'raw' AND a.md_outcome IN ('error', 'wrong_type'))";
+    /// A form the rendered page has and the raw HTML has not: no raw form of
+    /// the same method and action (both as written, so they resolve alike).
+    /// Only pages the crawl rendered have rendered rows.
+    pub const FORM_RENDERED_ONLY: &str = "EXISTS (SELECT 1 FROM page_forms r WHERE r.url_id = u.id AND r.source = 'rendered' AND NOT EXISTS (SELECT 1 FROM page_forms w WHERE w.url_id = r.url_id AND w.source = 'raw' AND w.method = r.method AND COALESCE(w.action, '') = COALESCE(r.action, '')))";
     /// Checked pages only: a page without a `page_agent` row was not checked.
     pub const NO_MARKDOWN: &str = "EXISTS (SELECT 1 FROM page_agent a WHERE a.url_id = u.id AND a.source = 'raw' AND a.md_alternate IS NULL)";
 }
 
 fn agent_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
     filter(id, label, cond).needs(Need::Agents)
+}
+
+/// Filters over what a browser saw need the crawl to have rendered pages.
+fn rendered_filter(id: &'static str, label: &'static str, cond: &'static str) -> FilterDef {
+    filter(id, label, cond).needs(Need::Rendering)
 }
 
 /// The Agents tab (spec 016 FR-017). Score columns join it once evaluation
@@ -109,6 +122,11 @@ pub(crate) fn tab() -> TabDef {
             filter("all", "All", "1"),
             agent_filter("has_forms", "Has forms", conditions::HAS_FORMS),
             agent_filter("search_forms", "Search forms", conditions::SEARCH_FORMS),
+            rendered_filter(
+                "form_rendered_only",
+                "Form only after JavaScript",
+                conditions::FORM_RENDERED_ONLY,
+            ),
             agent_filter(
                 "unlabelled_fields",
                 "Form fields without labels",

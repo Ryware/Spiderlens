@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control, Crawler};
+use spiderlens_test_fixtures::links::{FakeLinks, LinkKeys};
 use spiderlens_test_fixtures::providers::{FakeGoogle, GoogleData, GscRow};
+use spiderlens_test_fixtures::sheets::FakeSheets;
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
 
@@ -176,4 +178,143 @@ fn keys_are_read_from_standard_input_never_arguments() {
     assert!(listing.contains("Agency") && !listing.contains("k-secret-1"));
     let keys = std::fs::read_to_string(dir.path().join("test-keychain.json")).unwrap();
     assert!(keys.contains("k-secret-1"));
+}
+
+fn with_fakes(c: &mut Command, links: &FakeLinks, sheets: &FakeSheets) {
+    c.env("SPIDERLENS_TEST_LINKS", links.base())
+        .env("SPIDERLENS_TEST_SHEETS", sheets.base_url());
+}
+
+#[test]
+fn link_metrics_show_the_estimate_need_a_yes_and_stop_at_the_cap() {
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let path = crawl(&site, dir.path());
+    let file = path.to_str().unwrap();
+    let g = FakeGoogle::start(GoogleData::default());
+    let links = FakeLinks::start(LinkKeys::default());
+    let sheets = FakeSheets::start(10_000_000);
+    let run = |args: &[&str], stdin: &str| {
+        let mut c = cli(&home, &g);
+        with_fakes(&mut c, &links, &sheets);
+        c.args(args).write_stdin(stdin.to_string()).output().unwrap()
+    };
+
+    let out = run(&["connect", "majestic", "--label", "Agency"], "majestic-key\n");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(run(&["enable", "majestic"], "").status.success());
+
+    // The estimate is shown in the provider's units; without --yes nothing is sent.
+    let out = run(&["fetch", file, "--provider", "majestic"], "");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("rows"));
+    assert_eq!(links.requests("majestic"), 0);
+
+    // A cap below the estimate stops the run: exit 10, and no more units used.
+    let out = run(
+        &[
+            "fetch",
+            file,
+            "--provider",
+            "majestic",
+            "--yes",
+            "--cap",
+            "2",
+            "--json",
+        ],
+        "",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let r: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["done"], 2);
+    assert!(links.used("majestic") <= 2);
+
+    // The rest of the pages; the first two come from the cache.
+    let out = run(&["fetch", file, "--provider", "majestic", "--yes"], "");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(links.used("majestic") <= 4);
+
+    let csv = Command::cargo_bin("spiderlens")
+        .unwrap()
+        .args([
+            "export",
+            file,
+            "--tab",
+            "link-metrics",
+            "--filter",
+            "with_data",
+            "--columns",
+            "address,majestic_trust_flow",
+        ])
+        .output()
+        .unwrap();
+    assert!(csv.status.success(), "{}", String::from_utf8_lossy(&csv.stderr));
+    assert_eq!(String::from_utf8(csv.stdout).unwrap().lines().count(), 5);
+}
+
+#[test]
+fn export_sheets_creates_a_sheet_and_prints_the_looker_link() {
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let path = crawl(&site, dir.path());
+    let file = path.to_str().unwrap();
+    let g = FakeGoogle::start(GoogleData {
+        email: "ana@example.com".into(),
+        ..GoogleData::default()
+    });
+    let links = FakeLinks::start(LinkKeys::default());
+    let sheets = FakeSheets::start(10_000_000);
+    let run = |args: &[&str]| {
+        let mut c = cli(&home, &g);
+        with_fakes(&mut c, &links, &sheets);
+        c.args(args).output().unwrap()
+    };
+    let out = run(&["connect", "google", "--scope", "sheets", "--no-browser"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(run(&["enable", "sheets"]).status.success());
+
+    let out = run(&[
+        "export-sheets",
+        file,
+        "--tab",
+        "internal",
+        "--columns",
+        "address,status_code",
+        "--looker",
+    ]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("docs.google.com/spreadsheets/d/"), "{text}");
+    assert!(
+        text.contains("lookerstudio.google.com/reporting/create"),
+        "{text}"
+    );
+    let made = sheets.spreadsheets();
+    assert_eq!(made.len(), 1);
+    // Header plus one row per crawled page.
+    assert_eq!(made[0].text_rows(0).len(), 5);
+
+    // Too many cells for one spreadsheet: refused with the choices, nothing sent.
+    let mut c = cli(&home, &g);
+    with_fakes(&mut c, &links, &sheets);
+    c.env("SPIDERLENS_TEST_SHEETS_CAPACITY", "6");
+    let out = c
+        .args(["export-sheets", file, "--columns", "address,status_code"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--split"));
+    assert_eq!(sheets.spreadsheets().len(), 1);
 }

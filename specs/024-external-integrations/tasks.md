@@ -50,37 +50,37 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Slice 2: US2 URL Inspection (P2)
 
-- [ ] T028 Fake URL Inspection with daily allowance and clock.
-- [ ] T029 Tests then code: `gsc::inspect` queue (default set and order), fields, canonical mismatch, quota pause and next-day resume, multi-day warning (US2.1 to US2.4).
-- [ ] T030 `results` Index status tab and filters (Not indexed, Canonical mismatch, Blocked by robots per Google); Vitest + Playwright for the run panel with allowance.
-- [ ] T031 CLI `--provider url-inspection`.
+- [x] T028 Fake URL Inspection with daily allowance and clock.
+- [x] T029 Tests then code: `gsc::inspect` queue (default set and order), fields, canonical mismatch, quota pause and next-day resume, multi-day warning (US2.1 to US2.4).
+- [x] T030 `results` Index status tab and filters (Not indexed, Canonical mismatch, Blocked by robots per Google); Vitest + Playwright for the run panel with allowance.
+- [x] T031 CLI `--provider url-inspection`.
 
 ## Slice 3: US3 Field data and lab tests (P2)
 
-- [ ] T032 Fakes for CrUX (404 for low-traffic URLs) and PageSpeed (slow responses, categories).
-- [ ] T033 Tests then code: `crux` per URL and form factor, origin fallback cached per origin, ratings, period (US3.1, US3.2).
-- [ ] T034 Tests then code: `psi` strategy choice, stored score, metrics, opportunities, audits for 026 (US3.3).
-- [ ] T035 Rate log test: no run exceeds limits; 1,000 URLs × 2 devices estimate under 15 min (US3.4, SC-003).
-- [ ] T036 `results` Page experience tab and filters (Poor LCP, Poor INP, Poor CLS, origin data only); Vitest + Playwright; CLI providers `field-data`, `lab-tests`.
+- [x] T032 Fakes for CrUX (404 for low-traffic URLs) and PageSpeed (slow responses, categories).
+- [x] T033 Tests then code: `crux` per URL and form factor, origin fallback cached per origin, ratings, period (US3.1, US3.2).
+- [x] T034 Tests then code: `psi` strategy choice, stored score, metrics, opportunities, audits for 026 (US3.3).
+- [x] T035 Rate log test: no run exceeds limits; 1,000 URLs × 2 devices estimate under 15 min (US3.4, SC-003).
+- [x] T036 `results` Page experience tab and filters (Poor LCP, Poor INP, Poor CLS, origin data only); Vitest + Playwright; CLI providers `field-data`, `lab-tests`.
 
 ## Slice 4: US4 Analytics (P2)
 
-- [ ] T037 Fake GA4 Admin and Data with `propertyQuota`.
-- [ ] T038 Tests then code: `ga4` property and stream pick, landing page fetch with offset paging, query-string combine option, quota pause (US4.1 to US4.3).
-- [ ] T039 `results` Analytics tab; orphan candidates from Analytics; Vitest + Playwright; CLI provider `analytics`.
+- [x] T037 Fake GA4 Admin and Data with `propertyQuota`.
+- [x] T038 Tests then code: `ga4` property and stream pick, landing page fetch with offset paging, query-string combine option, quota pause (US4.1 to US4.3).
+- [x] T039 `results` Analytics tab; orphan candidates from Analytics; Vitest + Playwright; CLI provider `analytics`.
 
 ## Slice 5: US5 Link metrics (P3)
 
-- [ ] T040 Fakes for Ahrefs, Majestic and Moz with metered units.
-- [ ] T041 Tests then code: `links::{ahrefs,majestic,moz}` batching, estimate, re-estimate after the first batch, cap stop, cache reuse (US5.1 to US5.3, FR-029, SC-006).
-- [ ] T042 `results` Link metrics tab with per-provider columns; Vitest + Playwright for the cost confirmation; CLI with `--cap` and `--yes`.
+- [x] T040 Fakes for Ahrefs, Majestic and Moz with metered units.
+- [x] T041 Tests then code: `links::{ahrefs,majestic,moz}` batching, estimate, re-estimate after the first batch, cap stop, cache reuse (US5.1 to US5.3, FR-029, SC-006).
+- [x] T042 `results` Link metrics tab with per-provider columns; Vitest + Playwright for the cost confirmation; CLI with `--cap` and `--yes`.
 
 ## Slice 6: US6 Sheets and Looker Studio (P3)
 
-- [ ] T043 Fake Sheets API with cell capacity.
-- [ ] T044 Tests then code: `sheets` export of a tab view (visible columns, filter, sort), batches, capacity warning, truncate and split (US6.1, US6.2, FR-030).
-- [ ] T045 Tests then code: `looker` link (US6.3, FR-031).
-- [ ] T046 Vitest + Playwright: Export to Google Sheets, Open in Looker Studio; CLI `export-sheets --looker`.
+- [x] T043 Fake Sheets API with cell capacity.
+- [x] T044 Tests then code: `sheets` export of a tab view (visible columns, filter, sort), batches, capacity warning, truncate and split (US6.1, US6.2, FR-030).
+- [x] T045 Tests then code: `looker` link (US6.3, FR-031).
+- [x] T046 Vitest + Playwright: Export to Google Sheets, Open in Looker Studio; CLI `export-sheets --looker`.
 
 ## Final phase: Polish
 
