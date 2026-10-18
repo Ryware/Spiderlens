@@ -19,6 +19,7 @@ export function CleanupNotice({ transport, onManage, onSettings }: { transport: 
 
   const close = () => setReport(null);
   const removed = report.removed.length;
+  const scheduled = report.schedule_removed.length;
   const announced = report.announced;
   return (
     <div
@@ -29,12 +30,13 @@ export function CleanupNotice({ transport, onManage, onSettings }: { transport: 
       <div className="flex items-center gap-2">
         <Trash2 aria-hidden className="size-4 shrink-0 text-fg-3" />
         <h2 id="cleanup-title" className="m-0 text-base font-semibold">
-          {announced.length > 0 && removed === 0 ? "Old unsaved crawls will be removed" : "Cleaned up unused files"}
+          {announced.length > 0 && removed + scheduled === 0 ? "Old unsaved crawls will be removed" : "Cleaned up unused files"}
         </h2>
       </div>
-      {removed + report.leftovers > 0 && (
+      {removed + scheduled + report.leftovers > 0 && (
         <p className="m-0 text-fg-2">
           {removed > 0 && `${removed} unsaved ${removed === 1 ? "crawl" : "crawls"} not used for a while ${removed === 1 ? "was" : "were"} moved to the Trash. `}
+          {scheduled > 0 && `${scheduled} older scheduled ${scheduled === 1 ? "run was" : "runs were"} moved to the Trash. `}
           {report.leftovers > 0 && `${report.leftovers} leftover ${report.leftovers === 1 ? "file" : "files"} from earlier crashes ${report.leftovers === 1 ? "was" : "were"} removed. `}
           {formatSize(report.freed_bytes)} freed.
         </p>

@@ -289,3 +289,47 @@ test("remove_all_asks_first_and_clears_the_list", async () => {
   expect(await screen.findByText("No schedules yet")).toBeTruthy();
   expect(t.schedules.stored.size).toBe(0);
 });
+
+test("keep_last_starts_at_ten_and_turning_it_off_saves_null", async () => {
+  const t = fakeTransport();
+  await renderApp(t);
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "https://example.com/" } });
+  await palette("Schedule this crawl");
+  const sheet = await editor();
+  expect((within(sheet).getByLabelText("Runs to keep") as HTMLInputElement).value).toBe("10");
+  expect(sheet.textContent).toContain("Older run files of this schedule go to the Trash. Files you moved or saved elsewhere are never removed.");
+  fireEvent.click(within(sheet).getByRole("switch", { name: "Remove older runs" }));
+  expect(within(sheet).queryByLabelText("Runs to keep")).toBeNull();
+  const create = within(sheet).getByRole("button", { name: "Create schedule" });
+  await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(create);
+  await waitFor(() => expect(t.schedules.stored.size).toBe(1));
+  expect([...t.schedules.stored.values()][0].keep_last).toBeNull();
+});
+
+test("keep_last_out_of_range_shows_the_issue_and_blocks_saving", async () => {
+  const t = fakeTransport();
+  await renderApp(t);
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "https://example.com/" } });
+  await palette("Schedule this crawl");
+  const sheet = await editor();
+  fireEvent.change(within(sheet).getByLabelText("Runs to keep"), { target: { value: "1000" } });
+  expect(await within(sheet).findByText(/Keep between 1 and 999 runs/)).toBeTruthy();
+  await waitFor(() => expect((within(sheet).getByRole("button", { name: "Create schedule" }) as HTMLButtonElement).disabled).toBe(true));
+});
+
+test("the_detail_says_how_many_runs_are_kept_and_lowering_it_says_what_goes_to_the_trash", async () => {
+  const t = fakeTransport();
+  const s = t.schedules.seed({ name: "Blog" }, [1, 2, 3, 4, 5].map((n) => fakeRun(n)));
+  await renderApp(t);
+  await goToSchedules();
+  const detail = await screen.findByRole("region", { name: "Blog" });
+  expect(within(detail).getByText("Keeps the last 10 runs")).toBeTruthy();
+  fireEvent.click(within(detail).getByRole("button", { name: "Edit…" }));
+  const sheet = await editor();
+  fireEvent.change(within(sheet).getByLabelText("Runs to keep"), { target: { value: "2" } });
+  expect(await within(sheet).findByText("3 older run files will go to the Trash at the next cleanup.")).toBeTruthy();
+  fireEvent.click(within(sheet).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(t.schedules.stored.get(s.id)!.keep_last).toBe(2));
+  await waitFor(() => expect(within(detail).getByText("Keeps the last 2 runs")).toBeTruthy());
+});
