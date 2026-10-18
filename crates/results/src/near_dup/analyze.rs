@@ -25,9 +25,10 @@ pub struct Params {
     pub top_k: usize,
     /// Buckets larger than this become dense groups (research R4).
     pub dense_bucket: usize,
-    /// Dense groups up to this size are compared all-pairs.
+    /// Dense groups up to this size are compared all-pairs (4,000 members
+    /// is 1.6 x 10^7 comparisons; 50,000 cost 4.9 s at 20,000 pages).
     pub exact_limit: usize,
-    /// Members compared per page in larger groups.
+    /// Members compared per page in larger groups (at most the group size).
     pub sample: usize,
 }
 
@@ -38,8 +39,8 @@ impl Params {
             floor: floor.min(threshold),
             top_k: 50,
             dense_bucket: 256,
-            exact_limit: 50_000,
-            sample: 2_000,
+            exact_limit: 4_000,
+            sample: 1_000,
         }
     }
 
@@ -391,8 +392,10 @@ fn score_group(
     let gate = p.prefix_gate();
     // Positions in `members` to compare each member with.
     let compare: Vec<usize> = if sampled {
-        let step = members.len() as f64 / p.sample as f64;
-        (0..p.sample).map(|k| (k as f64 * step) as usize).collect()
+        // Distinct, in-range positions: step >= 1 and k < n, so k * step < len.
+        let n = p.sample.min(members.len()).max(1);
+        let step = members.len() as f64 / n as f64;
+        (0..n).map(|k| (k as f64 * step) as usize).collect()
     } else {
         (0..members.len()).collect()
     };

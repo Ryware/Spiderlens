@@ -32,7 +32,7 @@ pub use custom::{
     SearchTarget, export_rules, import_rules, merge_rules,
 };
 pub use links::{LinkAnalysisSettings, Position, PositionRule, PositionWeights, check_selector};
-pub use list_input::{InvalidLine, ListFormat, ListInput, parse_list_bytes, parse_list_text};
+pub use list_input::{InvalidLine, ListEntry, ListFormat, ListInput, list_from_urls, parse_list_bytes, parse_list_text};
 pub use model::{
     AccessSettings, AgentSettings, AiChecks, AuthMethod, Changefreq, CheckCondition, ContentSettings,
     CookiePolicy, CrawlConfig, CustomHeader, DEFAULT_SIGN_OUT_PATTERNS, ExtractionSettings, HeaderTarget,

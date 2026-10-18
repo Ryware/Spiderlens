@@ -19,7 +19,7 @@ Input: [plan.md](plan.md), [data-model.md](data-model.md), [contracts/](contract
 ## Phase 3: Analysis (plan D4, D5)
 
 - [ ] T009 `results/near_dup/lsh.rs`: band parameters from the floor (research R3 table as a test), band keys, radix sort, buckets, dense groups for buckets over 256.
-- [ ] T010 [P] `results/near_dup/score.rs`: pair scoring, top 50 per page, counts, union-find clusters, stable numbering, representative, sample for groups over 50,000 with `near_count_is_min`.
+- [ ] T010 [P] `results/near_dup/score.rs`: pair scoring, top 50 per page, counts, union-find clusters, stable numbering, representative, sample for groups over 4,000 with `near_count_is_min`.
 - [ ] T011 `results/near_dup/pass.rs`: eligibility query and statuses (FR-001, FR-004), outputs replaced in one transaction, settings in `meta.analysis`, cancellation and progress. Runs through the spec 009 runner when it is on main; until then called from the crawl-end hook and the CLI with the same signature.
 - [ ] T012 Fixture site `test-fixtures/src/near_dup.rs`: groups with known similarity (100, 97, 92, 85, 70%), shared chrome, related-products block, short pages, noindex and canonicalised copies, a 300-page template group, Japanese pages. End-to-end tests for US1.1 to US1.5, US4.3, US4.4, US5.3 (scaled), FR-014.
 - [ ] T013 Benchmarks: 100k fixture analysis (SC-001), synthetic 1M signature file with a 20k group (SC-002, SC-005), threshold change (SC-006); numbers in `benchmarks.md`.
@@ -42,6 +42,6 @@ Input: [plan.md](plan.md), [data-model.md](data-model.md), [contracts/](contract
 
 ## Phase 6: Issues and finish
 
-- [ ] T024 `content.near_duplicate` rule in the spec 009 catalogue (after 009 code is on main), evidence, "available when the crawl ends" state (US3). Tests: rule URL set equals the Near duplicates filter; CLI `issues --fail-on medium` exit code.
+- [x] T024 `content.near_duplicate` rule in the spec 009 catalogue (after 009 code is on main), evidence, "available when the crawl ends" state (US3). Tests: rule URL set equals the Near duplicates filter; CLI `issues --fail-on medium` exit code.
 - [ ] T025 Older files: pre-feature file with HTML is offered analysis and matches a new crawl (US5.1); without HTML shows unavailable (US5.2). Fixture files.
 - [ ] T026 `/speckit-converge`; CI green on Windows, macOS and Linux.

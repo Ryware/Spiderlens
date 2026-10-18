@@ -36,6 +36,7 @@ use spiderlens_config::{
     CrawlConfig, Decision, Issue, ListFormat, Mode, ModeInput, Severity, export_profile, parse_list_bytes,
     test_patterns, validate, validate_config,
 };
+use spiderlens_engine::crawl::sitemap_list::{SitemapListSource, list_from_sitemap};
 use spiderlens_engine::{
     BuildInfo, CheckOptions, ErrorClass, FinalState, PageCheckResult, Title, check_page,
 };
@@ -225,6 +226,10 @@ struct ConfigArgs {
     /// URL list file, text or CSV (List mode).
     #[arg(long, value_name = "FILE", conflicts_with = "url")]
     list: Option<PathBuf>,
+    /// Sitemap address or file whose page URLs are the list (List mode);
+    /// a file may be followed by =BASE-URL for relative addresses.
+    #[arg(long, value_name = "URL-OR-PATH[=BASE-URL]", conflicts_with_all = ["url", "list"])]
+    list_sitemap: Option<String>,
     /// Print as JSON.
     #[arg(long)]
     json: bool,
@@ -377,7 +382,7 @@ fn run_config(cmd: ConfigCommand) -> ExitCode {
 }
 
 fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
-    let mode = if args.list.is_some() {
+    let mode = if args.list.is_some() || args.list_sitemap.is_some() {
         Mode::List
     } else {
         Mode::Spider
@@ -392,7 +397,12 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     for n in &resolved.notices {
         eprintln!("notice: {n}");
     }
-    let input = match read_input(args.url.as_deref(), args.list.as_deref()) {
+    let input = match read_input(
+        args.url.as_deref(),
+        args.list.as_deref(),
+        args.list_sitemap.as_deref(),
+        &resolved.config,
+    ) {
         Ok(i) => i,
         Err(code) => return code,
     };
@@ -416,13 +426,20 @@ fn show_config(args: ConfigArgs, print_config: bool) -> ExitCode {
     }
 }
 
-/// Reads the Spider start URL or the List file into a mode input.
-pub(crate) fn read_input(url: Option<&str>, list: Option<&Path>) -> Result<Option<ModeInput>, ExitCode> {
-    match (url, list) {
-        (Some(url), _) => Ok(Some(ModeInput::Spider {
+/// Reads the Spider start URL, the List file or the List sitemap into a
+/// mode input. A sitemap is read here, before the crawl, so the crawl is an
+/// ordinary list crawl (spec 011 FR-005).
+pub(crate) fn read_input(
+    url: Option<&str>,
+    list: Option<&Path>,
+    list_sitemap: Option<&str>,
+    config: &CrawlConfig,
+) -> Result<Option<ModeInput>, ExitCode> {
+    match (url, list, list_sitemap) {
+        (Some(url), _, _) => Ok(Some(ModeInput::Spider {
             start_url: url.to_string(),
         })),
-        (None, Some(path)) => match std::fs::read(path) {
+        (None, Some(path), _) => match std::fs::read(path) {
             Ok(bytes) => {
                 let format = ListFormat::from_file_name(&path.to_string_lossy());
                 let list = parse_list_bytes(&bytes, format, &mut |_| {});
@@ -439,7 +456,36 @@ pub(crate) fn read_input(url: Option<&str>, list: Option<&Path>) -> Result<Optio
                 Err(ExitCode::from(exit::USAGE))
             }
         },
-        (None, None) => Ok(None),
+        (None, None, Some(arg)) => {
+            let source = SitemapListSource::parse_arg(arg).map_err(|e| {
+                eprintln!("error: --list-sitemap: {e}");
+                ExitCode::from(exit::USAGE)
+            })?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    eprintln!("error: could not start: {e}");
+                    ExitCode::FAILURE
+                })?;
+            let list = runtime
+                .block_on(list_from_sitemap(source, config))
+                .map_err(|e| {
+                    eprintln!("error: --list-sitemap: {e}");
+                    ExitCode::from(exit::USAGE)
+                })?;
+            for n in &list.notices {
+                eprintln!("notice: {n}");
+            }
+            eprintln!(
+                "list: {} URLs to crawl, {} duplicates removed, {} invalid",
+                list.urls.len(),
+                list.duplicates,
+                list.invalid_count
+            );
+            Ok(Some(ModeInput::List(list)))
+        }
+        (None, None, None) => Ok(None),
     }
 }
 

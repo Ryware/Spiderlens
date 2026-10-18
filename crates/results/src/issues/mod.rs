@@ -28,7 +28,7 @@ use crate::tabs::{Derived, Need};
 
 /// Increases whenever a rule is added, removed or changes its condition
 /// (FR-003).
-pub const RULES_VERSION: u32 = 3;
+pub const RULES_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +51,10 @@ pub enum Category {
     Security,
     Url,
     Sitemaps,
+    Serp,
+    Pdf,
+    Spelling,
+    Amp,
     Agents,
 }
 
@@ -74,6 +78,10 @@ impl Category {
             Self::Security => "Security",
             Self::Url => "URL",
             Self::Sitemaps => "Sitemaps",
+            Self::Serp => "SERP",
+            Self::Pdf => "PDFs",
+            Self::Spelling => "Spelling",
+            Self::Amp => "AMP",
             Self::Agents => "AI agents",
         }
     }
@@ -157,6 +165,7 @@ pub enum Unit {
     Score,
     Days,
     Entries,
+    Px,
 }
 
 impl Unit {
@@ -172,6 +181,7 @@ impl Unit {
             Self::Score => "points",
             Self::Days => "days",
             Self::Entries => "entries",
+            Self::Px => "pixels",
         }
     }
 }
@@ -310,6 +320,10 @@ pub fn catalogue() -> &'static [Rule] {
             rules::security::RULES,
             rules::url::RULES,
             rules::sitemaps::RULES,
+            rules::serp::RULES,
+            rules::pdf::RULES,
+            rules::spelling::RULES,
+            rules::amp::RULES,
             rules::agents::RULES,
         ]
         .concat()
@@ -477,8 +491,8 @@ mod tests {
         let all = catalogue();
         assert_eq!(
             all.len(),
-            117,
-            "first rule set (spec table, with readability), spec 011's 27 and spec 016's 15"
+            140,
+            "first rule set (spec table, with readability), spec 011's 27, spec 020's near duplicate, spec 027's SERP (5), PDF (5), spelling (4) and AMP (9) rules and spec 016's 15"
         );
         let mut ids = HashSet::new();
         let mut cats = HashSet::new();
@@ -518,7 +532,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(cats.len(), 18);
+        assert_eq!(cats.len(), 22);
     }
 
     #[test]

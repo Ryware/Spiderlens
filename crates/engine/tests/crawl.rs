@@ -861,6 +861,7 @@ async fn list_mode_depth_zero_and_hosts_internal() {
         invalid_count: 0,
         invalid_sample: vec![],
         notices: vec![],
+        sitemap: None,
     });
     let d = run_input(&site, input, Mode::List, fast).await;
     assert_eq!(d.row(&site.url("other.test", "/b")).state, UrlState::Crawled);

@@ -189,7 +189,7 @@ The user updates SpiderLens, or moves the app to another folder, and expects exi
 - Runs happen only while the user is logged in. Running while logged out would need the user's password stored in the operating system and is out of scope.
 - The computer is not woken to run; missed runs are caught up instead.
 - Integration keys and OAuth tokens live in the operating system keychain (owner's decision 2026-10-13, spec 024); scheduled runs read them from there. Site passwords, login cookies (025) and marked-secret headers stay unstored (spec 002 FR-038, spec 006 FR-034), so schedules needing them are refused.
-- Retention of scheduled run files (for example keep the last N runs) belongs to spec 019. Until it lands, scheduled runs are kept like any saved crawl. Spec 019 is asked to add a per-schedule "keep the last N runs" rule.
+- Retention of scheduled run files belongs to spec 019 (US6, FR-027 to FR-033, decided 2026-10-18). Each schedule has `keep_last` (1 to 999, or none to keep all). New schedules keep the last 10 runs; schedules saved before that read as keep all. The desktop app moves older run files to the Trash in its cleanup pass. Only files in the schedule's own run history that still exist in its output folder are touched, never one that is open, running or locked. The CLI only sets and shows the rule (`--keep-last N|all`). Until spec 019 lands in code, scheduled runs are kept like any saved crawl.
 - Comparison (012) and the report (010) are defined by their own specs; this spec only says when they run and where their output goes.
 - Desktop only. No server, no remote triggering, no sharing schedules between computers.
 

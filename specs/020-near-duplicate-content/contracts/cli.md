@@ -10,6 +10,7 @@ spiderlens duplicates <FILE> [--pages | --pairs | --clusters]
 - Default view `--pages`. Default format `csv` to stdout.
 - Without overrides: reads stored results; if the pass is stale or missing, runs it first (into the file when writable, into memory otherwise) and says so on stderr.
 - With overrides: runs into memory, never changes the file.
+- `spiderlens crawl --near-duplicates` also runs the pass when the crawl ends (off by default: it adds to the process's run time); the desktop app starts it by itself on its own thread after the crawl.
 - `spiderlens analyse <FILE>` (spec 009) runs this pass with every other stale pass.
 
 ## Columns
