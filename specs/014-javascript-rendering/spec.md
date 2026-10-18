@@ -298,3 +298,13 @@ AI crawlers that do not run JavaScript only see the raw HTML. The user wants, fo
 - Thresholds (20% and 50 words for "JavaScript content", 50% for "hidden from non-rendering crawlers") are starting values the owner may tune during `/speckit-clarify`.
 - Rendered HTML is stored under the same "Store page HTML" switch as raw HTML; a separate switch is not added (constitution principle VIII, simplicity).
 - Crawl file format changes follow the storage feature (006): files without rendering data keep opening.
+
+## Owner decisions
+
+Recorded for T078.
+
+- **Browser source (decided 2026-10-18, Ryware)**: the browser is downloaded on first use, with the user's consent and the download size shown (Chrome for Testing headless shell, version pinned, checked by SHA-256). It is not bundled with the installer. An installed Chrome or Edge is used only when the user gives it with `--browser` or "Change browser". This settles the "how the engine is obtained" planning decision in Assumptions.
+- **Plan points approved 2026-10-13 (Ryware, "מרגג הכל")**:
+  1. **FR-039 gets a fourth "Not rendered" reason**: `html_not_stored`, for pages whose raw HTML was not stored when an existing crawl is rendered later (FR-006).
+  2. **`Change::Rendering`**: rendering an existing crawl records the rendering settings as a configuration change, so a reopened crawl shows both the original settings and the later rendering run (FR-034).
+  3. **SC-001 method**: the gate is the median of 7 alternating runs of the 100,000-page benchmark, with rendering off, against the stored baseline; the 2% and 5% budgets stay as written.
