@@ -103,6 +103,7 @@ export function defaultConfig(): CrawlConfig {
       host_pause_max_secs: 600,
       host_give_up_after: 5,
     },
+    accessibility: { level: "static", wcag: { version: "2.2", level: "aa" }, best_practice: true, mobile: true, budget_secs: 5, small_text_px: 12, small_text_share: 40, tap_target_px: 24, overflow_px: 5 },
     extraction: { store_html: true, check_amp: false, pdf: { crawl: false, follow_links: true, max_mb: 20, time_limit_secs: 5 } },
     content: { threshold: 90, report_floor: 80, min_words: 50, indexable_only: true, content_selector: null, exclude_selectors: [] },
     issues: { rules: {} },
