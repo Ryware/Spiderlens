@@ -909,6 +909,44 @@ fn print_render_summary(out: &mut impl Write, r: &RenderSummary) {
     if let Some(b) = &r.renderer {
         let _ = writeln!(out, "  {:<32} {} {}", "Renderer", b.name, b.version);
     }
+    if let Some(c) = &r.settings {
+        let auto = |v: Option<u32>| v.map_or_else(|| "auto".to_string(), |v| v.to_string());
+        let _ = writeln!(
+            out,
+            "  {:<32} up to {} s, at least {} s, {} at once, memory {}",
+            "Settings",
+            c.max_render_secs,
+            c.min_wait_secs,
+            auto(c.concurrency),
+            auto(c.memory_budget_mb)
+        );
+        let window = match c.window.preset {
+            spiderlens_config::WindowPreset::Auto => "auto".to_string(),
+            spiderlens_config::WindowPreset::Mobile => "mobile".to_string(),
+            spiderlens_config::WindowPreset::Desktop => "desktop".to_string(),
+            spiderlens_config::WindowPreset::Custom => format!(
+                "{}x{}",
+                c.window.width.unwrap_or_default(),
+                c.window.height.unwrap_or_default()
+            ),
+        };
+        let blocked: Vec<&str> = [
+            ("images", c.block.images),
+            ("media", c.block.media),
+            ("fonts", c.block.fonts),
+            ("stylesheets", c.block.stylesheets),
+            ("third-party", c.block.third_party),
+        ]
+        .into_iter()
+        .filter_map(|(n, on)| on.then_some(n))
+        .collect();
+        let blocked = if blocked.is_empty() {
+            "none".to_string()
+        } else {
+            blocked.join(", ")
+        };
+        let _ = writeln!(out, "  {:<32} window {window}, blocked: {blocked}", "");
+    }
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
