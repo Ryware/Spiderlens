@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
+    A11yLevel, Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
     normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
@@ -691,6 +691,60 @@ struct Extracted {
     html: Option<(Vec<u8>, usize)>,
 }
 
+/// Stores the static accessibility findings and mobile facts of one page
+/// (spec 026), inside the writer's batch.
+fn record_static_a11y(
+    store: &CrawlStore,
+    url_id: i64,
+    a: &extract::a11y::A11yStatic,
+) -> Result<(), super::store::StoreError> {
+    use super::store::{A11yNodeRow, A11yRow, MobileRow};
+    use extract::a11y::StaticCheck;
+    let rows: Vec<A11yRow<'_>> = a
+        .findings
+        .iter()
+        .map(|f| A11yRow {
+            check_id: format!("static.{}", f.check.as_str()).into(),
+            kind: "violation",
+            source: "static",
+            impact: Some(f.check.impact().as_str()),
+            wcag: f.check.wcag().into(),
+            nodes_total: f.count,
+            nodes: f
+                .nodes
+                .iter()
+                .map(|n| A11yNodeRow {
+                    selector: n.selector.as_str().into(),
+                    excerpt: n.excerpt.as_str().into(),
+                    data: None,
+                    bbox: None,
+                })
+                .collect(),
+        })
+        .collect();
+    store.record_a11y(url_id, "static", &rows)?;
+    store.set_a11y_state(url_id, "static", "checked", None, None)?;
+    let viewport_state = match &a.viewport {
+        None => "missing",
+        Some(v) if v.zoom_disabled => "zoom_disabled",
+        Some(v) if !v.device_width => "not_device_width",
+        Some(_) => "ok",
+    };
+    store.record_mobile(
+        url_id,
+        &MobileRow {
+            viewport: a.viewport.as_ref().map(|v| v.content.as_str()),
+            viewport_state: Some(viewport_state),
+            plugins: Some(
+                a.finding(StaticCheck::PluginElement)
+                    .map_or(0, |f| i64::from(f.count)),
+            ),
+            ..MobileRow::default()
+        },
+    )?;
+    Ok(())
+}
+
 /// Header facts for every response; for HTML bodies, extraction and
 /// compression on Tokio's blocking pool under the memory budget, so parsing
 /// never stalls network I/O (spec 005 plan D3).
@@ -704,6 +758,7 @@ async fn finish_page(
     custom: Option<Arc<CustomRun>>,
     hook: Option<PageHook>,
     content: Arc<ContentRules>,
+    a11y: bool,
     budget: &Semaphore,
 ) -> PageOutcome {
     let header_facts = extract::header_facts(&o.x_robots_tag, &o.link_header);
@@ -725,9 +780,9 @@ async fn finish_page(
                         body: &bytes,
                         truncated,
                         robots_token: &token,
-                        // Spec 026: stored once the crawl file has the tables.
                         keep_text: false,
-                        a11y: false,
+                        // Spec 026: static accessibility checks, internal pages only.
+                        a11y,
                         hook: hook.as_ref(),
                         content: Some(&content),
                     },
@@ -872,6 +927,9 @@ impl Crawler {
         }
         if config.extraction.check_amp {
             features.push_str(",amp");
+        }
+        if config.accessibility.level != A11yLevel::Off {
+            features.push_str(",accessibility_static");
         }
         store.set_meta("data_features", &features)?;
         if config.rendering.is_on() {
@@ -2888,6 +2946,8 @@ impl Run {
         // (one `Option` check when it is off, plan D2).
         let keep_html = store_html || (internal && self.render.is_some());
         let content = self.content_rules.clone();
+        // Spec 026: one `bool` per page; Off collects and stores nothing.
+        let a11y = internal && self.c.config.accessibility.level != A11yLevel::Off;
         tokio::spawn(async move {
             let sent = Instant::now();
             let fetched = fetch_once(&net, &url, &headers, internal, !check_only, max_body, pdf_max).await;
@@ -2899,7 +2959,7 @@ impl Run {
                 Ok(mut o) => {
                     pdf_body = o.pdf.take();
                     let mut outcome =
-                        finish_page(o, url, token, keep_html, rules, hook, content, &budget).await;
+                        finish_page(o, url, token, keep_html, rules, hook, content, a11y, &budget).await;
                     outcome.pdf = pdf_body.is_some();
                     Ok(outcome)
                 }
@@ -3891,6 +3951,11 @@ impl Run {
                         && let Some(amp) = p.data.as_ref().ok().and_then(|d| d.amp.as_ref())
                     {
                         store.record_amp(entry.id, amp)?;
+                    }
+                    if self.c.config.accessibility.level != A11yLevel::Off
+                        && let Some(a) = p.data.as_ref().ok().and_then(|d| d.a11y.as_ref())
+                    {
+                        record_static_a11y(store, entry.id, a)?;
                     }
                     if let Some(c) = &p.custom {
                         store.record_custom(entry.id, c)?;

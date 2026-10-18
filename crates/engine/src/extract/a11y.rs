@@ -54,6 +54,27 @@ pub enum Impact {
     Minor,
 }
 
+impl Impact {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::Serious => "serious",
+            Self::Moderate => "moderate",
+            Self::Minor => "minor",
+        }
+    }
+}
+
+/// The static check ids (`StaticCheck::as_str`) that test the same thing as
+/// an axe-core rule; a stored full result drops those static results.
+pub fn static_ids_for_axe(axe_id: &str) -> Vec<&'static str> {
+    StaticCheck::ALL
+        .iter()
+        .filter(|c| c.same_as().contains(&axe_id))
+        .map(|c| c.as_str())
+        .collect()
+}
+
 impl StaticCheck {
     pub const ALL: [Self; 16] = [
         Self::FormLabel,

@@ -45,6 +45,93 @@ pub struct CrawlConfig {
     /// they never change what is crawled.
     pub segments: Vec<crate::segments::Segment>,
     pub spelling: SpellingSettings,
+    /// Accessibility and mobile checks (spec 026).
+    pub accessibility: AccessibilitySettings,
+}
+
+/// How far the accessibility checks go (spec 026 FR-001).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum A11yLevel {
+    /// Nothing is checked or stored.
+    Off,
+    /// Checks the HTML alone can decide.
+    #[default]
+    Static,
+    /// Static checks plus axe-core in the rendered page.
+    Full,
+}
+
+/// WCAG version a run is measured against (spec 026 FR-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum WcagVersion {
+    #[serde(rename = "2.0")]
+    V2_0,
+    #[serde(rename = "2.1")]
+    V2_1,
+    #[default]
+    #[serde(rename = "2.2")]
+    V2_2,
+}
+
+/// WCAG conformance level (spec 026 FR-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum WcagLevel {
+    A,
+    #[default]
+    Aa,
+    Aaa,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct WcagTarget {
+    pub version: WcagVersion,
+    pub level: WcagLevel,
+}
+
+/// Accessibility and mobile usability checks (spec 026, data-model.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AccessibilitySettings {
+    pub level: A11yLevel,
+    pub wcag: WcagTarget,
+    /// Also report axe-core best practices.
+    pub best_practice: bool,
+    /// Mobile usability checks (FR-004).
+    pub mobile: bool,
+    /// Probe time allowed per page, 1 to 30 seconds (FR-005).
+    pub budget_secs: u32,
+    /// Text below this size counts as small, 6 to 24 px (FR-016).
+    pub small_text_px: u32,
+    /// Share of small text that is reported, 1 to 100 percent.
+    pub small_text_share: u32,
+    /// Smallest tap target, 16 to 64 px.
+    pub tap_target_px: u32,
+    /// Horizontal overflow allowed, 0 to 100 px.
+    pub overflow_px: u32,
+}
+
+impl Default for AccessibilitySettings {
+    fn default() -> Self {
+        Self {
+            level: A11yLevel::Static,
+            wcag: WcagTarget::default(),
+            best_practice: true,
+            mobile: true,
+            budget_secs: 5,
+            small_text_px: 12,
+            small_text_share: 40,
+            tap_target_px: 24,
+            overflow_px: 5,
+        }
+    }
 }
 
 /// Options for generating XML sitemaps from a crawl (spec 011 FR-020,
