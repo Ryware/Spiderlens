@@ -544,6 +544,30 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
     }
 }
 
+/// The second progress line of a crawl with rendering on (spec 014 FR-040):
+/// what is rendered, waiting and rendering, how fast, and why rendering is
+/// the slower stage, if it is.
+fn render_line(r: &spiderlens_engine::crawl::render::progress::RenderProgress) -> String {
+    use spiderlens_engine::crawl::render::progress::RenderLimiting as L;
+    let why = match r.limiting {
+        Some(L::QueueFull) => "  (fetching is paused until fewer pages wait to be rendered)".to_string(),
+        Some(L::Concurrency) => format!("  (rendering {} pages at once)", r.limit),
+        Some(L::MemoryGuard) => "  (the memory guard lowered the number of pages rendered at once)".into(),
+        Some(L::SlowPages) => "  (slow pages are using the render slots)".into(),
+        Some(L::SiteLimits) => "  (the site's limits hold back the pages' resources)".into(),
+        None => String::new(),
+    };
+    let done = if r.fetching_done {
+        "  fetching done; rendering continues"
+    } else {
+        ""
+    };
+    format!(
+        "rendered {}  waiting {}  rendering {}  {:.1} pages/s{done}{why}",
+        r.rendered, r.queued, r.rendering, r.pages_per_sec
+    )
+}
+
 /// Runs the near duplicate analysis (spec 020) into the file, as the process
 /// that wrote it. A failure is a warning: the crawl itself succeeded and
 /// `spiderlens duplicates` can run it again.
@@ -640,6 +664,9 @@ fn execute(
                                 "crawled {}  queued {}  in flight {}{waiting}  {:.0} URLs/s{eta}{host}{a11y}{limit}",
                                 p.crawled, p.queued, p.in_flight, p.urls_per_sec
                             );
+                            if let Some(r) = &p.render {
+                                eprintln!("{}", render_line(r));
+                            }
                         }
                     }
                 }
@@ -1367,4 +1394,43 @@ pub fn run_info(args: InfoArgs) -> ExitCode {
         }
     }
     ExitCode::from(exit::FETCHED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_line;
+    use spiderlens_engine::crawl::render::progress::{RenderLimiting, RenderProgress};
+
+    fn progress() -> RenderProgress {
+        RenderProgress {
+            rendered: 120,
+            queued: 30,
+            rendering: 4,
+            pages_per_sec: 7.26,
+            avg_pages_per_sec: 6.0,
+            limit: 4,
+            limiting: None,
+            fetching_done: false,
+        }
+    }
+
+    #[test]
+    fn the_render_line_shows_the_figures() {
+        assert_eq!(
+            render_line(&progress()),
+            "rendered 120  waiting 30  rendering 4  7.3 pages/s"
+        );
+    }
+
+    #[test]
+    fn the_render_line_says_when_fetching_is_done_and_what_limits_rendering() {
+        let mut p = progress();
+        p.fetching_done = true;
+        p.limiting = Some(RenderLimiting::Concurrency);
+        let line = render_line(&p);
+        assert!(line.contains("fetching done; rendering continues"), "{line}");
+        assert!(line.contains("rendering 4 pages at once"), "{line}");
+        p.limiting = Some(RenderLimiting::QueueFull);
+        assert!(render_line(&p).contains("fetching is paused"));
+    }
 }

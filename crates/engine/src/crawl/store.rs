@@ -597,6 +597,9 @@ pub struct Counts {
     pub external_blocked: u64,
 }
 
+/// Prepared statements kept per connection (rusqlite's default is 16).
+const STATEMENT_CACHE: usize = 128;
+
 impl CrawlStore {
     /// Creates a new crawl file. An existing file is never overwritten.
     pub fn create(path: &Path) -> Result<Self> {
@@ -861,6 +864,10 @@ impl CrawlStore {
             conn.pragma_update(None, "cache_size", v.as_str())?;
         }
         conn.pragma_update(None, "foreign_keys", "OFF")?;
+        // The page path alone uses more statements than rusqlite's default
+        // cache of 16, so each page re-prepared the ones the cache had
+        // dropped; the render queue's two inserts made that cost visible.
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         Ok(())
     }
 
@@ -3237,15 +3244,18 @@ impl CrawlStore {
 
     /// Queues a page for rendering. `input` is the compressed raw body and
     /// its size, kept only until the render is final, when the crawl does
-    /// not store page HTML (research R8).
-    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<()> {
+    /// not store page HTML (research R8). Returns whether the page was added
+    /// (a page already in the table is left as it is).
+    pub fn enqueue_render(&self, url_id: i64, input: Option<(&[u8], usize)>) -> Result<bool> {
         let seq = self.take_render_seq()?;
-        self.conn
+        let added = self
+            .conn
             .prepare_cached(
                 "INSERT INTO renders (url_id, state, queue_seq) VALUES (?1, 'queued', ?2)
                  ON CONFLICT(url_id) DO NOTHING",
             )?
-            .execute(params![url_id, seq])?;
+            .execute(params![url_id, seq])?
+            == 1;
         if let Some((packed, size)) = input {
             self.conn
                 .prepare_cached(
@@ -3253,7 +3263,7 @@ impl CrawlStore {
                 )?
                 .execute(params![url_id, body::CODEC, size as i64, packed])?;
         }
-        Ok(())
+        Ok(added)
     }
 
     /// Records a page that is not rendered at all (`outside_rules`,

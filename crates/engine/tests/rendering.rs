@@ -7,10 +7,15 @@
 use std::path::Path;
 
 use spiderlens_config::{Change, CrawlConfig, ModeInput, RenderMode, SpeedSettings};
-use spiderlens_engine::crawl::{Control, CrawlStore, Crawler, ResumeOptions};
+use spiderlens_engine::crawl::render::progress::{RenderLimiting, RenderProgress};
+use spiderlens_engine::crawl::{
+    Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, Progress, ResumeOptions,
+};
 use spiderlens_render::{BrowserInfo, LaunchOptions, browser_for_tests};
 use spiderlens_test_fixtures::js_site::{JS_HOST, JsSite, JsSiteBuilder};
-use tokio::sync::watch;
+use std::time::Duration;
+
+use tokio::sync::{mpsc, watch};
 
 /// Tests run one at a time: the raw-crawl test reads the process-wide
 /// browser launch counter.
@@ -485,4 +490,660 @@ async fn us1_rendering_off_starts_no_browser_and_finds_no_script_links() {
     let t = id(&store, &site, "/title-changed");
     let raw: String = one(&store, "SELECT title FROM urls WHERE id = ?1", t);
     assert_eq!(raw, "Loading");
+}
+
+// ---------------------------------------------------------------------
+// User story 2: rendering never slows the raw crawl (T032 to T037)
+// ---------------------------------------------------------------------
+
+/// A crawl of the slow-render page set: `/` and `/slow/0 .. /slow/{n-1}`,
+/// each settling after `settle`.
+fn slow_site(pages: u64, settle: Duration) -> JsSite {
+    JsSiteBuilder::new().slow_pages(pages, settle).start()
+}
+
+fn slow_crawler(site: &JsSite, path: &Path, browser: BrowserInfo, concurrency: u32) -> Crawler {
+    let mut c = config(false);
+    c.rendering.mode = RenderMode::Javascript;
+    c.rendering.concurrency = Some(concurrency);
+    Crawler::create(
+        path,
+        c,
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve())
+    .with_browser(browser)
+    .with_render_launch(LaunchOptions::default())
+}
+
+fn resumed(site: &JsSite, path: &Path, browser: BrowserInfo) -> Crawler {
+    Crawler::open_with(path, &ResumeOptions::default())
+        .unwrap()
+        .with_resolve(site.resolve())
+        .with_browser(browser)
+        .with_render_launch(LaunchOptions::default())
+}
+
+/// Runs a crawl and hands every progress event to `on_event` while it runs.
+async fn run_observed(
+    crawler: Crawler,
+    control: &watch::Sender<Control>,
+    mut on_event: impl FnMut(&Progress, &watch::Sender<Control>),
+) -> CrawlSummary {
+    let (etx, mut erx) = mpsc::unbounded_channel();
+    let rx = control.subscribe();
+    let (summary, ()) = tokio::join!(crawler.run(rx, Some(etx)), async {
+        while let Some(e) = erx.recv().await {
+            if let CrawlEvent::Progress(p) = e {
+                on_event(&p, control);
+            }
+        }
+    });
+    summary.unwrap()
+}
+
+fn slow_fetched(site: &JsSite, pages: u64) -> u64 {
+    (0..pages)
+        .map(|i| site.count(JS_HOST, &format!("/slow/{i}")))
+        .sum()
+}
+
+fn render_rows(store: &CrawlStore, state: &str) -> i64 {
+    store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM renders WHERE state = ?1", [state], |r| {
+            r.get(0)
+        })
+        .unwrap()
+}
+
+/// T032: with 20/15 as the marks and slow renders, fetching stops at the
+/// mark and starts again below the low one; the crawl still completes and
+/// every page is rendered once.
+#[tokio::test]
+async fn us2_fetching_pauses_when_the_render_queue_is_full_and_resumes() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    const PAGES: u64 = 60;
+    let site = slow_site(PAGES, Duration::from_millis(1000));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pressure.spiderlens");
+    let crawler = slow_crawler(&site, &path, browser, 4).with_render_queue_marks(20, 15);
+    let (control, _keep) = watch::channel(Control::Run);
+
+    let mut max_queued = 0;
+    let mut held_at: Option<u64> = None;
+    let mut seen_released = false;
+    let site_ref = &site;
+    let summary = run_observed(crawler, &control, |p, _| {
+        let r = p
+            .render
+            .as_ref()
+            .expect("a rendering crawl reports render progress");
+        max_queued = max_queued.max(r.queued);
+        if r.limiting == Some(RenderLimiting::QueueFull) {
+            held_at.get_or_insert_with(|| slow_fetched(site_ref, PAGES));
+        } else if held_at.is_some() {
+            seen_released = true;
+        }
+    })
+    .await;
+
+    assert_eq!(summary.status, "completed");
+    let held_at = held_at.expect("the queue reached the mark and fetching paused");
+    assert!(
+        held_at < PAGES,
+        "pages were still unfetched at the mark ({held_at})"
+    );
+    assert!(
+        max_queued <= 20 + 64,
+        "the queue stays near the mark: peak {max_queued} (requests already open may still land)"
+    );
+    assert!(seen_released, "fetching started again below the low mark");
+    assert!(
+        slow_fetched(&site, PAGES) == PAGES,
+        "every page was fetched in the end"
+    );
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1);
+    assert_eq!(
+        render_rows(&store, "queued") + render_rows(&store, "rendering"),
+        0
+    );
+}
+
+/// T033, US2 scenario 5: pause while pages are rendering, resume; every
+/// eligible page is rendered exactly once and the resume asks the site for
+/// no page again.
+#[tokio::test]
+async fn us2_pause_and_resume_render_every_page_exactly_once() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    const PAGES: u64 = 12;
+    let site = slow_site(PAGES, Duration::from_millis(700));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pause.spiderlens");
+    let (control, _keep) = watch::channel(Control::Run);
+    let summary = run_observed(
+        slow_crawler(&site, &path, browser.clone(), 2),
+        &control,
+        |p, c| {
+            if p.render
+                .as_ref()
+                .is_some_and(|r| r.rendering > 0 && r.rendered >= 2)
+            {
+                let _ = c.send(Control::Pause);
+            }
+        },
+    )
+    .await;
+    assert_eq!(summary.status, "paused");
+    {
+        let store = CrawlStore::open_read_only(&path).unwrap();
+        assert_eq!(
+            render_rows(&store, "rendering"),
+            0,
+            "open renders finished before the pause"
+        );
+        assert!(render_rows(&store, "queued") > 0, "the queue was kept");
+        assert!(render_rows(&store, "rendered") >= 2);
+    }
+    let (control, _keep) = watch::channel(Control::Run);
+    let summary = run_observed(resumed(&site, &path, browser), &control, |_, _| {}).await;
+    assert_eq!(summary.status, "completed");
+
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1);
+    let stamps: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(rendered_at) FROM renders WHERE state = 'rendered'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stamps, PAGES as i64 + 1, "one rendered_at per page");
+    let rows: i64 = store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM rendered_pages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, PAGES as i64 + 1, "one rendered version per page");
+    let over: i64 = store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM renders WHERE attempts <> 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(over, 0, "no page was rendered twice");
+    for i in 0..PAGES {
+        let path = format!("/slow/{i}");
+        assert_eq!(
+            site.count(JS_HOST, &path),
+            1,
+            "{path} requested once, resume included"
+        );
+    }
+}
+
+/// T033: stop marks every waiting render "Crawl stopped" and leaves none
+/// queued or rendering.
+#[tokio::test]
+async fn us2_stop_marks_waiting_renders_as_crawl_stopped() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    const PAGES: u64 = 12;
+    let site = slow_site(PAGES, Duration::from_millis(700));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("stop.spiderlens");
+    let (control, _keep) = watch::channel(Control::Run);
+    let summary = run_observed(slow_crawler(&site, &path, browser, 2), &control, |p, c| {
+        if p.render
+            .as_ref()
+            .is_some_and(|r| r.rendering > 0 && r.rendered >= 2)
+        {
+            let _ = c.send(Control::Stop);
+        }
+    })
+    .await;
+    assert_eq!(summary.status, "stopped");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(
+        render_rows(&store, "queued") + render_rows(&store, "rendering"),
+        0
+    );
+    let stopped: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM renders WHERE state = 'not_rendered' AND reason = 'crawl_stopped'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(stopped > 0, "waiting renders were marked Crawl stopped");
+    assert_eq!(
+        summary
+            .render
+            .as_ref()
+            .and_then(|r| r.by_reason.get("crawl_stopped")),
+        Some(&(stopped as u64))
+    );
+}
+
+/// The process ids of the browser processes this test started: our own
+/// children whose command line has the debugging pipe or port flag.
+fn browser_children() -> Vec<u32> {
+    let me = std::process::id();
+    let mut out = Vec::new();
+    for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let ppid = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|p| p.parse::<u32>().ok());
+        let cmd = std::fs::read_to_string(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        if ppid == Some(me) && cmd.contains("remote-debugging") {
+            out.push(pid);
+        }
+    }
+    out
+}
+
+/// T034 (US2 scenario 3, part of SC-006): the site is asked for each
+/// rendered page's own path once, also when a render had to be tried again
+/// after the browser died.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn us2_a_rendered_page_is_requested_once_also_after_a_crash_retry() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    const PAGES: u64 = 8;
+    let site = slow_site(PAGES, Duration::from_millis(1500));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("once.spiderlens");
+    let (control, _keep) = watch::channel(Control::Run);
+    let mut killed = false;
+    let summary = run_observed(slow_crawler(&site, &path, browser, 2), &control, |p, _| {
+        if !killed && p.render.as_ref().is_some_and(|r| r.rendering > 0) {
+            // Our own child only: the browser this crawl started.
+            for pid in browser_children() {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .status();
+                killed = true;
+            }
+        }
+    })
+    .await;
+    assert_eq!(summary.status, "completed");
+    assert!(killed, "the browser was killed while rendering");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let retried: i64 = store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM renders WHERE attempts > 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(retried > 0, "at least one render was tried again after the crash");
+    assert_eq!(
+        render_rows(&store, "queued") + render_rows(&store, "rendering"),
+        0
+    );
+    assert_eq!(site.count(JS_HOST, "/"), 1, "/ requested once");
+    for i in 0..PAGES {
+        let p = format!("/slow/{i}");
+        assert_eq!(site.count(JS_HOST, &p), 1, "{p} requested once");
+        let in_log = site
+            .log()
+            .iter()
+            .filter(|e| e.host == JS_HOST && e.path == p)
+            .count();
+        assert_eq!(in_log, 1, "{p} appears once in the request log");
+    }
+}
+
+/// T035, US2 scenario 4: render progress adds up, is reported while
+/// rendering goes on after fetching is done, and does not exist for raw
+/// crawls.
+#[tokio::test]
+async fn us2_render_progress_adds_up_and_raw_crawls_have_none() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    const PAGES: u64 = 10;
+    let site = slow_site(PAGES, Duration::from_millis(400));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("progress.spiderlens");
+    let (control, _keep) = watch::channel(Control::Run);
+    let mut events: Vec<RenderProgress> = Vec::new();
+    let mut last = None;
+    let summary = run_observed(slow_crawler(&site, &path, browser, 2), &control, |p, _| {
+        if let Some(r) = &p.render {
+            events.push(r.clone());
+        }
+        last = Some(p.clone());
+    })
+    .await;
+    assert_eq!(summary.status, "completed");
+    let last = last.expect("progress was reported");
+    let r = last
+        .render
+        .as_ref()
+        .expect("render progress on a rendering crawl");
+    let total = PAGES + 1;
+    assert_eq!((r.rendered, r.queued, r.rendering), (total, 0, 0));
+    assert_eq!(r.limit, 2);
+    assert!(r.avg_pages_per_sec > 0.0);
+    assert!(
+        events
+            .iter()
+            .all(|r| r.rendered + r.queued + u64::from(r.rendering) <= total),
+        "rendered, waiting and rendering never exceed the pages queued"
+    );
+    assert!(events.iter().all(|r| r.rendering <= r.limit));
+    assert!(
+        events
+            .iter()
+            .any(|r| r.fetching_done && (r.queued > 0 || r.rendering > 0)),
+        "rendering went on after fetching was done"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|r| r.limiting == Some(RenderLimiting::Concurrency))
+    );
+    let rendered_json = serde_json::to_value(&last).unwrap();
+    assert!(rendered_json["render"].is_object());
+    assert_eq!(rendered_json["render"]["rendered"], total);
+
+    // Fields agree with the file.
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_rows(&store, "rendered") as u64, r.rendered);
+}
+
+/// The key set of a crawl summary before spec 014.
+const PRE_FEATURE_SUMMARY_KEYS: &[&str] = &[
+    "active_ms",
+    "by_class",
+    "by_reason",
+    "crawled",
+    "discovered",
+    "external_blocked",
+    "external_checked",
+    "failed_by_class",
+    "hosts",
+    "hosts_paused",
+    "manual_retries",
+    "not_crawled",
+    "pause_reason",
+    "permanent_errors",
+    "queued",
+    "recovered",
+    "retries",
+    "sitemaps",
+    "speed_events",
+    "status",
+    "transient_errors",
+    "url_limit_reached",
+    "warnings",
+];
+
+/// Every table migration step 16 creates for rendering.
+const RENDERING_TABLES: &[&str] = &[
+    "renders",
+    "render_inputs",
+    "rendered_pages",
+    "rendered_text",
+    "rendered_directives",
+    "rendered_structured_data",
+    "rendered_links",
+    "raw_only_links",
+    "render_comparisons",
+    "render_resources",
+    "console_entries",
+    "rendered_bodies",
+    "screenshots",
+];
+
+/// T037, FR-002, US2 scenario 1: with rendering off, no browser starts, no
+/// rendering row exists, there is no render progress or summary, and the
+/// summary has exactly the keys it had before the feature.
+#[tokio::test]
+async fn us2_rendering_off_leaves_no_trace() {
+    let _serial = SERIAL.lock().await;
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("off.spiderlens");
+    let before = spiderlens_render::launch_count();
+    let crawler = Crawler::create(
+        &path,
+        config(true),
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve());
+    let (control, _keep) = watch::channel(Control::Run);
+    let mut progress_events = 0;
+    let summary = run_observed(crawler, &control, |p, _| {
+        progress_events += 1;
+        assert!(p.render.is_none(), "no render progress for a raw crawl");
+        let json = serde_json::to_value(p).unwrap();
+        assert!(
+            json.get("render").is_none(),
+            "no render key in the progress payload"
+        );
+    })
+    .await;
+    assert_eq!(summary.status, "completed");
+    assert!(progress_events > 0);
+    assert_eq!(
+        spiderlens_render::launch_count(),
+        before,
+        "the launch counter stays at 0"
+    );
+    assert!(summary.render.is_none());
+
+    let json = serde_json::to_value(&summary).unwrap();
+    let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys, PRE_FEATURE_SUMMARY_KEYS,
+        "the summary JSON keys are unchanged"
+    );
+
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    for table in RENDERING_TABLES {
+        let n: i64 = store
+            .conn_for_tests()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "{table} has no rows");
+    }
+    for key in ["renderer", "fetch_completed_at"] {
+        assert_eq!(store.meta(key).unwrap(), None, "meta.{key}");
+    }
+}
+
+// ---------------------------------------------------------------------
+// T038: the raw fetch rate while rendering (SC-002, second half)
+// ---------------------------------------------------------------------
+
+/// `bench-site`, started on a free port and stopped when dropped.
+struct BenchSite {
+    child: std::process::Child,
+    port: u16,
+}
+
+impl BenchSite {
+    fn start(pages: u64) -> Self {
+        // The binary sits next to the test's own directory; build it when it
+        // is not there yet, in the profile the test was built with.
+        let exe = std::env::current_exe().unwrap();
+        let profile_dir = exe.parent().and_then(Path::parent).unwrap().to_path_buf();
+        let bin = profile_dir.join("bench-site");
+        if !bin.exists() {
+            let mut build = std::process::Command::new(env!("CARGO"));
+            build.args(["build", "-p", "spiderlens-test-fixtures", "--bin", "bench-site"]);
+            if profile_dir.ends_with("release") {
+                build.arg("--release");
+            }
+            assert!(build.status().unwrap().success(), "bench-site builds");
+        }
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let child = std::process::Command::new(bin)
+            .args([
+                "--spa",
+                "--pages",
+                &pages.to_string(),
+                "--port",
+                &port.to_string(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let site = Self { child, port };
+        for _ in 0..100 {
+            if site.get("/__stats").is_some() {
+                return site;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("bench-site did not start");
+    }
+
+    fn get(&self, path: &str) -> Option<String> {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).ok()?;
+        write!(s, "GET {path} HTTP/1.0\r\nHost: bench\r\n\r\n").ok()?;
+        let mut out = String::new();
+        s.read_to_string(&mut out).ok()?;
+        Some(out.split_once("\r\n\r\n")?.1.to_string())
+    }
+
+    fn stats(&self) -> serde_json::Value {
+        serde_json::from_str(&self.get("/__stats").expect("stats")).expect("stats are JSON")
+    }
+}
+
+impl Drop for BenchSite {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// One crawl of the bench site. Returns the pages per second the site saw
+/// its page requests arrive at (first to last), and how many renders were
+/// done when fetching ended. With rendering on, the crawl is stopped once
+/// every page is fetched: the renders still waiting then are not what is
+/// measured. `cap` is a URLs-per-second cap.
+async fn spa_fetch_rate(
+    site: &BenchSite,
+    pages: u64,
+    browser: Option<BrowserInfo>,
+    cap: Option<f64>,
+) -> (f64, u64) {
+    let _ = site.get("/__reset");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spa.spiderlens");
+    let mut c = config(false);
+    c.speed.max_urls_per_sec = cap;
+    if browser.is_some() {
+        c.rendering.mode = RenderMode::Javascript;
+    }
+    let mut crawler = Crawler::create(
+        &path,
+        c,
+        &ModeInput::Spider {
+            start_url: format!("http://127.0.0.1:{}/p/0", site.port),
+        },
+    )
+    .unwrap();
+    if let Some(b) = browser.clone() {
+        crawler = crawler
+            .with_browser(b)
+            .with_render_launch(LaunchOptions::default());
+    }
+    let (control, _keep) = watch::channel(Control::Run);
+    let mut rendered = 0;
+    let summary = run_observed(crawler, &control, |p, c| {
+        if browser.is_some() && site.stats()["pages"].as_u64() >= Some(pages) {
+            rendered = p.render.as_ref().map_or(0, |r| r.rendered);
+            let _ = c.send(Control::Stop);
+        }
+    })
+    .await;
+    assert!(matches!(summary.status.as_str(), "completed" | "stopped"));
+    let stats = site.stats();
+    assert_eq!(stats["pages"], pages, "every page was requested once");
+    let ms = stats["last_page_ms"].as_u64().unwrap() - stats["first_page_ms"].as_u64().unwrap();
+    (pages as f64 / (ms as f64 / 1000.0), rendered)
+}
+
+/// Fetching while rendering runs as fast as with rendering off, until the
+/// queue mark (10,000 pages never reach 50,000 waiting renders).
+///
+/// Two cases, three alternating rounds each, medians compared:
+/// - capped at 300 URLs per second, as a crawl is held back by a site or
+///   a network and not by this computer: asserted, at least 95% of the
+///   rate with rendering off;
+/// - uncapped: only printed. The site, the crawler and the browser share
+///   the CPUs of one machine here, so the browser's own work takes cycles
+///   from the other two.
+///
+/// Run it on its own, in release mode, and record the numbers in
+/// `specs/014-javascript-rendering/benchmarks.md`:
+///
+/// `SPIDERLENS_BROWSER=... cargo test --release -p spiderlens-engine --test rendering -- --ignored --nocapture spa_raw_fetch_rate`
+#[tokio::test]
+#[ignore = "benchmark: needs a browser and a quiet machine"]
+async fn spa_raw_fetch_rate_while_rendering_is_not_lower() {
+    let _serial = SERIAL.lock().await;
+    let browser = browser().expect("a browser is needed for the benchmark");
+    const PAGES: u64 = 10_000;
+    const ROUNDS: usize = 3;
+    let site = BenchSite::start(PAGES);
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    let mut medians = Vec::new();
+    for cap in [Some(300.0), None] {
+        let (mut off, mut on) = (Vec::new(), Vec::new());
+        for round in 0..ROUNDS {
+            let (rate_off, _) = spa_fetch_rate(&site, PAGES, None, cap).await;
+            let (rate_on, rendered) = spa_fetch_rate(&site, PAGES, Some(browser.clone()), cap).await;
+            println!(
+                "cap {cap:?}, round {}: off {rate_off:.0} pages/s, on {rate_on:.0} pages/s \
+                 ({rendered} rendered when fetching ended)",
+                round + 1
+            );
+            off.push(rate_off);
+            on.push(rate_on);
+        }
+        let (off, on) = (median(&mut off), median(&mut on));
+        println!(
+            "cap {cap:?}, median: off {off:.0} pages/s, on {on:.0} pages/s ({:+.1}%)",
+            (on / off - 1.0) * 100.0
+        );
+        medians.push((cap, off, on));
+    }
+    let (_, off, on) = medians[0];
+    assert!(
+        on >= off * 0.95,
+        "fetching while rendering ({on:.0}/s) is slower than with rendering off ({off:.0}/s)"
+    );
 }

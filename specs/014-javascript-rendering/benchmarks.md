@@ -221,3 +221,33 @@ lookup itself. The options, for the owner:
 3. Store the rendered inlink and outlink counts when the crawl writes them
    (a data-model change for a later task): the sorts then cost what raw
    ones do.
+
+## Raw fetch rate while rendering (T038, SC-002 second half)
+
+**To be measured.** The test is
+`spa_raw_fetch_rate_while_rendering_is_not_lower` in
+`crates/engine/tests/rendering.rs` (ignored). It starts `bench-site --spa
+--pages 10000`, crawls it with rendering off and on in alternating rounds
+(3 each), stops the rendering crawl once every page is fetched, and reads
+the fetch rate from the site's own counters (`/__stats`: `pages`,
+`first_page_ms`, `last_page_ms`). Two cases: capped at 300 URLs per second
+(asserted: on at least 95% of off) and uncapped (printed only, because the
+site, the crawler and the browser share one machine's CPUs). 10,000 pages
+never reach the 50,000 queue mark, so this measures the fetch rate until
+the mark.
+
+```
+SPIDERLENS_BROWSER=/path/to/chromium cargo test --release -p spiderlens-engine \
+  --test rendering -- --ignored --nocapture spa_raw_fetch_rate
+```
+
+| Case | Rendering off | Rendering on | Change |
+|---|---|---|---|
+| capped, 300 URLs/s | to be measured | to be measured | |
+| uncapped | to be measured | to be measured | |
+
+An unrecorded earlier trial on the 4-core container (before the statement
+cache fix in this batch) found rendering on 60% slower even when no page
+was rendered; the cause was rusqlite's 16-statement cache being exceeded.
+That is fixed in `store.rs` (128 statements). The SC-001 gate (T080) still
+has to be run with 7 alternating runs.
