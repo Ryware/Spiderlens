@@ -17,6 +17,8 @@ use spiderlens_integrations::store::RunProgress;
 use spiderlens_integrations::{Provider, browser};
 use tauri::{AppHandle, Emitter, Manager};
 
+pub(crate) mod perf;
+
 type Cmd<T> = Result<T, String>;
 
 /// The progress event, at most every 200 ms and once at the end.

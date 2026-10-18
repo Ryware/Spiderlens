@@ -28,6 +28,8 @@ use crate::settings::{Connection, Folder, IntegrationSettings, ProviderSettings}
 use crate::store::{self, OrphanCandidate, RunProgress};
 use crate::{Error, Provider, Result};
 
+mod perf;
+
 /// What Settings › Integrations shows for one provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -78,7 +80,7 @@ pub struct OrphanPage {
 }
 
 /// Providers this build can run.
-pub const AVAILABLE: &[Provider] = &[Provider::SearchConsole];
+pub const AVAILABLE: &[Provider] = &[Provider::SearchConsole, Provider::FieldData, Provider::LabTests];
 
 const OWN_CLIENT: (&str, &str) = ("google_client", "own");
 
@@ -87,6 +89,8 @@ pub struct Hub {
     store: Arc<dyn CredentialStore>,
     endpoints: Endpoints,
     webmasters: gsc::Api,
+    crux_api: crate::crux::Api,
+    psi_api: crate::psi::Api,
     cache_path: Option<PathBuf>,
     built_in: Option<Client>,
 }
@@ -109,6 +113,8 @@ impl Hub {
             store,
             endpoints: Endpoints::default(),
             webmasters: gsc::Api::default(),
+            crux_api: crate::crux::Api::default(),
+            psi_api: crate::psi::Api::default(),
             cache_path,
             built_in: Client::built_in(),
         }
@@ -467,6 +473,7 @@ impl Hub {
                     on_progress,
                 ))
             }
+            Provider::FieldData | Provider::LabTests => self.resume_perf(crawl, &r, control, on_progress),
             p => Err(Error::Invalid(format!(
                 "{} is not available in this build",
                 p.label()

@@ -2,6 +2,9 @@
 // tested in Rust against fake Google services (crates/integrations/tests).
 
 import type { Connection } from "../generated/Connection";
+import type { FieldRequest } from "../generated/FieldRequest";
+import type { LabRequest } from "../generated/LabRequest";
+import type { PerfEstimate } from "../generated/PerfEstimate";
 import type { PageRequest } from "../generated/PageRequest";
 import type { Provider } from "../generated/Provider";
 import type { ProviderSettings } from "../generated/ProviderSettings";
@@ -45,6 +48,11 @@ type Integrations = Pick<
   | "integrationsCacheClear"
   | "integrationsOpenTerms"
   | "onIntegrationsProgress"
+  | "integrationsSaveGoogleKey"
+  | "integrationsEstimateFieldData"
+  | "integrationsEstimateLabTests"
+  | "integrationsRunFieldData"
+  | "integrationsRunLabTests"
 >;
 
 export interface FakeIntegrations {
@@ -65,6 +73,11 @@ export interface FakeIntegrations {
   /** Lets the run that is in progress finish. */
   finishRun(): void;
   orphans: string[];
+  /** Crawled pages a field data or lab test run would cover before the page cap. */
+  pages: number;
+  /** Field data and lab test requests the UI started, in order. */
+  fieldRequests: FieldRequest[];
+  labRequests: LabRequest[];
 }
 
 const run = (id: number, patch: Partial<RunProgress> = {}): RunProgress => ({
@@ -101,6 +114,9 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
     calls: [],
     quotaNext: false,
     orphans: [],
+    pages: 300,
+    fieldRequests: [],
+    labRequests: [],
     progress: (p) => listeners.forEach((cb) => cb(run(fi.runs[0]?.id ?? 1, p))),
     finishRun: () => {
       const f = pending;
@@ -117,7 +133,7 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
       sends,
       terms_url: "https://example.com/terms",
       uses_google_account: google,
-      available: provider === "search_console",
+      available: provider === "search_console" || provider === "field_data" || provider === "lab_tests",
       settings: fi.settings[provider] ?? { enabled: false, per_minute: null, concurrency: null },
       per_minute: 600,
       concurrency: 4,
@@ -137,11 +153,43 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
         fi.quotaNext = false;
         Object.assign(r, quota
           ? { state: "paused_quota", done: 25000, resume_at: "2026-10-15T07:00:00Z", message: "Daily allowance used." }
-          : { state: "finished", done: 60010, matched: 10, unmatched: 60000, finished_at: "2026-10-14T08:01:00Z" });
+          : r.provider === "search_console"
+            ? { state: "finished", done: 60010, matched: 10, unmatched: 60000, finished_at: "2026-10-14T08:01:00Z" }
+            : { state: "finished", done: r.requested, finished_at: "2026-10-14T08:01:00Z" });
         listeners.forEach((cb) => cb({ ...r }));
         resolve({ ...r });
       };
     });
+
+  const startPerf = (provider: Provider, path: string, params: RunProgress["params"], requested: number) =>
+    new Promise<RunProgress>((resolve) => {
+      const id = (fi.runs[0]?.id ?? 0) + 1;
+      fi.runs.unshift(run(id, { provider, account_label: "main", property: null, params, requested }));
+      fi.calls.push(`run ${provider} ${path}`);
+      pending = () => {
+        const r = fi.runs.find((x) => x.id === id)!;
+        const quota = fi.quotaNext;
+        fi.quotaNext = false;
+        Object.assign(r, quota
+          ? { state: "paused_quota", done: Math.floor(requested / 2), resume_at: "2026-10-15T07:00:00Z", message: "The provider's daily allowance is used up." }
+          : { state: "finished", done: requested, finished_at: "2026-10-14T08:01:00Z" });
+        listeners.forEach((cb) => cb({ ...r }));
+        resolve({ ...r });
+      };
+    });
+  const pagesOf = (max: number | null) => Math.min(fi.pages, max ?? fi.pages);
+  const estimate = (pages: number, perPage: number, perMinute: number, concurrency: number, seconds: number, allowance: number | null): PerfEstimate => {
+    const requests = pages * perPage;
+    return {
+      urls: pages,
+      requests,
+      per_minute: perMinute,
+      concurrency,
+      duration_secs: Math.max(Math.ceil((requests * 60) / perMinute), Math.ceil((requests * seconds) / concurrency)),
+      days_needed: allowance ? Math.max(1, Math.ceil(requests / allowance)) : 1,
+      share_of_allowance: allowance ? requests / allowance : null,
+    };
+  };
 
   const api: Integrations = {
     integrationsStatus: async () => ({
@@ -203,6 +251,23 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
     onIntegrationsProgress: async (cb) => {
       listeners.add(cb);
       return () => void listeners.delete(cb);
+    },
+    integrationsSaveGoogleKey: async (label) => {
+      const made = (["field_data", "lab_tests"] as const).map((kind): Connection => ({ kind, label, scopes: [], created_at: "2026-10-14T08:00:00Z", store: fi.store }));
+      fi.calls.push(`save google key ${label}`);
+      fi.connections = [...fi.connections.filter((c) => !(c.label === label && (c.kind === "field_data" || c.kind === "lab_tests"))), ...made];
+      return made;
+    },
+    integrationsEstimateFieldData: async (_path, request) => estimate(pagesOf(request.max), request.devices.length, 140, 8, 1, null),
+    integrationsEstimateLabTests: async (_path, request) =>
+      estimate(pagesOf(request.max), request.strategy === "both" ? 2 : 1, 120, 6, 25, 25000),
+    integrationsRunFieldData: (path, _key, request) => {
+      fi.fieldRequests.push(request);
+      return startPerf("field_data", path, request as unknown as RunProgress["params"], pagesOf(request.max));
+    },
+    integrationsRunLabTests: (path, _key, request) => {
+      fi.labRequests.push(request);
+      return startPerf("lab_tests", path, request as unknown as RunProgress["params"], pagesOf(request.max));
     },
   };
   return { api, integrations: fi };

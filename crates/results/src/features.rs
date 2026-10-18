@@ -83,6 +83,11 @@ impl Features {
                 available.push(need);
             }
         }
+        for need in [Need::FieldData, Need::LabTests] {
+            if integrations.split(',').any(|f| f.trim() == need.feature_id()) {
+                available.push(need);
+            }
+        }
         // Crawl Analysis runs once fetching has ended (spec 023 FR-029).
         if meta("status")?.as_deref() != Some("running") {
             available.push(Need::Analysis);

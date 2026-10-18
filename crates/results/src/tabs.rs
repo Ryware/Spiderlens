@@ -70,6 +70,10 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
+    /// Chrome UX Report field data fetched after the crawl (spec 024).
+    FieldData,
+    /// PageSpeed Insights lab tests run after the crawl (spec 024).
+    LabTests,
 }
 
 impl Need {
@@ -114,6 +118,10 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
+            Self::FieldData => {
+                "No field data in this crawl yet. Save a Google API key and fetch field data from Integrations."
+            }
+            Self::LabTests => "No lab test results in this crawl yet. Run lab tests from Integrations.",
         }
     }
 
@@ -141,6 +149,8 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
+            Self::FieldData => "field_data",
+            Self::LabTests => "lab_tests",
         }
     }
 }
@@ -2060,6 +2070,7 @@ fn build_tabs() -> Vec<TabDef> {
             scoped: false,
             rows: None,
         },
+        crate::page_experience::tab(),
         ai_search_tab(),
         near_dup_tab(),
     ]
@@ -2583,7 +2594,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 20);
+        assert_eq!(tab_ids.len(), 21);
     }
 
     #[test]

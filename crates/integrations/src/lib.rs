@@ -13,11 +13,13 @@
 //! - `run` and `store`: resumable runs inside the crawl file (D7, D8).
 //! - `matching`: provider URLs to crawled URLs (D9).
 //! - `gsc`: Search Console (D10).
+//! - `perf`, `crux`, `psi`: field data and lab tests (D10).
 //! - `hub`: the one entry point the app and the CLI share.
 
 pub mod browser;
 pub mod cache;
 pub mod credentials;
+pub mod crux;
 mod error;
 pub mod gsc;
 pub mod http;
@@ -25,7 +27,9 @@ pub mod hub;
 pub mod limits;
 pub mod matching;
 pub mod oauth;
+pub mod perf;
 mod provider;
+pub mod psi;
 pub mod run;
 pub mod settings;
 pub mod store;

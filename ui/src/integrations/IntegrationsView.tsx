@@ -14,6 +14,7 @@ import type { RunProgress } from "../generated/RunProgress";
 import type { RunState } from "../generated/RunState";
 import type { Status } from "../generated/Status";
 import type { Transport } from "../transport";
+import { PageExperiencePanel } from "./PageExperiencePanel";
 
 const STATE_LABEL: Record<RunState, string> = {
   queued: "Queued",
@@ -89,6 +90,19 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
           />
         ) : (
           <Notice>Open or finish a crawl to fetch Search Console data for it.</Notice>
+        )}
+
+        {path && (
+          <PageExperiencePanel
+            transport={transport}
+            path={path}
+            field={status.providers.find((p) => p.provider === "field_data")!}
+            lab={status.providers.find((p) => p.provider === "lab_tests")!}
+            keys={status.connections}
+            crawlRunning={crawlRunning}
+            onChanged={reload}
+            onDataChanged={onDataChanged}
+          />
         )}
       </div>
     </div>
