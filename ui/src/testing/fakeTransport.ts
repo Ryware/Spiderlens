@@ -16,6 +16,7 @@ import type { RerunSummary } from "../generated/RerunSummary";
 import { fakeAgentsTransport, type FakeAssistants } from "./fakeAgents";
 import { fakeCompareTransport, type FakeCompare } from "./fakeCompare";
 import { fakeIntegrationsTransport, type FakeIntegrations } from "./fakeIntegrations";
+import { fakeLinksTransport, type FakeLinks } from "./fakeLinks";
 import { fakeAeoTransport, type FakeAeo } from "./fakeAeo";
 import { fakeResultsTransport, fakeSegmentOf, fakeUrls, type FakeResults, type FakeUrl } from "./fakeResults";
 import { fakeAuditTransport, type FakeAudit } from "./fakeAudit";
@@ -306,7 +307,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender; linkMetrics: FakeLinks } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, orphans: fakeOrphanSummary(), entries: new Map(), existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -367,6 +368,7 @@ export function fakeTransport(
   const resultsApi = fakeResultsTransport(urls);
   const compareApi = fakeCompareTransport(resultsApi.results.progress);
   const { api: integrationsApi, integrations } = fakeIntegrationsTransport();
+  const { api: linksApi, linkMetrics } = fakeLinksTransport(integrations);
   const aeoApi = fakeAeoTransport();
   const { files, api: filesApi } = fakeFilesTransport(crawls, () => nextId++);
   const agentsApi = fakeAgentsTransport(
@@ -387,6 +389,8 @@ export function fakeTransport(
     ...fakeCustomTransport(),
     ...integrationsApi,
     integrations,
+    ...linksApi,
+    linkMetrics,
     ...aeoApi,
     ...schedulesApi,
     schedules,

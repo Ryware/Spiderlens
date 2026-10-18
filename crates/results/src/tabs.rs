@@ -52,6 +52,12 @@ pub enum Need {
     Readability,
     /// Search Console page data fetched after the crawl (spec 024).
     SearchConsole,
+    /// URL Inspection results fetched after the crawl (spec 024 US2).
+    UrlInspection,
+    /// Google Analytics 4 landing page data fetched after the crawl (spec 024 US4).
+    Analytics,
+    /// Ahrefs, Majestic or Moz link metrics fetched after the crawl (spec 024).
+    LinkMetrics,
     /// Every sitemap file and entry the crawl read (spec 011).
     SitemapEntries,
     /// The `sitemap_audit` pass's problems (spec 011 part b), written once
@@ -70,6 +76,10 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
+    /// Chrome UX Report field data fetched after the crawl (spec 024).
+    FieldData,
+    /// PageSpeed Insights lab tests run after the crawl (spec 024).
+    LabTests,
     /// Static accessibility checks (spec 026).
     AccessibilityStatic,
     /// Full accessibility checks in the rendering stage (spec 026).
@@ -106,6 +116,15 @@ impl Need {
             Self::SearchConsole => {
                 "No Search Console data in this crawl yet. Fetch it from Integrations after connecting your Google account."
             }
+            Self::UrlInspection => {
+                "No URL Inspection results in this crawl yet. Choose Inspect index status in Integrations after connecting your Google account."
+            }
+            Self::Analytics => {
+                "No Analytics data in this crawl yet. Fetch it from Integrations after connecting your Google account."
+            }
+            Self::LinkMetrics => {
+                "No link metrics in this crawl yet. Save an Ahrefs, Majestic or Moz key in Integrations and fetch them for this crawl."
+            }
             Self::SitemapEntries => {
                 "Sitemap entries were not recorded in this crawl file; it was made before SpiderLens kept them."
             }
@@ -120,6 +139,10 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
+            Self::FieldData => {
+                "No field data in this crawl yet. Save a Google API key and fetch field data from Integrations."
+            }
+            Self::LabTests => "No lab test results in this crawl yet. Run lab tests from Integrations.",
             Self::AccessibilityStatic => {
                 "This crawl did not check accessibility. Turn on accessibility checks in the crawl settings to check it."
             }
@@ -148,6 +171,9 @@ impl Need {
             Self::Pdf => "pdf",
             Self::Readability => "readability",
             Self::SearchConsole => "search_console",
+            Self::UrlInspection => "url_inspection",
+            Self::Analytics => "analytics",
+            Self::LinkMetrics => "link_metrics",
             Self::SitemapEntries => "sitemap_entries",
             Self::SitemapAudit => "sitemap_audit",
             Self::Orphans => "orphans",
@@ -156,6 +182,8 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
+            Self::FieldData => "field_data",
+            Self::LabTests => "lab_tests",
             Self::AccessibilityStatic => "accessibility_static",
             Self::AccessibilityFull => "accessibility_full",
             Self::MobileLayout => "mobile_layout",
@@ -2320,6 +2348,10 @@ fn build_tabs() -> Vec<TabDef> {
             scoped: false,
             rows: None,
         },
+        crate::google_tabs::index_status_tab(),
+        crate::google_tabs::analytics_tab(),
+        crate::page_experience::tab(),
+        crate::link_data::tab(),
         ai_search_tab(),
         near_dup_tab(),
         javascript_tab(),
@@ -3120,7 +3152,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(tab_ids.len(), 23);
+        assert_eq!(tab_ids.len(), 27);
     }
 
     #[test]

@@ -39,13 +39,27 @@ import type { ViewQuery } from "./generated/ViewQuery";
 import type { Values } from "./generated/Values";
 import type { CacheInfo } from "./generated/CacheInfo";
 import type { Connection } from "./generated/Connection";
+import type { FieldRequest } from "./generated/FieldRequest";
+import type { LabRequest } from "./generated/LabRequest";
+import type { PerfEstimate } from "./generated/PerfEstimate";
 import type { OrphanPage } from "./generated/OrphanPage";
+import type { Ga4Request } from "./generated/Ga4Request";
+import type { Ga4Stream } from "./generated/Ga4Stream";
+import type { InspectPlan } from "./generated/InspectPlan";
+import type { InspectRequest } from "./generated/InspectRequest";
 import type { PageRequest } from "./generated/PageRequest";
 import type { Property } from "./generated/Property";
 import type { ProviderSettings } from "./generated/ProviderSettings";
 import type { ProviderStatus } from "./generated/ProviderStatus";
 import type { QueryRow } from "./generated/QueryRow";
 import type { RunProgress } from "./generated/RunProgress";
+import type { LinkEstimate } from "./generated/LinkEstimate";
+import type { LinkRequest } from "./generated/LinkRequest";
+import type { MetricInfo } from "./generated/MetricInfo";
+import type { Overflow } from "./generated/Overflow";
+import type { SheetExport } from "./generated/SheetExport";
+import type { SheetsPlan } from "./generated/SheetsPlan";
+import type { SpreadsheetRef } from "./generated/SpreadsheetRef";
 import type { Status as IntegrationStatus } from "./generated/Status";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
@@ -775,6 +789,12 @@ export interface CrawlRule {
   run_state: "crawl" | "complete" | "partial" | "stale" | null;
 }
 
+/** Rows sent to a new spreadsheet so far. */
+export interface SheetsProgress {
+  sent: number;
+  total: number;
+}
+
 export interface CustomRunProgress {
   run: number;
   done: number;
@@ -1114,7 +1134,32 @@ export interface Transport {
   integrationsCacheInfo(): Promise<CacheInfo>;
   integrationsCacheClear(provider: string | null): Promise<number>;
   integrationsOpenTerms(provider: string): Promise<void>;
+  /** Spec 024 slice 2: URL Inspection. */
+  integrationsDefaultInspectRequest(property: string): Promise<InspectRequest>;
+  integrationsInspectionPlan(path: string, account: string | null, request: InspectRequest): Promise<InspectPlan>;
+  integrationsRunInspection(path: string, account: string | null, request: InspectRequest): Promise<RunProgress>;
+  /** Spec 024 slice 4: Google Analytics 4. */
+  integrationsAnalyticsStreams(account: string | null, path: string | null): Promise<Ga4Stream[]>;
+  integrationsDefaultAnalyticsRequest(property: string, stream: string): Promise<Ga4Request>;
+  integrationsRunAnalytics(path: string, account: string | null, request: Ga4Request): Promise<RunProgress>;
+  /** Link metrics (spec 024 US5): what a provider offers, the cost before a run, and the run. */
+  integrationsLinkMetrics(provider: string): Promise<MetricInfo[]>;
+  integrationsLinkEstimate(path: string, label: string | null, request: LinkRequest): Promise<LinkEstimate>;
+  integrationsRunLinks(path: string, label: string | null, request: LinkRequest): Promise<RunProgress>;
+  /** Google Sheets and Looker Studio (spec 024 US6): size of the view's export, the export, the links. */
+  integrationsSheetsPlan(path: string, query: ViewQuery, columns: string[], segments?: Segment[]): Promise<SheetsPlan>;
+  integrationsExportSheets(path: string, query: ViewQuery, columns: string[], segments: Segment[] | undefined, title: string, worksheet: string, account: string | null, overflow: Overflow): Promise<SheetExport>;
+  integrationsOpenLooker(sheet: SpreadsheetRef): Promise<string>;
+  integrationsLookerLink(sheet: SpreadsheetRef): Promise<string>;
+  onSheetsProgress(cb: (p: SheetsProgress) => void): Promise<() => void>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
+  // Field data and lab tests (spec 024 US3).
+  /** Saves one Google API key in the keychain for field data and lab tests. */
+  integrationsSaveGoogleKey(label: string, key: string): Promise<Connection[]>;
+  integrationsEstimateFieldData(path: string, request: FieldRequest): Promise<PerfEstimate>;
+  integrationsEstimateLabTests(path: string, request: LabRequest): Promise<PerfEstimate>;
+  integrationsRunFieldData(path: string, keyLabel: string | null, request: FieldRequest): Promise<RunProgress>;
+  integrationsRunLabTests(path: string, keyLabel: string | null, request: LabRequest): Promise<RunProgress>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
   aeoRun(path: string): Promise<{ run_id: number }>;
@@ -1395,7 +1440,27 @@ export const tauriTransport: Transport = {
   integrationsCacheInfo: () => invoke("integrations_cache_info"),
   integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
   integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  integrationsDefaultInspectRequest: (property) => invoke("integrations_default_inspect_request", { property }),
+  integrationsInspectionPlan: (path, account, request) => invoke("integrations_inspection_plan", { path, account, request }),
+  integrationsRunInspection: (path, account, request) => invoke("integrations_run_inspection", { path, account, request }),
+  integrationsAnalyticsStreams: (account, path) => invoke("integrations_analytics_streams", { account, path }),
+  integrationsDefaultAnalyticsRequest: (property, stream) => invoke("integrations_default_analytics_request", { property, stream }),
+  integrationsRunAnalytics: (path, account, request) => invoke("integrations_run_analytics", { path, account, request }),
+  integrationsLinkMetrics: (provider) => invoke("integrations_link_metrics", { providerId: provider }),
+  integrationsLinkEstimate: (path, label, request) => invoke("integrations_link_estimate", { path, label, request }),
+  integrationsRunLinks: (path, label, request) => invoke("integrations_run_links", { path, label, request }),
+  integrationsSheetsPlan: (path, query, columns, segments) => invoke("integrations_sheets_plan", { path, query, columns, segments: segments ?? null }),
+  integrationsExportSheets: (path, query, columns, segments, title, worksheet, account, overflow) =>
+    invoke("integrations_export_sheets", { path, query, columns, segments: segments ?? null, title, worksheet, account, overflow }),
+  integrationsOpenLooker: (sheet) => invoke("integrations_open_looker", { sheet }),
+  integrationsLookerLink: (sheet) => invoke("integrations_looker_link", { sheet }),
+  onSheetsProgress: (cb) => listen<SheetsProgress>("integrations://sheets-progress", (e) => cb(e.payload)),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
+  integrationsSaveGoogleKey: (label, key) => invoke("integrations_save_google_key", { label, key }),
+  integrationsEstimateFieldData: (path, request) => invoke("integrations_estimate_field_data", { path, request }),
+  integrationsEstimateLabTests: (path, request) => invoke("integrations_estimate_lab_tests", { path, request }),
+  integrationsRunFieldData: (path, keyLabel, request) => invoke("integrations_run_field_data", { path, keyLabel, request }),
+  integrationsRunLabTests: (path, keyLabel, request) => invoke("integrations_run_lab_tests", { path, keyLabel, request }),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),
   aeoSummary: (path) => invoke("aeo_summary", { path }),
