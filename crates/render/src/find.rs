@@ -19,11 +19,13 @@ pub const PINNED_VERSION: &str = "155.0.8059.39";
 /// (FR-003, "comparable version").
 pub const MAJOR_TOLERANCE: u32 = 4;
 
-/// Browser source policy (research R16 note, owner decision pending):
-/// `true` prefers a downloaded `chrome-headless-shell`, which rendered about
-/// five times faster than full headless Chromium in the spike, and keeps an
-/// installed browser as the fallback when the user declines the download or
-/// is offline. `false` restores R2 option (a): installed browser first.
+/// Browser source policy (the owner's decision, 2026-10-18): the browser is
+/// a `chrome-headless-shell` that SpiderLens downloads on first use, after
+/// the user agreed. An installed Chrome, Chromium or Edge is used only when
+/// the user points at it (`--browser`, "Change browser"). This one constant
+/// is the whole choice: `false` restores "installed browser first" (the
+/// installed browsers are searched again by [`find_browser`], and
+/// [`should_offer_download`] stops offering the download over one).
 pub const PREFER_DOWNLOAD: bool = true;
 
 /// The oldest major version accepted.
@@ -47,11 +49,37 @@ pub fn should_offer_download(found: &Result<BrowserInfo, NotUsable>, download_av
     }
 }
 
-/// User path, then a previous download, then installed Chrome, Chromium, Edge.
-/// Runs `<browser> --version` (on Windows, reads the version folder next to
+/// User path, then a previous download, then (only when [`PREFER_DOWNLOAD`]
+/// is off) installed Chrome, Chromium, Edge. Runs `<browser> --version` (on Windows, reads the version folder next to
 /// the executable, because `chrome.exe --version` prints nothing there).
 pub fn find_browser(opts: &FindOptions) -> Result<BrowserInfo, NotUsable> {
-    find_in(opts, &installed_candidates())
+    find_in(opts, &installed_sources())
+}
+
+/// The installed browsers searched without a user path: none while the
+/// policy is "download first" ([`PREFER_DOWNLOAD`]).
+fn installed_sources() -> Vec<(BrowserName, PathBuf)> {
+    if PREFER_DOWNLOAD {
+        Vec::new()
+    } else {
+        installed_candidates()
+    }
+}
+
+/// The browser SpiderLens downloaded earlier, newest version first.
+pub(crate) fn find_downloaded(data_dir: &Path) -> Result<BrowserInfo, NotUsable> {
+    let mut last = NotUsable::NotFound;
+    for path in downloaded_candidates(data_dir) {
+        match check(
+            &path,
+            Some(BrowserName::ChromeHeadlessShell),
+            BrowserSource::Downloaded,
+        ) {
+            Ok(info) => return Ok(info),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// [`find_browser`] with the installed locations given, for tests.
@@ -327,7 +355,7 @@ pub fn browser_for_tests() -> Result<Option<BrowserInfo>, String> {
         user_path,
         data_dir: data_dir().unwrap_or_else(std::env::temp_dir),
     };
-    match find_browser(&opts) {
+    match find_in(&opts, &installed_candidates()) {
         Ok(b) => Ok(Some(b)),
         Err(NotUsable::TooOld { found, .. }) if opts.user_path.is_some() => Ok(Some(found)),
         Err(e) if std::env::var("SPIDERLENS_REQUIRE_BROWSER").as_deref() == Ok("1") => {

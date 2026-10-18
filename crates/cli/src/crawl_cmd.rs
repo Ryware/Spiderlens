@@ -10,8 +10,8 @@ use spiderlens_config::Change;
 use spiderlens_config::{ModeInput, normalize_url, validate};
 use spiderlens_engine::crawl::file::{self, DEFAULT_DISK_RESERVE};
 use spiderlens_engine::crawl::{
-    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, ResumeOptions,
-    Upgrade, UrlState, default_file_name, retry_preview,
+    Control, CrawlError, CrawlEvent, CrawlStore, CrawlSummary, Crawler, NotCrawledReason, RenderSummary,
+    ResumeOptions, Upgrade, UrlState, default_file_name, retry_preview,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -864,19 +864,14 @@ fn print_summary(s: &CrawlSummary, json: bool, file: &Path) {
 
 /// The Rendering block (contracts/cli.md "Summary"): final states and
 /// reasons add up to the pages eligible for rendering.
-fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::RenderSummary) {
+fn print_render_summary(out: &mut impl Write, r: &RenderSummary) {
     let n = |k: &str| r.by_state.get(k).copied().unwrap_or(0);
     let reason = |k: &str| r.by_reason.get(k).copied().unwrap_or(0);
-    let label = |k: &'static str| match k {
-        "crash" => "Browser crash",
-        "renderer_error" => "Renderer error",
-        "page_too_large" => "Page too large",
-        "navigation_error" => "Navigation error",
-        "outside_rules" => "Outside rendering rules",
-        "crawl_stopped" => "Crawl stopped",
-        "browser_unavailable" => "Browser unavailable",
-        "html_not_stored" => "Raw HTML not stored",
-        other => other,
+    let label = |k: &'static str| {
+        RenderSummary::REASONS
+            .iter()
+            .find(|(key, _)| *key == k)
+            .map_or(k, |(_, label)| *label)
     };
     let _ = writeln!(out, "Rendering");
     let _ = writeln!(out, "  {:<32} {}", "Rendered", n("rendered"));

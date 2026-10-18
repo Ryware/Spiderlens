@@ -21,8 +21,14 @@ fn full_page(path: &str) -> &'static FullPage {
 
 fn site() -> JsSite {
     let mut pages: Vec<(&str, &str)> = vec![
-        (full_page("/full/color-contrast").path, full_page("/full/color-contrast").html),
-        (full_page("/full/color-contrast-ok").path, full_page("/full/color-contrast-ok").html),
+        (
+            full_page("/full/color-contrast").path,
+            full_page("/full/color-contrast").html,
+        ),
+        (
+            full_page("/full/color-contrast-ok").path,
+            full_page("/full/color-contrast-ok").html,
+        ),
         (full_page("/full/label").path, full_page("/full/label").html),
         (full_page("/full/label-ok").path, full_page("/full/label-ok").html),
         (SCRIPT_ADDED.path, SCRIPT_ADDED.html),
@@ -56,7 +62,9 @@ fn one<T: rusqlite::types::FromSql>(store: &CrawlStore, sql: &str, id: i64) -> T
 fn full_results(store: &CrawlStore, id: i64) -> Vec<(String, String)> {
     let mut stmt = store
         .conn()
-        .prepare("SELECT check_id, kind FROM a11y_results WHERE url_id = ?1 AND source = 'full' ORDER BY check_id")
+        .prepare(
+            "SELECT check_id, kind FROM a11y_results WHERE url_id = ?1 AND source = 'full' ORDER BY check_id",
+        )
         .unwrap();
     stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap()
@@ -112,7 +120,14 @@ async fn full_checks_and_mobile_measures_are_stored_for_rendered_pages() {
 
     // Contrast: the pale text fails, the dark text passes.
     let bad = id("/full/color-contrast");
-    assert_eq!(one::<String>(&store, "SELECT full_state FROM a11y_audits WHERE url_id = ?1", bad), "checked");
+    assert_eq!(
+        one::<String>(
+            &store,
+            "SELECT full_state FROM a11y_audits WHERE url_id = ?1",
+            bad
+        ),
+        "checked"
+    );
     assert!(has(&full_results(&store, bad), "color-contrast", "violation"));
     let nodes: i64 = one(
         &store,
@@ -132,7 +147,10 @@ async fn full_checks_and_mobile_measures_are_stored_for_rendered_pages() {
         "SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1 AND check_id = 'static.form_label'",
         label,
     );
-    assert_eq!(static_label, 0, "the full label result replaces static.form_label");
+    assert_eq!(
+        static_label, 0,
+        "the full label result replaces static.form_label"
+    );
     let label_ok = id("/full/label-ok");
     assert!(!has(&full_results(&store, label_ok), "label", "violation"));
 
@@ -162,7 +180,12 @@ async fn full_checks_and_mobile_measures_are_stored_for_rendered_pages() {
     let wider = measures("/mobile/content-wider");
     assert_eq!((wider.0.as_str(), wider.1.as_str()), ("mobile", "yes"));
     assert!(wider.3 <= 480.0, "the mobile window is narrow: {}", wider.3);
-    assert!(wider.2 > wider.3 + 5.0, "content {} in a window of {}", wider.2, wider.3);
+    assert!(
+        wider.2 > wider.3 + 5.0,
+        "content {} in a window of {}",
+        wider.2,
+        wider.3
+    );
 
     let small = measures("/mobile/small-text");
     assert_eq!(small.1, "yes");

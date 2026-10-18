@@ -4,6 +4,7 @@ import { useCrawlRun } from "../crawl/useCrawlRun";
 import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
+import { BrowserDialog } from "../crawl/BrowserDialog";
 import { RunAccessibilityDialog } from "../accessibility/RunAccessibility";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SpellingBar } from "../spelling/SpellingBar";
@@ -266,6 +267,23 @@ export function AppShell({ transport }: { transport: Transport }) {
   // Not gated on setup.canStart: that reflects the last validated value, which
   // can lag behind the field. crawlInput validates what is there now.
   const starting = useRef(false);
+  type StartInput = NonNullable<Awaited<ReturnType<typeof setup.crawlInput>>>;
+  // The start that is waiting for a browser (spec 014 FR-045); kept until it
+  // starts, so the dialog can run it again.
+  const pendingStart = useRef<StartInput | null>(null);
+  const [browserAsk, setBrowserAsk] = useState<string | null>(null);
+  const runStart = useCallback(
+    async (input: StartInput) => {
+      pendingStart.current = input;
+      const id = await crawl.start(input.config, input.startUrl, input.target);
+      if (id !== null) pendingStart.current = null;
+    },
+    [crawl],
+  );
+  useEffect(() => {
+    const m = /browser_unavailable: ([\s\S]*)$/.exec(crawl.error ?? "");
+    if (m && pendingStart.current) setBrowserAsk(m[1]);
+  }, [crawl.error]);
   const startCrawl = useCallback(async () => {
     if (starting.current || crawl.active) return;
     starting.current = true;
@@ -273,11 +291,11 @@ export function AppShell({ transport }: { transport: Transport }) {
       const input = await setup.crawlInput();
       if (!input) return;
       setSection("overview");
-      crawl.start(input.config, input.startUrl, input.target);
+      await runStart(input);
     } finally {
       starting.current = false;
     }
-  }, [setup, crawl]);
+  }, [setup, crawl, runStart]);
 
   const library = useCrawlLibrary(transport);
   const file = useCrawlFile(transport, crawl, {
@@ -560,7 +578,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               comparison={reportComparison}
             />
           ) : crawl.phase === "idle" ? (
-            <StartState setup={setup} error={crawl.error} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />
+            <StartState setup={setup} error={crawl.error?.replace(/^.*?browser_unavailable: /, "") ?? null} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />
           ) : (
             <CrawlOverview run={crawl} onInfo={() => setInfoOpen(true)} onResume={resume} onSaveAs={saveAs} onReport={crawl.path ? () => setSection("report") : undefined} />
           )}
@@ -641,6 +659,26 @@ export function AppShell({ transport }: { transport: Transport }) {
         }}
 
       />
+      {browserAsk !== null && (
+        <BrowserDialog
+          transport={transport}
+          message={browserAsk}
+          onReady={() => {
+            setBrowserAsk(null);
+            if (pendingStart.current) void runStart(pendingStart.current);
+          }}
+          onRaw={() => {
+            setBrowserAsk(null);
+            const input = pendingStart.current;
+            setup.set((c) => ({ ...c, rendering: { ...c.rendering, mode: "raw" } }));
+            if (input) void runStart({ ...input, config: { ...input.config, rendering: { ...input.config.rendering, mode: "raw" } } });
+          }}
+          onClose={() => {
+            setBrowserAsk(null);
+            pendingStart.current = null;
+          }}
+        />
+      )}
       {crawl.path && <CompareSheet transport={transport} path={crawl.path} request={compare} onRequest={setCompare} onClose={() => setCompare(null)} />}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} recent={ui.recentCommands} onRun={run} />
       <CompareSetup open={compareOpen} onOpenChange={setCompareOpen} transport={transport} initialCurrent={crawl.path} onStart={startComparison} />

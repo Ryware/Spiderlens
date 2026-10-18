@@ -104,7 +104,9 @@ async fn every_page_stores_exactly_its_expected_static_findings() {
             )
             .unwrap();
         let rows: Vec<(String, u32, String, String, Option<String>)> = stmt
-            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .query_map([id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -118,19 +120,31 @@ async fn every_page_stores_exactly_its_expected_static_findings() {
         }
         for (check, n, kind, source, impact) in &rows {
             assert!(check.starts_with("static."), "{check}");
-            assert_eq!((kind.as_str(), source.as_str()), ("violation", "static"), "{check}");
+            assert_eq!(
+                (kind.as_str(), source.as_str()),
+                ("violation", "static"),
+                "{check}"
+            );
             assert!(impact.is_some(), "{check} has no impact");
             assert!(*n >= 1, "{check}");
         }
         // Every checked page has its audit row, also the clean ones.
         let state: Option<String> = store
             .conn()
-            .query_row("SELECT static_state FROM a11y_audits WHERE url_id = ?1", [id], |r| r.get(0))
+            .query_row(
+                "SELECT static_state FROM a11y_audits WHERE url_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
             .unwrap_or_else(|e| panic!("{}: no audit row: {e}", page.path));
         assert_eq!(state.as_deref(), Some("checked"), "{}", page.path);
         let checks: i64 = store
             .conn()
-            .query_row("SELECT checks_failed FROM a11y_audits WHERE url_id = ?1", [id], |r| r.get(0))
+            .query_row(
+                "SELECT checks_failed FROM a11y_audits WHERE url_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(checks as usize, page.expect.len(), "{}", page.path);
     }
@@ -174,5 +188,10 @@ async fn with_the_level_off_nothing_is_checked_or_stored() {
         assert!(!features.split(',').any(|x| x == f), "{f} in {features}");
     }
     // The pages themselves were still crawled.
-    assert!(store.id_of(&c.site.url(E, "/static/form_label")).unwrap().is_some());
+    assert!(
+        store
+            .id_of(&c.site.url(E, "/static/form_label"))
+            .unwrap()
+            .is_some()
+    );
 }

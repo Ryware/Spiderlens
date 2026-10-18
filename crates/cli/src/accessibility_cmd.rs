@@ -303,7 +303,9 @@ fn print_json_table(out: &mut impl Write, t: &Table) {
 fn run_checks(args: &RunArgs) -> ExitCode {
     use std::io::{BufRead, IsTerminal};
     if args.full {
-        eprintln!("error: Full checks on an existing crawl need the render-later path, which is not built yet");
+        eprintln!(
+            "error: Full checks on an existing crawl need the render-later path, which is not built yet"
+        );
         return ExitCode::from(exit::USAGE);
     }
     let has_results = Reader::open(&args.file)
@@ -322,9 +324,13 @@ fn run_checks(args: &RunArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     }
-    let result = spiderlens_engine::accessibility::rerun_static(&args.file, &AccessibilitySettings::default(), |done, total| {
-        eprint!("\r{done} of {total} pages   ");
-    });
+    let result = spiderlens_engine::accessibility::rerun_static(
+        &args.file,
+        &AccessibilitySettings::default(),
+        |done, total| {
+            eprint!("\r{done} of {total} pages   ");
+        },
+    );
     eprintln!();
     match result {
         Ok(s) => {

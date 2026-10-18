@@ -60,7 +60,13 @@ fn stored(path: &Path) -> BTreeMap<String, Vec<(String, u32)>> {
         )
         .unwrap();
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, u32>(2)?)))
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, u32>(2)?,
+            ))
+        })
         .unwrap();
     let mut out: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
     for row in rows {
@@ -79,13 +85,24 @@ fn count(path: &Path, sql: &str) -> i64 {
 async fn rerun_gives_the_fixture_findings_and_sends_no_requests() {
     let site = site();
     let (_d, path) = crawl(&site, |_| {}).await;
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM a11y_audits"), 0, "level off: nothing checked");
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM a11y_audits"),
+        0,
+        "level off: nothing checked"
+    );
 
     let hits_before = site.hits().len();
     let mut calls = Vec::new();
-    let summary = rerun_static(&path, &AccessibilitySettings::default(), |done, total| calls.push((done, total))).unwrap();
+    let summary = rerun_static(&path, &AccessibilitySettings::default(), |done, total| {
+        calls.push((done, total))
+    })
+    .unwrap();
     assert_eq!(site.hits().len(), hits_before, "a re-check sends no requests");
-    assert_eq!(summary.pages as usize, STATIC_PAGES.len() + 1, "every page plus the home page");
+    assert_eq!(
+        summary.pages as usize,
+        STATIC_PAGES.len() + 1,
+        "every page plus the home page"
+    );
     assert_eq!(summary.skipped_no_html, 0);
     let with_findings = STATIC_PAGES.iter().filter(|p| !p.expect.is_empty()).count() as u64;
     assert!(summary.with_findings >= with_findings, "{summary:?}");
@@ -93,7 +110,11 @@ async fn rerun_gives_the_fixture_findings_and_sends_no_requests() {
 
     let found = stored(&path);
     for page in STATIC_PAGES {
-        let mut want: Vec<(String, u32)> = page.expect.iter().map(|(id, n)| (format!("static.{id}"), *n)).collect();
+        let mut want: Vec<(String, u32)> = page
+            .expect
+            .iter()
+            .map(|(id, n)| (format!("static.{id}"), *n))
+            .collect();
         want.sort();
         let got = found.get(&site.url(E, page.path)).cloned().unwrap_or_default();
         assert_eq!(got, want, "{}", page.path);
@@ -106,11 +127,20 @@ async fn rerun_gives_the_fixture_findings_and_sends_no_requests() {
         summary.pages as i64
     );
     assert!(
-        count(&path, "SELECT COUNT(*) FROM mobile_measures WHERE viewport_state IS NOT NULL") > 0,
+        count(
+            &path,
+            "SELECT COUNT(*) FROM mobile_measures WHERE viewport_state IS NOT NULL"
+        ) > 0,
         "mobile facts are stored too"
     );
     let store = CrawlStore::open(&path).unwrap();
-    assert!(store.meta("data_features").unwrap().unwrap_or_default().contains("accessibility_static"));
+    assert!(
+        store
+            .meta("data_features")
+            .unwrap()
+            .unwrap_or_default()
+            .contains("accessibility_static")
+    );
 }
 
 #[tokio::test]
@@ -124,7 +154,11 @@ async fn running_twice_replaces_the_results() {
     let second = rerun_static(&path, &settings, |_, _| {}).unwrap();
     assert_eq!(first, second);
     assert_eq!(stored(&path), before);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM a11y_results"), rows, "no duplicate rows");
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM a11y_results"),
+        rows,
+        "no duplicate rows"
+    );
 }
 
 #[tokio::test]
@@ -146,5 +180,9 @@ async fn a_file_another_process_holds_is_refused() {
         Err(AccessibilityError::NotPossible(m)) => assert!(m.contains("view-only"), "{m}"),
         other => panic!("expected a refusal, got {other:?}"),
     }
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM a11y_audits"), 0, "nothing was written");
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM a11y_audits"),
+        0,
+        "nothing was written"
+    );
 }

@@ -374,7 +374,10 @@ mod tests {
         let a = parse_a11y(A11Y_JSON).unwrap();
         let row = a.results[0].as_row();
         assert_eq!(row.check_id, "color-contrast");
-        assert_eq!((row.kind, row.source, row.impact), ("violation", "full", Some("serious")));
+        assert_eq!(
+            (row.kind, row.source, row.impact),
+            ("violation", "full", Some("serious"))
+        );
         assert_eq!(row.nodes_total, 3);
         assert_eq!(row.nodes.len(), 2);
         assert_eq!(row.nodes[0].bbox, Some([16.0, 820.0, 380.0, 40.0]));
@@ -403,7 +406,10 @@ mod tests {
         assert_eq!(examples[0]["w"], 16.0);
 
         let bare = parse_mobile(r#"{"window_px":411,"content_px":411}"#).unwrap();
-        assert_eq!((bare.widest, bare.small_targets, bare.examples.as_str()), (None, 0, "[]"));
+        assert_eq!(
+            (bare.widest, bare.small_targets, bare.examples.as_str()),
+            (None, 0, "[]")
+        );
         assert!(parse_mobile(r#"{"content_px":1}"#).is_err());
     }
 
@@ -445,10 +451,7 @@ mod tests {
         assert_eq!(names, [PROBE_MOBILE, PROBE_A11Y]);
         assert!(probes[0].budget <= Duration::from_secs(1));
 
-        let longer = AccessibilitySettings {
-            budget_secs: 12,
-            ..s
-        };
+        let longer = AccessibilitySettings { budget_secs: 12, ..s };
         let (probes, total) = probes_for(&longer, false);
         assert_eq!(total, Duration::from_secs(12));
         assert_eq!(probes[0].budget, Duration::from_secs(12));
@@ -459,7 +462,10 @@ mod tests {
         let both = || {
             vec![
                 (PROBE_A11Y.to_string(), ProbeOutcome::Ok(A11Y_JSON.to_string())),
-                (PROBE_MOBILE.to_string(), ProbeOutcome::Ok(MOBILE_JSON.to_string())),
+                (
+                    PROBE_MOBILE.to_string(),
+                    ProbeOutcome::Ok(MOBILE_JSON.to_string()),
+                ),
             ]
         };
         let report = digest(both(), false);
@@ -483,7 +489,10 @@ mod tests {
 
         let report = digest(vec![(PROBE_A11Y.to_string(), ProbeOutcome::TooLarge)], false);
         assert_eq!(report.full, Some(FullOutcome::NotChecked("too_large")));
-        let report = digest(vec![(PROBE_A11Y.to_string(), ProbeOutcome::Ok("{".into()))], false);
+        let report = digest(
+            vec![(PROBE_A11Y.to_string(), ProbeOutcome::Ok("{".into()))],
+            false,
+        );
         assert_eq!(report.full, Some(FullOutcome::NotChecked("probe_failed")));
 
         let report = digest(both(), true);

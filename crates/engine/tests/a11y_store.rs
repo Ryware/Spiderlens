@@ -95,7 +95,10 @@ fn a_new_file_has_the_four_accessibility_tables_and_their_indexes() {
             .conn()
             .prepare("SELECT name FROM sqlite_master WHERE type = ?1 ORDER BY name")
             .unwrap();
-        stmt.query_map([kind], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        stmt.query_map([kind], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
     };
     let tables = names("table");
     for t in ["a11y_audits", "a11y_results", "a11y_nodes", "mobile_measures"] {
@@ -116,9 +119,33 @@ fn a_new_file_has_the_four_accessibility_tables_and_their_indexes() {
 fn static_results_are_stored_with_their_counts_and_the_mobile_row() {
     let (_d, _p, s) = store();
     let rows = [
-        row("static.form_label", "violation", "static", Some("critical"), "wcag2a wcag131", 4, 4),
-        row("static.link_name", "violation", "static", Some("serious"), "wcag22aa wcag258", 3, 3),
-        row("static.tabindex_positive", "violation", "static", Some("minor"), "best-practice", 2, 2),
+        row(
+            "static.form_label",
+            "violation",
+            "static",
+            Some("critical"),
+            "wcag2a wcag131",
+            4,
+            4,
+        ),
+        row(
+            "static.link_name",
+            "violation",
+            "static",
+            Some("serious"),
+            "wcag22aa wcag258",
+            3,
+            3,
+        ),
+        row(
+            "static.tabindex_positive",
+            "violation",
+            "static",
+            Some("minor"),
+            "best-practice",
+            2,
+            2,
+        ),
     ];
     let mobile = MobileRow {
         viewport: Some("width=device-width"),
@@ -135,15 +162,25 @@ fn static_results_are_stored_with_their_counts_and_the_mobile_row() {
     );
     let state: String = s
         .conn()
-        .query_row("SELECT static_state FROM a11y_audits WHERE url_id = 1", [], |r| r.get(0))
+        .query_row("SELECT static_state FROM a11y_audits WHERE url_id = 1", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(state, "checked");
     assert_eq!(
         check_ids(&s, 1, "static"),
-        ["static.form_label", "static.link_name", "static.tabindex_positive"]
+        [
+            "static.form_label",
+            "static.link_name",
+            "static.tabindex_positive"
+        ]
     );
     assert_eq!(
-        count(&s, "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)", 1),
+        count(
+            &s,
+            "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)",
+            1
+        ),
         9
     );
     let (viewport, state): (String, String) = s
@@ -167,17 +204,58 @@ fn a_full_result_replaces_the_static_results_that_test_the_same_thing() {
     let (_d, _p, s) = store();
     let statics = || {
         [
-            row("static.form_label", "violation", "static", Some("critical"), "wcag2a", 2, 2),
-            row("static.link_name", "violation", "static", Some("serious"), "wcag2a", 1, 1),
-            row("static.plugin_element", "violation", "static", Some("moderate"), "wcag2a", 1, 1),
+            row(
+                "static.form_label",
+                "violation",
+                "static",
+                Some("critical"),
+                "wcag2a",
+                2,
+                2,
+            ),
+            row(
+                "static.link_name",
+                "violation",
+                "static",
+                Some("serious"),
+                "wcag2a",
+                1,
+                1,
+            ),
+            row(
+                "static.plugin_element",
+                "violation",
+                "static",
+                Some("moderate"),
+                "wcag2a",
+                1,
+                1,
+            ),
         ]
     };
-    s.record_static_a11y(1, &statics(), &MobileRow::default()).unwrap();
+    s.record_static_a11y(1, &statics(), &MobileRow::default())
+        .unwrap();
 
     // `label` is the same as static form_label (same_as); link-name is not run.
     let full = [
-        row("label", "violation", "full", Some("critical"), "wcag2a wcag412", 5, 5),
-        row("color-contrast", "violation", "full", Some("serious"), "wcag2aa wcag143", 7, 7),
+        row(
+            "label",
+            "violation",
+            "full",
+            Some("critical"),
+            "wcag2a wcag412",
+            5,
+            5,
+        ),
+        row(
+            "color-contrast",
+            "violation",
+            "full",
+            Some("serious"),
+            "wcag2aa wcag143",
+            7,
+            7,
+        ),
     ];
     s.record_a11y(1, "full", &full).unwrap();
     assert_eq!(
@@ -211,10 +289,26 @@ fn a_full_result_replaces_the_static_results_that_test_the_same_thing() {
 fn nodes_are_capped_at_20_per_result_and_500_per_page() {
     let (_d, _p, s) = store();
     // One result: 50 failing elements, 20 stored, the real number kept.
-    s.record_a11y(1, "full", &[row("link-name", "violation", "full", Some("serious"), "wcag2a", 50, 50)])
-        .unwrap();
+    s.record_a11y(
+        1,
+        "full",
+        &[row(
+            "link-name",
+            "violation",
+            "full",
+            Some("serious"),
+            "wcag2a",
+            50,
+            50,
+        )],
+    )
+    .unwrap();
     assert_eq!(
-        count(&s, "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)", 1),
+        count(
+            &s,
+            "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)",
+            1
+        ),
         20
     );
     assert_eq!(
@@ -225,24 +319,55 @@ fn nodes_are_capped_at_20_per_result_and_500_per_page() {
 
     // 40 results of 20 nodes: 800 offered, 500 stored; every result is kept.
     let many: Vec<A11yRow<'static>> = (0..40)
-        .map(|i| row(&format!("rule-{i:02}"), "violation", "full", Some("minor"), "best-practice", 20, 20))
+        .map(|i| {
+            row(
+                &format!("rule-{i:02}"),
+                "violation",
+                "full",
+                Some("minor"),
+                "best-practice",
+                20,
+                20,
+            )
+        })
         .collect();
     s.record_a11y(2, "full", &many).unwrap();
     assert_eq!(
-        count(&s, "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)", 2),
+        count(
+            &s,
+            "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)",
+            2
+        ),
         500
     );
-    assert_eq!(count(&s, "SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1", 2), 40);
+    assert_eq!(
+        count(&s, "SELECT COUNT(*) FROM a11y_results WHERE url_id = ?1", 2),
+        40
+    );
     assert_eq!(audit(&s, 2).5, 40);
     assert_eq!(audit(&s, 2).7.as_deref(), Some("best_practice"));
 
     // The same cap holds for static results.
     let statics: Vec<A11yRow<'static>> = (0..30)
-        .map(|i| row(&format!("static.x{i}"), "violation", "static", Some("minor"), "wcag2a", 20, 20))
+        .map(|i| {
+            row(
+                &format!("static.x{i}"),
+                "violation",
+                "static",
+                Some("minor"),
+                "wcag2a",
+                20,
+                20,
+            )
+        })
         .collect();
     s.record_static_a11y(3, &statics, &MobileRow::default()).unwrap();
     assert_eq!(
-        count(&s, "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)", 3),
+        count(
+            &s,
+            "SELECT COUNT(*) FROM a11y_nodes WHERE result_id IN (SELECT id FROM a11y_results WHERE url_id = ?1)",
+            3
+        ),
         500
     );
 }
@@ -251,12 +376,60 @@ fn nodes_are_capped_at_20_per_result_and_500_per_page() {
 fn counts_split_by_impact_and_needs_review_and_the_lowest_level_follows_the_tags() {
     let (_d, _p, s) = store();
     let rows = [
-        row("image-alt", "violation", "full", Some("critical"), "wcag2a wcag111", 1, 1),
-        row("color-contrast", "violation", "full", Some("serious"), "wcag2aa wcag143", 2, 2),
-        row("target-size", "violation", "full", Some("moderate"), "wcag22aa wcag258", 3, 3),
-        row("region", "violation", "full", Some("moderate"), "best-practice", 4, 4),
-        row("heading-order", "violation", "full", Some("minor"), "best-practice", 5, 5),
-        row("color-contrast-enhanced", "needs_review", "full", Some("serious"), "wcag2aaa wcag146", 6, 6),
+        row(
+            "image-alt",
+            "violation",
+            "full",
+            Some("critical"),
+            "wcag2a wcag111",
+            1,
+            1,
+        ),
+        row(
+            "color-contrast",
+            "violation",
+            "full",
+            Some("serious"),
+            "wcag2aa wcag143",
+            2,
+            2,
+        ),
+        row(
+            "target-size",
+            "violation",
+            "full",
+            Some("moderate"),
+            "wcag22aa wcag258",
+            3,
+            3,
+        ),
+        row(
+            "region",
+            "violation",
+            "full",
+            Some("moderate"),
+            "best-practice",
+            4,
+            4,
+        ),
+        row(
+            "heading-order",
+            "violation",
+            "full",
+            Some("minor"),
+            "best-practice",
+            5,
+            5,
+        ),
+        row(
+            "color-contrast-enhanced",
+            "needs_review",
+            "full",
+            Some("serious"),
+            "wcag2aaa wcag146",
+            6,
+            6,
+        ),
     ];
     s.record_a11y(1, "full", &rows).unwrap();
     // Needs-review results are not violations: they count only as needs_review
@@ -275,8 +448,12 @@ fn counts_split_by_impact_and_needs_review_and_the_lowest_level_follows_the_tags
     .unwrap();
     assert_eq!(audit(&s, 2).7.as_deref(), Some("2.0-aa"));
 
-    s.record_a11y(3, "full", &[row("a", "violation", "full", Some("minor"), "wcag22aaa", 1, 1)])
-        .unwrap();
+    s.record_a11y(
+        3,
+        "full",
+        &[row("a", "violation", "full", Some("minor"), "wcag22aaa", 1, 1)],
+    )
+    .unwrap();
     assert_eq!(audit(&s, 3).7.as_deref(), Some("2.2-aaa"));
 
     // Rows written again for the same source leave only the new counts.
@@ -287,7 +464,8 @@ fn counts_split_by_impact_and_needs_review_and_the_lowest_level_follows_the_tags
 #[test]
 fn the_state_is_set_without_touching_the_results_and_creates_the_row() {
     let (_d, _p, s) = store();
-    s.set_a11y_state(1, "full", "not_checked", Some("too_large"), None).unwrap();
+    s.set_a11y_state(1, "full", "not_checked", Some("too_large"), None)
+        .unwrap();
     let (full, reason, ms, stat): (String, Option<String>, Option<i64>, Option<String>) = s
         .conn()
         .query_row(
@@ -296,9 +474,13 @@ fn the_state_is_set_without_touching_the_results_and_creates_the_row() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
-    assert_eq!((full.as_str(), reason.as_deref(), ms, stat), ("not_checked", Some("too_large"), None, None));
+    assert_eq!(
+        (full.as_str(), reason.as_deref(), ms, stat),
+        ("not_checked", Some("too_large"), None, None)
+    );
 
-    s.set_a11y_state(1, "full", "timed_out", None, Some(5000)).unwrap();
+    s.set_a11y_state(1, "full", "timed_out", None, Some(5000))
+        .unwrap();
     s.set_a11y_state(1, "static", "checked", None, None).unwrap();
     let (full, reason, ms, stat): (String, Option<String>, Option<i64>, String) = s
         .conn()
@@ -314,8 +496,20 @@ fn the_state_is_set_without_touching_the_results_and_creates_the_row() {
     );
 
     // Recording results afterwards keeps both states.
-    s.record_a11y(1, "full", &[row("label", "violation", "full", Some("critical"), "wcag2a", 1, 1)])
-        .unwrap();
+    s.record_a11y(
+        1,
+        "full",
+        &[row(
+            "label",
+            "violation",
+            "full",
+            Some("critical"),
+            "wcag2a",
+            1,
+            1,
+        )],
+    )
+    .unwrap();
     let (full, stat): (String, String) = s
         .conn()
         .query_row(
@@ -359,7 +553,19 @@ fn mobile_measures_keep_what_a_later_write_leaves_out() {
     )
     .unwrap();
     #[allow(clippy::type_complexity)]
-    let got: (String, String, i64, String, String, f64, f64, String, f64, i64, String) = s
+    let got: (
+        String,
+        String,
+        i64,
+        String,
+        String,
+        f64,
+        f64,
+        String,
+        f64,
+        i64,
+        String,
+    ) = s
         .conn()
         .query_row(
             "SELECT viewport, viewport_state, plugins, \"window\", measured, content_px, window_px, widest, \
@@ -390,12 +596,23 @@ fn mobile_measures_keep_what_a_later_write_leaves_out() {
     assert!(got.10.contains("a.x"));
 
     // A later write with a value replaces it; one row per page.
-    s.record_mobile(1, &MobileRow { measured: Some("timed_out"), ..MobileRow::default() })
-        .unwrap();
+    s.record_mobile(
+        1,
+        &MobileRow {
+            measured: Some("timed_out"),
+            ..MobileRow::default()
+        },
+    )
+    .unwrap();
     let measured: String = s
         .conn()
-        .query_row("SELECT measured FROM mobile_measures WHERE url_id = 1", [], |r| r.get(0))
+        .query_row("SELECT measured FROM mobile_measures WHERE url_id = 1", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(measured, "timed_out");
-    assert_eq!(count(&s, "SELECT COUNT(*) FROM mobile_measures WHERE url_id = ?1", 1), 1);
+    assert_eq!(
+        count(&s, "SELECT COUNT(*) FROM mobile_measures WHERE url_id = ?1", 1),
+        1
+    );
 }

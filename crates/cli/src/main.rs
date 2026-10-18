@@ -143,6 +143,9 @@ enum Command {
     /// Validate, test and run custom extraction and search rules.
     #[command(subcommand)]
     CustomRules(rules_cmd::RulesCommand),
+    /// The browser JavaScript rendering uses: status, download, removal.
+    #[command(subcommand)]
+    Browser(browser::BrowserCommand),
     /// Generate XML sitemaps from a crawl file.
     #[command(subcommand)]
     Sitemap(sitemap_cmd::SitemapCommand),
@@ -288,6 +291,7 @@ fn main() -> ExitCode {
         Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),
         Command::CustomRules(cmd) => rules_cmd::run(cmd),
+        Command::Browser(cmd) => browser::run(cmd),
         Command::Sitemap(cmd) => sitemap_cmd::run(cmd),
         Command::Sitemaps(args) => sitemap_cmd::run_sitemaps(&args),
         Command::Orphans(args) => sitemap_cmd::run_orphans(&args),

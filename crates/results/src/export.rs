@@ -380,7 +380,10 @@ fn part_path(dest: &Path) -> PathBuf {
 /// field).
 pub const A11Y_EXPORTS: [(&str, &str); 4] = [
     ("a11y_violations", "Accessibility violations"),
-    ("a11y_violations_level", "Accessibility violations in the WCAG target"),
+    (
+        "a11y_violations_level",
+        "Accessibility violations in the WCAG target",
+    ),
     ("a11y_needs_review", "Accessibility results that need review"),
     ("a11y_summary", "Accessibility summary by check"),
 ];
@@ -405,7 +408,9 @@ struct A11yQuery {
 const A11Y_IMPACT_ORDER: &str = "CASE r.impact WHEN 'critical' THEN 0 WHEN 'serious' THEN 1 \
      WHEN 'moderate' THEN 2 WHEN 'minor' THEN 3 ELSE 4 END";
 
-const A11Y_ROW_HEADERS: &[&str] = &["address", "check_id", "title", "kind", "source", "impact", "wcag", "elements"];
+const A11Y_ROW_HEADERS: &[&str] = &[
+    "address", "check_id", "title", "kind", "source", "impact", "wcag", "elements",
+];
 
 fn a11y_query(id: &str) -> Option<A11yQuery> {
     Some(match id {
@@ -463,7 +468,9 @@ pub fn write_a11y(
         ))
     })?;
     let (conn, mut features, _) = connect(crawl, &ResolvedSettings::default())?;
-    if !features.has(crate::tabs::Need::AccessibilityStatic) && !features.has(crate::tabs::Need::AccessibilityFull) {
+    if !features.has(crate::tabs::Need::AccessibilityStatic)
+        && !features.has(crate::tabs::Need::AccessibilityFull)
+    {
         return Err(Error::invalid(crate::tabs::Need::AccessibilityStatic.unavailable_reason()).into());
     }
     if let Some(t) = target {

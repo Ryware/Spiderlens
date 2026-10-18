@@ -23,7 +23,10 @@ fn site() -> Site {
     );
     let mut b = SiteBuilder::new().html(E, "/", &home);
     for path in PAGES {
-        let page = STATIC_PAGES.iter().find(|p| p.path == path).expect("fixture page");
+        let page = STATIC_PAGES
+            .iter()
+            .find(|p| p.path == path)
+            .expect("fixture page");
         b = b.html(E, path, page.html);
     }
     b.start()
@@ -64,7 +67,10 @@ async fn csv_starts_with_the_disclaimer_and_has_a_row_per_page_and_check() {
     let (n, csv) = export(&path, "a11y_violations", A11yFormat::Csv, None);
     let lines: Vec<&str> = csv.split("\r\n").collect();
     assert_eq!(lines[0], format!("# {A11Y_DISCLAIMER}"));
-    assert_eq!(lines[1], "address,check_id,title,kind,source,impact,wcag,elements");
+    assert_eq!(
+        lines[1],
+        "address,check_id,title,kind,source,impact,wcag,elements"
+    );
     // form_label, zoom_disabled and the three checks of the mixed page.
     assert_eq!(n, 5, "{csv}");
     let form = format!(
@@ -99,7 +105,10 @@ async fn the_level_export_follows_the_target() {
     let site = site();
     let (_d, path) = crawl(&site).await;
     let (_, all) = export(&path, "a11y_violations", A11yFormat::Csv, None);
-    assert!(all.contains("static.zoom_disabled"), "zoom_disabled is WCAG 2.0 AA");
+    assert!(
+        all.contains("static.zoom_disabled"),
+        "zoom_disabled is WCAG 2.0 AA"
+    );
     let a = WcagTarget {
         version: WcagVersion::V2_0,
         level: WcagLevel::A,
@@ -128,7 +137,10 @@ async fn needs_review_is_empty_for_static_checks_and_the_summary_counts_pages() 
     assert_eq!(v["disclaimer"], A11Y_DISCLAIMER);
     let rows = v["rows"].as_array().unwrap();
     assert_eq!(rows.len() as u64, n);
-    let form = rows.iter().find(|r| r["check_id"] == "static.form_label").unwrap();
+    let form = rows
+        .iter()
+        .find(|r| r["check_id"] == "static.form_label")
+        .unwrap();
     assert_eq!(form["pages"], 2, "form_label page and the mixed page");
     assert_eq!(form["elements"], 5);
     assert_eq!(form["title"], "Form field without a label");

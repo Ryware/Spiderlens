@@ -11,7 +11,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use spiderlens_config::{A11yLevel, CrawlConfig, ModeInput, SpeedSettings, WcagLevel, WcagTarget, WcagVersion};
+use spiderlens_config::{
+    A11yLevel, CrawlConfig, ModeInput, SpeedSettings, WcagLevel, WcagTarget, WcagVersion,
+};
 use spiderlens_engine::crawl::store::{A11yNodeRow, A11yRow, MobileRow};
 use spiderlens_engine::crawl::{Control, CrawlStore, Crawler};
 use spiderlens_results::{A11Y_DISCLAIMER, Need, Reader, UrlScope, ViewQuery, tabs};
@@ -21,7 +23,10 @@ use tokio::sync::watch;
 const E: &str = "a11y-results.test";
 
 fn page(links: &[&str]) -> String {
-    let a: String = links.iter().map(|l| format!("<a href=\"{l}\">{l}</a> ")).collect();
+    let a: String = links
+        .iter()
+        .map(|l| format!("<a href=\"{l}\">{l}</a> "))
+        .collect();
     format!("<!doctype html><html lang=\"en\"><head><title>Page</title></head><body>{a}</body></html>")
 }
 
@@ -111,7 +116,9 @@ async fn crawl(features: bool) -> Crawled {
     if features {
         let store = CrawlStore::open(&path).unwrap();
         let id = |p: &str| store.id_of(&site.url(E, p)).unwrap().unwrap();
-        store.add_data_features(&["accessibility_static", "accessibility_full", "mobile_layout"]).unwrap();
+        store
+            .add_data_features(&["accessibility_static", "accessibility_full", "mobile_layout"])
+            .unwrap();
 
         let ok_viewport = MobileRow {
             viewport: Some("width=device-width, initial-scale=1"),
@@ -124,17 +131,50 @@ async fn crawl(features: bool) -> Crawled {
         let a = id("/a");
         store.record_static_a11y(a, &[], &ok_viewport).unwrap();
         let mut contrast_nodes = nodes(3);
-        contrast_nodes[0].data = Some("{\"fg\":\"#aaaaaa\",\"bg\":\"#ffffff\",\"ratio\":2.32,\"expected\":4.5}".into());
+        contrast_nodes[0].data =
+            Some("{\"fg\":\"#aaaaaa\",\"bg\":\"#ffffff\",\"ratio\":2.32,\"expected\":4.5}".into());
         contrast_nodes[0].bbox = Some([10.0, 20.0, 30.0, 40.0]);
         store
             .record_a11y(
                 a,
                 "full",
                 &[
-                    row("label", "violation", "full", "critical", "wcag2a wcag412 wcag131", 25, nodes(25)),
-                    row("image-alt", "violation", "full", "critical", "wcag2a wcag111", 1, nodes(1)),
-                    row("color-contrast", "violation", "full", "serious", "wcag2aa wcag143", 3, contrast_nodes),
-                    row("heading-order", "violation", "full", "moderate", "best-practice", 2, nodes(2)),
+                    row(
+                        "label",
+                        "violation",
+                        "full",
+                        "critical",
+                        "wcag2a wcag412 wcag131",
+                        25,
+                        nodes(25),
+                    ),
+                    row(
+                        "image-alt",
+                        "violation",
+                        "full",
+                        "critical",
+                        "wcag2a wcag111",
+                        1,
+                        nodes(1),
+                    ),
+                    row(
+                        "color-contrast",
+                        "violation",
+                        "full",
+                        "serious",
+                        "wcag2aa wcag143",
+                        3,
+                        contrast_nodes,
+                    ),
+                    row(
+                        "heading-order",
+                        "violation",
+                        "full",
+                        "moderate",
+                        "best-practice",
+                        2,
+                        nodes(2),
+                    ),
                     row(
                         "frame-focusable-content",
                         "needs_review",
@@ -147,7 +187,9 @@ async fn crawl(features: bool) -> Crawled {
                 ],
             )
             .unwrap();
-        store.set_a11y_state(a, "full", "checked", None, Some(420)).unwrap();
+        store
+            .set_a11y_state(a, "full", "checked", None, Some(420))
+            .unwrap();
         store
             .record_mobile(
                 a,
@@ -172,7 +214,15 @@ async fn crawl(features: bool) -> Crawled {
         store
             .record_static_a11y(
                 b,
-                &[row("static.link_name", "violation", "static", "serious", "wcag2a wcag244 wcag412", 2, nodes(2))],
+                &[row(
+                    "static.link_name",
+                    "violation",
+                    "static",
+                    "serious",
+                    "wcag2a wcag244 wcag412",
+                    2,
+                    nodes(2),
+                )],
                 &MobileRow {
                     viewport_state: Some("missing"),
                     plugins: Some(2),
@@ -184,10 +234,20 @@ async fn crawl(features: bool) -> Crawled {
             .record_a11y(
                 b,
                 "full",
-                &[row("target-size", "violation", "full", "moderate", "wcag22aa wcag258", 4, nodes(4))],
+                &[row(
+                    "target-size",
+                    "violation",
+                    "full",
+                    "moderate",
+                    "wcag22aa wcag258",
+                    4,
+                    nodes(4),
+                )],
             )
             .unwrap();
-        store.set_a11y_state(b, "full", "checked", None, Some(300)).unwrap();
+        store
+            .set_a11y_state(b, "full", "checked", None, Some(300))
+            .unwrap();
         store
             .record_mobile(
                 b,
@@ -238,7 +298,9 @@ fn q(tab: &str, filter: &str) -> ViewQuery {
 
 fn strip(site: &Site, url: &str) -> String {
     let base = site.url(E, "");
-    url.strip_prefix(base.trim_end_matches('/')).unwrap_or(url).to_string()
+    url.strip_prefix(base.trim_end_matches('/'))
+        .unwrap_or(url)
+        .to_string()
 }
 
 fn paths(r: &mut Reader, c: &Crawled, tab: &str, filter: &str) -> BTreeSet<String> {
@@ -325,8 +387,16 @@ async fn accessibility_tab_filters_follow_the_impact_and_the_wcag_target() {
     .unwrap();
     assert_eq!(p(&mut r, "all"), set(&["/", "/a", "/b", "/c", "/d"]));
     assert_eq!(p(&mut r, "critical"), set(&["/a"]));
-    assert_eq!(p(&mut r, "serious"), set(&["/b"]), "/a's only serious check is 2.0 AA");
-    assert_eq!(p(&mut r, "moderate"), set(&["/a"]), "/b's only moderate check is 2.2 AA");
+    assert_eq!(
+        p(&mut r, "serious"),
+        set(&["/b"]),
+        "/a's only serious check is 2.0 AA"
+    );
+    assert_eq!(
+        p(&mut r, "moderate"),
+        set(&["/a"]),
+        "/b's only moderate check is 2.2 AA"
+    );
     let counts = r.counts("accessibility", UrlScope::All).unwrap();
     assert_eq!(counts.counts["serious"], Some(1));
     assert_eq!(counts.counts["moderate"], Some(1));
@@ -348,7 +418,10 @@ async fn accessibility_rules_fire_on_the_pages_and_follow_the_target() {
 
     assert_eq!(flagged_paths(&mut r, &c, "accessibility.link_name"), set(&["/b"]));
     assert_eq!(flagged_paths(&mut r, &c, "accessibility.form_label"), set(&[]));
-    assert_eq!(flagged_paths(&mut r, &c, "accessibility.needs_review"), set(&["/a"]));
+    assert_eq!(
+        flagged_paths(&mut r, &c, "accessibility.needs_review"),
+        set(&["/a"])
+    );
     assert_eq!(
         flagged(&mut r, &c, "accessibility.needs_review")[0].1.as_deref(),
         Some("1 checks to review")
@@ -359,8 +432,14 @@ async fn accessibility_rules_fire_on_the_pages_and_follow_the_target() {
     assert_eq!(
         full,
         [
-            ("/a".to_string(), Some("4 checks failed, on 31 elements".to_string())),
-            ("/b".to_string(), Some("1 checks failed, on 4 elements".to_string())),
+            (
+                "/a".to_string(),
+                Some("4 checks failed, on 31 elements".to_string())
+            ),
+            (
+                "/b".to_string(),
+                Some("1 checks failed, on 4 elements".to_string())
+            ),
         ]
     );
 
@@ -373,7 +452,10 @@ async fn accessibility_rules_fire_on_the_pages_and_follow_the_target() {
     let full = flagged(&mut r, &c, "accessibility.full_violation");
     assert_eq!(
         full,
-        [("/a".to_string(), Some("3 checks failed, on 28 elements".to_string()))]
+        [(
+            "/a".to_string(),
+            Some("3 checks failed, on 28 elements".to_string())
+        )]
     );
     // The static link_name check is 2.0 A: still inside.
     assert_eq!(flagged_paths(&mut r, &c, "accessibility.link_name"), set(&["/b"]));
@@ -414,11 +496,17 @@ async fn mobile_tab_and_rules_use_the_stored_measures() {
     assert_eq!(flagged_paths(&mut r, &c, "mobile.viewport_width"), set(&[]));
     assert_eq!(
         flagged(&mut r, &c, "mobile.content_wider"),
-        [("/a".to_string(), Some("900 px wide on a 411 px screen".to_string()))]
+        [(
+            "/a".to_string(),
+            Some("900 px wide on a 411 px screen".to_string())
+        )]
     );
     assert_eq!(
         flagged(&mut r, &c, "mobile.small_text"),
-        [("/a".to_string(), Some("55% of the text is below 12 px".to_string()))]
+        [(
+            "/a".to_string(),
+            Some("55% of the text is below 12 px".to_string())
+        )]
     );
     assert_eq!(
         flagged(&mut r, &c, "mobile.small_targets"),
@@ -443,10 +531,19 @@ async fn the_detail_lists_checks_by_impact_with_the_cap_help_links_and_the_discl
     let ids: Vec<&str> = acc.checks.iter().map(|c| c.check_id.as_str()).collect();
     assert_eq!(
         ids,
-        ["image-alt", "label", "color-contrast", "frame-focusable-content", "heading-order"]
+        [
+            "image-alt",
+            "label",
+            "color-contrast",
+            "frame-focusable-content",
+            "heading-order"
+        ]
     );
     let label = &acc.checks[1];
-    assert_eq!((label.kind.as_str(), label.source.as_str()), ("violation", "full"));
+    assert_eq!(
+        (label.kind.as_str(), label.source.as_str()),
+        ("violation", "full")
+    );
     assert_eq!(label.impact.as_deref(), Some("critical"));
     assert_eq!(label.wcag.as_deref(), Some("wcag2a wcag412 wcag131"));
     assert_eq!(label.nodes_total, 25);
