@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Soon</title>
+</head>
+<body>
+<p>Waiting for the script.</p>
+<script>
+setTimeout(function () {
+  document.title = 'Delayed title 1';
+  var l = document.createElement('link');
+  l.rel = 'canonical';
+  l.href = 'https://links.example.org/canonical/1';
+  document.head.appendChild(l);
+  var h = document.createElement('h1');
+  h.textContent = 'Delayed heading 1';
+  document.body.appendChild(h);
+}, 50);
+</script>
+</body>
+</html>

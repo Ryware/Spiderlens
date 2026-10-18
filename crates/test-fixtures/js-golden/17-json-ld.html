@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Structured {i}</title>
+</head>
+<body>
+<h1>Structured page {i}</h1>
+<script>
+var s = document.createElement('script');
+s.type = 'application/ld+json';
+s.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "Product", "name": "Item 2" });
+document.head.appendChild(s);
+</script>
+</body>
+</html>

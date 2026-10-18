@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Element {i}</title>
+</head>
+<body>
+<x-card></x-card>
+<script>
+class XCard extends HTMLElement {
+  connectedCallback() {
+    this.innerHTML = '<h1>Card 4</h1><h2>Card body 4</h2><a href="https://links.example.org/card/4">Open card</a>';
+  }
+}
+customElements.define('x-card', XCard);
+</script>
+</body>
+</html>

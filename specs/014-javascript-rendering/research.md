@@ -152,7 +152,7 @@ The spike (T001) checks option 1 for chromiumoxide and chromey.
 
 ## R13. Browsers on CI runners
 
-GitHub's hosted images for `ubuntu-24.04`, `windows-latest` and `macos-14` list Google Chrome as preinstalled, and Windows also has Edge *(from the runner image documentation, unverified for the exact images this repository pins)*. Task T002 adds a CI step that prints the browser found on each runner, so this is verified before any render test depends on it. *Status 2026-10-14: the step and `scripts/find-browser.sh` exist on the branch, but the branch has not run in CI yet, so what each runner has is still to be recorded here from the first run's job summary.* Render integration tests read `SPIDERLENS_REQUIRE_BROWSER=1` in CI: without a browser they fail instead of being skipped silently. Locally they skip with a message.
+GitHub's hosted images for `ubuntu-24.04`, `windows-latest` and `macos-14` list Google Chrome as preinstalled, and Windows also has Edge *(from the runner image documentation, unverified for the exact images this repository pins)*. Task T002 adds a CI step that prints the browser found on each runner, so this is verified before any render test depends on it. *Status 2026-10-18 (T074): `scripts/find-browser.sh` is gone; the CI step runs `spiderlens browser status --json`, runs `spiderlens browser install --yes` on a runner with no usable browser, and writes the result to the job summary. What each runner has is visible in that summary of each run.* Render integration tests read `SPIDERLENS_REQUIRE_BROWSER=1` in CI: without a browser they fail instead of being skipped silently. Locally they skip with a message.
 
 ## R14. Integrity of the downloaded browser
 

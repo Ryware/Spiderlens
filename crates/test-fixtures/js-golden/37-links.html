@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Links {i}</title>
+</head>
+<body>
+<h1>Link list {i}</h1><nav id="nav"></nav>
+<script>
+var hrefs = ['https://links.example.org/x2', 'https://links.example.org/y2?a=1&b=2', 'https://links.example.org/z2#part', '/local/2', 'relative-2.html'];
+var nav = document.getElementById('nav');
+hrefs.forEach(function (h) {
+  var a = document.createElement('a');
+  a.setAttribute('href', h);
+  a.textContent = 'Go to ' + h;
+  nav.appendChild(a);
+});
+</script>
+</body>
+</html>

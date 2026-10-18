@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loading</title>
+</head>
+<body>
+<div id="app"></div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.title = 'Product 1 | Shop';
+  var m = document.createElement('meta');
+  m.name = 'description';
+  m.content = 'Description of product 1.';
+  document.head.appendChild(m);
+  var h = document.createElement('h1');
+  h.textContent = 'Product 1';
+  document.getElementById('app').appendChild(h);
+});
+</script>
+</body>
+</html>

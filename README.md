@@ -108,3 +108,4 @@ Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.m
 Signing in to password-protected sites, cookies and proxies: [docs/site-login.md](docs/site-login.md).
 Where crawls live and what cleanup does: [docs/crawl-storage.md](docs/crawl-storage.md).
 Accessibility and mobile checks: [docs/accessibility.md](docs/accessibility.md).
+Rendering pages with JavaScript, and the browser it downloads: [docs/javascript-rendering.md](docs/javascript-rendering.md).
