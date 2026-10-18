@@ -516,6 +516,20 @@ export function fakeTransport(
     parseListFile: async () => {
       throw new Error("not in tests");
     },
+    listLoadSitemap: async (location, baseUrl) => {
+      if (location.includes("fail")) throw new Error(`${location}: the server answered 404`);
+      const base = baseUrl?.trim() || (/^https?:/i.test(location) ? location : "https://example.com/");
+      const first_urls = ["/", "/about", "/contact"].map((p) => new URL(p, base).toString());
+      listCount = first_urls.length;
+      return {
+        urls: first_urls.length,
+        duplicates: 0,
+        invalid_count: 0,
+        invalid_sample: [],
+        notices: ["Read 1 sitemap file."],
+        first_urls,
+      };
+    },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
     pickSitemapFile: async () => picks.sitemapFile,

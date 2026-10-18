@@ -33,8 +33,8 @@ description: "Task list for spec 011, sitemaps and orphan pages"
 - [ ] T011 [US6] `SitemapJob` loop in the runner replacing `maybe_start_sitemaps`: sources robots.txt, defaults (`/sitemap.xml`, `/sitemap_index.xml` when robots lists none, research R9), user URLs, local files (read with `spawn_blocking`); `Msg::SitemapEntries` batches of 1,000; per-file facts; index depth and loop detection; per-host rate limit and robots.txt applied to sitemap requests. Tests US3 scenarios 1, 7, 8 and US6 scenarios 1, 2.
 - [ ] T012 [US6] `crawl_sitemap_only = false` path: sitemap-only URLs recorded with `SitemapOnly`, upgraded when linked. Tests US6 scenario 3 and US2 scenario 7.
 - [ ] T013 [US6] Image and hreflang refs from entries: discovered under scope rules (images as status checks per spec 003 FR-033, alternates with source `sitemap`); refs stored with `url_id`. Test: FR-008.
-- [ ] T014 [US6] List mode sitemap source (`ListInput::Sitemap`): the runner reads the sitemap (and children) and uses the page URLs as the list. Test US6 scenario 5.
-- [ ] T015 [P] [US6] CLI crawl flags from contracts/cli.md in `crates/cli/src/options.rs`, with tests.
+- [x] T014 [US6] List mode sitemap source (`ListInput::Sitemap`): the runner reads the sitemap (and children) and uses the page URLs as the list. Test US6 scenario 5.
+- [x] T015 [P] [US6] CLI crawl flags from contracts/cli.md in `crates/cli/src/options.rs`, with tests.
 - [ ] T016 [P] [US6] Settings › Scope › Sitemaps group `ui/src/settings/SitemapSources.tsx` (two switches, URL list, local files with base URL and file picker), wired into `categories.tsx`; Vitest tests for every control, validation messages, keyboard order; Playwright: toggle, add URL, add file, save profile.
 
 ## Phase 4: Sitemap files view (US3)

@@ -13,6 +13,7 @@ use spiderlens_config::{
     SpeedPreset, SpeedSettings, StoreError, UaPreset, export_profile, import_profile, parse_list_bytes,
     parse_list_text, test_patterns, validate, validate_config,
 };
+use spiderlens_engine::crawl::sitemap_list::{SitemapListSource, list_from_sitemap};
 use tauri::{AppHandle, Emitter};
 
 pub struct State {
@@ -243,6 +244,22 @@ pub async fn list_parse_file(
     })
     .await
     .map_err(err)??;
+    Ok(keep(&state, list))
+}
+
+/// Reads a sitemap (a web address, or a file with the address it will have)
+/// and every file it lists into the list, before the crawl (spec 011
+/// FR-005). Requests use the given settings, else the default profile's.
+#[tauri::command]
+pub async fn list_load_sitemap(
+    state: tauri::State<'_, State>,
+    location: String,
+    base_url: Option<String>,
+    config: Option<CrawlConfig>,
+) -> Cmd<ListSummary> {
+    let source = SitemapListSource::new(&location, base_url.as_deref())?;
+    let config = config.unwrap_or_else(|| state.store.default_config());
+    let list = list_from_sitemap(source, &config).await?;
     Ok(keep(&state, list))
 }
 
