@@ -8,8 +8,10 @@ use crate::issues::{Category::Spelling as C, Priority::*, Rule, Scope, rule};
 use crate::tabs::Need;
 
 pub const ERRORS: &str = "(SELECT s.errors FROM spell_pages s WHERE s.url_id = u.id) > 0";
-pub const GRAMMAR: &str = "EXISTS (SELECT 1 FROM spell_findings f WHERE f.url_id = u.id AND f.kind = 'grammar')";
-pub const NO_DICTIONARY: &str = "(SELECT s.status FROM spell_pages s WHERE s.url_id = u.id) = 'no_dictionary'";
+pub const GRAMMAR: &str =
+    "EXISTS (SELECT 1 FROM spell_findings f WHERE f.url_id = u.id AND f.kind = 'grammar')";
+pub const NO_DICTIONARY: &str =
+    "(SELECT s.status FROM spell_pages s WHERE s.url_id = u.id) = 'no_dictionary'";
 pub const LANG_MISMATCH: &str = "(SELECT s.lang_mismatch FROM spell_pages s WHERE s.url_id = u.id) = 1";
 
 pub const RULES: &[Rule] = &[
