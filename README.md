@@ -57,3 +57,4 @@ reason and no rows. Details: [specs/011-sitemaps-orphan-pages](specs/011-sitemap
 
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
+Where crawls live and what cleanup does: [docs/crawl-storage.md](docs/crawl-storage.md).
