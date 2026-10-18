@@ -1560,7 +1560,11 @@ async fn us6_rendered_html_is_stored_only_with_store_page_html() {
         assert!(html.to_ascii_lowercase().starts_with("<!doctype html"), "{p}");
         assert!(html.contains(&format!("<title>Rendered {p}</title>")), "{p}");
         assert!(html.contains("Hello from JavaScript"), "{p}");
-        let flag: bool = one(&store, "SELECT rendered_html_stored FROM rendered_pages WHERE url_id = ?1", id);
+        let flag: bool = one(
+            &store,
+            "SELECT rendered_html_stored FROM rendered_pages WHERE url_id = ?1",
+            id,
+        );
         assert!(flag, "{p}");
         // The raw HTML is still the raw one.
         let raw = String::from_utf8(store.page_html(id).unwrap().unwrap()).unwrap();
@@ -1573,7 +1577,10 @@ async fn us6_rendered_html_is_stored_only_with_store_page_html() {
     let store = CrawlStore::open_read_only(&off).unwrap();
     let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(count("SELECT COUNT(*) FROM rendered_bodies"), 0);
-    assert_eq!(count("SELECT COUNT(*) FROM rendered_pages WHERE rendered_html_stored = 1"), 0);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM rendered_pages WHERE rendered_html_stored = 1"),
+        0
+    );
     // Everything extracted from the rendered pages is there.
     assert_eq!(count("SELECT COUNT(*) FROM rendered_pages"), 3);
     assert_eq!(count("SELECT COUNT(*) FROM render_comparisons"), 3);
@@ -1582,7 +1589,10 @@ async fn us6_rendered_html_is_stored_only_with_store_page_html() {
         3
     );
     for p in ["/", "/a", "/b"] {
-        assert!(store.rendered_html(id(&store, &site, p)).unwrap().is_none(), "{p}");
+        assert!(
+            store.rendered_html(id(&store, &site, p)).unwrap().is_none(),
+            "{p}"
+        );
     }
 }
 

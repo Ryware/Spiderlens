@@ -517,6 +517,7 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
   | "cookieUrls"
   | "urlHtml"
   | "urlHtmlDiff"
+  | "urlScreenshot"
   | "urlTabs"
   | "copyText"
   | "copyRows"
@@ -916,6 +917,12 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     urlHtmlDiff: async (_p, _id, fromHunk, maxHunks) => {
       if (!results.htmlDiff) throw new Error("The rendered HTML of this page is not stored in this crawl.");
       return { ...results.htmlDiff, hunks: results.htmlDiff.hunks.slice(fromHunk, fromHunk + maxHunks) };
+    },
+    urlScreenshot: async (_p, id) => {
+      if (!results.features.includes("screenshots")) return { webp_base64: null, missing: "not_taken", width: 0, height: 0 };
+      if (!results.renders.get(id)?.screenshot_stored) return { webp_base64: null, missing: "no_image", width: 0, height: 0 };
+      // A 1 by 1 WebP.
+      return { webp_base64: "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", missing: null, width: 1024, height: 2000 };
     },
     urlHtml: async (_p, id, version) => {
       const u = results.urls.find((x) => x.id === id)!;

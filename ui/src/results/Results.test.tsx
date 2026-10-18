@@ -445,6 +445,25 @@ test("the_comparison_needs_both_versions_stored", async () => {
   expect(within(pane).getByText(/Turn on Store page HTML/)).toBeTruthy();
 });
 
+test("rendered_html_and_screenshot_sections_show_when_stored_and_say_why_when_not", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering", "raw_html", "screenshots"];
+  t.results.renders.set(2, fakeRender({ rendered_html_stored: true, screenshot_stored: true }));
+  t.results.renders.set(3, fakeRender({ rendered_html_stored: false, screenshot_stored: false }));
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  const html = (await within(detailsPane()).findByRole("heading", { name: "Rendered HTML" })).closest("section") as HTMLElement;
+  expect((within(html).getByRole("button", { name: /View rendered source/ }) as HTMLButtonElement).disabled).toBe(false);
+  const shot = within(detailsPane()).getByRole("heading", { name: "Screenshot" }).closest("section") as HTMLElement;
+  expect(await within(shot).findByRole("img", { name: /Screenshot of/ })).toBeTruthy();
+
+  fireEvent.click(rows()[2]);
+  const html3 = (await within(detailsPane()).findByText(/Not stored in this crawl\. Turn on Settings/)).closest("section") as HTMLElement;
+  expect(within(html3).queryByRole("button", { name: /View rendered source/ })).toBeNull();
+  expect(within(detailsPane()).getByText(/No screenshot was saved for this page\. Turn on Settings/)).toBeTruthy();
+  expect(within(detailsPane()).queryByRole("img", { name: /Screenshot of/ })).toBeNull();
+});
+
 test("a_page_that_was_not_rendered_has_no_comparison_section", async () => {
   await openInternal();
   fireEvent.click(rows()[1]);

@@ -17,9 +17,9 @@ use spiderlens_results::analysis::{AnalysisReport, PassProgress};
 use spiderlens_results::issues::{IssuesSummary, RuleCatalogue, SettingsNotice, UrlIssue};
 use spiderlens_results::{
     AnalysisProgress, AnalysisRun, CookieFilter, CookiePage, CookieUrlPage, CustomResult, ExportError,
-    Features, FilterCounts, HtmlDiff, HtmlVersion, ListKind, ListPage, PageHtml, Reader, Refresh, RowPage,
-    SegmentCounts, TabCounts, TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery, export_file_in,
-    issue_tabs, tabs,
+    Features, FilterCounts, HtmlDiff, HtmlVersion, ListKind, ListPage, PageHtml, PageScreenshot, Reader,
+    Refresh, RowPage, SegmentCounts, TabCounts, TabDef, TestedLink, UrlDetail, UrlScope, Values, ViewQuery,
+    export_file_in, issue_tabs, tabs,
 };
 use spiderlens_results::{
     GenerateError, GenerateReport, OrphanSummary, SitemapFiles, SitemapOutput, UrlSitemapEntry,
@@ -641,6 +641,14 @@ pub async fn url_html(
         .with(&path, move |r| {
             r.page_html_version(id, version.unwrap_or_default()).map_err(err)
         })
+        .await
+}
+
+/// A rendered page's stored screenshot (spec 014 FR-033).
+#[tauri::command]
+pub async fn url_screenshot(state: tauri::State<'_, State>, path: PathBuf, id: i64) -> Cmd<PageScreenshot> {
+    state
+        .with(&path, move |r| r.page_screenshot(id).map_err(err))
         .await
 }
 
