@@ -38,6 +38,10 @@ import type { Values } from "./generated/Values";
 import type { CacheInfo } from "./generated/CacheInfo";
 import type { Connection } from "./generated/Connection";
 import type { OrphanPage } from "./generated/OrphanPage";
+import type { Ga4Request } from "./generated/Ga4Request";
+import type { Ga4Stream } from "./generated/Ga4Stream";
+import type { InspectPlan } from "./generated/InspectPlan";
+import type { InspectRequest } from "./generated/InspectRequest";
 import type { PageRequest } from "./generated/PageRequest";
 import type { Property } from "./generated/Property";
 import type { ProviderSettings } from "./generated/ProviderSettings";
@@ -991,6 +995,14 @@ export interface Transport {
   integrationsCacheInfo(): Promise<CacheInfo>;
   integrationsCacheClear(provider: string | null): Promise<number>;
   integrationsOpenTerms(provider: string): Promise<void>;
+  /** Spec 024 slice 2: URL Inspection. */
+  integrationsDefaultInspectRequest(property: string): Promise<InspectRequest>;
+  integrationsInspectionPlan(path: string, account: string | null, request: InspectRequest): Promise<InspectPlan>;
+  integrationsRunInspection(path: string, account: string | null, request: InspectRequest): Promise<RunProgress>;
+  /** Spec 024 slice 4: Google Analytics 4. */
+  integrationsAnalyticsStreams(account: string | null, path: string | null): Promise<Ga4Stream[]>;
+  integrationsDefaultAnalyticsRequest(property: string, stream: string): Promise<Ga4Request>;
+  integrationsRunAnalytics(path: string, account: string | null, request: Ga4Request): Promise<RunProgress>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
@@ -1256,6 +1268,12 @@ export const tauriTransport: Transport = {
   integrationsCacheInfo: () => invoke("integrations_cache_info"),
   integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
   integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  integrationsDefaultInspectRequest: (property) => invoke("integrations_default_inspect_request", { property }),
+  integrationsInspectionPlan: (path, account, request) => invoke("integrations_inspection_plan", { path, account, request }),
+  integrationsRunInspection: (path, account, request) => invoke("integrations_run_inspection", { path, account, request }),
+  integrationsAnalyticsStreams: (account, path) => invoke("integrations_analytics_streams", { account, path }),
+  integrationsDefaultAnalyticsRequest: (property, stream) => invoke("integrations_default_analytics_request", { property, stream }),
+  integrationsRunAnalytics: (path, account, request) => invoke("integrations_run_analytics", { path, account, request }),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),

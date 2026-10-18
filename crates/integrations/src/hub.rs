@@ -78,7 +78,17 @@ pub struct OrphanPage {
 }
 
 /// Providers this build can run.
-pub const AVAILABLE: &[Provider] = &[Provider::SearchConsole];
+pub const AVAILABLE: &[Provider] = &[
+    Provider::SearchConsole,
+    Provider::UrlInspection,
+    Provider::Analytics,
+];
+
+// URL Inspection and Analytics (spec 024 slices 2 and 4) live in their own
+// file to keep this one small.
+#[path = "hub_google.rs"]
+mod google;
+pub use google::GoogleApis;
 
 const OWN_CLIENT: (&str, &str) = ("google_client", "own");
 
@@ -89,6 +99,7 @@ pub struct Hub {
     webmasters: gsc::Api,
     cache_path: Option<PathBuf>,
     built_in: Option<Client>,
+    apis: GoogleApis,
 }
 
 impl Hub {
@@ -111,6 +122,7 @@ impl Hub {
             webmasters: gsc::Api::default(),
             cache_path,
             built_in: Client::built_in(),
+            apis: GoogleApis::default(),
         }
     }
 
@@ -466,6 +478,9 @@ impl Hub {
                     control,
                     on_progress,
                 ))
+            }
+            Provider::UrlInspection | Provider::Analytics => {
+                self.resume_google(crawl, &r, control, on_progress)
             }
             p => Err(Error::Invalid(format!(
                 "{} is not available in this build",

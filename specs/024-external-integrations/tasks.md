@@ -50,10 +50,10 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Slice 2: US2 URL Inspection (P2)
 
-- [ ] T028 Fake URL Inspection with daily allowance and clock.
-- [ ] T029 Tests then code: `gsc::inspect` queue (default set and order), fields, canonical mismatch, quota pause and next-day resume, multi-day warning (US2.1 to US2.4).
-- [ ] T030 `results` Index status tab and filters (Not indexed, Canonical mismatch, Blocked by robots per Google); Vitest + Playwright for the run panel with allowance.
-- [ ] T031 CLI `--provider url-inspection`.
+- [x] T028 Fake URL Inspection with daily allowance and clock.
+- [x] T029 Tests then code: `gsc::inspect` queue (default set and order), fields, canonical mismatch, quota pause and next-day resume, multi-day warning (US2.1 to US2.4).
+- [x] T030 `results` Index status tab and filters (Not indexed, Canonical mismatch, Blocked by robots per Google); Vitest + Playwright for the run panel with allowance.
+- [x] T031 CLI `--provider url-inspection`.
 
 ## Slice 3: US3 Field data and lab tests (P2)
 
@@ -65,9 +65,9 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Slice 4: US4 Analytics (P2)
 
-- [ ] T037 Fake GA4 Admin and Data with `propertyQuota`.
-- [ ] T038 Tests then code: `ga4` property and stream pick, landing page fetch with offset paging, query-string combine option, quota pause (US4.1 to US4.3).
-- [ ] T039 `results` Analytics tab; orphan candidates from Analytics; Vitest + Playwright; CLI provider `analytics`.
+- [x] T037 Fake GA4 Admin and Data with `propertyQuota`.
+- [x] T038 Tests then code: `ga4` property and stream pick, landing page fetch with offset paging, query-string combine option, quota pause (US4.1 to US4.3).
+- [x] T039 `results` Analytics tab; orphan candidates from Analytics; Vitest + Playwright; CLI provider `analytics`.
 
 ## Slice 5: US5 Link metrics (P3)
 

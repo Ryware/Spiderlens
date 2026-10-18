@@ -30,6 +30,8 @@ export const resultTabs: NavItem[] = [
   { id: "content", title: "Content", icon: Files },
   { id: "amp", title: "AMP", icon: Zap },
   { id: "search-console", title: "Search Console", icon: Search },
+  { id: "index-status", title: "Index status", icon: TextSearch },
+  { id: "analytics", title: "Analytics", icon: Activity },
   { id: "sitemaps", title: "Sitemaps", icon: MapIcon },
   { id: "sitemap-files", title: "Sitemap files", icon: ListTree },
 ];
