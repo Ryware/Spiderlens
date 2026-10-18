@@ -1052,3 +1052,22 @@ test("details_show_a_pages_forms_for_ai_agents", async ({ page }) => {
   const fb = (await form.boundingBox())!;
   expect(fb.x + fb.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
 });
+
+// Spec 016 FR-018: the Agents tab opens with the crawl's score, and its details
+// list the rules that cost points and the entry points of the host.
+test("agents_tab_shows_the_score_and_entry_points", async ({ page }) => {
+  await page.evaluate(() => window.spiderlens.results.features.push("extraction", "agents"));
+  await crawl(page);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Agents", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  const summary = page.getByRole("region", { name: "AI agents" });
+  await expect(summary.getByTestId("agents-score")).toHaveText("72");
+  await summary.getByRole("button", { name: "Details" }).click();
+  await expect(summary.getByText("Form fields without a label")).toBeVisible();
+  await expect(summary.getByText("Challenge pages")).toBeVisible();
+  const host = summary.getByRole("region", { name: "Entry points for example.com" });
+  await expect(host.getByText("Invalid")).toBeVisible();
+  const box = (await summary.boundingBox())!;
+  const hb = (await host.boundingBox())!;
+  expect(hb.x + hb.width).toBeLessThanOrEqual(box.x + box.width + 1);
+});

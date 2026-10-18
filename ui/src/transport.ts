@@ -66,6 +66,8 @@ import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
+import type { AgentsSummary } from "./generated/AgentsSummary";
+import type { EntryPointRow } from "./generated/EntryPointRow";
 import type { PageAgentFindings } from "./generated/PageAgentFindings";
 import type { CompareSettings } from "./generated/CompareSettings";
 import type { ComparisonReport } from "./generated/ComparisonReport";
@@ -906,6 +908,9 @@ export interface Transport {
   onNearDupFinished(cb: (f: NearDupFinished) => void): Promise<() => void>;
   // AI agents (spec 016, contracts/desktop-commands.md).
   agentsPage(path: string, id: number): Promise<PageAgentFindings>;
+  /** The crawl's agent score; `available` is false with a reason when it was not evaluated. */
+  agentsSummary(path: string): Promise<AgentsSummary>;
+  agentsEntryPoints(path: string): Promise<EntryPointRow[]>;
   assistantsGet(): Promise<AssistantsView>;
   /** Rejects with a sentence when a folder does not exist. */
   assistantsSet(settings: AssistantSettings): Promise<AssistantSettings>;
@@ -1184,6 +1189,8 @@ export const tauriTransport: Transport = {
   onNearDupProgress: (cb) => listen<NearDupProgress>("near-dup-progress", (e) => cb(e.payload)),
   onNearDupFinished: (cb) => listen<NearDupFinished>("near-dup-finished", (e) => cb(e.payload)),
   agentsPage: (path, id) => invoke("agents_page", { path, id }),
+  agentsSummary: (path) => invoke("agents_summary", { path }),
+  agentsEntryPoints: (path) => invoke("agents_entry_points", { path }),
   assistantsGet: () => invoke("assistants_get"),
   assistantsSet: (settings) => invoke("assistants_set", { settings }),
   assistantsTest: () => invoke("assistants_test"),

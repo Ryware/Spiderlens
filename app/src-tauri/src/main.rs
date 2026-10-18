@@ -165,6 +165,8 @@ fn main() {
             results::url_detail,
             results::url_list,
             results::agents_page,
+            results::agents_summary,
+            results::agents_entry_points,
             assistants::assistants_get,
             assistants::assistants_set,
             assistants::assistants_test,

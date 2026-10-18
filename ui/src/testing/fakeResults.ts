@@ -168,6 +168,14 @@ export const fakeTabs: TabDef[] = [
     scoped: false,
   },
   {
+    id: "agents",
+    title: "Agents",
+    columns: [col("address", "Address", "url", 420)],
+    filters: [{ id: "all", label: "All", need: "base" }],
+    search_column: null,
+    scoped: false,
+  },
+  {
     id: "sitemaps",
     title: "Sitemaps",
     columns: [col("address", "Address", "url", 420), col("status_code", "Status code", "int", 90)],
