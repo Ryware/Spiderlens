@@ -5962,11 +5962,13 @@ dependencies = [
  "futures-util",
  "reqwest 0.12.28",
  "serde_json",
+ "sha2",
  "spiderlens-test-fixtures",
  "sysinfo",
  "tempfile",
  "tokio",
  "url",
+ "zip",
 ]
 
 [[package]]

@@ -13,17 +13,19 @@ use std::process::Command;
 use crate::types::{BrowserInfo, BrowserName, BrowserSource, FindOptions, NotUsable};
 
 /// The `chrome-headless-shell` version this release downloads (research R14).
-pub const PINNED_VERSION: &str = "155.0.8059.39";
+pub const PINNED_VERSION: &str = crate::fetcher::pins::VERSION;
 
 /// How many major versions below the pinned one are still accepted
 /// (FR-003, "comparable version").
 pub const MAJOR_TOLERANCE: u32 = 4;
 
-/// Browser source policy (research R16 note, owner decision pending):
-/// `true` prefers a downloaded `chrome-headless-shell`, which rendered about
-/// five times faster than full headless Chromium in the spike, and keeps an
-/// installed browser as the fallback when the user declines the download or
-/// is offline. `false` restores R2 option (a): installed browser first.
+/// Browser source policy (the owner's decision, 2026-10-18): the browser is
+/// a `chrome-headless-shell` that SpiderLens downloads on first use, after
+/// the user agreed. An installed Chrome, Chromium or Edge is used only when
+/// the user points at it (`--browser`, "Change browser"). This one constant
+/// is the whole choice: `false` restores "installed browser first" (the
+/// installed browsers are searched again by [`find_browser`], and
+/// [`should_offer_download`] stops offering the download over one).
 pub const PREFER_DOWNLOAD: bool = true;
 
 /// The oldest major version accepted.
@@ -47,11 +49,33 @@ pub fn should_offer_download(found: &Result<BrowserInfo, NotUsable>, download_av
     }
 }
 
-/// User path, then a previous download, then installed Chrome, Chromium, Edge.
-/// Runs `<browser> --version` (on Windows, reads the version folder next to
+/// User path, then a previous download, then (only when [`PREFER_DOWNLOAD`]
+/// is off) installed Chrome, Chromium, Edge. Runs `<browser> --version` (on Windows, reads the version folder next to
 /// the executable, because `chrome.exe --version` prints nothing there).
 pub fn find_browser(opts: &FindOptions) -> Result<BrowserInfo, NotUsable> {
-    find_in(opts, &installed_candidates())
+    find_in(opts, &installed_sources())
+}
+
+/// The installed browsers searched without a user path: none while the
+/// policy is "download first" ([`PREFER_DOWNLOAD`]).
+fn installed_sources() -> Vec<(BrowserName, PathBuf)> {
+    if PREFER_DOWNLOAD {
+        Vec::new()
+    } else {
+        installed_candidates()
+    }
+}
+
+/// The browser SpiderLens downloaded earlier, newest version first.
+pub(crate) fn find_downloaded(data_dir: &Path) -> Result<BrowserInfo, NotUsable> {
+    let mut last = NotUsable::NotFound;
+    for path in downloaded_candidates(data_dir) {
+        match check(&path, Some(BrowserName::ChromeHeadlessShell), BrowserSource::Downloaded) {
+            Ok(info) => return Ok(info),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// [`find_browser`] with the installed locations given, for tests.
@@ -327,7 +351,7 @@ pub fn browser_for_tests() -> Result<Option<BrowserInfo>, String> {
         user_path,
         data_dir: data_dir().unwrap_or_else(std::env::temp_dir),
     };
-    match find_browser(&opts) {
+    match find_in(&opts, &installed_candidates()) {
         Ok(b) => Ok(Some(b)),
         Err(NotUsable::TooOld { found, .. }) if opts.user_path.is_some() => Ok(Some(found)),
         Err(e) if std::env::var("SPIDERLENS_REQUIRE_BROWSER").as_deref() == Ok("1") => {
@@ -390,7 +414,7 @@ mod tests {
         );
         assert_eq!(parse_version("Chrome Headless Shell"), None);
         assert_eq!(major_of("155.0.8059.39"), Some(155));
-        assert_eq!(min_major(), 151);
+        assert_eq!(min_major(), 137);
     }
 
     #[test]
@@ -539,27 +563,27 @@ mod tests {
     fn too_old_is_reported_with_what_was_found() {
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("chromium");
-        fake(&old, "Chromium 141.0.7390.37");
+        fake(&old, "Chromium 136.0.7103.113");
         let installed = vec![(BrowserName::Chromium, old.clone())];
         match find_in(&opts(dir.path()), &installed) {
             Err(NotUsable::TooOld { found, min_major }) => {
-                assert_eq!(found.major, 141);
+                assert_eq!(found.major, 136);
                 assert_eq!(found.path, old);
-                assert_eq!(min_major, 151);
+                assert_eq!(min_major, 137);
             }
             other => panic!("expected TooOld, got {other:?}"),
         }
         // A newer browser later in the list is still used.
         let newer = dir.path().join("msedge");
-        fake(&newer, "Microsoft Edge 152.0.1.1");
+        fake(&newer, "Microsoft Edge 142.0.1.1");
         let installed = vec![
             (BrowserName::Chromium, old),
             (BrowserName::MicrosoftEdge, newer.clone()),
         ];
         assert_eq!(find_in(&opts(dir.path()), &installed).unwrap().path, newer);
         // The oldest accepted major is exactly the pin minus four.
-        let edge = dir.path().join("edge151");
-        fake(&edge, "Microsoft Edge 151.0.0.1");
+        let edge = dir.path().join("edge137");
+        fake(&edge, "Microsoft Edge 137.0.0.1");
         assert!(find_in(&opts(dir.path()), &[(BrowserName::MicrosoftEdge, edge)]).is_ok());
     }
 
