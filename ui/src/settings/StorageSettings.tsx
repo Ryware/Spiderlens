@@ -15,6 +15,7 @@ const reasons: Record<CleanupReason, string> = {
   auto_age: "Unsaved, not used for a while: moved to the Trash",
   leftover: "Leftover file from a crash",
   html_purge: "Stored HTML removed",
+  schedule_retention: "Scheduled run beyond its keep-last limit: moved to the Trash",
 };
 
 /** Reserve in GB as the user types it; whole MB underneath. */

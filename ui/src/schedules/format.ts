@@ -50,6 +50,14 @@ export function formatDuration(start: string | null, end: string | null): string
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
+export const DEFAULT_KEEP_LAST = 10;
+
+/** What a schedule does with old run files: "Keeps the last 10 runs". */
+export function keepLastText(keepLast: number | null): string {
+  if (keepLast === null) return "Keeps all runs";
+  return keepLast === 1 ? "Keeps the last run" : `Keeps the last ${keepLast} runs`;
+}
+
 export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 /** A new schedule's name from what it crawls: "example.com weekly". */
@@ -94,6 +102,7 @@ export function newDraft({
     catch_up: true,
     notify: "problems",
     after: [],
+    keep_last: DEFAULT_KEEP_LAST,
     created_at: now,
     updated_at: now,
   };
