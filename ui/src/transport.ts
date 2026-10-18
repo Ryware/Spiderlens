@@ -216,6 +216,28 @@ export interface CrawlProgress {
   sites: SitePace[];
   /** Sites with work in progress in all. */
   sites_total: number;
+  /** Rendering progress (spec 014 FR-040); absent when the crawl does not render. */
+  render?: RenderProgress | null;
+}
+
+/** Why rendering is the slower stage (spec 014 plan D13). */
+export type RenderLimiting = "concurrency" | "memory_guard" | "slow_pages" | "site_limits" | "queue_full";
+
+/** Rendering progress next to the crawl's own figures (spec 014 plan D13). */
+export interface RenderProgress {
+  /** Pages whose rendering ended (rendered, timed out or failed), over every run of this file. */
+  rendered: number;
+  /** Pages waiting to be rendered. */
+  queued: number;
+  /** Pages being rendered now. */
+  rendering: number;
+  pages_per_sec: number;
+  avg_pages_per_sec: number;
+  /** Pages that may be rendered at once now. */
+  limit: number;
+  limiting: RenderLimiting | null;
+  /** Nothing is left to fetch; renders go on. */
+  fetching_done: boolean;
 }
 
 /** The main limit on the crawl's speed (spec 008 FR-028). */
