@@ -523,6 +523,7 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
         Err(code) => return code,
     };
     let ai_auto = crawler.config().ai_checks.auto;
+    let a11y_level = crawler.config().accessibility.level.clone();
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -613,6 +614,9 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
             "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
             file.display()
         );
+    }
+    if !json && !quiet {
+        crate::accessibility_cmd::print_crawl_summary(&file, &a11y_level);
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
