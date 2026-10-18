@@ -128,7 +128,11 @@ impl LoginSite {
 
     /// Whether the server still holds a session with this `sid`.
     pub fn session_is_live(&self, sid: &str) -> bool {
-        self.state.sessions.lock().expect("sessions lock").contains_key(sid)
+        self.state
+            .sessions
+            .lock()
+            .expect("sessions lock")
+            .contains_key(sid)
     }
 
     pub fn hits(&self) -> Vec<LoginHit> {
@@ -207,7 +211,10 @@ fn page(title: &str, body: &str) -> Reply {
 
 fn route(state: &State, req: &Request, path: &str, sid: Option<&str>, user: Option<&str>) -> Reply {
     match path {
-        "/" => page("Home", "<a href=\"/members/\">Members</a> <a href=\"/login\">Login</a>"),
+        "/" => page(
+            "Home",
+            "<a href=\"/members/\">Members</a> <a href=\"/login\">Login</a>",
+        ),
         "/login" => {
             let from = user_param(req.query().unwrap_or(""))
                 .or_else(|| user_param(&String::from_utf8_lossy(&req.body)));
@@ -230,7 +237,10 @@ fn route(state: &State, req: &Request, path: &str, sid: Option<&str>, user: Opti
             Reply::redirect(302, "/login").header("Set-Cookie", "sid=; Path=/; Max-Age=0")
         }
         "/account" => match user {
-            Some(name) => page("Account", &format!("<p>Hello {name}</p><a href=\"/members/\">Members</a>")),
+            Some(name) => page(
+                "Account",
+                &format!("<p>Hello {name}</p><a href=\"/members/\">Members</a>"),
+            ),
             None => page("Account", "<a href=\"/login\">Sign in</a>"),
         },
         "/members/" => {
@@ -244,7 +254,11 @@ fn route(state: &State, req: &Request, path: &str, sid: Option<&str>, user: Opti
             page("Members", &links)
         }
         _ => match path.strip_prefix("/members/") {
-            Some(rest) if rest.parse::<usize>().is_ok_and(|i| (1..=state.members).contains(&i)) => {
+            Some(rest)
+                if rest
+                    .parse::<usize>()
+                    .is_ok_and(|i| (1..=state.members).contains(&i)) =>
+            {
                 if user.is_none() {
                     return Reply::redirect(302, "/login");
                 }

@@ -3,4 +3,4 @@
 /**
  * Where a running comparison is (contracts: `compare-progress`).
  */
-export type Phase = "open" | "previous" | "current" | "match" | "counts" | "done";
+export type Phase = "open" | "previous" | "current" | "issues" | "match" | "counts" | "done";

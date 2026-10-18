@@ -5,6 +5,7 @@
 //! records the history and keeps the OS registrations in shape. It has no
 //! dependency on the desktop shell, so the command line can do everything.
 
+pub mod baseline;
 pub mod cron;
 pub mod due;
 pub mod frequency;
@@ -20,6 +21,7 @@ pub mod store;
 pub mod validate;
 pub mod view;
 
+pub use baseline::{Baseline, BaselineError, ScheduleRun, baseline_for, previous_complete_run, schedule_of};
 pub use cron::{Cron, CronError};
 pub use due::{Due, due};
 pub use frequency::{Frequency, MonthDay, TimeOfDay};

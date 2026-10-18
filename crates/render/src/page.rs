@@ -28,16 +28,16 @@ use chromiumoxide::cdp::browser_protocol::inspector::{EnableParams as InspectorE
 use chromiumoxide::cdp::browser_protocol::network::{CookieParam, ErrorReason, ResourceType, TimeSinceEpoch};
 use chromiumoxide::cdp::browser_protocol::page::{
     AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat, CaptureScreenshotParams,
-    CreateIsolatedWorldParams, EventJavascriptDialogOpening, EventLoadEventFired, HandleJavaScriptDialogParams, NavigateParams,
-    Viewport,
+    CreateIsolatedWorldParams, EventJavascriptDialogOpening, EventLoadEventFired,
+    HandleJavaScriptDialogParams, NavigateParams, Viewport,
 };
 use chromiumoxide::cdp::browser_protocol::storage::SetCookiesParams;
 use chromiumoxide::cdp::browser_protocol::target::{
     CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams,
 };
 use chromiumoxide::cdp::js_protocol::runtime::{
-    AddBindingParams, ConsoleApiCalledType, EventBindingCalled, EventConsoleApiCalled, EventExceptionThrown,
-    EvaluateParams, GetHeapUsageParams, RemoteObject,
+    AddBindingParams, ConsoleApiCalledType, EvaluateParams, EventBindingCalled, EventConsoleApiCalled,
+    EventExceptionThrown, GetHeapUsageParams, RemoteObject,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -571,14 +571,21 @@ async fn run_probes(page: &Page, job: &RenderJob) -> Vec<(String, ProbeOutcome)>
     for probe in &job.probes {
         let remaining = job.probes_max_total.saturating_sub(begun.elapsed());
         if remaining.is_zero() {
-            out.push((probe.name.clone(), ProbeOutcome::TimedOut { spent: Duration::ZERO }));
+            out.push((
+                probe.name.clone(),
+                ProbeOutcome::TimedOut {
+                    spent: Duration::ZERO,
+                },
+            ));
             continue;
         }
         let budget = probe.budget.min(remaining);
         let started = Instant::now();
         let outcome = match tokio::time::timeout(budget, run_probe(page, probe)).await {
             Ok(outcome) => outcome,
-            Err(_) => ProbeOutcome::TimedOut { spent: started.elapsed() },
+            Err(_) => ProbeOutcome::TimedOut {
+                spent: started.elapsed(),
+            },
         };
         out.push((probe.name.clone(), outcome));
     }

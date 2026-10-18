@@ -26,9 +26,9 @@ use super::health::Transition;
 use super::hosts::{Host, RobotsState};
 use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, SpeedLimit};
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
+use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
-use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
@@ -2847,7 +2847,8 @@ impl Run {
         let store = &self.c.store;
         if a.level == A11yLevel::Full {
             let rendered = matches!(r.outcome.state, RenderState::Rendered);
-            let not_checked = |reason: &str| store.set_a11y_state(id, "full", "not_checked", Some(reason), None);
+            let not_checked =
+                |reason: &str| store.set_a11y_state(id, "full", "not_checked", Some(reason), None);
             if !rendered {
                 not_checked(match r.outcome.state {
                     RenderState::TimedOut => "render_timed_out",
@@ -2872,7 +2873,11 @@ impl Run {
                 }
             }
         }
-        if a.mobile && a.level != A11yLevel::Off && matches!(r.outcome.state, RenderState::Rendered) && !r.bot_challenge {
+        if a.mobile
+            && a.level != A11yLevel::Off
+            && matches!(r.outcome.state, RenderState::Rendered)
+            && !r.bot_challenge
+        {
             if !r.outcome.window.mobile {
                 store.record_mobile(
                     id,

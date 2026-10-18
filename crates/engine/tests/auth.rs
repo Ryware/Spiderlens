@@ -130,7 +130,10 @@ async fn basic_sign_in_set_up_front_reaches_200() {
             }
             _ => assert_eq!((hits.len(), anonymous), (4, 1), "{hits:?}"),
         }
-        assert!(hits.iter().all(|h| h.scheme.as_deref().is_none_or(|s| s == "basic")));
+        assert!(
+            hits.iter()
+                .all(|h| h.scheme.as_deref().is_none_or(|s| s == "basic"))
+        );
     }
 }
 
@@ -208,7 +211,11 @@ async fn wrong_password_is_rejected_without_a_retry_loop() {
                 (site.url(p), Some(401), Some(format!("auth_rejected:{method}")))
             );
             // At most the challenge and one try with the credentials.
-            assert!(site.count(p) <= 2, "{method}: {p} requested {} times", site.count(p));
+            assert!(
+                site.count(p) <= 2,
+                "{method}: {p} requested {} times",
+                site.count(p)
+            );
         }
         assert_eq!(notices_with(&d, "refused the sign-in"), 1, "{:?}", d.notices);
         assert_eq!(notices_with(&d, "asks for a sign-in"), 0);
@@ -293,10 +300,7 @@ async fn adding_a_sign_in_mid_crawl_fetches_the_401_urls_again() {
         }
         let (reply, answer) = oneshot::channel();
         commands
-            .send(RunCommand::AddSignIn {
-                sign_in: add,
-                reply,
-            })
+            .send(RunCommand::AddSignIn { sign_in: add, reply })
             .unwrap();
         done_tx.send(answer.await.unwrap()).ok();
         // Keep the channel open until the crawl ends.
@@ -331,7 +335,11 @@ async fn ntlm_sign_in_with_a_domain_user_reaches_200() {
         .filter(|h| h.scheme.as_deref() == Some("ntlm"))
         .map(|h| h.connection)
         .collect();
-    assert_eq!(handshake.len(), 1, "the handshake stays on one connection: {hits:?}");
+    assert_eq!(
+        handshake.len(),
+        1,
+        "the handshake stays on one connection: {hits:?}"
+    );
     // Once signed in, the connection carries the later pages without headers.
     let signed_in = *handshake.iter().next().unwrap();
     assert!(

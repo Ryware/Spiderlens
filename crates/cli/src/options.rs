@@ -963,7 +963,8 @@ impl CrawlArgs {
         if matches!(c.accessibility.level, spiderlens_config::A11yLevel::Full)
             && !matches!(c.rendering.mode, spiderlens_config::RenderMode::Javascript)
         {
-            notices.push("full accessibility checks need JavaScript rendering; static checks will run".into());
+            notices
+                .push("full accessibility checks need JavaScript rendering; static checks will run".into());
         }
         Ok(Resolved { config: c, notices })
     }

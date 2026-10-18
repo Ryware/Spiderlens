@@ -19,7 +19,8 @@ use ts_rs::TS;
 
 pub(crate) use eval::build_derived_with;
 pub use eval::{
-    IssueCount, IssueTarget, IssuesSummary, PriorityTotal, TARGETS_SHOWN, UrlIssue, record_issue_settings,
+    IssueCount, IssueTarget, IssuesSummary, PriorityTotal, RuleRun, TARGETS_SHOWN, UrlIssue, evaluate_on,
+    record_issue_settings, rule_runs, stored_issue_settings_on,
 };
 pub use settings::{ResolvedRule, ResolvedSettings, SettingsNotice, resolve};
 pub use spiderlens_config::Priority;

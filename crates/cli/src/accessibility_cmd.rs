@@ -45,7 +45,9 @@ enum FormatArg {
 
 /// `2.2-aa` style WCAG targets, for `--wcag`.
 pub fn parse_wcag(s: &str) -> Result<WcagTarget, String> {
-    let bad = || format!("{s:?} is not a WCAG target; use 2.0, 2.1 or 2.2, then -a, -aa or -aaa (for example 2.2-aa)");
+    let bad = || {
+        format!("{s:?} is not a WCAG target; use 2.0, 2.1 or 2.2, then -a, -aa or -aaa (for example 2.2-aa)")
+    };
     let (version, level) = s.split_once('-').ok_or_else(bad)?;
     let version = match version {
         "2.0" => WcagVersion::V2_0,
@@ -76,7 +78,9 @@ const PAGES: &str = "SELECT u.url AS address, \
      LEFT JOIN a11y_results r ON r.url_id = u.id AND r.kind = ?1 AND wcag_in_target(r.wcag) \
      GROUP BY u.id ORDER BY 2 DESC, 3 DESC, 4 DESC, 5 DESC, u.url";
 
-const PAGE_HEADERS: &[&str] = &["Address", "Critical", "Serious", "Moderate", "Minor", "Checks", "Elements"];
+const PAGE_HEADERS: &[&str] = &[
+    "Address", "Critical", "Serious", "Moderate", "Minor", "Checks", "Elements",
+];
 
 const SUMMARY: &str = "SELECT r.check_id, COALESCE(r.impact, ''), COUNT(DISTINCT r.url_id), COALESCE(SUM(r.nodes_total), 0), \
      CASE WHEN r.wcag = 'best-practice' THEN 'Opportunity' WHEN r.impact = 'critical' THEN 'High' \
@@ -117,7 +121,12 @@ fn json_of(v: ValueRef<'_>) -> Value {
     }
 }
 
-fn query(reader: &Reader, sql: &str, kind: Option<&str>, headers: &'static [&'static str]) -> rusqlite::Result<Table> {
+fn query(
+    reader: &Reader,
+    sql: &str,
+    kind: Option<&str>,
+    headers: &'static [&'static str],
+) -> rusqlite::Result<Table> {
     let mut stmt = reader.connection().prepare(sql)?;
     let n = headers.len();
     let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Vec<Value>> {
@@ -159,7 +168,11 @@ pub fn run_accessibility(args: AccessibilityArgs) -> ExitCode {
         eprintln!("error: {e}");
         return ExitCode::FAILURE;
     }
-    let kind = if args.needs_review { "needs_review" } else { "violation" };
+    let kind = if args.needs_review {
+        "needs_review"
+    } else {
+        "violation"
+    };
     let table = if args.mobile {
         query(&reader, MOBILE, None, MOBILE_HEADERS)
     } else if args.summary {
@@ -193,7 +206,12 @@ fn print_text(out: &mut impl Write, t: &Table, args: &AccessibilityArgs) {
     } else {
         "Violations"
     };
-    let _ = writeln!(out, "{what}: {} {}", t.rows.len(), if args.summary { "checks" } else { "pages" });
+    let _ = writeln!(
+        out,
+        "{what}: {} {}",
+        t.rows.len(),
+        if args.summary { "checks" } else { "pages" }
+    );
     let _ = writeln!(out, "{}", t.headers.join("\t"));
     for row in &t.rows {
         let line: Vec<String> = row.iter().map(cell).collect();
@@ -229,10 +247,22 @@ fn print_json_table(out: &mut impl Write, t: &Table) {
     let rows: Vec<Value> = t
         .rows
         .iter()
-        .map(|row| Value::Object(t.headers.iter().map(|h| (*h).to_string()).zip(row.iter().cloned()).collect()))
+        .map(|row| {
+            Value::Object(
+                t.headers
+                    .iter()
+                    .map(|h| (*h).to_string())
+                    .zip(row.iter().cloned())
+                    .collect(),
+            )
+        })
         .collect();
     let v = json!({ "disclaimer": A11Y_DISCLAIMER, "rows": rows });
-    let _ = writeln!(out, "{}", serde_json::to_string_pretty(&v).expect("rows serialize"));
+    let _ = writeln!(
+        out,
+        "{}",
+        serde_json::to_string_pretty(&v).expect("rows serialize")
+    );
 }
 
 /// The short block after a crawl (spec 026 FR-033): pages checked, pages with

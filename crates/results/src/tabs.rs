@@ -775,7 +775,11 @@ const fn mobile_filter(id: &'static str, label: &'static str, cond: &'static str
 /// A value of the page's `mobile_measures` row.
 macro_rules! mobile_value {
     ($expr:literal) => {
-        concat!("(SELECT ", $expr, " FROM mobile_measures m WHERE m.url_id = u.id)")
+        concat!(
+            "(SELECT ",
+            $expr,
+            " FROM mobile_measures m WHERE m.url_id = u.id)"
+        )
     };
 }
 

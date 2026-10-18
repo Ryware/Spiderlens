@@ -23,6 +23,13 @@ connections; the crawl thread is not involved. Types from ts-rs.
 | `compare_close` | `comparison` | – (deletes the workspace) |
 | `compare_settings_load` / `compare_settings_save` | `path` / `path`, `settings` | `CompareSettings` / – |
 
+## Report section (FR-033)
+
+`report`, `export_report_html` and `print_report` (spec 010) take an extra
+`comparison?: u32`. When it names an open comparison, that comparison's
+report section is added after the built-in sections. The UI passes it only
+for the report of the comparison's current crawl.
+
 ## Events
 
 | Event | Payload |

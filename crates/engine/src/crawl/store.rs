@@ -436,8 +436,12 @@ fn lowest_a11y_level(wcags: &[String]) -> Option<String> {
     }
     let mut best: Option<(usize, usize)> = None;
     for tag in wcags.iter().flat_map(|w| w.split_whitespace()) {
-        let Some(rest) = tag.strip_prefix("wcag") else { continue };
-        let Some(split) = rest.find(|c: char| c.is_ascii_alphabetic()) else { continue };
+        let Some(rest) = tag.strip_prefix("wcag") else {
+            continue;
+        };
+        let Some(split) = rest.find(|c: char| c.is_ascii_alphabetic()) else {
+            continue;
+        };
         let (num, letters) = rest.split_at(split);
         let version = match num {
             "2" => 0,
@@ -1555,7 +1559,11 @@ impl CrawlStore {
                     if used >= A11Y_NODES_PER_PAGE {
                         break;
                     }
-                    let excerpt: String = node.excerpt.chars().take(crate::extract::a11y::EXCERPT_CHARS).collect();
+                    let excerpt: String = node
+                        .excerpt
+                        .chars()
+                        .take(crate::extract::a11y::EXCERPT_CHARS)
+                        .collect();
                     let [x, y, w, h] = match node.bbox {
                         Some([x, y, w, h]) => [Some(x), Some(y), Some(w), Some(h)],
                         None => [None; 4],
@@ -1605,7 +1613,12 @@ impl CrawlStore {
     /// The static results of a page as it is first written during a crawl
     /// (spec 026): no full results exist yet, so the counts come from `rows`
     /// and the page costs a few statements instead of a recount.
-    pub fn record_static_a11y(&self, url_id: i64, rows: &[A11yRow<'_>], mobile: &MobileRow<'_>) -> Result<()> {
+    pub fn record_static_a11y(
+        &self,
+        url_id: i64,
+        rows: &[A11yRow<'_>],
+        mobile: &MobileRow<'_>,
+    ) -> Result<()> {
         if !rows.is_empty() {
             self.conn
                 .prepare_cached(
@@ -1650,7 +1663,12 @@ impl CrawlStore {
                     if used >= A11Y_NODES_PER_PAGE {
                         break;
                     }
-                    insert_node.execute(params![result_id, pos as i64, node.selector.as_ref(), node.excerpt.as_ref()])?;
+                    insert_node.execute(params![
+                        result_id,
+                        pos as i64,
+                        node.selector.as_ref(),
+                        node.excerpt.as_ref()
+                    ])?;
                     used += 1;
                 }
             }

@@ -65,6 +65,12 @@ pub(crate) fn connect(
 /// through a `mode=ro` URI, so SQLite refuses any write to it, while a
 /// scratch file attached later stays writable.
 pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
+    connect_attachable_with(path, &ResolvedSettings::default())
+}
+
+/// [`connect_attachable`] with `thr()` reading `settings`' thresholds, so a
+/// filter and an issue rule that share a threshold agree (spec 012 FR-023).
+pub fn connect_attachable_with(path: &Path, settings: &ResolvedSettings) -> Result<(Connection, Features)> {
     if !path.exists() {
         return Err(Error::invalid(format!("{} does not exist", path.display())));
     }
@@ -75,8 +81,7 @@ pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
             | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    // The comparison reads filters with the default issue thresholds.
-    let (conn, features, _) = setup(conn, path, &ResolvedSettings::default())?;
+    let (conn, features, _) = setup(conn, path, settings)?;
     Ok((conn, features))
 }
 

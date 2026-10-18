@@ -36,9 +36,21 @@ async fn index_is_walked_once_per_file_and_entries_become_the_list() {
     assert_eq!(list.duplicates, 1);
     assert_eq!(list.invalid_count, 1);
     assert_eq!(list.sitemap, Some(site.url(E, "/index.xml")));
-    assert!(list.notices[0].starts_with("Read 3 sitemap files (1 index)."), "{:?}", list.notices);
-    assert!(list.notices.iter().any(|n| n.contains("/broken.xml")), "{:?}", list.notices);
-    assert_eq!(site.count(E, "/index.xml"), 1, "the loop back to the index is not followed");
+    assert!(
+        list.notices[0].starts_with("Read 3 sitemap files (1 index)."),
+        "{:?}",
+        list.notices
+    );
+    assert!(
+        list.notices.iter().any(|n| n.contains("/broken.xml")),
+        "{:?}",
+        list.notices
+    );
+    assert_eq!(
+        site.count(E, "/index.xml"),
+        1,
+        "the loop back to the index is not followed"
+    );
 }
 
 #[tokio::test]
@@ -54,7 +66,10 @@ async fn local_file_resolves_relative_addresses_against_the_base() {
     let list = list_from_sitemap_resolving(source, &CrawlConfig::default(), &[])
         .await
         .unwrap();
-    assert_eq!(list.urls, vec!["https://example.test/one", "https://other.test/two"]);
+    assert_eq!(
+        list.urls,
+        vec!["https://example.test/one", "https://other.test/two"]
+    );
 }
 
 #[tokio::test]

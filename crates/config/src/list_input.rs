@@ -112,7 +112,11 @@ pub fn list_from_urls(entries: impl IntoIterator<Item = ListEntry>, notices: Vec
     for e in entries {
         match normalize_url(e.url.trim()) {
             Ok(url) => b.valid(url.into()),
-            Err(err) => b.invalid(e.position, &format!("{} #{}: {}", e.place, e.position, e.url), err.0),
+            Err(err) => b.invalid(
+                e.position,
+                &format!("{} #{}: {}", e.place, e.position, e.url),
+                err.0,
+            ),
         }
     }
     b.out.notices = notices;
@@ -236,7 +240,11 @@ mod tests {
             position,
         };
         let r = list_from_urls(
-            vec![e("https://a.test/1", 1), e("https://A.test/1#x", 2), e("ht!tp//bad", 3)],
+            vec![
+                e("https://a.test/1", 1),
+                e("https://A.test/1#x", 2),
+                e("ht!tp//bad", 3),
+            ],
             vec!["note".into()],
         );
         assert_eq!(r.urls, vec!["https://a.test/1"]);
