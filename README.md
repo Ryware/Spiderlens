@@ -43,3 +43,4 @@ correctly, and cells that a spreadsheet would run as a formula start with `'`.
 
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
+Signing in to password-protected sites, cookies and proxies: [docs/site-login.md](docs/site-login.md).
