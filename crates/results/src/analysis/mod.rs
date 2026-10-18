@@ -215,6 +215,8 @@ pub static PASSES: &[&dyn Pass] = &[
     &crate::sitemaps::Orphans,
     &LinkPositions,
     &LinkMetrics,
+    &crate::agents::AgentEntryPoints,
+    &crate::agents::AgentScores,
 ];
 
 /// One global computation over the crawl.

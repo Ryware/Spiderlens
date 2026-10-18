@@ -19,6 +19,8 @@ import type { ViewState } from "../generated/ViewState";
 import type { ExportOptions } from "../generated/ExportOptions";
 import { fakeScene, fakeTermLinks } from "./fakeViz";
 import type { LinkAnalysisSettings } from "../generated/LinkAnalysisSettings";
+import type { A11yDetail } from "../generated/A11yDetail";
+import type { MobileDetail } from "../generated/MobileDetail";
 import type { AnalysisProgress } from "../generated/AnalysisProgress";
 import type { AnalysisRun } from "../generated/AnalysisRun";
 import type { AnalysisDone, AnalysisProgressEvent, ExportProgress, NearDupFinished, NearDupProgress, Range, Transport, ViewReady } from "../transport";
@@ -45,7 +47,78 @@ export interface FakeUrl {
   description?: string | null;
   /** Spelling errors, once spelling was checked. */
   spellErrors?: number;
+  /** Accessibility detail, once the checks ran (spec 026). */
+  a11y?: A11yDetail;
+  /** Mobile detail, once the mobile checks ran (spec 026). */
+  mobile?: MobileDetail;
 }
+
+/** The disclaimer the accessibility section ends with. */
+export const FAKE_A11Y_DISCLAIMER = "Automated checks find only part of the accessibility problems. A page without violations is not necessarily accessible.";
+
+/** An accessibility detail with one critical contrast check, one minor check and one needing review. */
+export const fakeA11y = (over: Partial<A11yDetail> = {}): A11yDetail => ({
+  static_state: "checked",
+  full_state: null,
+  full_reason: null,
+  capped: false,
+  disclaimer: FAKE_A11Y_DISCLAIMER,
+  checks: [
+    {
+      check_id: "color-contrast",
+      title: "Text has too little contrast",
+      kind: "violation",
+      source: "full",
+      impact: "critical",
+      wcag: "wcag2aa wcag143",
+      nodes_total: 2,
+      help_url: "https://dequeuniversity.com/rules/axe/4.14/color-contrast",
+      nodes: [
+        { selector: "main > p.lead", excerpt: "<p class=\"lead\">Welcome</p>", data: null, bbox: [10, 20, 200, 40] },
+        { selector: "footer a", excerpt: "<a href=\"/x\">More</a>", data: null, bbox: null },
+      ],
+    },
+    {
+      check_id: "static.image_alt_missing",
+      title: "Image has no alt text",
+      kind: "violation",
+      source: "static",
+      impact: "minor",
+      wcag: null,
+      nodes_total: 1,
+      help_url: null,
+      nodes: [{ selector: "img.hero", excerpt: "<img class=\"hero\">", data: null, bbox: null }],
+    },
+    {
+      check_id: "aria-allowed-attr",
+      title: "ARIA attribute may not be allowed",
+      kind: "needs_review",
+      source: "full",
+      impact: "moderate",
+      wcag: "wcag2a",
+      nodes_total: 1,
+      help_url: "https://dequeuniversity.com/rules/axe/4.14/aria-allowed-attr",
+      nodes: [{ selector: "div[role=button]", excerpt: "<div role=\"button\"></div>", data: null, bbox: null }],
+    },
+  ],
+  ...over,
+});
+
+/** A mobile detail with a missing viewport and some small tap targets. */
+export const fakeMobile = (over: Partial<MobileDetail> = {}): MobileDetail => ({
+  viewport: "width=device-width, initial-scale=1",
+  viewport_state: "ok",
+  plugins: 0,
+  window: "390 x 844",
+  measured: "Rendered",
+  content_px: 480,
+  window_px: 390,
+  widest: "table.prices",
+  small_text_share: 55,
+  small_targets: 3,
+  examples: [{ selector: "nav a.tiny", w: 18, h: 14 }],
+  ...over,
+});
 
 /** A PDF's detail with sensible defaults. */
 export const fakePdf = (p: Partial<PdfDetail> = {}): PdfDetail => ({
@@ -159,6 +232,18 @@ export const fakeTabs: TabDef[] = [
     scoped: false,
   },
   {
+    id: "accessibility",
+    title: "Accessibility",
+    columns: [col("address", "Address", "url", 420, "accessibility_static"), col("a11y_critical", "Critical", "int", 80, "accessibility_static")],
+    filters: [
+      { id: "all", label: "All", need: "accessibility_static" },
+      { id: "critical", label: "Critical", need: "accessibility_static" },
+      { id: "needs_review", label: "Needs review", need: "accessibility_static" },
+    ],
+    search_column: null,
+    scoped: false,
+  },
+  {
     id: "amp",
     title: "AMP",
     columns: [col("address", "Address", "url", 420, "amp"), col("amp_failures", "Failed checks", "int", 110, "amp")],
@@ -166,6 +251,14 @@ export const fakeTabs: TabDef[] = [
       { id: "all", label: "All", need: "amp" },
       { id: "failing", label: "Failing a check", need: "amp" },
     ],
+    search_column: null,
+    scoped: false,
+  },
+  {
+    id: "agents",
+    title: "Agents",
+    columns: [col("address", "Address", "url", 420)],
+    filters: [{ id: "all", label: "All", need: "base" }],
     search_column: null,
     scoped: false,
   },
@@ -255,7 +348,7 @@ const cell = (u: FakeUrl, c: string, segments: Segment[] = [], urls: FakeUrl[] =
       closest_url: closest?.url ?? null,
       near_count: d ? d.others.length : 0,
       cluster: d?.cluster ?? null,
-      address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null, amp_failures: u.ampFailures ?? null,
+      address: u.url, status_code: u.status, title: u.title, h1: u.h1 ?? null, depth: u.depth, link_score: fakeScore(u), followed_inlinks: u.id % 7, segment: fakeSegmentOf(segments, u)?.name ?? null, pdf_title: u.pdf?.title ?? null, pdf_pages: u.pdf?.pages ?? null, pdf_status: u.pdf?.status_label ?? null, spell_errors: u.spellErrors ?? null, amp_failures: u.ampFailures ?? null, a11y_critical: u.a11y ? u.a11y.checks.filter((k) => k.kind === "violation" && k.impact === "critical").length : null,
     } as Record<string, string | number | null>
   )[c] ?? null;
 };
@@ -534,6 +627,9 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
     if (q.tab === "pdfs" && q.filter === "missing_title") us = us.filter((u) => !u.pdf?.title);
     if (q.filter === "errors") us = us.filter((u) => (u.spellErrors ?? 0) > 0);
     if (q.tab === "javascript") us = us.filter((u) => results.renders.has(u.id));
+    if (q.tab === "accessibility") us = us.filter((u) => u.a11y !== undefined);
+    if (q.tab === "accessibility" && q.filter === "critical") us = us.filter((u) => u.a11y?.checks.some((k) => k.kind === "violation" && k.impact === "critical"));
+    if (q.tab === "accessibility" && q.filter === "needs_review") us = us.filter((u) => u.a11y?.checks.some((k) => k.kind === "needs_review"));
     if (q.tab === "amp") us = us.filter((u) => u.ampFailures !== undefined);
     if (q.tab === "sitemaps") us = us.filter((u) => u.internal);
     if (q.tab === "sitemaps" && q.filter === "orphans") us = us.filter((u) => u.id % 50 === 7);
@@ -781,8 +877,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         spelling: null,
         render: results.renders.get(id) ?? null,
         amp: null,
-        accessibility: null,
-        mobile: null,
+        accessibility: u.a11y ?? null,
+        mobile: u.mobile ?? null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

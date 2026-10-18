@@ -68,6 +68,8 @@ import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
+import type { AgentsSummary } from "./generated/AgentsSummary";
+import type { EntryPointRow } from "./generated/EntryPointRow";
 import type { PageAgentFindings } from "./generated/PageAgentFindings";
 import type { CompareSettings } from "./generated/CompareSettings";
 import type { ComparisonReport } from "./generated/ComparisonReport";
@@ -96,6 +98,7 @@ import type { Dictionaries } from "./generated/Dictionaries";
 import type { Installed } from "./generated/Installed";
 import type { SpellingSettings } from "./generated/SpellingSettings";
 import type { SpellSummary } from "./generated/SpellSummary";
+import type { RerunSummary } from "./generated/RerunSummary";
 
 /** A spelling check's progress, then its end (spec 027 part D). */
 export interface SpellProgress {
@@ -202,6 +205,10 @@ export interface CrawlProgress {
   /** Requests finished per second over the last 5 seconds (spec 008). */
   urls_per_sec: number;
   avg_urls_per_sec: number;
+  /** Pages with an accessibility check result so far (spec 026). */
+  a11y_checked: number;
+  /** Average full-check time per page in milliseconds, when full checks ran. */
+  a11y_avg_ms: number | null;
   /** Seconds left for the URLs queued now; rises while discovery outpaces crawling. */
   eta_secs: number | null;
   /** Time spent crawling, pauses excluded, across every run of this file (spec 007). */
@@ -218,6 +225,28 @@ export interface CrawlProgress {
   sites: SitePace[];
   /** Sites with work in progress in all. */
   sites_total: number;
+  /** Rendering progress (spec 014 FR-040); absent when the crawl does not render. */
+  render?: RenderProgress | null;
+}
+
+/** Why rendering is the slower stage (spec 014 plan D13). */
+export type RenderLimiting = "concurrency" | "memory_guard" | "slow_pages" | "site_limits" | "queue_full";
+
+/** Rendering progress next to the crawl's own figures (spec 014 plan D13). */
+export interface RenderProgress {
+  /** Pages whose rendering ended (rendered, timed out or failed), over every run of this file. */
+  rendered: number;
+  /** Pages waiting to be rendered. */
+  queued: number;
+  /** Pages being rendered now. */
+  rendering: number;
+  pages_per_sec: number;
+  avg_pages_per_sec: number;
+  /** Pages that may be rendered at once now. */
+  limit: number;
+  limiting: RenderLimiting | null;
+  /** Nothing is left to fetch; renders go on. */
+  fetching_done: boolean;
 }
 
 /** The main limit on the crawl's speed (spec 008 FR-028). */
@@ -921,6 +950,9 @@ export interface Transport {
   onNearDupFinished(cb: (f: NearDupFinished) => void): Promise<() => void>;
   // AI agents (spec 016, contracts/desktop-commands.md).
   agentsPage(path: string, id: number): Promise<PageAgentFindings>;
+  /** The crawl's agent score; `available` is false with a reason when it was not evaluated. */
+  agentsSummary(path: string): Promise<AgentsSummary>;
+  agentsEntryPoints(path: string): Promise<EntryPointRow[]>;
   assistantsGet(): Promise<AssistantsView>;
   /** Rejects with a sentence when a folder does not exist. */
   assistantsSet(settings: AssistantSettings): Promise<AssistantSettings>;
@@ -929,6 +961,8 @@ export interface Transport {
   assistantsActivity(limit: number): Promise<ActivityEntry[]>;
   assistantsActivityClear(): Promise<void>;
 
+  /** Re-runs the static accessibility checks on a crawl's stored HTML (spec 026). */
+  accessibilityRun(path: string): Promise<RerunSummary>;
   // Spelling (spec 027 part D)
   spellDictionaries(): Promise<Dictionaries>;
   /** Downloads a listed dictionary, checked against its published checksum. */
@@ -1204,11 +1238,14 @@ export const tauriTransport: Transport = {
   onNearDupProgress: (cb) => listen<NearDupProgress>("near-dup-progress", (e) => cb(e.payload)),
   onNearDupFinished: (cb) => listen<NearDupFinished>("near-dup-finished", (e) => cb(e.payload)),
   agentsPage: (path, id) => invoke("agents_page", { path, id }),
+  agentsSummary: (path) => invoke("agents_summary", { path }),
+  agentsEntryPoints: (path) => invoke("agents_entry_points", { path }),
   assistantsGet: () => invoke("assistants_get"),
   assistantsSet: (settings) => invoke("assistants_set", { settings }),
   assistantsTest: () => invoke("assistants_test"),
   assistantsActivity: (limit) => invoke("assistants_activity", { limit }),
   assistantsActivityClear: () => invoke("assistants_activity_clear"),
+  accessibilityRun: (path) => invoke("accessibility_run", { path }),
   spellDictionaries: () => invoke("spell_dictionaries"),
   spellDownload: (lang) => invoke("spell_download", { lang }),
   pickDictionaryFiles: async () => {

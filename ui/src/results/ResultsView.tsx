@@ -14,6 +14,7 @@ import type { Values } from "../generated/Values";
 import type { ViewQuery } from "../generated/ViewQuery";
 import type { Transport } from "../transport";
 import { Bar, Button, EmptyState, Input, Menu, Notice, Segmented } from "../components/ui";
+import { AgentsOverview } from "./AgentsOverview";
 import { AiOverview } from "./AiOverview";
 import { ColumnMenu } from "./ColumnMenu";
 import { defaultPrefs, loadPrefs, savePrefs, type ColumnPrefs } from "./columnPrefs";
@@ -400,6 +401,7 @@ export function ResultsView({
         </div>
         {toolbar}
         {tab.id === "ai-search" && <AiOverview transport={transport} path={path} live={live} />}
+        {tab.id === "agents" && <AgentsOverview transport={transport} path={path} />}
         {issue ? (
           <IssueHeader rule={issue} onSettings={onIssueSettings} />
         ) : (

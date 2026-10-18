@@ -87,7 +87,24 @@ missing), `--fail-on-lost-indexable N` (pages that stopped being indexable) and
 affected URLs) make the command exit with code 8 and say which condition failed.
 Details: [specs/012-crawl-comparison](specs/012-crawl-comparison/contracts/cli.md).
 
+## Accessibility and mobile checks
+
+Every crawl checks each page's HTML for common accessibility problems and
+mobile-friendliness. Results are in the Accessibility and Mobile tabs and in
+the details pane. Full checks, which run an accessibility engine in a rendered
+page, are optional. Static results can be refreshed on a saved crawl.
+
+```sh
+spiderlens crawl example.com --accessibility full --render javascript
+spiderlens accessibility example.spiderlens --summary
+spiderlens accessibility run example.spiderlens --static
+```
+
+Automated checks find only part of the accessibility problems. A page without
+violations is not necessarily accessible. Details: [docs/accessibility.md](docs/accessibility.md).
+
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
 Signing in to password-protected sites, cookies and proxies: [docs/site-login.md](docs/site-login.md).
 Where crawls live and what cleanup does: [docs/crawl-storage.md](docs/crawl-storage.md).
+Accessibility and mobile checks: [docs/accessibility.md](docs/accessibility.md).

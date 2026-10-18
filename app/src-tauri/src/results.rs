@@ -380,6 +380,26 @@ pub async fn agents_page(
         .await
 }
 
+/// The crawl's AI agent score and what drives it (spec 016 FR-018).
+#[tauri::command]
+pub async fn agents_summary(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+) -> Cmd<spiderlens_results::agents::AgentsSummary> {
+    state.with(&path, move |r| r.agents_summary().map_err(err)).await
+}
+
+/// What each host offers to AI agents (spec 016 FR-008).
+#[tauri::command]
+pub async fn agents_entry_points(
+    state: tauri::State<'_, State>,
+    path: PathBuf,
+) -> Cmd<Vec<spiderlens_results::agents::EntryPointRow>> {
+    state
+        .with(&path, move |r| r.agent_entry_points().map_err(err))
+        .await
+}
+
 #[tauri::command]
 pub async fn url_list(
     state: tauri::State<'_, State>,
