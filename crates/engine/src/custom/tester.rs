@@ -1,12 +1,13 @@
 //! Testing rules on one page before a crawl (FR-018, US4).
 
+use spiderlens_config::{RobotsMode, RobotsSettings};
 use url::Url;
 
 use super::{CompiledRules, PageRules};
 use crate::check::parse_input_url;
 use crate::extract::{PageInput, extract_page_with};
 use crate::fetch::{BodyPolicy, OnLimit, build_client, get_following};
-use crate::robots::{self, RobotsFetch, RobotsVerdict};
+use crate::robots::{self, RobotsFetch, RobotsTxt, RobotsVerdict};
 use crate::title::is_html;
 use crate::{CheckError, CheckOptions, ErrorClass};
 
@@ -18,24 +19,31 @@ pub struct Tested {
 }
 
 /// Fetches one URL with the crawl's identity and headers, following
-/// redirects, honouring robots.txt when `respect_robots`, and applies the
-/// rules to it. One request for the page (plus robots.txt).
+/// redirects, honouring robots.txt when the mode is `Respect`, and applies
+/// the rules to it. One request for the page (plus robots.txt, unless the
+/// host has a custom one).
 pub async fn test_url(
     input: &str,
     opts: &CheckOptions,
-    respect_robots: bool,
+    robots: &RobotsSettings,
     rules: &CompiledRules,
 ) -> Result<Tested, CheckError> {
     let url = parse_input_url(input)?;
     let client = build_client(opts)?;
-    if respect_robots {
-        let fetch = robots::fetch(&client, &url, &opts.headers).await;
-        if let RobotsFetch::Unreachable(e) = &fetch
-            && e.class != ErrorClass::ContentProblem
-        {
-            return Err(e.clone());
-        }
-        if let RobotsVerdict::Disallowed(rule) = fetch.policy(&opts.robots_token).check(&url) {
+    if robots.mode == RobotsMode::Respect {
+        let policy = match robots.custom_for(url.host_str().unwrap_or_default()) {
+            Some(text) => RobotsTxt::parse(text.as_bytes()).for_agent(&opts.robots_token),
+            None => {
+                let fetch = robots::fetch(&client, &url, &opts.headers).await;
+                if let RobotsFetch::Unreachable(e) = &fetch
+                    && e.class != ErrorClass::ContentProblem
+                {
+                    return Err(e.clone());
+                }
+                fetch.policy(&opts.robots_token)
+            }
+        };
+        if let RobotsVerdict::Disallowed(rule) = policy.check(&url) {
             return Err(CheckError {
                 class: ErrorClass::ContentProblem,
                 reason: None,

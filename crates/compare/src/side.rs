@@ -13,7 +13,8 @@ use crate::{Error, Result};
 const BATCH: i64 = 50_000;
 
 /// Reasons a URL was left for later because of a limit or a stop (spec 003).
-pub(crate) const LIMIT_REASONS: &str = "('over_depth_limit', 'over_url_limit', 'crawl_stopped')";
+pub(crate) const LIMIT_REASONS: &str =
+    "('over_depth_limit', 'over_url_limit', 'over_subdomain_limit', 'over_depth_url_limit', 'crawl_stopped')";
 
 pub(crate) fn create_tables(ws: &Connection, layout: &Layout, elements: &[Element]) -> Result<()> {
     let mut cols: Vec<String> = (0..layout.columns())

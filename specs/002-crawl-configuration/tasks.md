@@ -45,3 +45,12 @@
 ## Phase 8: Polish
 
 - [x] T020 fmt, clippy, full test suite; quickstart map updated
+
+## Phase 9: Follow-up (custom robots.txt, URL rewriting, extra limits)
+
+- [x] T021 Config model: `robots.custom`, `scope.rewrite`, four new limits; validation
+- [x] T022 Engine: custom robots.txt instead of fetching (crawl, resume, scope tester)
+- [x] T023 Engine: rewrite rules in link normalization (not seeds)
+- [x] T024 Engine: folder depth and query parameter limits in the scope decision; per subdomain and per depth counts at page start, restored on resume
+- [x] T025 CLI flags `--max-urls-per-subdomain`, `--max-urls-per-depth`, `--max-folder-depth`, `--max-query-params`, `--rewrite`, `--robots-file`
+- [x] T026 Settings UI: limits, URL rewriting editor, custom robots.txt editor; stored config sheet; reason labels

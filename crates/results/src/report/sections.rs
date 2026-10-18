@@ -249,9 +249,11 @@ fn completeness(r: &mut Reader, _ctx: &Ctx) -> Result<Vec<Block>> {
                         "blocked_by_robots" | "robots_unavailable" => {
                             Some(Target::tab("response-codes", "blocked_robots"))
                         }
-                        "excluded" | "not_included" | "outside_start_folder" => {
-                            Some(Target::tab("response-codes", "blocked_config"))
-                        }
+                        "excluded"
+                        | "not_included"
+                        | "outside_start_folder"
+                        | "over_folder_depth"
+                        | "over_query_limit" => Some(Target::tab("response-codes", "blocked_config")),
                         _ => None,
                     };
                     vec![
@@ -297,7 +299,12 @@ pub(crate) fn incomplete(r: &mut Reader) -> Result<Option<Incomplete>> {
     for (code, label, n) in self::reasons(r)? {
         if matches!(
             code.as_str(),
-            "over_url_limit" | "over_depth_limit" | "crawl_stopped" | "robots_unavailable"
+            "over_url_limit"
+                | "over_depth_limit"
+                | "over_subdomain_limit"
+                | "over_depth_url_limit"
+                | "crawl_stopped"
+                | "robots_unavailable"
         ) {
             reasons.push(ReasonCount { label, count: n });
         }

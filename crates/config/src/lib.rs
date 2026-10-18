@@ -16,6 +16,7 @@ mod patterns;
 mod presets;
 mod profile;
 mod recent;
+mod rewrite;
 mod secret;
 mod segments;
 mod site;
@@ -40,18 +41,20 @@ pub use list_input::{
 };
 pub use model::{
     A11yLevel, AccessSettings, AccessibilitySettings, AgentSettings, AiChecks, AuthMethod, Changefreq,
-    CheckCondition, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, CustomRobots, DEFAULT_SIGN_OUT_PATTERNS,
-    ExtractionSettings, HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits,
-    LocalSitemap, LoginSettings, Mode, ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource,
-    ProxyKind, ProxyMode, ProxySettings, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings,
-    RenderWindow, RetrySettings, RewriteRule, RobotsMode, RobotsSettings, RuleOverride, Scope, SignIn, SignedOutCheck,
-    SitemapGenerateOptions, SitemapSettings, SpeedSettings, SpellingSettings, SubdomainMode, SuppliedCookie,
-    UserAgent, WcagLevel, WcagTarget, WcagVersion, WindowPreset, env_suffix,
+    CheckCondition, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, CustomRobots,
+    DEFAULT_SIGN_OUT_PATTERNS, ExtractionSettings, HeaderTarget, Identity, ImageEntries, IssueSettings,
+    LastmodSource, Limits, LocalSitemap, LoginSettings, Mode, ModeInput, NetworkSettings, PdfSettings,
+    Priority, PrioritySource, ProxyKind, ProxyMode, ProxySettings, QueryMode, QueryParams, RenderBlock,
+    RenderMode, RenderSettings, RenderWindow, RetrySettings, RewriteRule, RobotsMode, RobotsSettings,
+    RuleOverride, Scope, SignIn, SignedOutCheck, SitemapGenerateOptions, SitemapSettings, SpeedSettings,
+    SpellingSettings, SubdomainMode, SuppliedCookie, UserAgent, WcagLevel, WcagTarget, WcagVersion,
+    WindowPreset, env_suffix,
 };
 pub use patterns::{Decision, PatternTest, UrlFilter, test_patterns};
 pub use presets::{SpeedPreset, UaPreset, spiderlens_user_agent};
 pub use profile::{FORMAT_VERSION, ImportedProfile, ProfileError, export_profile, import_profile};
 pub use recent::{RECENT_LIMIT, RecentEntry, RecentStore};
+pub use rewrite::{CompiledRewrites, rewrite_url};
 pub use secret::{HeaderValue, Secret};
 pub use segments::{
     Clause, Field as SegmentField, MAX_SEGMENTS, Match as SegmentMatch, Op as SegmentOp, Segment,

@@ -213,6 +213,12 @@ Weeks after a crawl, a user (or a colleague who received the crawl file) needs t
 - **FR-041**: Resuming a crawl (after pause, quit or crash) MUST use its stored configuration, including any recorded speed or retry changes.
 - **FR-042**: Opening a crawl file from an older app version MUST show its stored configuration as recorded, marking settings that did not exist in that version as not available.
 
+### Follow-up (2026-10-18): custom robots.txt, URL rewriting, extra limits
+
+- **FR-043**: Users MUST be able to enter a custom robots.txt per host (for example `example.com`). For that host the site's own robots.txt is not requested; the custom text decides allow/disallow, crawl-delay and sitemap seeds, for http and https alike. Each custom file shows a warning that the site's own file is not read. With robots.txt set to "Ignore", custom files have no effect and a warning says so.
+- **FR-044**: Users MUST be able to add URL rewrite rules (regex pattern and replacement, `$1` groups allowed) that are applied in order to every discovered link after normalization and before the scope decision. Start and listed URLs are not rewritten. A rule whose result is not a valid URL records the link as a malformed URL. Invalid patterns block the crawl at validation.
+- **FR-045**: Users MUST be able to set, each optional: max URLs per subdomain (pages requested per host), max URLs per crawl depth, max folder depth (directories in the URL path: `/a/b/page` has 2), and max query parameters (0 means no query strings). Folder depth and query parameter limits do not apply to start or listed URLs. URLs over a limit are recorded as not crawled with reasons "Over folder depth limit", "Too many query parameters", "Over URLs per subdomain limit" and "Over URLs per depth limit"; robots.txt blocking is reported first when both apply.
+
 ### Key Entities
 
 - **Crawl Configuration**: The full set of settings for one crawl: mode, mode input, limits, include and exclude patterns, subdomain and external handling, nofollow and query parameter handling, user agent and robots token, custom headers, speed values and preset name, robots.txt behaviour, crawl-delay handling, timeout, redirect limit, and retry settings.

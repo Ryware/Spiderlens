@@ -28,6 +28,13 @@ export function configRows(c: CrawlConfig): [string, string][] {
     ["Retries", `${c.retry.attempts} attempts, up to ${c.retry.max_wait_secs} s apart`],
     ["Timeouts", `Connect ${c.network.connect_timeout_secs} s, read ${c.network.read_timeout_secs} s`],
   ];
+  const l = c.limits;
+  if (l.max_urls_per_subdomain !== null) rows.push(["URLs per subdomain", noLimit(l.max_urls_per_subdomain)]);
+  if (l.max_urls_per_depth !== null) rows.push(["URLs per depth", noLimit(l.max_urls_per_depth)]);
+  if (l.max_folder_depth !== null) rows.push(["Folder depth limit", noLimit(l.max_folder_depth)]);
+  if (l.max_query_params !== null) rows.push(["Query parameter limit", noLimit(l.max_query_params)]);
+  if (c.scope.rewrite.length) rows.push(["URL rewriting", c.scope.rewrite.map((r) => `${r.pattern} => ${r.replace}`).join("\n")]);
+  if (c.robots.custom.length) rows.push(["Custom robots.txt", c.robots.custom.map((r) => r.host).join("\n")]);
   for (const h of c.identity.headers) rows.push([`Header ${h.name}`, "plain" in h.value ? h.value.plain : "secret, not stored"]);
   return rows;
 }

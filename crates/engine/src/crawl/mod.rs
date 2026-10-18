@@ -45,6 +45,7 @@ pub use store::{AgentSource, CrawlStore, LogEntry, UrlRow};
 /// of `inputs` if the start page linked to it. With `check_robots`, each
 /// host's robots.txt is fetched once (one request per host, nothing else);
 /// a host whose robots.txt cannot be read counts as disallowing everything.
+/// A host with a custom robots.txt uses that text and is not requested.
 /// Shared by the CLI (`scope test`) and the desktop app (`scope_test`).
 pub async fn scope_test(
     config: &spiderlens_config::CrawlConfig,
@@ -54,16 +55,29 @@ pub async fn scope_test(
 ) -> Result<Vec<ScopeTest>, String> {
     let rules = ScopeRules::new(config, std::slice::from_ref(start))?;
     let mut policies = std::collections::HashMap::new();
+    let token = crate::CheckOptions::from(config).robots_token;
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
         let robots = config.robots.mode != spiderlens_config::RobotsMode::Ignore;
         let policy = match rules.normalize(start, input) {
-            Ok(url) if check_robots && robots => {
+            // A host with a custom robots.txt needs no request, so it is
+            // consulted even without `check_robots`.
+            Ok(url)
+                if robots
+                    && (check_robots
+                        || config
+                            .robots
+                            .custom_for(url.host_str().unwrap_or_default())
+                            .is_some()) =>
+            {
                 let key = host_key(&url);
                 if !policies.contains_key(&key) {
-                    let p = fetch_robots(config, &url)
-                        .await
-                        .unwrap_or_else(|_| crate::robots::RobotsPolicy::disallow_all());
+                    let p = match config.robots.custom_for(url.host_str().unwrap_or_default()) {
+                        Some(text) => crate::robots::RobotsTxt::parse(text.as_bytes()).for_agent(&token),
+                        None => fetch_robots(config, &url)
+                            .await
+                            .unwrap_or_else(|_| crate::robots::RobotsPolicy::disallow_all()),
+                    };
                     policies.insert(key.clone(), p);
                 }
                 policies.get(&key)

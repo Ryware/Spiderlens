@@ -77,6 +77,20 @@ impl Issues {
     }
 }
 
+/// Most bytes of one custom robots.txt, the size crawlers such as Google
+/// read.
+const MAX_CUSTOM_ROBOTS_BYTES: usize = 500 * 1024;
+
+/// A bare host name or IP address such as `example.com`: no scheme, port,
+/// path or spaces. It must be the form `url::Url` reports as the host
+/// (lower case ASCII), because the crawler matches on that.
+fn is_bare_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.contains(|c: char| c.is_whitespace() || matches!(c, '/' | '\\' | '?' | '#' | '@'))
+        && url::Url::parse(&format!("http://{host}/"))
+            .is_ok_and(|u| u.host_str().is_some_and(|h| h.eq_ignore_ascii_case(host)))
+}
+
 /// A host name with no dot, such as `r` or `intranet`, other than
 /// `localhost`. Such start URLs are almost always a half-typed address
 /// (`r` while typing `ryware.dev`), so Start refuses them. IP addresses
@@ -173,6 +187,20 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "Max depth must be at least 1. Leave it blank for no limit.",
         );
     }
+    if c.limits.max_urls_per_subdomain == Some(0) {
+        i.error(
+            "limits.max_urls_per_subdomain",
+            "limit_zero",
+            "Max URLs per subdomain must be at least 1. Leave it blank for no limit.",
+        );
+    }
+    if c.limits.max_urls_per_depth == Some(0) {
+        i.error(
+            "limits.max_urls_per_depth",
+            "limit_zero",
+            "Max URLs per depth must be at least 1. Leave it blank for no limit.",
+        );
+    }
     if c.mode == Mode::List && c.limits.max_depth.is_some() {
         i.warn(
             "limits.max_depth",
@@ -205,6 +233,23 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "query_names_missing",
             "List at least one parameter name to remove, or choose another option.",
         );
+    }
+
+    // URL rewriting (spec 002 follow-up)
+    for (index, r) in c.scope.rewrite.iter().enumerate() {
+        let path = format!("scope.rewrite.{index}.pattern");
+        if r.pattern.is_empty() {
+            i.error(path, "required", "Enter the pattern to replace.");
+        } else if let Err(e) = regex::Regex::new(&r.pattern) {
+            i.error(
+                path,
+                "invalid_pattern",
+                format!(
+                    "This is not a valid regular expression: {}",
+                    e.to_string().lines().last().unwrap_or("").trim()
+                ),
+            );
+        }
     }
 
     // Sitemaps (spec 011)
@@ -522,6 +567,45 @@ pub fn validate_config(c: &CrawlConfig) -> Vec<Issue> {
             "robots.honour_crawl_delay",
             "crawl_delay_ignored",
             "The site's requested crawl-delay will be ignored.",
+        );
+    }
+    // Custom robots.txt (spec 002 follow-up)
+    let mut seen_hosts: Vec<String> = Vec::new();
+    for (index, custom) in c.robots.custom.iter().enumerate() {
+        let host = custom.host.trim();
+        if !is_bare_host(host) {
+            i.error(
+                format!("robots.custom.{index}.host"),
+                "invalid_host",
+                "Enter a host such as example.com",
+            );
+        } else if seen_hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
+            i.error(
+                format!("robots.custom.{index}.host"),
+                "duplicate",
+                format!("There is already a custom robots.txt for {host}."),
+            );
+        } else {
+            seen_hosts.push(host.to_string());
+        }
+        if custom.text.len() > MAX_CUSTOM_ROBOTS_BYTES {
+            i.error(
+                format!("robots.custom.{index}.text"),
+                "too_long",
+                "A robots.txt file can be at most 500 KiB.",
+            );
+        }
+        i.warn(
+            format!("robots.custom.{index}"),
+            "custom_robots",
+            format!("The site's own robots.txt is not read for {host}"),
+        );
+    }
+    if c.robots.mode == RobotsMode::Ignore && !c.robots.custom.is_empty() {
+        i.warn(
+            "robots.custom",
+            "unused",
+            "robots.txt is ignored, so custom files have no effect",
         );
     }
 
@@ -1314,6 +1398,90 @@ mod tests {
         assert!(got.contains(&"speed.max_per_host".to_string()));
         assert!(got.contains(&"retry.attempts".to_string()));
         assert!(got.contains(&"network.read_timeout_secs".to_string()));
+    }
+
+    #[test]
+    fn extra_limits_zero_is_an_error_except_folder_and_query() {
+        let mut c = CrawlConfig::default();
+        c.limits.max_urls_per_subdomain = Some(0);
+        c.limits.max_urls_per_depth = Some(0);
+        c.limits.max_folder_depth = Some(0);
+        c.limits.max_query_params = Some(0);
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "limits.max_urls_per_subdomain".to_string(),
+                    "limit_zero".to_string()
+                ),
+                ("limits.max_urls_per_depth".to_string(), "limit_zero".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_rules_need_a_valid_pattern() {
+        let mut c = CrawlConfig::default();
+        c.scope.rewrite = vec![
+            crate::RewriteRule {
+                pattern: "/a/(.*)".into(),
+                replace: "/b/$1".into(),
+            },
+            crate::RewriteRule::default(),
+            crate::RewriteRule {
+                pattern: "(".into(),
+                replace: String::new(),
+            },
+        ];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("scope.rewrite.1.pattern".to_string(), "required".to_string()),
+                (
+                    "scope.rewrite.2.pattern".to_string(),
+                    "invalid_pattern".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn custom_robots_are_checked_and_warn() {
+        let custom = |host: &str, text: &str| crate::CustomRobots {
+            host: host.into(),
+            text: text.into(),
+        };
+        let mut c = CrawlConfig::default();
+        c.robots.custom = vec![
+            custom("example.com", "User-agent: *\nDisallow: /x/\n"),
+            custom("https://example.com/", ""),
+            custom("EXAMPLE.com", ""),
+            custom("big.test", &"a".repeat(500 * 1024 + 1)),
+        ];
+        let got: Vec<_> = validate_config(&c)
+            .into_iter()
+            .map(|i| (i.path, i.code))
+            .collect();
+        let has = |path: &str, code: &str| got.iter().any(|(p, c)| p == path && c == code);
+        assert!(has("robots.custom.0", "custom_robots"));
+        assert!(has("robots.custom.1.host", "invalid_host"));
+        assert!(has("robots.custom.2.host", "duplicate"));
+        assert!(has("robots.custom.3.text", "too_long"));
+        assert!(!has("robots.custom", "unused"));
+        c.robots.mode = RobotsMode::Ignore;
+        assert!(
+            validate_config(&c)
+                .iter()
+                .any(|i| i.path == "robots.custom" && i.code == "unused")
+        );
     }
 
     #[test]

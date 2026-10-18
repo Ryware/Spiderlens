@@ -200,7 +200,7 @@ pub struct UrlSitemapEntry {
 
 /// Internal URLs left behind by a stop, a pause or a limit, not by a rule.
 const NOT_REACHED: &str = "internal = 1 AND (state = 'queued' OR (state = 'not_crawled' \
-     AND reason IN ('over_url_limit', 'over_depth_limit', 'crawl_stopped')))";
+     AND reason IN ('over_url_limit', 'over_depth_limit', 'over_subdomain_limit', 'over_depth_url_limit', 'crawl_stopped')))";
 
 impl Reader {
     pub fn orphan_summary(&self) -> Result<OrphanSummary> {
