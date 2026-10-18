@@ -8,6 +8,7 @@ pub mod auth;
 pub mod jar;
 pub mod login;
 pub(crate) mod ntlm;
+mod pac;
 pub mod proxy;
 
 use std::collections::HashMap;
@@ -247,5 +248,9 @@ pub async fn test_proxy(
     let client = proxy::apply(client_builder(opts, &[]), Some(&r))
         .and_then(|b| finish(b).map_err(|e| ProxyProblem::Invalid(e.message)))?;
     proxy::check(&client, probe).await?;
-    Ok(r.in_effect(access.proxy.mode))
+    let mut shown = r.in_effect(access.proxy.mode);
+    if let (Some(note), Some(script)) = (r.pac_note(probe), shown.host.clone()) {
+        shown.host = Some(format!("{script} ({note})"));
+    }
+    Ok(shown)
 }

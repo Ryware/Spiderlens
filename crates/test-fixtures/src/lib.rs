@@ -5,10 +5,13 @@
 //! runtime, so both async engine tests and sync CLI tests can use it.
 
 pub mod a11y_site;
+pub mod auth_site;
 pub mod js_site;
+pub mod login_site;
 pub mod near_dup;
 pub mod pdf;
 pub mod providers;
+pub mod proxy;
 pub mod report;
 mod site;
 

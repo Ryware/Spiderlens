@@ -44,6 +44,10 @@
   --color-info-soft: var(--info-soft);
   --color-warn-soft: var(--warn-soft);
   --color-bad-soft: var(--bad-soft);
+  --color-impact-critical: var(--impact-critical);
+  --color-impact-serious: var(--impact-serious);
+  --color-impact-moderate: var(--impact-moderate);
+  --color-impact-minor: var(--impact-minor);
   --color-diff-changed: var(--diff-changed);
   --color-transparent: transparent;
   --color-current: currentColor;

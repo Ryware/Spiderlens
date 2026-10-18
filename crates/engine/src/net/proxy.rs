@@ -4,15 +4,19 @@
 //! environment says (FR-024). "Manual" uses the settings as entered.
 //! "System" is read once when the crawl starts and then used like a manual
 //! proxy: environment variables first, then the operating system's
-//! setting. Automatic configuration (PAC) scripts are reported, not
-//! evaluated, in this version.
+//! setting. When the system names an automatic configuration (PAC) script,
+//! it is downloaded and run (see [`super::pac`]); finding the proxy by
+//! network discovery (WPAD) is reported, not done.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::{ClientBuilder, NoProxy, Proxy, StatusCode};
 use serde::Serialize;
 use spiderlens_config::{ProxyKind, ProxyMode, ProxySettings};
 use url::Url;
+
+use super::pac::Pac;
 
 /// The proxy a crawl used, stored in crawl meta as `proxy_in_effect`
 /// (never the password).
@@ -24,7 +28,9 @@ pub struct ProxyInEffect {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub user: Option<String>,
-    /// `manual`, `env`, `os`, or `none` when the system has no proxy.
+    /// `manual`, `env`, `os`, `pac` (the system's configuration script;
+    /// `host` is then the script's address), or `none` when the system has
+    /// no proxy.
     pub source: String,
     pub bypass: Vec<String>,
 }
@@ -44,6 +50,11 @@ impl ProxyInEffect {
 
     /// One line for the crawl information sheet and `spiderlens info`.
     pub fn describe(&self) -> String {
+        if self.source == "pac"
+            && let Some(script) = &self.host
+        {
+            return format!("automatic configuration script {script}");
+        }
         match (&self.host, self.port) {
             (Some(h), Some(p)) => {
                 let user = self.user.as_deref().map(|u| format!("{u}@")).unwrap_or_default();
@@ -71,8 +82,8 @@ pub enum ProxyProblem {
     /// The proxy answered 407: it refused the user name or password.
     Rejected,
     PacUnreadable(String),
-    /// The system uses an automatic configuration script, which this
-    /// version does not evaluate.
+    /// The system finds its proxy by network discovery (WPAD), without a
+    /// script address.
     PacUnsupported,
     /// The settings themselves are wrong (validation catches this first).
     Invalid(String),
@@ -84,7 +95,7 @@ impl ProxyProblem {
             Self::Unreachable(d) => format!("The proxy could not be reached: {d}"),
             Self::Rejected => "The proxy rejected the user name or password.".into(),
             Self::PacUnreadable(d) => format!("The automatic proxy configuration script could not be read: {d}"),
-            Self::PacUnsupported => "The system uses an automatic proxy configuration script, which SpiderLens cannot read yet. Enter the proxy manually.".into(),
+            Self::PacUnsupported => "The system finds its proxy automatically (WPAD), which SpiderLens cannot do. Enter the proxy manually.".into(),
             Self::Invalid(d) => format!("The proxy settings are not valid: {d}"),
         }
     }
@@ -100,9 +111,44 @@ pub(crate) struct Resolved {
     pub password: Option<String>,
     pub bypass: Vec<String>,
     pub source: &'static str,
+    /// The system's configuration script; then `host` is its address and
+    /// `port` is 0, and the script picks the proxy for each request.
+    pub pac: Option<Arc<Pac>>,
+}
+
+/// What the operating system's settings ask for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SystemProxy {
+    Fixed(Resolved),
+    /// The address of a proxy auto-configuration script.
+    Pac(String),
 }
 
 impl Resolved {
+    /// A proxy that a configuration script chooses per request.
+    pub(crate) fn with_pac(location: &str, pac: Pac) -> Self {
+        Self {
+            kind: ProxyKind::Http,
+            host: location.to_string(),
+            port: 0,
+            user: None,
+            password: None,
+            bypass: Vec::new(),
+            source: "pac",
+            pac: Some(Arc::new(pac)),
+        }
+    }
+
+    /// For the proxy test: which proxy the script picks for `probe`.
+    pub(crate) fn pac_note(&self, probe: &Url) -> Option<String> {
+        let pac = self.pac.as_ref()?;
+        let host = probe.host_str().unwrap_or_default();
+        Some(match pac.lookup(probe) {
+            Some(proxy) => format!("{host} goes through {proxy}"),
+            None => format!("{host} goes direct"),
+        })
+    }
+
     fn url(&self) -> String {
         let host = if self.host.contains(':') && !self.host.starts_with('[') {
             format!("[{}]", self.host)
@@ -113,6 +159,17 @@ impl Resolved {
     }
 
     pub fn in_effect(&self, mode: ProxyMode) -> ProxyInEffect {
+        if self.pac.is_some() {
+            return ProxyInEffect {
+                mode: mode_name(mode),
+                kind: None,
+                host: Some(self.host.clone()),
+                port: None,
+                user: None,
+                source: self.source.into(),
+                bypass: self.bypass.clone(),
+            };
+        }
         ProxyInEffect {
             mode: mode_name(mode),
             kind: Some(match self.kind {
@@ -130,6 +187,17 @@ impl Resolved {
 
     /// The reqwest proxy for every request, with credentials and bypass.
     pub fn proxy(&self) -> Result<Proxy, ProxyProblem> {
+        let bypass: Vec<&str> = self
+            .bypass
+            .iter()
+            .map(|b| b.trim())
+            .filter(|b| !b.is_empty())
+            .collect();
+        if let Some(pac) = &self.pac {
+            let pac = Arc::clone(pac);
+            let proxy = Proxy::custom(move |url: &Url| -> Option<String> { pac.lookup(url) });
+            return Ok(proxy.no_proxy(NoProxy::from_string(&bypass.join(","))));
+        }
         let mut url = Url::parse(&self.url()).map_err(|e| ProxyProblem::Invalid(e.to_string()))?;
         // SOCKS5 takes its credentials in the URL; HTTP proxies as a
         // Proxy-Authorization header.
@@ -145,12 +213,6 @@ impl Resolved {
         {
             proxy = proxy.basic_auth(user, self.password.as_deref().unwrap_or_default());
         }
-        let bypass: Vec<&str> = self
-            .bypass
-            .iter()
-            .map(|b| b.trim())
-            .filter(|b| !b.is_empty())
-            .collect();
         Ok(proxy.no_proxy(NoProxy::from_string(&bypass.join(","))))
     }
 }
@@ -175,11 +237,19 @@ pub(crate) fn resolve(settings: &ProxySettings) -> Result<Option<Resolved>, Prox
             password: settings.password.expose().map(str::to_string),
             bypass: settings.bypass.clone(),
             source: "manual",
+            pac: None,
         })),
         ProxyMode::System => {
             let mut found = from_env(&|k: &str| std::env::var(k).ok());
             if found.is_none() {
-                found = os::system_proxy()?;
+                found = match os::system_proxy()? {
+                    None => None,
+                    Some(SystemProxy::Fixed(r)) => Some(r),
+                    Some(SystemProxy::Pac(location)) => {
+                        let pac = Pac::load(&location)?;
+                        Some(Resolved::with_pac(&location, pac))
+                    }
+                };
             }
             Ok(found.map(|mut r| {
                 r.bypass.extend(settings.bypass.iter().cloned());
@@ -237,6 +307,7 @@ pub(crate) fn parse_proxy_url(value: &str, source: &'static str) -> Option<Resol
         password: url.password().map(percent_decode),
         bypass: Vec::new(),
         source,
+        pac: None,
     })
 }
 
@@ -306,17 +377,17 @@ pub(crate) async fn check(client: &reqwest::Client, probe: &Url) -> Result<(), P
 /// The operating system's proxy setting (research R6). Each platform reads
 /// it with a tool every installation has, so no new crate is needed.
 mod os {
-    use super::{ProxyProblem, Resolved};
+    use super::{ProxyProblem, SystemProxy};
 
     #[cfg(target_os = "macos")]
-    pub(super) fn system_proxy() -> Result<Option<Resolved>, ProxyProblem> {
+    pub(super) fn system_proxy() -> Result<Option<SystemProxy>, ProxyProblem> {
         let out = std::process::Command::new("scutil").arg("--proxy").output();
         let Ok(out) = out else { return Ok(None) };
         super::parse_scutil(&String::from_utf8_lossy(&out.stdout))
     }
 
     #[cfg(target_os = "windows")]
-    pub(super) fn system_proxy() -> Result<Option<Resolved>, ProxyProblem> {
+    pub(super) fn system_proxy() -> Result<Option<SystemProxy>, ProxyProblem> {
         let out = std::process::Command::new("reg")
             .args([
                 "query",
@@ -328,7 +399,7 @@ mod os {
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    pub(super) fn system_proxy() -> Result<Option<Resolved>, ProxyProblem> {
+    pub(super) fn system_proxy() -> Result<Option<SystemProxy>, ProxyProblem> {
         let get = |key: &str, schema: &str| {
             std::process::Command::new("gsettings")
                 .args(["get", schema, key])
@@ -343,7 +414,12 @@ mod os {
         };
         match get("mode", "org.gnome.system.proxy").as_deref() {
             Some("manual") => {}
-            Some("auto") => return Err(ProxyProblem::PacUnsupported),
+            Some("auto") => {
+                return match get("autoconfig-url", "org.gnome.system.proxy") {
+                    Some(url) if !url.is_empty() => Ok(Some(SystemProxy::Pac(url))),
+                    _ => Err(ProxyProblem::PacUnsupported),
+                };
+            }
             _ => return Ok(None),
         }
         for (schema, kind) in [
@@ -362,7 +438,7 @@ mod os {
                         .map(|v| super::parse_gsettings_list(&v))
                         .unwrap_or_default();
                 }
-                return Ok(r);
+                return Ok(r.map(SystemProxy::Fixed));
             }
         }
         Ok(None)
@@ -371,7 +447,7 @@ mod os {
 
 /// `scutil --proxy` output on macOS.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn parse_scutil(text: &str) -> Result<Option<Resolved>, ProxyProblem> {
+pub(crate) fn parse_scutil(text: &str) -> Result<Option<SystemProxy>, ProxyProblem> {
     let mut values = std::collections::HashMap::new();
     let mut exceptions = Vec::new();
     let mut in_exceptions = false;
@@ -395,7 +471,10 @@ pub(crate) fn parse_scutil(text: &str) -> Result<Option<Resolved>, ProxyProblem>
     }
     let on = |k: &str| values.get(k).is_some_and(|v| v == "1");
     if on("ProxyAutoConfigEnable") {
-        return Err(ProxyProblem::PacUnsupported);
+        return match values.get("ProxyAutoConfigURLString") {
+            Some(url) if !url.is_empty() => Ok(Some(SystemProxy::Pac(url.clone()))),
+            _ => Err(ProxyProblem::PacUnsupported),
+        };
     }
     for (enable, host, port, kind) in [
         ("HTTPSEnable", "HTTPSProxy", "HTTPSPort", "http"),
@@ -409,7 +488,7 @@ pub(crate) fn parse_scutil(text: &str) -> Result<Option<Resolved>, ProxyProblem>
             if let Some(r) = &mut r {
                 r.bypass.clone_from(&exceptions);
             }
-            return Ok(r);
+            return Ok(r.map(SystemProxy::Fixed));
         }
     }
     Ok(None)
@@ -417,7 +496,7 @@ pub(crate) fn parse_scutil(text: &str) -> Result<Option<Resolved>, ProxyProblem>
 
 /// `reg query` of the Internet Settings key on Windows.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(crate) fn parse_windows_registry(text: &str) -> Result<Option<Resolved>, ProxyProblem> {
+pub(crate) fn parse_windows_registry(text: &str) -> Result<Option<SystemProxy>, ProxyProblem> {
     let value = |name: &str| {
         text.lines().find_map(|l| {
             let mut parts = l.split_whitespace();
@@ -427,8 +506,10 @@ pub(crate) fn parse_windows_registry(text: &str) -> Result<Option<Resolved>, Pro
             })
         })
     };
-    if value("AutoConfigURL").is_some_and(|v| !v.is_empty()) {
-        return Err(ProxyProblem::PacUnsupported);
+    if let Some(url) = value("AutoConfigURL")
+        && !url.is_empty()
+    {
+        return Ok(Some(SystemProxy::Pac(url)));
     }
     if value("ProxyEnable").as_deref() != Some("0x1") {
         return Ok(None);
@@ -461,7 +542,7 @@ pub(crate) fn parse_windows_registry(text: &str) -> Result<Option<Resolved>, Pro
             .map(str::to_string)
             .collect();
     }
-    Ok(r)
+    Ok(r.map(SystemProxy::Fixed))
 }
 
 /// `['localhost', '127.0.0.0/8']` from gsettings.
@@ -479,6 +560,13 @@ pub(crate) fn parse_gsettings_list(v: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixed(found: Option<SystemProxy>) -> Resolved {
+        match found {
+            Some(SystemProxy::Fixed(r)) => r,
+            other => panic!("expected a fixed proxy, got {other:?}"),
+        }
+    }
 
     #[test]
     fn proxy_urls_from_settings_and_environment() {
@@ -529,7 +617,7 @@ mod tests {
     #[test]
     fn system_settings_of_each_platform() {
         let mac = "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  HTTPEnable : 1\n  HTTPPort : 8080\n  HTTPProxy : proxy.corp\n  HTTPSEnable : 0\n}";
-        let r = parse_scutil(mac).unwrap().unwrap();
+        let r = fixed(parse_scutil(mac).unwrap());
         assert_eq!((r.host.as_str(), r.port), ("proxy.corp", 8080));
         assert_eq!(r.bypass, ["*.local", "169.254/16"]);
         assert_eq!(
@@ -538,7 +626,7 @@ mod tests {
         );
 
         let win = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=p1:80;https=p2:443\n    ProxyOverride    REG_SZ    *.corp;<local>\n";
-        let r = parse_windows_registry(win).unwrap().unwrap();
+        let r = fixed(parse_windows_registry(win).unwrap());
         assert_eq!((r.host.as_str(), r.port), ("p2", 443));
         assert_eq!(r.bypass, ["*.corp"]);
         assert_eq!(
@@ -547,8 +635,40 @@ mod tests {
         );
 
         assert_eq!(
+            parse_scutil("ProxyAutoConfigEnable : 1\nProxyAutoConfigURLString : http://wpad.corp/proxy.pac\n"),
+            Ok(Some(SystemProxy::Pac("http://wpad.corp/proxy.pac".into())))
+        );
+        assert_eq!(
+            parse_scutil("ProxyAutoConfigEnable : 0\nProxyAutoConfigURLString : http://x/p.pac\n"),
+            Ok(None)
+        );
+        assert_eq!(
+            parse_windows_registry("    AutoConfigURL    REG_SZ    http://wpad.corp/proxy.pac\n"),
+            Ok(Some(SystemProxy::Pac("http://wpad.corp/proxy.pac".into())))
+        );
+
+        assert_eq!(
             parse_gsettings_list("['localhost', '127.0.0.0/8']"),
             ["localhost", "127.0.0.0/8"]
         );
+    }
+
+    #[test]
+    fn a_configuration_script_is_shown_and_used() {
+        let pac = Pac::from_script("function FindProxyForURL(u, h) { return 'PROXY gw:3128'; }").unwrap();
+        let r = Resolved::with_pac("http://wpad.corp/proxy.pac", pac);
+        let shown = r.in_effect(ProxyMode::System);
+        assert_eq!(shown.source, "pac");
+        assert_eq!(
+            shown.describe(),
+            "automatic configuration script http://wpad.corp/proxy.pac"
+        );
+        assert!(r.proxy().is_ok());
+        let probe = Url::parse("http://example.com/robots.txt").unwrap();
+        assert_eq!(
+            r.pac_note(&probe).as_deref(),
+            Some("example.com goes through http://gw:3128")
+        );
+        assert!(ProxyProblem::PacUnsupported.message().contains("WPAD"));
     }
 }

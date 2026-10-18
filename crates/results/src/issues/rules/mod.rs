@@ -1,6 +1,7 @@
 //! The first rule set (spec 009, "First rule set" table), one file per
 //! category.
 
+pub mod accessibility;
 pub mod agents;
 pub mod amp;
 pub mod canonicals;
@@ -11,6 +12,7 @@ pub mod hreflang;
 pub mod images;
 pub mod links;
 pub mod meta;
+pub mod mobile;
 pub mod other;
 pub mod pdf;
 pub mod response;

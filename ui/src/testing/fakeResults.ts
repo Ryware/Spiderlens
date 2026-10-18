@@ -707,6 +707,8 @@ export function fakeResultsTransport(initial: FakeUrl[]): Pick<
         link_metrics: null,
         spelling: null,
         amp: null,
+        accessibility: null,
+        mobile: null,
         attempts: results.features.includes("attempts") ? (u.attempts ?? 1) : null,
         error_reason: null,
         manual_retry: u.manual_retry ?? false,

@@ -31,6 +31,11 @@ pub struct Features {
     #[serde(skip)]
     #[ts(skip)]
     pub link_settings: spiderlens_config::LinkAnalysisSettings,
+    /// Accessibility settings the crawl was made with (spec 026): the WCAG
+    /// target and the mobile thresholds the rules read.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub a11y: spiderlens_config::AccessibilitySettings,
 }
 
 impl Features {
@@ -73,6 +78,9 @@ impl Features {
             Need::Readability,
             Need::SitemapEntries,
             Need::NearDup,
+            Need::AccessibilityStatic,
+            Need::AccessibilityFull,
+            Need::MobileLayout,
         ] {
             if listed.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
@@ -114,6 +122,10 @@ impl Features {
             .as_ref()
             .map(|s| s.config.links.clone())
             .unwrap_or_default();
+        let a11y = stored
+            .as_ref()
+            .map(|s| s.config.accessibility.clone())
+            .unwrap_or_default();
         let robots_token = stored
             .and_then(|s| s.config.identity.user_agent.token())
             .unwrap_or_else(|| "SpiderLens".into())
@@ -123,6 +135,7 @@ impl Features {
             redirect_limit,
             robots_token,
             link_settings,
+            a11y,
         })
     }
 }
