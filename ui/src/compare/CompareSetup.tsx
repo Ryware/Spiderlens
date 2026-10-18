@@ -179,6 +179,8 @@ export function CompareSetup({
           </div>
         )}
 
+        {setup?.disk_warning && <Notice kind="warn">{setup.disk_warning}</Notice>}
+
         {setup && setup.config_diffs.length > 0 && (
           <section aria-label="Configuration differences" className="flex flex-col gap-1">
             <Notice kind="warn">The crawls were made with different settings, so some differences come from the settings and not the site.</Notice>

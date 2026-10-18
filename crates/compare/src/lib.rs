@@ -98,6 +98,8 @@ pub struct Setup {
     pub config_diffs: Vec<ConfigDiff>,
     /// A host rule when the two crawls start on different origins.
     pub suggested_mapping: Option<MapRule>,
+    /// Set when the temporary folder may be too small for the workspace.
+    pub disk_warning: Option<String>,
 }
 
 /// One URL through the mapping tester (FR-008).
@@ -159,12 +161,40 @@ pub fn setup(previous: &Path, current: &Path) -> Result<Setup> {
         }),
         _ => None,
     };
+    let temp = std::env::temp_dir();
+    let disk_warning = disk_warning(
+        previous.urls,
+        current.urls,
+        spiderlens_engine::crawl::file::free_space(&temp),
+        &temp,
+    );
     Ok(Setup {
+        disk_warning,
         config_diffs: info::config_diffs(&previous, &current),
         previous,
         current,
         suggested_mapping,
     })
+}
+
+/// The workspace holds about this many bytes per URL per side (plan: Disk).
+const WORKSPACE_BYTES_PER_URL: u64 = 200;
+
+/// A warning when `free` bytes in `temp` are under twice the workspace
+/// estimate for the two crawls; unknown free space warns of nothing.
+fn disk_warning(previous_urls: u64, current_urls: u64, free: Option<u64>, temp: &Path) -> Option<String> {
+    let need = WORKSPACE_BYTES_PER_URL.saturating_mul(previous_urls.saturating_add(current_urls));
+    let free = free?;
+    if free >= need.saturating_mul(2) {
+        return None;
+    }
+    let format = spiderlens_engine::crawl::file::format_bytes;
+    Some(format!(
+        "The comparison needs about {} of temporary space and only {} is free in {}.",
+        format(need),
+        format(free),
+        temp.display()
+    ))
 }
 
 /// Runs `rules` on sample URLs, or on the first `from_previous` URLs of the
@@ -422,4 +452,22 @@ pub fn crawl_files(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
         .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_warning_only_below_twice_the_estimate() {
+        let temp = Path::new("/tmp");
+        // 2 000 000 URLs a side: 800 MB estimated.
+        let low = disk_warning(2_000_000, 2_000_000, Some(1_000_000_000), temp).unwrap();
+        assert!(
+            low.contains("needs about") && low.contains("is free in /tmp"),
+            "{low}"
+        );
+        assert!(disk_warning(2_000_000, 2_000_000, Some(1_600_000_000), temp).is_none());
+        assert!(disk_warning(2_000_000, 2_000_000, None, temp).is_none());
+    }
 }
