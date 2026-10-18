@@ -119,6 +119,7 @@ export function defaultConfig(): CrawlConfig {
     ai_checks: { auto: true, site_files: true },
     segments: [],
     spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
+    accessibility: { level: "static", wcag: { version: "2.2", level: "aa" }, best_practice: true, mobile: true, budget_secs: 5, small_text_px: 12, small_text_share: 40, tap_target_px: 24, overflow_px: 5 },
     rendering: {
       mode: "raw",
       max_render_secs: 10,
@@ -516,6 +517,20 @@ export function fakeTransport(
     parseListFile: async () => {
       throw new Error("not in tests");
     },
+    listLoadSitemap: async (location, baseUrl) => {
+      if (location.includes("fail")) throw new Error(`${location}: the server answered 404`);
+      const base = baseUrl?.trim() || (/^https?:/i.test(location) ? location : "https://example.com/");
+      const first_urls = ["/", "/about", "/contact"].map((p) => new URL(p, base).toString());
+      listCount = first_urls.length;
+      return {
+        urls: first_urls.length,
+        duplicates: 0,
+        invalid_count: 0,
+        invalid_sample: [],
+        notices: ["Read 1 sitemap file."],
+        first_urls,
+      };
+    },
     onListProgress: async () => () => {},
     pickListFile: async () => null,
     pickSitemapFile: async () => picks.sitemapFile,
@@ -789,7 +804,7 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     prefs: defaultStoragePrefs(),
     history: [],
     leftoverBytes: 0,
-    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
+    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], schedule_removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
     crawlsChanged: () => crawlsChanged.forEach((cb) => cb()),
   };
 

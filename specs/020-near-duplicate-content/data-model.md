@@ -34,7 +34,7 @@ Replaced in one transaction per run. In read-only files the same tables exist in
 | `closest_id` | INTEGER | Most similar other page, when its similarity ≥ the floor |
 | `closest_sim` | INTEGER | 0 to 100 |
 | `near_count` | INTEGER | Other pages at or above the threshold |
-| `near_count_is_min` | INTEGER | 1 when counted from a sample (group over 50,000) |
+| `near_count_is_min` | INTEGER | 1 when counted from a sample (group over 4,000) |
 | `cluster` | INTEGER | Cluster number, NULL when not in a cluster |
 
 Index: `near_dup_pages_cluster ON near_dup_pages(cluster) WHERE cluster IS NOT NULL`.

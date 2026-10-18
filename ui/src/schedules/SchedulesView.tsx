@@ -6,7 +6,7 @@ import type { ScheduleDetail } from "../generated/ScheduleDetail";
 import type { ScheduleRow } from "../generated/ScheduleRow";
 import type { ScheduleSaved, Transport } from "../transport";
 import { Badge, Button, cn, EmptyState, Input, Menu, Modal, Notice, Switch } from "../components/ui";
-import { fileName, formatDuration, formatRunTime, registrationNote, runStatusInfo, triggerLabel } from "./format";
+import { fileName, formatDuration, formatRunTime, keepLastText, registrationNote, runStatusInfo, triggerLabel } from "./format";
 import type { Schedules } from "./useSchedules";
 
 /** Runs shown in the history; the CLI shows more with --limit. */
@@ -238,6 +238,7 @@ function DetailPane({
           <p className="m-0 px-1 text-sm text-fg-3">{s.enabled ? "None" : "Off: turn it on to run at its times."}</p>
         )}
         <p className="m-0 px-1 text-xs text-fg-3">Saved in {s.output_dir}</p>
+        <p className="m-0 px-1 text-xs text-fg-3">{keepLastText(s.keep_last)}</p>
       </section>
 
       <section aria-labelledby="history" className="flex flex-col gap-1">

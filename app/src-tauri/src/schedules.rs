@@ -15,7 +15,8 @@ use spiderlens_schedule::os::{self, Scheduler};
 use spiderlens_schedule::runner::{self, Context, Launcher, TickAction};
 use spiderlens_schedule::view::{self, Preview, ScheduleDetail, ScheduleRow};
 use spiderlens_schedule::{
-    BaselineError, Frequency, Paths, Run, Schedule, Store, Trigger, baseline_for, notify, store::profile_hash,
+    BaselineError, Frequency, Paths, Run, Schedule, Store, Trigger, baseline_for, history, notify,
+    store::profile_hash,
 };
 
 use crate::settings;
@@ -100,6 +101,26 @@ pub fn headless(args: &[String]) -> Option<i32> {
         Ok(outcome) => i32::from(runner::exit_code(&outcome)),
         Err(_) => 2,
     })
+}
+
+/// Every schedule that keeps only its last N runs, with its recorded runs,
+/// for cleanup (`manage::run_cleanup`). Nothing when the schedules file
+/// cannot be read: cleanup then leaves every file alone.
+pub fn retention_sets() -> Vec<(Schedule, Vec<Run>)> {
+    let Some(dir) = spiderlens_schedule::default_config_dir() else {
+        return Vec::new();
+    };
+    let paths = Paths::new(dir);
+    let Ok(all) = Store::new(paths.clone()).list() else {
+        return Vec::new();
+    };
+    all.into_iter()
+        .filter(|s| s.keep_last.is_some())
+        .map(|s| {
+            let runs = history::read(&paths.history(&s.id)).unwrap_or_default();
+            (s, runs)
+        })
+        .collect()
 }
 
 fn now_tz() -> (Timestamp, jiff::tz::TimeZone) {

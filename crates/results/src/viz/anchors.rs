@@ -114,7 +114,15 @@ fn target(state: &ViewState) -> Option<i64> {
 }
 
 /// Calls `f` for every link the cloud covers, in the order they were stored.
-fn each_link(conn: &Connection, state: &ViewState, mut f: impl FnMut(Row)) -> Result<()> {
+///
+/// `positions` are checked names (checked by the reader): when not
+/// empty, only links at one of those positions count (FR-016).
+fn each_link(
+    conn: &Connection,
+    state: &ViewState,
+    positions: &[String],
+    mut f: impl FnMut(Row),
+) -> Result<()> {
     let to = target(state);
     let mut sql = String::from(
         "SELECT l.from_id, l.to_id, l.text, l.alt, l.rel, (l.nofollow OR l.page_nofollow OR l.sponsored OR l.ugc) \
@@ -141,6 +149,20 @@ fn each_link(conn: &Connection, state: &ViewState, mut f: impl FnMut(Row)) -> Re
     };
     if state.followed_only {
         sql.push_str(" AND NOT (l.nofollow OR l.page_nofollow OR l.sponsored OR l.ugc)");
+    }
+    if !positions.is_empty() {
+        // The same join as the Links inspector's position filter; a link
+        // with no stored position is "unknown".
+        let list = positions
+            .iter()
+            .map(|p| format!("'{p}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        sql.push_str(&format!(
+            " AND COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' WHEN 2 THEN 'header' \
+             WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
+             FROM link_positions p WHERE p.from_id = l.from_id AND p.pos = l.pos), 'unknown') IN ({list})"
+        ));
     }
     // No ORDER BY: the file's own order (sources in crawl order) is
     // stable, and sorting 1M+ links would double the time.
@@ -283,11 +305,11 @@ fn spiral(boxes: &[(f32, f32)]) -> Vec<(f32, f32)> {
 }
 
 /// Builds the cloud for `state.focus` (a page) or the whole site.
-pub fn scene(conn: &Connection, state: &ViewState) -> Result<Scene> {
+pub fn scene(conn: &Connection, state: &ViewState, positions: &[String]) -> Result<Scene> {
     let (terming, lang) = terming(conn, state)?;
     let mut counts: HashMap<String, u32> = HashMap::new();
     let (mut links, mut with_text) = (0u32, 0u32);
-    each_link(conn, state, |row| {
+    each_link(conn, state, positions, |row| {
         links += 1;
         if let Some(text) = &row.text {
             with_text += 1;
@@ -427,11 +449,17 @@ pub struct TermLinks {
 
 /// The links whose anchor text has `term`, under the same rules as the
 /// cloud, so `total` is the number the cloud shows.
-pub fn term_links(conn: &Connection, state: &ViewState, term: &str, limit: usize) -> Result<TermLinks> {
+pub fn term_links(
+    conn: &Connection,
+    state: &ViewState,
+    positions: &[String],
+    term: &str,
+    limit: usize,
+) -> Result<TermLinks> {
     let (terming, _) = terming(conn, state)?;
     let mut hits: Vec<Row> = Vec::new();
     let mut total = 0u32;
-    each_link(conn, state, |row| {
+    each_link(conn, state, positions, |row| {
         if let Some(text) = &row.text
             && terming.terms(text).iter().any(|t| t == term)
         {

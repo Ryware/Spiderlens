@@ -1052,3 +1052,16 @@ test("details_show_a_pages_forms_for_ai_agents", async ({ page }) => {
   const fb = (await form.boundingBox())!;
   expect(fb.x + fb.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
 });
+
+test("list_mode_reads_a_sitemap_into_the_list", async ({ page }) => {
+  // Spec 011 FR-005: a sitemap address is a source for the List mode list.
+  await page.getByLabel("List", { exact: true }).click();
+  await page.getByRole("button", { name: "Add a list of URLs…" }).click();
+  const group = page.getByRole("group", { name: "From a sitemap" });
+  const read = group.getByRole("button", { name: "Read sitemap" });
+  await expect(read).toBeDisabled();
+  await group.getByLabel("Sitemap address").fill("https://example.com/sitemap.xml");
+  await read.click();
+  await expect(page.getByTestId("list-summary")).toContainText("3 URLs to crawl");
+  await expect(page.getByTestId("list-summary")).toContainText("Read 1 sitemap file.");
+});

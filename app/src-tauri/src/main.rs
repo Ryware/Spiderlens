@@ -103,6 +103,7 @@ fn main() {
             settings::scope_test,
             settings::list_parse_text,
             settings::list_parse_file,
+            settings::list_load_sitemap,
             settings::profiles_list,
             settings::profile_load,
             settings::profile_save,

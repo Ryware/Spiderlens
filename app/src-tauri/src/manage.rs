@@ -16,6 +16,7 @@ use spiderlens_engine::crawl::file::{self, WriterLock};
 use spiderlens_engine::crawl::manage::{
     self, CleanupRule, CrawlRow, HtmlSize, Kind, PurgeCheck, PurgeReport, ScanContext,
 };
+use spiderlens_schedule::retention;
 use tauri::{AppHandle, Emitter, Manager};
 
 type Cmd<T> = Result<T, String>;
@@ -404,6 +405,8 @@ pub fn cleanup_history(app: AppHandle) -> Vec<CleanupRecord> {
 #[derive(Serialize, Clone, Default)]
 pub struct CleanupReport {
     removed: Vec<PathBuf>,
+    /// Older runs of schedules that keep only their last N runs.
+    schedule_removed: Vec<PathBuf>,
     leftovers: usize,
     freed_bytes: u64,
     /// Unsaved crawls the one-time notice names: removed at a later start.
@@ -476,6 +479,29 @@ pub fn run_cleanup(app: &AppHandle) -> CleanupReport {
                 });
             }
         }
+        // Scheduled runs beyond a schedule's keep-last limit. Never the crawl
+        // open here or one another process is writing; with no trash, they stay.
+        let open = open_paths(app);
+        for (schedule, runs) in crate::schedules::retention_sets() {
+            let exists = |p: &Path| p.is_file();
+            let doomed = retention::plan(&runs, schedule.keep_last, &schedule.output_dir, &exists);
+            for path in doomed {
+                if open.contains(&path) || WriterLock::held_by_other(&path).is_some() {
+                    continue;
+                }
+                if let Ok(bytes) = remove_crawl(&path, &Removal::Trash(&os_trash)) {
+                    files.forget(&path);
+                    report.freed_bytes += bytes;
+                    records.push(CleanupRecord {
+                        at: Timestamp::now().to_string(),
+                        path: path.clone(),
+                        bytes,
+                        reason: CleanupReason::ScheduleRetention,
+                    });
+                    report.schedule_removed.push(path);
+                }
+            }
+        }
         for path in &plan.leftovers {
             let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
             if std::fs::remove_file(path).is_ok() {
@@ -504,7 +530,11 @@ pub fn run_cleanup(app: &AppHandle) -> CleanupReport {
         report
     })();
     CLEANING.store(false, Ordering::SeqCst);
-    if !report.removed.is_empty() || report.leftovers > 0 || !report.announced.is_empty() {
+    if !report.removed.is_empty()
+        || !report.schedule_removed.is_empty()
+        || report.leftovers > 0
+        || !report.announced.is_empty()
+    {
         let _ = app.emit("cleanup-done", report.clone());
         let _ = app.emit("crawls-changed", ());
     }

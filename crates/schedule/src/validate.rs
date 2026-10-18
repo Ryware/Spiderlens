@@ -5,6 +5,7 @@
 
 use spiderlens_config::{Issue, Mode, ModeInput, Severity, validate};
 
+use crate::MAX_KEEP_LAST;
 use crate::model::{Schedule, ScheduleInput};
 
 fn issue(path: &str, severity: Severity, code: &str, message: impl Into<String>) -> Issue {
@@ -67,6 +68,16 @@ pub fn validate_schedule(s: &Schedule) -> Vec<Issue> {
                 "The folder {} does not exist now; runs fail until it does.",
                 s.output_dir.display()
             ),
+        ));
+    }
+    if let Some(n) = s.keep_last
+        && !(1..=MAX_KEEP_LAST).contains(&n)
+    {
+        out.push(issue(
+            "keep_last",
+            Severity::Error,
+            "keep_last_range",
+            format!("Keep between 1 and {MAX_KEEP_LAST} runs, or keep all of them."),
         ));
     }
     for (i, h) in s.config.identity.headers.iter().enumerate() {
@@ -147,6 +158,21 @@ mod tests {
         let issues = validate_schedule(&s);
         assert!(has_errors(&issues));
         assert_eq!(codes(&s), ["output_missing", "secret_header"]);
+    }
+
+    #[test]
+    fn keep_last_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = sample("a", "A");
+        s.output_dir = dir.path().to_path_buf();
+        for ok in [None, Some(1), Some(10), Some(999)] {
+            s.keep_last = ok;
+            assert!(codes(&s).is_empty(), "{ok:?}");
+        }
+        for bad in [0, 1000] {
+            s.keep_last = Some(bad);
+            assert_eq!(codes(&s), ["keep_last_range"], "{bad}");
+        }
     }
 
     #[test]
