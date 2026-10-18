@@ -9,15 +9,18 @@ use std::sync::atomic::AtomicBool;
 use clap::Args;
 use spiderlens_compare::{Comparison, FilterChange, Group, UrlGroup};
 use spiderlens_config::{CompareSettings, MapRule};
+use spiderlens_schedule::baseline_for;
 
 use crate::exit;
 
 #[derive(Args)]
 pub struct CompareArgs {
-    /// The previous crawl file.
-    previous: PathBuf,
-    /// The current crawl file.
-    current: PathBuf,
+    /// The previous and the current crawl file; with --baseline schedule, only the current one.
+    #[arg(value_names = ["PREVIOUS", "CURRENT"], num_args = 1..=2, required = true)]
+    files: Vec<PathBuf>,
+    /// Compare with the previous finished run of the schedule the current crawl belongs to.
+    #[arg(long, value_name = "WHICH", value_parser = ["schedule"])]
+    baseline: Option<String>,
     /// Plain-text mapping rule for previous URLs, FIND=>REPLACE (repeatable, in order).
     #[arg(long = "map", value_name = "FIND=>REPLACE")]
     map: Vec<String>,
@@ -70,7 +73,46 @@ fn load_settings(a: &CompareArgs) -> Result<CompareSettings, String> {
     Ok(s)
 }
 
+/// The previous and current crawl files, resolving `--baseline schedule`.
+fn resolve_files(a: &CompareArgs) -> Result<(PathBuf, PathBuf), ExitCode> {
+    match (a.baseline.is_some(), a.files.as_slice()) {
+        (false, [previous, current]) => Ok((previous.clone(), current.clone())),
+        (false, _) => {
+            eprintln!(
+                "error: give the previous and the current crawl file, or --baseline schedule with the current one"
+            );
+            Err(ExitCode::from(exit::USAGE))
+        }
+        (true, [current]) => {
+            let paths = crate::schedule_cmd::config_paths()?;
+            match baseline_for(&paths, current) {
+                Ok(b) => {
+                    eprintln!(
+                        "Comparing with run {} of schedule \u{201c}{}\u{201d}: {}",
+                        b.run,
+                        b.schedule,
+                        b.path.display()
+                    );
+                    Ok((b.path, current.clone()))
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    Err(ExitCode::from(exit::COMPARE_FAILED))
+                }
+            }
+        }
+        (true, _) => {
+            eprintln!("error: --baseline schedule takes only the current crawl file");
+            Err(ExitCode::from(exit::USAGE))
+        }
+    }
+}
+
 pub fn run_compare(a: CompareArgs) -> ExitCode {
+    let (previous, current) = match resolve_files(&a) {
+        Ok(files) => files,
+        Err(code) => return code,
+    };
     let settings = match load_settings(&a) {
         Ok(s) => s,
         Err(e) => {
@@ -79,7 +121,7 @@ pub fn run_compare(a: CompareArgs) -> ExitCode {
         }
     };
     let cancel = AtomicBool::new(false);
-    let mut c = match Comparison::run(&a.previous, &a.current, settings, &cancel, &mut |_| {}) {
+    let mut c = match Comparison::run(&previous, &current, settings, None, &cancel, &mut |_| {}) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");

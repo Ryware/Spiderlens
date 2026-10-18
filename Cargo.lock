@@ -6007,6 +6007,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "spiderlens-compare",
  "spiderlens-config",
  "spiderlens-engine",
  "spiderlens-results",

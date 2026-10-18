@@ -8,7 +8,7 @@ import type { CrawlInfo } from "../generated/CrawlInfo";
 import type { MapRule } from "../generated/MapRule";
 import type { MappingTest } from "../generated/MappingTest";
 import type { Setup } from "../generated/Setup";
-import type { Transport } from "../transport";
+import type { ScheduleBaseline, Transport } from "../transport";
 import { Badge, Button, Input, Notice, Sheet, SheetClose, Switch, Textarea, type Tone } from "../components/ui";
 import { fileName } from "./useComparison";
 
@@ -73,6 +73,9 @@ export function CompareSetup({
   const [rules, setRules] = useState<MapRule[]>([]);
   const [samples, setSamples] = useState("");
   const [tests, setTests] = useState<MappingTest[] | null>(null);
+  // The previous run of the current crawl's schedule, when it is a scheduled run (FR-002a).
+  const [baseline, setBaseline] = useState<ScheduleBaseline | null>(null);
+  const [baselineError, setBaselineError] = useState<string | null>(null);
 
   // Opening the sheet starts from the open crawl and suggests the previous
   // crawl of the same site (FR-001).
@@ -98,6 +101,20 @@ export function CompareSetup({
       off = true;
     };
   }, [transport, previous, current]);
+
+  useEffect(() => {
+    setBaseline(null);
+    setBaselineError(null);
+    if (!open || !current) return;
+    let off = false;
+    transport.compareScheduleBaseline(current).then(
+      (b) => !off && setBaseline(b),
+      (e) => !off && setBaselineError(String(e)),
+    );
+    return () => {
+      off = true;
+    };
+  }, [open, transport, current]);
 
   const browse = async (set: (p: string) => void) => {
     const p = await transport.pickCrawlFile();
@@ -139,6 +156,14 @@ export function CompareSetup({
             </Button>
           </div>
           <FileRow label="Current" path={current} onBrowse={() => void browse(setCurrent)} />
+          {baseline && (
+            <div className="flex pl-22">
+              <Button size="sm" disabled={previous === baseline.path} onClick={() => setPrevious(baseline.path)}>
+                Previous run of “{baseline.schedule}” (run {baseline.run})
+              </Button>
+            </div>
+          )}
+          {baselineError && <Notice kind="info">{baselineError}</Notice>}
         </div>
 
         {error && (
