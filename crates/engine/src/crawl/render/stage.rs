@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use spiderlens_config::{CrawlConfig, UaPreset, UrlFilter, WindowPreset};
 use spiderlens_render::{
@@ -19,6 +19,7 @@ use spiderlens_render::{
 use tokio::sync::{RwLock, Semaphore};
 use url::Url;
 
+use super::guard::{MemoryGuard, MemorySource, SystemMemory, TICK_EVERY};
 use super::net::{EngineNet, NetShared, Note};
 use crate::crawl::store::{CrawlStore, RenderEntry, Result as StoreResult};
 use crate::extract::compare::{Comparison, compare};
@@ -76,6 +77,13 @@ pub(crate) struct RenderStage {
     filter: UrlFilter,
     /// Also render internal 4xx and 5xx HTML pages (FR-004).
     error_pages: bool,
+    /// Lowers and raises `limit` with memory pressure (FR-037, FR-038).
+    guard: MemoryGuard,
+    memory: Box<dyn MemorySource>,
+    last_tick: Option<Instant>,
+    /// The guard asked for a restart between pages (over budget at a limit
+    /// of 1, or 1,000 pages since the last one).
+    restart_asked: AtomicBool,
 }
 
 /// What happens to a fetched page when the crawl renders (plan D2).
@@ -160,6 +168,10 @@ impl RenderStage {
         let filter = UrlFilter::new(&r.include, &r.exclude)
             .unwrap_or_else(|_| UrlFilter::new(&[], &[]).expect("no patterns"));
         let browser = Browser::launch(info, launch).await?;
+        let limit = r
+            .concurrency
+            .unwrap_or_else(spiderlens_render::default_concurrency)
+            .max(1);
         Ok(Self {
             browser: Arc::new(RwLock::new(browser)),
             restarting: Arc::new(AtomicBool::new(false)),
@@ -183,12 +195,13 @@ impl RenderStage {
             last_seq: None,
             exhausted: false,
             open: 0,
-            limit: r
-                .concurrency
-                .unwrap_or_else(spiderlens_render::default_concurrency)
-                .max(1),
+            limit,
             filter,
             error_pages: r.render_error_pages,
+            guard: MemoryGuard::new(limit, r.memory_budget_mb),
+            memory: Box::new(SystemMemory),
+            last_tick: None,
+            restart_asked: AtomicBool::new(false),
         })
     }
 
@@ -247,7 +260,8 @@ impl RenderStage {
     /// Restarts the browser between pages when a render had to be abandoned.
     /// Renders started meanwhile wait for the new process.
     pub(crate) fn restart_if_needed(&self) {
-        let needs = self.browser.try_read().is_ok_and(|b| b.needs_restart());
+        let asked = self.restart_asked.swap(false, Ordering::AcqRel);
+        let needs = asked || self.browser.try_read().is_ok_and(|b| b.needs_restart());
         if needs && !self.restarting.swap(true, Ordering::AcqRel) {
             let browser = self.browser.clone();
             let flag = self.restarting.clone();
@@ -255,6 +269,37 @@ impl RenderStage {
                 let _ = browser.write().await.restart().await;
                 flag.store(false, Ordering::Release);
             });
+        }
+    }
+
+    /// Once a second: reads memory and lowers or raises the render limit
+    /// (plan D10). Called from the coordinator's loop; cheap between ticks.
+    pub(crate) fn guard_tick(&mut self) {
+        let now = Instant::now();
+        if self.last_tick.is_some_and(|t| now.duration_since(t) < TICK_EVERY) {
+            return;
+        }
+        self.last_tick = Some(now);
+        let browser_bytes = self.browser.try_read().map_or(0, |b| b.memory_bytes());
+        let reading = self.memory.read(browser_bytes);
+        let decision = self.guard.tick(reading, now);
+        self.limit = decision.limit;
+        if decision.restart {
+            self.restart_asked.store(true, Ordering::Release);
+        }
+    }
+
+    /// Memory holds the render limit below what the settings allow: the
+    /// limiting reason `memory_guard` (plan D13).
+    #[allow(dead_code)] // read by the progress line (batch A)
+    pub(crate) fn memory_limited(&self) -> bool {
+        self.guard.limited()
+    }
+
+    /// A render ended: every 1,000 pages the browser restarts to cap leaks.
+    pub(crate) fn page_done(&mut self) {
+        if self.guard.page_done() {
+            self.restart_asked.store(true, Ordering::Release);
         }
     }
 

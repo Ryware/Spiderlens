@@ -2541,6 +2541,7 @@ impl Run {
         let Some(stage) = &mut self.render else {
             return Ok(());
         };
+        stage.guard_tick();
         stage.restart_if_needed();
         let store = &self.c.store;
         while stage.open < stage.limit {
@@ -2582,6 +2583,7 @@ impl Run {
             return Ok(());
         };
         stage.open -= 1;
+        stage.page_done();
         let id = r.entry.url_id;
         if let RenderState::Failed { retryable: true, .. } = r.outcome.state
             && r.entry.attempts < MAX_ATTEMPTS

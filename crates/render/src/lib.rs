@@ -27,7 +27,7 @@ pub use find::{
     should_offer_download,
 };
 pub use guard::{GUARD_ARG, parse_guard_args, run_guard};
-pub use launch::{default_concurrency, launch_count, sweep_stale_profiles};
+pub use launch::{default_concurrency, launch_count, sweep_stale_profiles, system_memory};
 pub use types::*;
 
 /// Removes a previous download, if any.

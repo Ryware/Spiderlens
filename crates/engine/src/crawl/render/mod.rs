@@ -4,5 +4,6 @@
 //! rendering off, none of this runs.
 
 pub mod cache;
+pub(crate) mod guard;
 pub mod net;
 pub(crate) mod stage;
