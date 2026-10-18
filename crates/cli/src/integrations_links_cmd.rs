@@ -33,6 +33,7 @@ pub struct LinkArgs {
     yes: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn fetch_links(
     h: &Hub,
     p: Provider,
@@ -49,9 +50,7 @@ pub fn fetch_links(
             "indexable" => UrlSet::Indexable,
             "all" => UrlSet::All,
             other => {
-                return Err(Error::Invalid(format!(
-                    "--urls {other}: link metrics take indexable or all"
-                )));
+                return Err(Error::Invalid(format!("--urls {other}: link metrics take indexable or all")));
             }
         },
         metrics: a.metrics.clone(),

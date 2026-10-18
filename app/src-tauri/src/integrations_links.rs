@@ -43,10 +43,7 @@ pub async fn integrations_link_estimate(
     label: Option<String>,
     request: LinkRequest,
 ) -> Cmd<LinkEstimate> {
-    blocking(&state, move |h| {
-        h.estimate_links(&path, label.as_deref(), &request)
-    })
-    .await
+    blocking(&state, move |h| h.estimate_links(&path, label.as_deref(), &request)).await
 }
 
 /// Fetches link metrics into the crawl file (US5).

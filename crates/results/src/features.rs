@@ -78,12 +78,14 @@ impl Features {
                 available.push(need);
             }
         }
-        for need in [Need::SearchConsole, Need::UrlInspection, Need::Analytics, Need::LinkMetrics] {
-            if integrations.split(',').any(|f| f.trim() == need.feature_id()) {
-                available.push(need);
-            }
-        }
-        for need in [Need::FieldData, Need::LabTests] {
+        for need in [
+            Need::SearchConsole,
+            Need::UrlInspection,
+            Need::Analytics,
+            Need::FieldData,
+            Need::LabTests,
+            Need::LinkMetrics,
+        ] {
             if integrations.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
             }

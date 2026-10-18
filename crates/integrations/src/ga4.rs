@@ -12,8 +12,8 @@
 //! how many tokens are left; a run stops before the allowance runs out and
 //! continues once it is back (FR-024).
 
-use jiff::{SignedDuration, Timestamp};
 use jiff::civil::Date;
+use jiff::{SignedDuration, Timestamp};
 use reqwest::Method;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};

@@ -464,7 +464,16 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
         Provider::FieldData | Provider::LabTests => return perf::fetch(h, p, &a),
         Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
             let account = a.account.as_deref();
-            return crate::integrations_links_cmd::fetch_links(h, p, &a.file, account, &a.urls, &a.links, a.fresh, a.json);
+            return crate::integrations_links_cmd::fetch_links(
+                h,
+                p,
+                &a.file,
+                account,
+                &a.urls,
+                &a.links,
+                a.fresh,
+                a.json,
+            );
         }
         _ => {
             return Err(Error::Invalid(format!(

@@ -143,7 +143,8 @@ impl Hub {
         match r.provider {
             Provider::UrlInspection => {
                 let req: InspectRequest = serde_json::from_value(r.params.clone()).map_err(invalid)?;
-                let (session, label) = self.google_session(Provider::UrlInspection, r.account_label.as_deref())?;
+                let (session, label) =
+                    self.google_session(Provider::UrlInspection, r.account_label.as_deref())?;
                 let update = spiderlens_engine::crawl::open_for_update(crawl, None)?;
                 let ctx = self.ctx(Provider::UrlInspection, req.fresh);
                 let ledger = self.ledger();

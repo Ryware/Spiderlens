@@ -46,6 +46,8 @@ pub(super) fn fetch_inspection(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error>
     Ok(finish(&r, a.json))
 }
 
+const NO_STREAM: &str = "no Analytics data stream matches; list them with `spiderlens integrations properties --provider analytics`";
+
 /// `28d` or `28`: the number of days.
 fn days(text: &str) -> Result<i64, Error> {
     text.trim()
@@ -72,9 +74,7 @@ fn pick_stream(h: &Hub, a: &FetchArgs) -> Result<Ga4Stream, Error> {
                     .is_none_or(|p| s.property.strip_prefix("properties/") == Some(p.as_str()))
                     && stream.as_ref().is_none_or(|id| &s.stream == id)
             });
-            let first = matching
-                .next()
-                .ok_or_else(|| Error::Invalid("no Analytics data stream matches; list them with `spiderlens integrations properties --provider analytics`".into()))?;
+            let first = matching.next().ok_or_else(|| Error::Invalid(NO_STREAM.into()))?;
             if matching.next().is_some() {
                 return Err(Error::Invalid(
                     "more than one data stream matches; add --property and --stream".into(),

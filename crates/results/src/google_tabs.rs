@@ -109,7 +109,11 @@ pub(crate) fn index_status_tab() -> TabDef {
         filters: [
             filter("all", "All", "1"),
             filter("inspected", "Inspected", INSPECTED),
-            filter("not_inspected", "Not inspected", "NOT EXISTS (SELECT 1 FROM gsc_inspection i WHERE i.url_id = u.id)"),
+            filter(
+                "not_inspected",
+                "Not inspected",
+                "NOT EXISTS (SELECT 1 FROM gsc_inspection i WHERE i.url_id = u.id)",
+            ),
             filter("not_indexed", "Not indexed", NOT_INDEXED),
             filter("canonical_mismatch", "Canonical mismatch", CANONICAL_MISMATCH),
             filter("blocked_by_robots", "Blocked by robots per Google", BLOCKED_BY_ROBOTS),
