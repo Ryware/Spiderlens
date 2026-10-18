@@ -403,6 +403,201 @@ impl JsSiteBuilder {
         )
     }
 
+    /// The pages of spec 014 user story 4 (task T046), linked from `/`. Pass
+    /// a rendering include pattern to render only the one under test.
+    ///
+    /// - `/settles`: a heading appears after 2 s.
+    /// - `/polls`: asks `/api/poll.json` every 200 ms and rewrites the
+    ///   page, forever.
+    /// - `/resources`: an image, a font, a video, a stylesheet, a script of
+    ///   its own, a third-party script on `cdn.test` and `/private/app.js`,
+    ///   which the fixture's robots.txt disallows.
+    /// - `/products/`, `/products/a`, `/products/b`: a section.
+    /// - `/width`: writes `window.innerWidth` into its `<h1>` as
+    ///   `innerWidth=N` (raw text `raw`).
+    /// - `/retry`: its first script answers 429 with `Retry-After: 2`; when
+    ///   that fails, a second script is asked for.
+    /// - `/many`: eight scripts of `/many/N.js`, each answered after 300 ms.
+    /// - `/plain`, `/other`: nothing happens.
+    pub fn us4_pages(mut self) -> Self {
+        let page = |title: &str, head: &str, body: &str| {
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+                 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+                 <title>{title}</title>{head}</head><body>{body}</body></html>"
+            )
+        };
+        let many: String = (0..8)
+            .map(|n| format!("<script src=\"/many/{n}.js\"></script>"))
+            .collect();
+        let mut retry = Resource::new("text/javascript", "");
+        retry.status = 429;
+        self = self
+            .robots(JS_HOST, "User-agent: *\nDisallow: /private/\n")
+            .page(
+                "/",
+                &page(
+                    "Rendering settings",
+                    "",
+                    "<h1>Rendering settings</h1><p>Pages for the rendering settings.</p>\
+                     <a href=\"/settles\">Settles</a> <a href=\"/polls\">Polls</a> \
+                     <a href=\"/resources\">Resources</a> <a href=\"/products/\">Products</a> \
+                     <a href=\"/products/a\">A</a> <a href=\"/products/b\">B</a> \
+                     <a href=\"/width\">Width</a> <a href=\"/retry\">Retry</a> \
+                     <a href=\"/many\">Many</a> <a href=\"/plain\">Plain</a> <a href=\"/other\">Other</a>",
+                ),
+            )
+            .page(
+                "/settles",
+                &page(
+                    "Settles",
+                    "<script>setTimeout(function () { document.body.insertAdjacentHTML('beforeend', \
+                     '<h2>Settled after two seconds</h2>'); }, 2000);</script>",
+                    "<h1>Settles</h1><p>A heading is added after two seconds.</p>",
+                ),
+            )
+            .page(
+                "/polls",
+                &page(
+                    "Polls",
+                    "<script>var n = 0; setInterval(function () { n++; \
+                     fetch('/api/poll.json?n=' + n).then(function (r) { return r.text(); }).then(function (t) { \
+                     document.getElementById('t').textContent = t + n; }); }, 200);</script>",
+                    "<h1>Polls</h1><p id=\"t\">0</p>",
+                ),
+            )
+            .json(JS_HOST, "/api/poll.json", "{}")
+            .cache_control(JS_HOST, "/api/poll.json", "no-store")
+            .page(
+                "/resources",
+                &page(
+                    "Resources",
+                    "<link rel=\"stylesheet\" href=\"/css/site.css\">\
+                     <script src=\"/js/own.js\"></script>\
+                     <script src=\"{base:cdn.test}/cdn/lib.js\"></script>\
+                     <script src=\"/private/app.js\"></script>\
+                     <script>new FontFace('Fixture', 'url(/fonts/a.woff2)').load().catch(function () {});</script>",
+                    "<h1>Resources</h1><img src=\"/img/a.png\" alt=\"a\">\
+                     <video src=\"/media/a.mp4\" preload=\"auto\" muted></video>",
+                ),
+            )
+            .stylesheet(JS_HOST, "/css/site.css", "h1 { color: green; }")
+            .script(JS_HOST, "/js/own.js", "window.own = 1;")
+            .script(CDN_HOST, "/cdn/lib.js", "window.cdn = 1;")
+            .script(JS_HOST, "/private/app.js", "window.privateApp = 1;")
+            .image(JS_HOST, "/img/a.png")
+            .font(JS_HOST, "/fonts/a.woff2")
+            .media(JS_HOST, "/media/a.mp4")
+            .page(
+                "/products/",
+                &page("Products", "", "<h1>Products</h1><p>The products section.</p>"),
+            )
+            .page(
+                "/products/a",
+                &page("Product A", "", "<h1>Product A</h1><p>The first product.</p>"),
+            )
+            .page(
+                "/products/b",
+                &page("Product B", "", "<h1>Product B</h1><p>The second product.</p>"),
+            )
+            .page(
+                "/width",
+                &page(
+                    "Width",
+                    "<script>document.addEventListener('DOMContentLoaded', function () { \
+                     document.getElementById('w').textContent = 'innerWidth=' + window.innerWidth; });</script>",
+                    "<h1 id=\"w\">raw</h1>",
+                ),
+            )
+            .page(
+                "/retry",
+                &page(
+                    "Retry",
+                    "<script>function loadB() { var s = document.createElement('script'); \
+                     s.src = '/retry/b.js'; document.head.appendChild(s); }</script>\
+                     <script src=\"/retry/a.js\" onerror=\"loadB()\"></script>",
+                    "<h1>Retry</h1><p>A script is asked to wait.</p>",
+                ),
+            )
+            .resource(JS_HOST, "/retry/a.js", retry)
+            .header(JS_HOST, "/retry/a.js", "Retry-After", "2")
+            .script(JS_HOST, "/retry/b.js", "window.retryB = 1;")
+            .page(
+                "/many",
+                &page("Many", &many, "<h1>Many</h1><p>Eight scripts at once.</p>"),
+            )
+            .page("/plain", &page("Plain", "", "<h1>Plain</h1><p>Nothing happens.</p>"))
+            .page("/other", &page("Other", "", "<h1>Other</h1><p>Nothing happens.</p>"));
+        for n in 0..8 {
+            self = self
+                .script(JS_HOST, &format!("/many/{n}.js"), "window.many = 1;")
+                .delay(JS_HOST, &format!("/many/{n}.js"), Duration::from_millis(300));
+        }
+        self
+    }
+
+    /// `pages` pages `/slow/0` .. `/slow/{pages-1}`, linked from `/`, each
+    /// with its own script answered after 600 ms (the concurrency test, T051).
+    pub fn us4_slow_pages(mut self, pages: u64) -> Self {
+        let links: String = (0..pages)
+            .map(|n| format!("<a href=\"/slow/{n}\">Slow {n}</a> "))
+            .collect();
+        self = self.page(
+            "/",
+            &format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Slow</title></head>\
+                 <body><h1>Slow</h1><p>Slow pages.</p>{links}</body></html>"
+            ),
+        );
+        for n in 0..pages {
+            self = self
+                .page(
+                    &format!("/slow/{n}"),
+                    &format!(
+                        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Slow {n}</title>\
+                         <script src=\"/slow/{n}.js\"></script></head>\
+                         <body><h1>Slow {n}</h1><p>Waits for its script.</p></body></html>"
+                    ),
+                )
+                .script(JS_HOST, &format!("/slow/{n}.js"), "window.slow = 1;")
+                .delay(JS_HOST, &format!("/slow/{n}.js"), Duration::from_millis(600));
+        }
+        self
+    }
+
+    /// `pages` pages `/c/0` .. `/c/{pages-1}`, linked from `/`, all loading
+    /// `/shared/max-age.js` (`Cache-Control: max-age=3600`) and
+    /// `/shared/no-store.js` (`no-store`) (the cache test, T055).
+    pub fn us4_cache_pages(mut self, pages: u64) -> Self {
+        let links: String = (0..pages)
+            .map(|n| format!("<a href=\"/c/{n}\">Page {n}</a> "))
+            .collect();
+        self = self
+            .page(
+                "/",
+                &format!(
+                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Cache</title></head>\
+                     <body><h1>Cache</h1><p>Pages sharing scripts.</p>{links}</body></html>"
+                ),
+            )
+            .script(JS_HOST, "/shared/max-age.js", "window.cached = 1;")
+            .cache_control(JS_HOST, "/shared/max-age.js", "max-age=3600")
+            .script(JS_HOST, "/shared/no-store.js", "window.fresh = 1;")
+            .cache_control(JS_HOST, "/shared/no-store.js", "no-store");
+        for n in 0..pages {
+            self = self.page(
+                &format!("/c/{n}"),
+                &format!(
+                    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Page {n}</title>\
+                     <script src=\"/shared/max-age.js\"></script>\
+                     <script src=\"/shared/no-store.js\"></script></head>\
+                     <body><h1>Page {n}</h1><p>Two shared scripts.</p></body></html>"
+                ),
+            );
+        }
+        self
+    }
+
     /// Starts on a random loopback port.
     pub fn start(self) -> JsSite {
         let listener = StdListener::bind("127.0.0.1:0").expect("bind fixture port");
