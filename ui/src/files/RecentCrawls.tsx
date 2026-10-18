@@ -14,14 +14,23 @@ export const statusInfo: Record<CrawlStatus, { label: string; tone: Tone }> = {
 
 const title = (e: RecentEntry) => e.name || e.start_url || e.path;
 
-/** The badges an entry carries: its status, then Recovered and Unsaved. */
-export function EntryBadges({ entry }: { entry: Pick<RecentEntry, "status" | "recovered" | "unsaved"> }) {
+/** The AI assistant that started a crawl, from its `started_by` marker. */
+export const startedByAssistant = (by?: string | null): string | null => (by?.startsWith("assistant:") ? by.slice("assistant:".length) || "an assistant" : null);
+
+/** The badges an entry carries: its status, then Recovered, Unsaved and who started it. */
+export function EntryBadges({ entry }: { entry: Pick<RecentEntry, "status" | "recovered" | "unsaved"> & { started_by?: string | null } }) {
+  const assistant = startedByAssistant(entry.started_by);
   const s = statusInfo[entry.status];
   return (
     <span className="flex shrink-0 items-center gap-1">
       <Badge tone={s.tone}>{s.label}</Badge>
       {entry.recovered && <Badge tone="info">Recovered</Badge>}
       {entry.unsaved && <Badge>Unsaved</Badge>}
+      {assistant && (
+        <span title={`Started by ${assistant}, an AI assistant you allowed in Settings › AI assistants.`}>
+          <Badge tone="info">Started by an AI assistant</Badge>
+        </span>
+      )}
     </span>
   );
 }

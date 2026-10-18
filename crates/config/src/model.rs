@@ -1237,11 +1237,22 @@ pub struct AgentSettings {
     /// `/.well-known/agent-card.json` once per internal host at the end of
     /// the crawl.
     pub entry_points: bool,
+    /// Most distinct Markdown alternates requested per host after the last
+    /// page, to check that each answers with Markdown. The rest are listed
+    /// as not verified. Needs `entry_points`.
+    pub markdown_alternates_max: u32,
+    /// Send one MCP discovery request to each MCP endpoint the site's
+    /// catalog or cards list (at most 5 per host). Needs `entry_points`.
+    pub mcp_discovery: bool,
 }
 
 impl Default for AgentSettings {
     fn default() -> Self {
-        Self { entry_points: true }
+        Self {
+            entry_points: true,
+            markdown_alternates_max: 50,
+            mcp_discovery: true,
+        }
     }
 }
 

@@ -21,6 +21,9 @@ pub const AGENT_PATHS: [&str; 3] = [
     "/.well-known/agent-card.json",
 ];
 
+/// The site files that can list MCP endpoints (spec 016 FR-011).
+pub const MCP_CARD_PATHS: [&str; 2] = ["/.well-known/ai-catalog.json", "/.well-known/agent-card.json"];
+
 /// Bodies above this are cut and marked `too_large`.
 pub const MAX_BYTES: u64 = 1024 * 1024;
 

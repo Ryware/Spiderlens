@@ -226,6 +226,34 @@ fn missing_data(conn: &Connection, id: &str) -> rusqlite::Result<Option<&'static
         {
             Some("llms.txt was not read in this crawl.")
         }
+        "agents.robots_blocks_agents"
+            if !has(
+                "SELECT EXISTS (SELECT 1 FROM aeo_bot_access WHERE ai_bot_purpose(bot) = 'user_fetch' \
+                 AND home_verdict <> 'unknown')",
+            )? =>
+        {
+            Some("robots.txt was not evaluated for AI agents that act for a person in this crawl.")
+        }
+        // Nothing here starts the probe: it is 015's explicit, optional run.
+        "agents.probe_blocked"
+            if !has("SELECT EXISTS (SELECT 1 FROM aeo_probe WHERE ai_bot_purpose(bot) = 'user_fetch')")? =>
+        {
+            Some(
+                "The AI agent test was not run for agents that act for a person. Run it from the AI search tab.",
+            )
+        }
+        "agents.markdown_alternate_broken"
+            if !has(
+                "SELECT EXISTS (SELECT 1 FROM page_agent WHERE md_outcome IN ('ok', 'wrong_type', 'error'))",
+            )? =>
+        {
+            Some("Markdown versions were not requested in this crawl.")
+        }
+        "agents.mcp_endpoint_unreachable"
+            if !has("SELECT EXISTS (SELECT 1 FROM agent_entry_points WHERE mcp_discovery IS NOT NULL)")? =>
+        {
+            Some("No MCP endpoint was checked in this crawl.")
+        }
         _ => None,
     })
 }

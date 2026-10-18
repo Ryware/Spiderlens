@@ -56,6 +56,22 @@ test("entry_points_are_listed_per_host_with_their_outcome", async () => {
   expect(within(items[2]).getByText("The API catalog has no `linkset` list.")).toBeTruthy();
 });
 
+test("details_show_whether_agents_acting_for_a_person_can_reach_the_site", async () => {
+  render(<AgentsOverview transport={withAgents()} path={PATH} />);
+  await screen.findByTestId("agents-score");
+  expect(screen.queryByRole("region", { name: "AI agent access" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  const items = within(screen.getByRole("region", { name: "AI agent access" })).getAllByRole("listitem");
+  expect(items).toHaveLength(4);
+  expect(within(items[0]).getByText("ChatGPT-User")).toBeTruthy();
+  expect(within(items[0]).getByText("Allowed")).toBeTruthy();
+  expect(within(items[0]).getByText("Reached")).toBeTruthy();
+  expect(within(items[1]).getByText("Blocked")).toBeTruthy();
+  expect(within(items[1]).getByText("Not tested")).toBeTruthy();
+  expect(within(items[2]).getByText("Challenged")).toBeTruthy();
+  expect(within(items[3]).getByText("Not checked")).toBeTruthy();
+});
+
 test("a_crawl_without_agent_checks_says_why_there_is_no_score", async () => {
   const t = fakeTransport();
   render(<AgentsOverview transport={t} path={PATH} />);

@@ -66,9 +66,22 @@ All tools only read. An assistant can:
 Answers are kept small: at most 500 rows and 64 KB per answer, with a `next`
 cursor for the rest, and long texts are cut at 2,000 characters.
 
+## Letting assistants start crawls
+
+Crawling is off until you turn on **Allow AI assistants to start crawls** under
+**Settings › AI assistants › Crawling** and pick the saved profiles an assistant
+may use. Profiles that ignore robots.txt cannot be picked, and profiles that
+render JavaScript are refused. With crawling on, an assistant also gets
+`start_crawl` (a profile plus a start URL or a list of up to 10,000 URLs),
+`crawl_progress`, `pause_crawl`, `resume_crawl` and `stop_crawl`, for the
+crawls it started itself. Such crawls are saved as unsaved crawls, show
+**Started by an AI assistant** in your recent crawls, and are paused and saved
+when the assistant disconnects, so you can resume them in the app.
+
 ## What assistants cannot do
 
-- Start, pause or stop crawls, or change settings or files.
+- Start crawls unless you allowed it, control crawls they did not start, or
+  change settings or files.
 - Read files outside your recent crawls and the folders you added.
 - Make SpiderLens fetch anything from the internet.
 
@@ -102,6 +115,11 @@ crawled site works for AI agents that browse and act on it:
   (A2A), plus API descriptions linked from pages. They are fetched once per
   host after the last page, under robots.txt, and can be turned off in the
   crawl settings;
+- after the last page, up to 50 markdown alternates per host are requested to
+  check they answer with markdown, and each MCP endpoint found gets one
+  discovery request (no credentials are sent);
+- whether robots.txt blocks AI agents that act for a person, from the AI search
+  checks;
 - rules in the **AI agents** issue category and an agent readiness score,
   computed when the crawl ends.
 

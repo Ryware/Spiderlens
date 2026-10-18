@@ -66,6 +66,7 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantProfile } from "./generated/AssistantProfile";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
 import type { AgentsSummary } from "./generated/AgentsSummary";
@@ -479,6 +480,8 @@ export interface CrawlInfo {
   status: CrawlStatus;
   pause_reason: string | null;
   recovered: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
   mode: "spider" | "list";
   start_url: string | null;
   /** The stored configuration; null when the file has none it can read. */
@@ -505,6 +508,8 @@ export interface RecentEntry {
   last_used: string;
   available: boolean;
   unsaved: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
 }
 
 export interface UnsavedCrawls {
@@ -677,6 +682,8 @@ export interface AssistantsView {
   settings: AssistantSettings;
   executable: string;
   snippets: AssistantSnippet[];
+  /** Saved profiles, with whether an assistant may crawl with each. */
+  profiles: AssistantProfile[];
 }
 
 /** What `<app> mcp --self-test` printed: the tools an assistant would see. */

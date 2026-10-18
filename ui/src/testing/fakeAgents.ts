@@ -4,6 +4,7 @@
 // crates/mcp/tests/server.rs).
 
 import type { ActivityEntry } from "../generated/ActivityEntry";
+import type { AssistantProfile } from "../generated/AssistantProfile";
 import type { AssistantSettings } from "../generated/AssistantSettings";
 import type { AgentsSummary } from "../generated/AgentsSummary";
 import type { EntryPointRow } from "../generated/EntryPointRow";
@@ -25,6 +26,8 @@ export interface FakeAssistants {
   /** Set to make the self-test fail with this message. */
   testError: string | null;
   saves: AssistantSettings[];
+  /** Saved profiles offered for crawling. */
+  profiles: AssistantProfile[];
 }
 
 export function fakeActivity(n: number): ActivityEntry[] {
@@ -112,6 +115,12 @@ export const fakeAgentsSummary: AgentsSummary = {
     { id: "agent-markdown-negotiation", name: "Markdown by content negotiation", reason: "Turned off in this crawl's settings." },
   ],
   weights_version: 1,
+  access: [
+    { bot: "ChatGPT-User", vendor: "OpenAI", purpose: "user_fetch", robots: "allowed", probe: "ok" },
+    { bot: "Claude-User", vendor: "Anthropic", purpose: "user_fetch", robots: "blocked", probe: "not_probed" },
+    { bot: "Perplexity-User", vendor: "Perplexity", purpose: "user_fetch", robots: "allowed", probe: "challenged" },
+    { bot: "Meta-ExternalFetcher", vendor: "Meta", purpose: "user_fetch", robots: "not_checked", probe: "blocked" },
+  ],
 };
 
 export const fakeAgentsUnavailable: AgentsSummary = {
@@ -123,6 +132,7 @@ export const fakeAgentsUnavailable: AgentsSummary = {
   top_failed: [],
   not_checked: [],
   weights_version: null,
+  access: [],
 };
 
 const wellKnown = { ai_catalog: "ai-catalog.json", api_catalog: "api-catalog", a2a_card: "agent-card.json" } as const;
@@ -169,6 +179,10 @@ export function fakeAgentsTransport(
     missing: new Set(),
     testError: null,
     saves: [],
+    profiles: [
+      { name: "Polite", respects_robots: true, reason: null },
+      { name: "Stress test", respects_robots: false, reason: "Ignores robots.txt" },
+    ],
   };
   const config = JSON.stringify({ mcpServers: { spiderlens: { command: fakeExecutable, args: ["mcp"] } } }, null, 2);
   return {
@@ -179,6 +193,7 @@ export function fakeAgentsTransport(
     assistantsGet: async () => ({
       settings: structuredClone(assistants.settings),
       executable: fakeExecutable,
+      profiles: structuredClone(assistants.profiles),
       snippets: [
         { client: "claude_desktop", label: "Claude Desktop", hint: "Settings › Developer › Edit Config, then restart Claude", text: config },
         { client: "claude_code", label: "Claude Code", hint: "Run in a terminal", text: `claude mcp add spiderlens -- ${fakeExecutable} mcp` },
@@ -188,7 +203,15 @@ export function fakeAgentsTransport(
     assistantsSet: async (s) => {
       const bad = s.allowed_folders.find((f) => assistants.missing.has(f));
       if (bad) throw `${bad} is not a folder on this computer.`;
-      const saved = { ...s, allowed_folders: [...new Set(s.allowed_folders)], allow_crawl: false, allowed_profiles: [] };
+      // As the app checks it: with crawling on, every allowed profile must be saved and respect robots.txt.
+      if (s.allow_crawl) {
+        for (const name of s.allowed_profiles) {
+          const p = assistants.profiles.find((x) => x.name === name);
+          if (!p) throw `There is no saved profile named "${name}".`;
+          if (!p.respects_robots) throw `The profile "${name}" ignores robots.txt, so an AI assistant cannot use it.`;
+        }
+      }
+      const saved = { ...s, allowed_folders: [...new Set(s.allowed_folders)], allowed_profiles: [...new Set(s.allowed_profiles)] };
       assistants.settings = saved;
       assistants.saves.push(structuredClone(saved));
       return structuredClone(saved);
@@ -200,8 +223,11 @@ export function fakeAgentsTransport(
         version: "0.1.0",
         protocol: "2026-07-28",
         read_access: assistants.settings.allow_read,
-        crawl_access: false,
-        tools: ["list_crawls", "crawl_summary", "list_tabs", "query_pages", "page_details", "page_html", "page_agent_findings", "export_rows"],
+        crawl_access: assistants.settings.allow_crawl,
+        tools: [
+          "list_crawls", "crawl_summary", "list_tabs", "query_pages", "page_details", "page_html", "page_agent_findings", "export_rows",
+          ...(assistants.settings.allow_crawl ? ["start_crawl", "crawl_progress", "pause_crawl", "resume_crawl", "stop_crawl"] : []),
+        ],
       };
     },
     assistantsActivity: async (limit) => assistants.activity.slice(0, limit),

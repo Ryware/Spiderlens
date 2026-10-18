@@ -625,7 +625,8 @@ fn page_agent_findings(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
 }
 
 /// The crawl's agent score. Every string in it is SpiderLens's own text (rule
-/// names, reasons), so nothing goes under `crawled`.
+/// names, reasons, and the `access` list of user-fetch agents from the bot
+/// registry), so nothing goes under `crawled`.
 fn agents_summary(o: &mut Open) -> Result<Value, ToolError> {
     let summary = o.reader.agents_summary().map_err(ToolError::from_results)?;
     let mut v = serde_json::to_value(&summary).expect("summary serializes");
