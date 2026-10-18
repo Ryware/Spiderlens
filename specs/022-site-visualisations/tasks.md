@@ -40,12 +40,12 @@
 - [ ] T017 [US3] `viz/force.rs`: seeded Barnes-Hut ForceAtlas2, pinned nodes, convergence, frame streaming and cancel; determinism test on all platforms
 - [ ] T018 [US3] Graph selection by Link Score or inlinks, focus rings, nofollow and external-domain options; fixture test (two clusters, one joining link)
 - [ ] T019 [US3] UI: frames, drag to pin, Reset layout, Focus controls, reduced motion; Vitest and Playwright tests
-- [ ] T020 [US3] Force-directed layout option for the two trees
+- [x] T020 [US3] Force-directed layout option for the two trees
 
 ## Phase 7: US4 anchor text clouds (P2)
 
 - [ ] T021 [US4] `viz/anchors.rs`: terms (words and whole anchors), stop word lists, language choice, spiral layout with width table; tests per language
-- [ ] T022 [US4] `viz_term_links`; position filter when spec 023 positions exist; tests
+- [x] T022 [US4] `viz_term_links`; position filter when spec 023 positions exist; tests
 - [ ] T023 [US4] UI `AnchorCloud` and term list, entry from the inspector's Inlinks; empty states; Vitest and Playwright tests
 
 ## Phase 8: US5 export (P2)

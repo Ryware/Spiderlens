@@ -7,7 +7,7 @@ spiderlens viz <file> --view crawl-tree|directory-tree|link-graph|anchors
     [--size score|inlinks|uniform]          default: score (falls back to inlinks)
     [--focus <URL> [--distance 1|2]]        link-graph focus mode
     [--url <URL>]                           anchors for one URL (default: site-wide)
-    [--words | --anchors] [--followed-only] [--keep-stop-words]
+    [--words | --anchors] [--followed-only] [--position navigation,header,content,sidebar,footer,unknown] [--keep-stop-words]
     [--theme light|dark]                    default: light
     [--svg <out.svg>] [--png <out.png> [--scale 1|2|4]] [--csv <out.csv>]
 ```
