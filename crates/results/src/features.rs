@@ -78,7 +78,7 @@ impl Features {
                 available.push(need);
             }
         }
-        for need in [Need::SearchConsole] {
+        for need in [Need::SearchConsole, Need::LinkMetrics] {
             if integrations.split(',').any(|f| f.trim() == need.feature_id()) {
                 available.push(need);
             }

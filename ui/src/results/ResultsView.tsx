@@ -24,6 +24,7 @@ import { IssueHeader } from "../issues/IssueHeader";
 import { Grid, type GridColumn, type GridHandle } from "./Grid";
 import { count, emptySelection, shift, single, type Selection } from "./selection";
 import type { TabSession } from "./useResults";
+import { SheetsExport } from "./SheetsExport";
 import { useExport } from "./useExport";
 import { useView } from "./useView";
 import { type CustomRun, runOutcomeText } from "./useCustomRun";
@@ -259,6 +260,8 @@ export function ResultsView({
   );
 
   const exp = useExport(transport);
+  // Spec 024 US6: the same view as a Google spreadsheet, or a Looker Studio report on one.
+  const [sheetsDialog, setSheetsDialog] = useState<"sheets" | "looker" | null>(null);
   const selected = count(selection.ranges);
 
   const copy = async () => {
@@ -375,6 +378,8 @@ export function ResultsView({
                 { label: view.ready ? `Export ${view.total.toLocaleString()} rows as CSV…` : "Export rows as CSV…", onSelect: () => void startExport(false), disabled: view.view === null },
                 { label: `Export ${selected.toLocaleString()} selected as CSV…`, onSelect: () => void startExport(true), disabled: selected === 0 },
                 ...allValuesItems,
+                { label: "Export to Google Sheets…", onSelect: () => setSheetsDialog("sheets"), disabled: view.view === null },
+                { label: "Open in Looker Studio…", onSelect: () => setSheetsDialog("looker"), disabled: view.view === null },
               ]}
             />
           </div>
@@ -387,6 +392,20 @@ export function ResultsView({
           <FilterStrip tab={tab} active={session.filter} counts={counts} onSelect={(filter) => onSession({ filter })} />
         )}
       </header>
+
+      {sheetsDialog && (
+        <SheetsExport
+          transport={transport}
+          path={path}
+          query={query}
+          columns={prefs.order}
+          segments={segmentCounts?.segments}
+          title={tab.title}
+          looker={sheetsDialog === "looker"}
+          open
+          onOpenChange={(o) => !o && setSheetsDialog(null)}
+        />
+      )}
 
       <div className="min-h-0 flex-1">
         {view.error ? (

@@ -26,7 +26,10 @@ use crate::oauth::{self, Client, Endpoints, Session, StoredGoogle};
 use crate::run::{self, Control, Ctx};
 use crate::settings::{Connection, Folder, IntegrationSettings, ProviderSettings};
 use crate::store::{self, OrphanCandidate, RunProgress};
-use crate::{Error, Provider, Result};
+use crate::{Error, Provider, Result, links, sheets};
+
+mod link_runs;
+mod sheet_export;
 
 /// What Settings › Integrations shows for one provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -78,7 +81,13 @@ pub struct OrphanPage {
 }
 
 /// Providers this build can run.
-pub const AVAILABLE: &[Provider] = &[Provider::SearchConsole];
+pub const AVAILABLE: &[Provider] = &[
+    Provider::SearchConsole,
+    Provider::Ahrefs,
+    Provider::Majestic,
+    Provider::Moz,
+    Provider::Sheets,
+];
 
 const OWN_CLIENT: (&str, &str) = ("google_client", "own");
 
@@ -89,6 +98,8 @@ pub struct Hub {
     webmasters: gsc::Api,
     cache_path: Option<PathBuf>,
     built_in: Option<Client>,
+    links: links::Apis,
+    sheets: sheets::Api,
 }
 
 impl Hub {
@@ -111,6 +122,8 @@ impl Hub {
             webmasters: gsc::Api::default(),
             cache_path,
             built_in: Client::built_in(),
+            links: links::Apis::default(),
+            sheets: sheets::Api::default(),
         }
     }
 
@@ -466,6 +479,9 @@ impl Hub {
                     control,
                     on_progress,
                 ))
+            }
+            Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
+                self.resume_link_run(crawl, &r, control, on_progress)
             }
             p => Err(Error::Invalid(format!(
                 "{} is not available in this build",

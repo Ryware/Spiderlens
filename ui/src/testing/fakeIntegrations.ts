@@ -117,7 +117,7 @@ export function fakeIntegrationsTransport(): { api: Integrations; integrations: 
       sends,
       terms_url: "https://example.com/terms",
       uses_google_account: google,
-      available: provider === "search_console",
+      available: ["search_console", "ahrefs", "majestic", "moz", "sheets"].includes(provider),
       settings: fi.settings[provider] ?? { enabled: false, per_minute: null, concurrency: null },
       per_minute: 600,
       concurrency: 4,

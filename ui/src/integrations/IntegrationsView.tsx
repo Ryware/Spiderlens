@@ -14,6 +14,7 @@ import type { RunProgress } from "../generated/RunProgress";
 import type { RunState } from "../generated/RunState";
 import type { Status } from "../generated/Status";
 import type { Transport } from "../transport";
+import { LinkMetricsPanel } from "./LinkMetricsPanel";
 
 const STATE_LABEL: Record<RunState, string> = {
   queued: "Queued",
@@ -89,6 +90,16 @@ export function IntegrationsView({ transport, path, crawlRunning, onDataChanged 
           />
         ) : (
           <Notice>Open or finish a crawl to fetch Search Console data for it.</Notice>
+        )}
+        {path && (
+          <LinkMetricsPanel
+            transport={transport}
+            path={path}
+            status={status}
+            crawlRunning={crawlRunning}
+            onChanged={reload}
+            onDataChanged={onDataChanged}
+          />
         )}
       </div>
     </div>
@@ -403,7 +414,7 @@ function SearchConsoleRun({
           {runs.map((r) => (
             <li key={r.id} data-run={r.id} className="flex flex-wrap items-center gap-2 text-sm text-fg-2">
               <Badge tone={STATE_TONE[r.state]}>{STATE_LABEL[r.state]}</Badge>
-              <span className="text-fg">{r.property}</span>
+              <span className="text-fg">{r.property ?? r.provider}</span>
               <span>
                 {n(r.done)} rows
                 {r.matched !== null && `, ${n(r.matched)} matched crawled pages`}

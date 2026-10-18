@@ -652,6 +652,47 @@ test("integrations_fetch_search_console_for_the_open_crawl", async ({ page }) =>
   expect(scrollH).toBeLessThanOrEqual(innerH);
 });
 
+test("link_metrics_show_the_cost_before_a_run_and_the_dialog_fits_the_window", async ({ page }) => {
+  await page.evaluate(() => {
+    const fi = window.spiderlens.integrations;
+    fi.connections = [{ kind: "ahrefs", label: "Agency", scopes: [], created_at: "", store: "keychain" }];
+    fi.settings.ahrefs = { enabled: true, per_minute: null, concurrency: null };
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await page.getByRole("button", { name: "Estimate cost" }).click();
+  const dialog = page.getByRole("dialog", { name: "Confirm link metrics run" });
+  await expect(dialog).toContainText("480 API units");
+  const box = await dialog.boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(await page.evaluate(() => window.spiderlens.linkMetrics.runs.length)).toBe(0);
+  await dialog.getByRole("button", { name: "Start run" }).click();
+  await expect(page.getByText(/120 of 120 pages fetched/)).toBeVisible();
+});
+
+test("export_the_view_to_google_sheets_and_open_looker_studio_fits_the_window", async ({ page }) => {
+  await page.evaluate(() => {
+    const fi = window.spiderlens.integrations;
+    fi.connections = [{ kind: "google", label: "ana@example.com", scopes: ["sheets"], created_at: "", store: "keychain" }];
+    fi.settings.sheets = { enabled: true, per_minute: null, concurrency: null };
+  });
+  await openInternal(page);
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Export to Google Sheets/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("will be sent to a new spreadsheet in ana@example.com");
+  await dialog.getByRole("button", { name: "Export", exact: true }).click();
+  await expect(dialog.getByRole("list", { name: "Spreadsheets" })).toContainText("SpiderLens - Internal");
+  await dialog.getByRole("button", { name: "Open in Looker Studio" }).click();
+  await expect.poll(() => page.evaluate(() => window.spiderlens.linkMetrics.opened.length)).toBe(1);
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("generate_sitemap_sheet_fits_and_writes_into_the_chosen_folder", async ({ page }) => {
   await crawl(page);
   await page.evaluate(() => (window.spiderlens.picks.folder = "/site/public"));

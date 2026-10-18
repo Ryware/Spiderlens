@@ -11,6 +11,7 @@ mod crawl;
 mod custom;
 mod files;
 mod integrations;
+mod integrations_links;
 mod login;
 mod manage;
 mod near_dup;
@@ -255,6 +256,13 @@ fn main() {
             integrations::integrations_cache_info,
             integrations::integrations_cache_clear,
             integrations::integrations_open_terms,
+            integrations_links::integrations_link_metrics,
+            integrations_links::integrations_link_estimate,
+            integrations_links::integrations_run_links,
+            integrations_links::integrations_sheets_plan,
+            integrations_links::integrations_export_sheets,
+            integrations_links::integrations_open_looker,
+            integrations_links::integrations_looker_link,
             results::sitemap_files,
             results::orphan_summary,
             results::sitemap_entries_for_url,

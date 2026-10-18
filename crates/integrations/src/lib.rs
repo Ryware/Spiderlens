@@ -13,6 +13,8 @@
 //! - `run` and `store`: resumable runs inside the crawl file (D7, D8).
 //! - `matching`: provider URLs to crawled URLs (D9).
 //! - `gsc`: Search Console (D10).
+//! - `links`: Ahrefs, Majestic and Moz link metrics with cost control (D10).
+//! - `sheets` and `looker`: export a results view to Google Sheets, open it in Looker Studio (D10).
 //! - `hub`: the one entry point the app and the CLI share.
 
 pub mod browser;
@@ -23,11 +25,14 @@ pub mod gsc;
 pub mod http;
 pub mod hub;
 pub mod limits;
+pub mod links;
+pub mod looker;
 pub mod matching;
 pub mod oauth;
 mod provider;
 pub mod run;
 pub mod settings;
+pub mod sheets;
 pub mod store;
 
 pub use error::{Error, Result};

@@ -44,6 +44,13 @@ import type { ProviderSettings } from "./generated/ProviderSettings";
 import type { ProviderStatus } from "./generated/ProviderStatus";
 import type { QueryRow } from "./generated/QueryRow";
 import type { RunProgress } from "./generated/RunProgress";
+import type { LinkEstimate } from "./generated/LinkEstimate";
+import type { LinkRequest } from "./generated/LinkRequest";
+import type { MetricInfo } from "./generated/MetricInfo";
+import type { Overflow } from "./generated/Overflow";
+import type { SheetExport } from "./generated/SheetExport";
+import type { SheetsPlan } from "./generated/SheetsPlan";
+import type { SpreadsheetRef } from "./generated/SpreadsheetRef";
 import type { Status as IntegrationStatus } from "./generated/Status";
 import type { Scene } from "./generated/Scene";
 import type { TermLinks } from "./generated/TermLinks";
@@ -676,6 +683,12 @@ export interface CrawlRule {
   run_state: "crawl" | "complete" | "partial" | "stale" | null;
 }
 
+/** Rows sent to a new spreadsheet so far. */
+export interface SheetsProgress {
+  sent: number;
+  total: number;
+}
+
 export interface CustomRunProgress {
   run: number;
   done: number;
@@ -991,6 +1004,16 @@ export interface Transport {
   integrationsCacheInfo(): Promise<CacheInfo>;
   integrationsCacheClear(provider: string | null): Promise<number>;
   integrationsOpenTerms(provider: string): Promise<void>;
+  /** Link metrics (spec 024 US5): what a provider offers, the cost before a run, and the run. */
+  integrationsLinkMetrics(provider: string): Promise<MetricInfo[]>;
+  integrationsLinkEstimate(path: string, label: string | null, request: LinkRequest): Promise<LinkEstimate>;
+  integrationsRunLinks(path: string, label: string | null, request: LinkRequest): Promise<RunProgress>;
+  /** Google Sheets and Looker Studio (spec 024 US6): size of the view's export, the export, the links. */
+  integrationsSheetsPlan(path: string, query: ViewQuery, columns: string[], segments?: Segment[]): Promise<SheetsPlan>;
+  integrationsExportSheets(path: string, query: ViewQuery, columns: string[], segments: Segment[] | undefined, title: string, worksheet: string, account: string | null, overflow: Overflow): Promise<SheetExport>;
+  integrationsOpenLooker(sheet: SpreadsheetRef): Promise<string>;
+  integrationsLookerLink(sheet: SpreadsheetRef): Promise<string>;
+  onSheetsProgress(cb: (p: SheetsProgress) => void): Promise<() => void>;
   onIntegrationsProgress(cb: (p: RunProgress) => void): Promise<() => void>;
   // AI checks (spec 015).
   /** Runs the checks on a crawl file; results replace the previous run's when it finishes. */
@@ -1256,6 +1279,15 @@ export const tauriTransport: Transport = {
   integrationsCacheInfo: () => invoke("integrations_cache_info"),
   integrationsCacheClear: (provider) => invoke("integrations_cache_clear", { provider }),
   integrationsOpenTerms: (provider) => invoke("integrations_open_terms", { provider }),
+  integrationsLinkMetrics: (provider) => invoke("integrations_link_metrics", { providerId: provider }),
+  integrationsLinkEstimate: (path, label, request) => invoke("integrations_link_estimate", { path, label, request }),
+  integrationsRunLinks: (path, label, request) => invoke("integrations_run_links", { path, label, request }),
+  integrationsSheetsPlan: (path, query, columns, segments) => invoke("integrations_sheets_plan", { path, query, columns, segments: segments ?? null }),
+  integrationsExportSheets: (path, query, columns, segments, title, worksheet, account, overflow) =>
+    invoke("integrations_export_sheets", { path, query, columns, segments: segments ?? null, title, worksheet, account, overflow }),
+  integrationsOpenLooker: (sheet) => invoke("integrations_open_looker", { sheet }),
+  integrationsLookerLink: (sheet) => invoke("integrations_looker_link", { sheet }),
+  onSheetsProgress: (cb) => listen<SheetsProgress>("integrations://sheets-progress", (e) => cb(e.payload)),
   onIntegrationsProgress: (cb) => listen<RunProgress>("integrations://progress", (e) => cb(e.payload)),
   aeoRun: (path) => invoke("aeo_run", { path }),
   aeoCancel: (runId) => invoke("aeo_cancel", { runId }),

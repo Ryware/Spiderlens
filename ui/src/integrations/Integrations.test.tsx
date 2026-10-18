@@ -31,9 +31,9 @@ test("us7_every_source_is_off_and_says_what_it_sends", async () => {
   expect(within(sc).getByRole("switch").getAttribute("aria-checked")).toBe("false");
   expect(sc.textContent).toContain("The list of crawled URLs is not sent.");
   // Sources not in this build are shown but cannot be turned on.
-  const ahrefs = source("ahrefs");
-  expect(within(ahrefs).getByText("Coming later")).toBeTruthy();
-  expect(within(ahrefs).getByRole("switch").hasAttribute("data-disabled")).toBe(true);
+  const field = source("field_data");
+  expect(within(field).getByText("Coming later")).toBeTruthy();
+  expect(within(field).getByRole("switch").hasAttribute("data-disabled")).toBe(true);
   expect(screen.getByText(/Open or finish a crawl/)).toBeTruthy();
 });
 

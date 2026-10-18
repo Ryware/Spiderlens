@@ -6,10 +6,12 @@
 
 pub mod a11y_site;
 pub mod js_site;
+pub mod links;
 pub mod near_dup;
 pub mod pdf;
 pub mod providers;
 pub mod report;
+pub mod sheets;
 mod site;
 
 pub use site::{Hit, Site, SiteBuilder};

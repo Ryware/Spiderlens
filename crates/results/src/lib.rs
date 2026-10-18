@@ -18,6 +18,7 @@ mod detail;
 mod export;
 mod features;
 pub mod issues;
+mod link_data;
 pub mod near_dup;
 mod reader;
 pub mod report;
