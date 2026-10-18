@@ -286,3 +286,112 @@ test("rendering_issues_count_in_the_rendering_category", async () => {
   await waitFor(() => expect(screen.getByRole("tab", { name: /^JavaScript rendering/ }).textContent).toContain("1 error"));
   expect(screen.getByRole("tab", { name: /^Limits/ }).textContent).toBe("Limits");
 });
+
+async function openRenderingOn(transport = fakeTransport()) {
+  const t = await setup(transport);
+  await openSettings("JavaScript rendering");
+  fireEvent.click(screen.getByRole("radio", { name: "JavaScript rendering" }));
+  await screen.findByLabelText("Maximum render time");
+  return t;
+}
+
+const typeInto = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const toggle = (name: string) => fireEvent.click(screen.getByRole("switch", { name }));
+
+test("rendering_category_each_control_writes_its_field", async () => {
+  // Spec 014 T054: every setting of the category reaches the crawl's configuration.
+  const t = await openRenderingOn();
+  typeInto("Maximum render time", "20");
+  typeInto("Minimum wait", "2");
+  fireEvent.change(screen.getByLabelText("Window"), { target: { value: "custom" } });
+  typeInto("Window width", "800");
+  typeInto("Window height", "600");
+  toggle("Block stylesheets");
+  toggle("Block third-party resources");
+  toggle("Render error pages");
+  typeInto("Only render pages matching", "/products/\n/shop/");
+  typeInto("Never render pages matching", "\\?print=");
+  typeInto("Pages rendered at once", "3");
+  typeInto("Browser memory budget", "2048");
+  toggle("Screenshots");
+  typeInto("JavaScript content: new text", "30");
+  typeInto("JavaScript content: new words", "80");
+  typeInto("Hidden text threshold", "60");
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.rendering).toEqual({
+    mode: "javascript",
+    max_render_secs: 20,
+    min_wait_secs: 2,
+    window: { preset: "custom", width: 800, height: 600 },
+    block: { images: true, media: true, fonts: true, stylesheets: true, third_party: true },
+    include: ["/products/", "/shop/"],
+    exclude: ["\\?print="],
+    render_error_pages: true,
+    concurrency: 3,
+    memory_budget_mb: 2048,
+    screenshots: true,
+    js_content_min_percent: 30,
+    js_content_min_words: 80,
+    hidden_content_percent: 60,
+  });
+});
+
+test("rendering_category_load_all_resources_clears_the_blocks", async () => {
+  const t = await openRenderingOn();
+  const all = () => screen.getByRole("switch", { name: "Load all resources" });
+  expect(all().getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(all());
+  await waitFor(() => expect(all().getAttribute("aria-checked")).toBe("true"));
+  for (const name of ["Block images", "Block video and audio", "Block fonts", "Block stylesheets", "Block third-party resources"]) {
+    expect(screen.getByRole("switch", { name }).getAttribute("aria-checked")).toBe("false");
+  }
+  // One block back on: not "all" any more.
+  toggle("Block images");
+  await waitFor(() => expect(all().getAttribute("aria-checked")).toBe("false"));
+  fireEvent.click(screen.getByRole("button", { name: /Done/ }));
+  fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "example.com" } });
+  await waitFor(() => expect(start().disabled).toBe(false));
+  fireEvent.click(start());
+  await waitFor(() => expect(t.crawls.started).toHaveLength(1));
+  expect(t.crawls.started[0].config.rendering.block).toEqual({ images: true, media: false, fonts: false, stylesheets: false, third_party: false });
+});
+
+test("rendering_category_shows_automatic_values_as_auto", async () => {
+  await openRenderingOn();
+  expect((screen.getByLabelText("Pages rendered at once") as HTMLInputElement).placeholder).toBe("Auto");
+  expect((screen.getByLabelText("Browser memory budget") as HTMLInputElement).placeholder).toBe("Auto");
+  expect((screen.getByLabelText("Window") as HTMLSelectElement).selectedOptions[0].textContent).toBe("Auto");
+  // Blank goes back to automatic.
+  typeInto("Pages rendered at once", "4");
+  typeInto("Pages rendered at once", "");
+  expect((screen.getByLabelText("Pages rendered at once") as HTMLInputElement).value).toBe("");
+});
+
+test("rendering_category_shows_each_issue_on_its_own_control", async () => {
+  await openRenderingOn();
+  typeInto("Maximum render time", "90");
+  await screen.findByText("The maximum render time must be between 1 and 60 seconds.");
+  typeInto("Pages rendered at once", "40");
+  await screen.findByText("Pages rendered at once must be between 1 and 16. Leave it blank for automatic.");
+  typeInto("Hidden text threshold", "0");
+  await screen.findByText("The hidden content threshold must be between 1 and 100 percent.");
+  fireEvent.change(screen.getByLabelText("Window"), { target: { value: "custom" } });
+  typeInto("Window width", "100");
+  await screen.findByText("A custom window width must be between 320 and 3,840 pixels.");
+  expect(screen.getByRole("tab", { name: /^JavaScript rendering/ }).textContent).toContain("error");
+});
+
+test("rendering_category_shows_the_browser_and_changes_it", async () => {
+  const t = await openRenderingOn();
+  expect((await screen.findByRole("status")).textContent).toContain("none was found");
+  fireEvent.click(screen.getByRole("button", { name: "Change browser" }));
+  fireEvent.change(screen.getByLabelText("Browser path"), { target: { value: "/opt/chrome/chrome" } });
+  fireEvent.click(screen.getByRole("button", { name: "Use this browser" }));
+  await waitFor(() => expect(t.render.paths).toEqual(["/opt/chrome/chrome"]));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Google Chrome 155.0.8059.39 (chosen by you)"));
+  expect(screen.queryByLabelText("Browser path")).toBeNull();
+});
