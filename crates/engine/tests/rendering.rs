@@ -6,7 +6,10 @@
 
 use std::path::Path;
 
-use spiderlens_config::{Change, CrawlConfig, ModeInput, RenderMode, SpeedSettings};
+use spiderlens_config::{
+    Change, CrawlConfig, ModeInput, RenderBlock, RenderMode, RenderWindow, RobotsMode, SpeedSettings,
+    UaPreset, WindowPreset,
+};
 use spiderlens_engine::crawl::render::progress::{RenderLimiting, RenderProgress};
 use spiderlens_engine::crawl::{
     Control, CrawlEvent, CrawlStore, CrawlSummary, Crawler, Progress, ResumeOptions,
@@ -85,9 +88,13 @@ async fn crawl_then_queue(site: &JsSite, path: &Path, store_html: bool) -> Vec<i
 }
 
 async fn render(site: &JsSite, path: &Path, browser: BrowserInfo) -> String {
+    render_with(site, path, browser, Some(2)).await
+}
+
+async fn render_with(site: &JsSite, path: &Path, browser: BrowserInfo, concurrency: Option<u32>) -> String {
     let mut settings = CrawlConfig::default().rendering;
     settings.mode = RenderMode::Javascript;
-    settings.concurrency = Some(2);
+    settings.concurrency = concurrency;
     let crawler = Crawler::open_with(
         path,
         &ResumeOptions {
@@ -1535,4 +1542,460 @@ async fn us5_a_browser_that_cannot_be_relaunched_makes_the_rest_browser_unavaila
         assert_eq!(url_state(&store, &site, p).as_deref(), Some("crawled"), "{p}");
         assert_eq!(site.count(JS_HOST, p), 1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// User story 4: rendering settings (T047 to T052, T055).
+
+fn us4_site() -> JsSite {
+    JsSiteBuilder::new().us4_pages().start()
+}
+
+/// The rendering patterns that leave one page of the US4 site to render.
+fn only(pattern: &str) -> impl FnOnce(&mut CrawlConfig) {
+    let pattern = pattern.to_string();
+    move |c| c.rendering.include = vec![pattern]
+}
+
+/// `render_resources` outcome of the resource whose address ends with
+/// `suffix`, on the page `p`.
+fn resource_outcome(store: &CrawlStore, site: &JsSite, p: &str, suffix: &str) -> Option<String> {
+    let id = id(store, site, p);
+    store
+        .conn_for_tests()
+        .query_row(
+            "SELECT outcome FROM render_resources WHERE url_id = ?1 AND url LIKE ?2",
+            rusqlite::params![id, format!("%{suffix}")],
+            |r| r.get(0),
+        )
+        .ok()
+}
+
+/// The text a script wrote into the width page and the window it was
+/// rendered in.
+async fn width_of(
+    site: &JsSite,
+    dir: &Path,
+    name: &str,
+    browser: BrowserInfo,
+    edit: impl FnOnce(&mut CrawlConfig),
+) -> (String, i64) {
+    let path = dir.join(name);
+    let status = crawl_rendering(site, &path, browser, |c| {
+        c.rendering.include = vec!["/width$".into()];
+        edit(c);
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let w = id(&store, site, "/width");
+    let text: String = one(
+        &store,
+        "SELECT text FROM rendered_text WHERE url_id = ?1 AND text LIKE 'innerWidth=%'",
+        w,
+    );
+    (
+        text,
+        one(&store, "SELECT window_w FROM renders WHERE url_id = ?1", w),
+    )
+}
+
+/// US4 scenario 7: the page sees the window the settings ask for (T047).
+#[tokio::test]
+async fn us4_the_page_sees_the_window_the_settings_ask_for() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = us4_site();
+    let dir = tempfile::tempdir().unwrap();
+
+    // `auto` with SpiderLens' desktop user agent: 1024 x 768.
+    let (text, w) = width_of(&site, dir.path(), "auto.spiderlens", browser.clone(), |_| {}).await;
+    assert_eq!((text.as_str(), w), ("innerWidth=1024", 1024));
+
+    // `auto` follows a mobile user agent.
+    let (text, w) = width_of(&site, dir.path(), "phone.spiderlens", browser.clone(), |c| {
+        c.identity.user_agent.preset = UaPreset::GooglebotSmartphone;
+    })
+    .await;
+    assert_eq!((text.as_str(), w), ("innerWidth=411", 411));
+
+    // The mobile preset, whatever the user agent.
+    let (text, _) = width_of(&site, dir.path(), "mobile.spiderlens", browser.clone(), |c| {
+        c.rendering.window.preset = WindowPreset::Mobile;
+    })
+    .await;
+    assert_eq!(text, "innerWidth=411");
+
+    // A custom size.
+    let (text, w) = width_of(&site, dir.path(), "custom.spiderlens", browser, |c| {
+        c.rendering.window = RenderWindow {
+            preset: WindowPreset::Custom,
+            width: Some(800),
+            height: Some(600),
+        };
+    })
+    .await;
+    assert_eq!((text.as_str(), w), ("innerWidth=800", 800));
+}
+
+/// US4 scenarios 3 and 4, FR-014 (T048).
+#[tokio::test]
+async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = us4_site();
+    let dir = tempfile::tempdir().unwrap();
+    let run = |name: &str, block: RenderBlock| {
+        let path = dir.path().join(name);
+        let browser = browser.clone();
+        let site = &site;
+        async move {
+            site.reset();
+            let status = crawl_rendering(site, &path, browser, |c| {
+                c.rendering.include = vec!["/resources$".into()];
+                c.rendering.block = block;
+                c.robots.mode = RobotsMode::Ignore;
+            })
+            .await;
+            assert_eq!(status, "completed");
+            CrawlStore::open_read_only(&path).unwrap()
+        }
+    };
+
+    // Defaults: images, media and fonts are blocked; scripts, stylesheets
+    // and third-party scripts load.
+    let store = run("default.spiderlens", RenderBlock::default()).await;
+    for (host_path, suffix) in [
+        ("/img/a.png", "/img/a.png"),
+        ("/media/a.mp4", "/media/a.mp4"),
+        ("/fonts/a.woff2", "/fonts/a.woff2"),
+    ] {
+        assert_eq!(site.count(JS_HOST, host_path), 0, "{host_path} was requested");
+        assert_eq!(
+            resource_outcome(&store, &site, "/resources", suffix).as_deref(),
+            Some("blocked_setting"),
+            "{suffix}"
+        );
+    }
+    assert!(site.count(JS_HOST, "/js/own.js") >= 1);
+    assert!(site.count(JS_HOST, "/css/site.css") >= 1);
+    assert!(
+        site.count("cdn.test", "/cdn/lib.js") >= 1,
+        "third-party scripts load by default"
+    );
+    let blocked: i64 = one(
+        &store,
+        "SELECT resources_blocked FROM renders WHERE url_id = ?1",
+        id(&store, &site, "/resources"),
+    );
+    assert!(blocked >= 3, "{blocked}");
+
+    // "Load all resources".
+    let none = RenderBlock {
+        images: false,
+        media: false,
+        fonts: false,
+        stylesheets: false,
+        third_party: false,
+    };
+    let store = run("all.spiderlens", none).await;
+    for (host_path, suffix) in [
+        ("/img/a.png", "/img/a.png"),
+        ("/media/a.mp4", "/media/a.mp4"),
+        ("/fonts/a.woff2", "/fonts/a.woff2"),
+    ] {
+        assert!(
+            site.count(JS_HOST, host_path) >= 1,
+            "{host_path} was not requested"
+        );
+        assert_ne!(
+            resource_outcome(&store, &site, "/resources", suffix).as_deref(),
+            Some("blocked_setting"),
+            "{suffix}"
+        );
+    }
+
+    // FR-014: third-party and stylesheet blocking.
+    let store = run(
+        "third.spiderlens",
+        RenderBlock {
+            stylesheets: true,
+            third_party: true,
+            ..none
+        },
+    )
+    .await;
+    assert_eq!(site.count("cdn.test", "/cdn/lib.js"), 0);
+    assert_eq!(site.count(JS_HOST, "/css/site.css"), 0);
+    for suffix in ["/cdn/lib.js", "/css/site.css"] {
+        assert_eq!(
+            resource_outcome(&store, &site, "/resources", suffix).as_deref(),
+            Some("blocked_setting"),
+            "{suffix}"
+        );
+    }
+    assert!(site.count(JS_HOST, "/js/own.js") >= 1, "own scripts still load");
+}
+
+/// US4 scenario 5, FR-015, FR-016 and SC-006 (T049).
+#[tokio::test]
+async fn us4_resources_are_polite() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = us4_site();
+    let dir = tempfile::tempdir().unwrap();
+
+    // `respect`: the disallowed script is never requested, is listed with
+    // its rule and flags the page.
+    let path = dir.path().join("respect.spiderlens");
+    let status = crawl_rendering(&site, &path, browser.clone(), only("/resources$")).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(site.count(JS_HOST, "/private/app.js"), 0);
+    assert_eq!(
+        resource_outcome(&store, &site, "/resources", "/private/app.js").as_deref(),
+        Some("blocked_robots")
+    );
+    let rule: Option<String> = one(
+        &store,
+        "SELECT robots_rule FROM render_resources WHERE url_id = ?1 AND url LIKE '%/private/app.js'",
+        id(&store, &site, "/resources"),
+    );
+    assert!(rule.is_some_and(|r| r.contains("/private/")));
+    let flagged: i64 = one(
+        &store,
+        "SELECT resources_blocked FROM renders WHERE url_id = ?1",
+        id(&store, &site, "/resources"),
+    );
+    assert!(flagged >= 1, "the page has blocked resources");
+
+    // `ignore_report`: requested, and still listed with the rule.
+    site.reset();
+    let path = dir.path().join("report.spiderlens");
+    let status = crawl_rendering(&site, &path, browser.clone(), |c| {
+        c.rendering.include = vec!["/resources$".into()];
+        c.robots.mode = RobotsMode::IgnoreReport;
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(site.count(JS_HOST, "/private/app.js"), 1);
+    assert_eq!(
+        resource_outcome(&store, &site, "/resources", "/private/app.js").as_deref(),
+        Some("loaded")
+    );
+    let rule: Option<String> = one(
+        &store,
+        "SELECT robots_rule FROM render_resources WHERE url_id = ?1 AND url LIKE '%/private/app.js'",
+        id(&store, &site, "/resources"),
+    );
+    assert!(rule.is_some(), "the rule is reported");
+
+    // The per-site cap counts pages and resources together.
+    site.reset();
+    let path = dir.path().join("cap.spiderlens");
+    let status = crawl_rendering(&site, &path, browser.clone(), |c| {
+        c.rendering.include = vec!["/many$".into()];
+        c.speed = SpeedSettings {
+            max_concurrent: 8,
+            max_per_host: 3,
+            max_urls_per_sec: None,
+            adaptive: false,
+        };
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let peak = site.peak_open(JS_HOST);
+    assert!((2..=3).contains(&peak), "peak open requests to the host: {peak}");
+
+    // A 429 with Retry-After holds the host: the next request waits.
+    site.reset();
+    let path = dir.path().join("retry.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, only("/retry$")).await;
+    assert_eq!(status, "completed");
+    let at = |p: &str| {
+        site.log()
+            .into_iter()
+            .find(|e| e.host == JS_HOST && e.path == p)
+            .map(|e| e.at_ms)
+    };
+    let a = at("/retry/a.js").expect("the 429 script was requested");
+    let b = at("/retry/b.js").expect("the second script was requested");
+    assert!(
+        b >= a + 1500,
+        "Retry-After: 2 held the host for only {} ms",
+        b - a
+    );
+}
+
+/// US4 scenarios 1 and 2, SC-007 (T050).
+#[tokio::test]
+async fn us4_pages_end_when_settled_or_at_the_cap_and_the_minimum_wait_holds() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = us4_site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settle.spiderlens");
+    let status = crawl_rendering(&site, &path, browser.clone(), |c| {
+        c.rendering.include = vec!["/settles$|/polls$".into()];
+        c.rendering.max_render_secs = 5.0;
+        c.extraction.store_html = true;
+    })
+    .await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+
+    let settles = id(&store, &site, "/settles");
+    assert_eq!(render_state(&store, &site, "/settles").unwrap().0, "rendered");
+    let ms: i64 = one(&store, "SELECT render_ms FROM renders WHERE url_id = ?1", settles);
+    assert!(
+        (2000..4500).contains(&ms),
+        "settled page took {ms} ms, not the 5 s cap"
+    );
+    let h2: i64 = one(
+        &store,
+        "SELECT COUNT(*) FROM rendered_text WHERE url_id = ?1 AND text = 'Settled after two seconds'",
+        settles,
+    );
+    assert_eq!(h2, 1);
+
+    let polls = id(&store, &site, "/polls");
+    assert_eq!(render_state(&store, &site, "/polls").unwrap().0, "timed_out");
+    let ms: i64 = one(&store, "SELECT render_ms FROM renders WHERE url_id = ?1", polls);
+    assert!(ms <= 5000 + 2000, "the cap held for {ms} ms");
+    assert_eq!(
+        one::<i64>(
+            &store,
+            "SELECT COUNT(*) FROM rendered_pages WHERE url_id = ?1",
+            polls
+        ),
+        1,
+        "the DOM at the cap is stored"
+    );
+    assert_eq!(
+        one::<i64>(
+            &store,
+            "SELECT COUNT(*) FROM rendered_bodies WHERE url_id = ?1",
+            polls
+        ),
+        1
+    );
+
+    // The minimum wait holds a fast page.
+    let quick = JsSiteBuilder::new()
+        .page(
+            "/",
+            "<!doctype html><html><head><title>Quick</title></head><body><h1>Quick</h1><p>Nothing happens.</p></body></html>",
+        )
+        .start();
+    let path = dir.path().join("minwait.spiderlens");
+    let status = crawl_rendering(&quick, &path, browser, |c| c.rendering.min_wait_secs = 3.0).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let home = id(&store, &quick, "/");
+    let ms: i64 = one(&store, "SELECT render_ms FROM renders WHERE url_id = ?1", home);
+    assert!(ms >= 3000, "{ms} ms");
+}
+
+/// Crawls raw, then queues the given pages for rendering (T051).
+async fn crawl_then_queue_paths(site: &JsSite, path: &Path, paths: &[String]) {
+    let crawler = Crawler::create(
+        path,
+        config(true),
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve());
+    let (_tx, rx) = watch::channel(Control::Run);
+    let s = crawler.run(rx, None).await.unwrap();
+    assert_eq!(s.status, "completed");
+    let store = CrawlStore::open(path).unwrap();
+    for p in paths {
+        let id = store.id_of(&site.url(JS_HOST, p)).unwrap().expect("crawled");
+        store.enqueue_render(id, None).unwrap();
+    }
+}
+
+/// US4 scenario 6, FR-037 (T051). Each slow page holds one request to the
+/// site open while it renders, so the site's peak is the renders at once.
+#[tokio::test]
+async fn us4_the_stage_renders_as_many_pages_at_once_as_the_setting_says() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = JsSiteBuilder::new().us4_slow_pages(6).start();
+    let paths: Vec<String> = (0..6).map(|n| format!("/slow/{n}")).collect();
+    let dir = tempfile::tempdir().unwrap();
+    for (name, concurrency) in [("two.spiderlens", 2), ("one.spiderlens", 1)] {
+        let path = dir.path().join(name);
+        crawl_then_queue_paths(&site, &path, &paths).await;
+        site.reset();
+        assert_eq!(
+            render_with(&site, &path, browser.clone(), Some(concurrency)).await,
+            "completed"
+        );
+        assert_eq!(
+            u64::from(concurrency),
+            site.peak_open(JS_HOST),
+            "peak open renders with concurrency {concurrency}"
+        );
+        let store = CrawlStore::open_read_only(&path).unwrap();
+        for p in &paths {
+            assert_eq!(render_state(&store, &site, p).unwrap().0, "rendered", "{p}");
+        }
+    }
+}
+
+/// US4 scenario 8 (T052).
+#[tokio::test]
+async fn us4_include_patterns_limit_which_pages_are_rendered() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = us4_site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("include.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, only("/products/")).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    for p in ["/products/", "/products/a", "/products/b"] {
+        assert_eq!(render_state(&store, &site, p).unwrap().0, "rendered", "{p}");
+    }
+    for p in ["/", "/plain", "/other", "/settles", "/width"] {
+        assert_eq!(
+            render_state(&store, &site, p).unwrap(),
+            ("not_rendered".to_string(), Some("outside_rules".to_string())),
+            "{p}"
+        );
+    }
+}
+
+/// FR-017 (T055): a cacheable script is fetched once for 50 pages, one
+/// marked `no-store` every time.
+#[tokio::test]
+async fn us4_cacheable_scripts_are_fetched_once_and_no_store_scripts_every_time() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = JsSiteBuilder::new().us4_cache_pages(50).start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache.spiderlens");
+    // One page at a time, so no two renders ask for the script together.
+    let status = crawl_rendering(&site, &path, browser, |c| c.rendering.concurrency = Some(1)).await;
+    assert_eq!(status, "completed");
+    assert_eq!(site.count(JS_HOST, "/shared/max-age.js"), 1);
+    assert_eq!(site.count(JS_HOST, "/shared/no-store.js"), 50);
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        count("SELECT COUNT(*) FROM render_resources WHERE url LIKE '%/max-age.js' AND outcome = 'cached'"),
+        49
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM render_resources WHERE url LIKE '%/max-age.js' AND outcome = 'loaded'"),
+        1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM render_resources WHERE url LIKE '%/no-store.js' AND outcome = 'cached'"),
+        0
+    );
 }
