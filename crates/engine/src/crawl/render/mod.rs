@@ -3,6 +3,7 @@
 //! Exists only when the crawl's rendering mode is JavaScript: with
 //! rendering off, none of this runs.
 
+pub(crate) mod a11y_probe;
 pub mod cache;
 pub mod net;
 pub(crate) mod stage;

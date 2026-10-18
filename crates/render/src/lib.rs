@@ -7,8 +7,8 @@
 //! workspace. The public API is `contracts/render-crate.md`.
 //!
 //! Not yet here: the `chrome-headless-shell` download (no pins yet, so
-//! [`download_plan`] is `None`) and running probes (each probe is reported
-//! as failed until specs 025 and 026 need them).
+//! [`download_plan`] is `None`). Probes run after the page settled, in an
+//! isolated world each, under their own budget and the per-page total.
 
 mod find;
 mod guard;
