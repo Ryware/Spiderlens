@@ -9,4 +9,15 @@ export type AgentSettings = {
  * `/.well-known/agent-card.json` once per internal host at the end of
  * the crawl.
  */
-entry_points: boolean, };
+entry_points: boolean, 
+/**
+ * Most distinct Markdown alternates requested per host after the last
+ * page, to check that each answers with Markdown. The rest are listed
+ * as not verified. Needs `entry_points`.
+ */
+markdown_alternates_max: number, 
+/**
+ * Send one MCP discovery request to each MCP endpoint the site's
+ * catalog or cards list (at most 5 per host). Needs `entry_points`.
+ */
+mcp_discovery: boolean, };

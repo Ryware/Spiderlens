@@ -242,6 +242,18 @@ fn missing_data(conn: &Connection, id: &str) -> rusqlite::Result<Option<&'static
                 "The AI agent test was not run for agents that act for a person. Run it from the AI search tab.",
             )
         }
+        "agents.markdown_alternate_broken"
+            if !has(
+                "SELECT EXISTS (SELECT 1 FROM page_agent WHERE md_outcome IN ('ok', 'wrong_type', 'error'))",
+            )? =>
+        {
+            Some("Markdown versions were not requested in this crawl.")
+        }
+        "agents.mcp_endpoint_unreachable"
+            if !has("SELECT EXISTS (SELECT 1 FROM agent_entry_points WHERE mcp_discovery IS NOT NULL)")? =>
+        {
+            Some("No MCP endpoint was checked in this crawl.")
+        }
         _ => None,
     })
 }
