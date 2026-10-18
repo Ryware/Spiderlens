@@ -176,14 +176,20 @@ fn orphans_lists_what_the_analysis_found() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("spiderlens analyse"));
+    // Page 1 is a crawled HTML page; page 2 is in a sitemap and linked from
+    // nowhere; page 3 is in a sitemap and linked only with a nofollow link.
+    // The command runs the pass itself.
     let url: String = {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(
             "UPDATE meta SET value = 'sitemap_entries' WHERE key = 'data_features';
-             CREATE TABLE IF NOT EXISTS orphans (url_id INTEGER PRIMARY KEY, class TEXT NOT NULL, sources TEXT NOT NULL);
-             DELETE FROM orphans;
-             INSERT INTO orphans VALUES (2, 'orphan', 'sitemap'), (3, 'nofollow_only', 'sitemap');
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('analysis', '{\"orphans\":{\"version\":1}}');",
+             DELETE FROM links WHERE to_id IN (2, 3);
+             UPDATE urls SET internal = 1, state = 'crawled', status = 200, content_type = 'text/html',
+                 error_class = NULL, source = 'start' WHERE id = 1;
+             UPDATE urls SET internal = 1, state = 'crawled', status = 200, content_type = 'text/html',
+                 error_class = NULL, in_sitemap = 1, source = 'sitemap' WHERE id IN (2, 3);
+             INSERT INTO links (from_id, to_id, raw, kind, nofollow, page_nofollow, followed)
+                 VALUES (1, 3, '/x', 'anchor', 1, 0, 0);",
         )
         .unwrap();
         conn.query_row("SELECT url FROM urls WHERE id = 2", [], |r| r.get(0))
@@ -199,7 +205,7 @@ fn orphans_lists_what_the_analysis_found() {
         .unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(
-        text.starts_with("url,class,sources,status,state,sitemap\n"),
+        text.starts_with("url,class,sources,status,indexability,sitemap\n"),
         "{text}"
     );
     assert!(text.contains(",nofollow_only,sitemap,"), "{text}");

@@ -7,17 +7,21 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use clap::Args;
-use spiderlens_compare::{Comparison, FilterChange, Group, UrlGroup};
-use spiderlens_config::{CompareSettings, MapRule};
+use spiderlens_compare::{Comparison, FilterChange, Group, IssueChange, UrlGroup};
+use spiderlens_config::{CompareSettings, IssueSettingsChoice, MapRule, Priority};
+use spiderlens_schedule::baseline_for;
 
 use crate::exit;
+use crate::issues_cmd::parse_priority;
 
 #[derive(Args)]
 pub struct CompareArgs {
-    /// The previous crawl file.
-    previous: PathBuf,
-    /// The current crawl file.
-    current: PathBuf,
+    /// The previous and the current crawl file; with --baseline schedule, only the current one.
+    #[arg(value_names = ["PREVIOUS", "CURRENT"], num_args = 1..=2, required = true)]
+    files: Vec<PathBuf>,
+    /// Compare with the previous finished run of the schedule the current crawl belongs to.
+    #[arg(long, value_name = "WHICH", value_parser = ["schedule"])]
+    baseline: Option<String>,
     /// Plain-text mapping rule for previous URLs, FIND=>REPLACE (repeatable, in order).
     #[arg(long = "map", value_name = "FIND=>REPLACE")]
     map: Vec<String>,
@@ -27,6 +31,10 @@ pub struct CompareArgs {
     /// Comparison settings file saved from the app.
     #[arg(long, value_name = "FILE")]
     settings: Option<PathBuf>,
+    /// Whose issue settings both crawls are evaluated with: current (the
+    /// current crawl's, the default), previous, or app (the defaults here).
+    #[arg(long, value_name = "WHICH", value_parser = parse_choice)]
+    issue_settings: Option<IssueSettingsChoice>,
     /// Print the full comparison report as JSON.
     #[arg(long)]
     json: bool,
@@ -39,6 +47,18 @@ pub struct CompareArgs {
     /// Fail when this many pages or more went from indexable to non-indexable.
     #[arg(long, value_name = "N")]
     fail_on_lost_indexable: Option<u64>,
+    /// Fail when an issue at this priority or higher has newly affected URLs.
+    #[arg(long, value_name = "PRIORITY", value_parser = parse_priority)]
+    fail_on_new_issues: Option<Priority>,
+}
+
+fn parse_choice(s: &str) -> Result<IssueSettingsChoice, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "current" => Ok(IssueSettingsChoice::Current),
+        "previous" => Ok(IssueSettingsChoice::Previous),
+        "app" => Ok(IssueSettingsChoice::App),
+        _ => Err("expected current, previous or app".into()),
+    }
 }
 
 fn parse_rule(s: &str, regex: bool) -> Result<MapRule, String> {
@@ -66,11 +86,53 @@ fn load_settings(a: &CompareArgs) -> Result<CompareSettings, String> {
     for m in &a.map_regex {
         s.mapping.push(parse_rule(m, true)?);
     }
+    if let Some(choice) = a.issue_settings {
+        s.issue_settings = choice;
+    }
     s.validate().map_err(|e| e.to_string())?;
     Ok(s)
 }
 
+/// The previous and current crawl files, resolving `--baseline schedule`.
+fn resolve_files(a: &CompareArgs) -> Result<(PathBuf, PathBuf), ExitCode> {
+    match (a.baseline.is_some(), a.files.as_slice()) {
+        (false, [previous, current]) => Ok((previous.clone(), current.clone())),
+        (false, _) => {
+            eprintln!(
+                "error: give the previous and the current crawl file, or --baseline schedule with the current one"
+            );
+            Err(ExitCode::from(exit::USAGE))
+        }
+        (true, [current]) => {
+            let paths = crate::schedule_cmd::config_paths()?;
+            match baseline_for(&paths, current) {
+                Ok(b) => {
+                    eprintln!(
+                        "Comparing with run {} of schedule \u{201c}{}\u{201d}: {}",
+                        b.run,
+                        b.schedule,
+                        b.path.display()
+                    );
+                    Ok((b.path, current.clone()))
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    Err(ExitCode::from(exit::COMPARE_FAILED))
+                }
+            }
+        }
+        (true, _) => {
+            eprintln!("error: --baseline schedule takes only the current crawl file");
+            Err(ExitCode::from(exit::USAGE))
+        }
+    }
+}
+
 pub fn run_compare(a: CompareArgs) -> ExitCode {
+    let (previous, current) = match resolve_files(&a) {
+        Ok(files) => files,
+        Err(code) => return code,
+    };
     let settings = match load_settings(&a) {
         Ok(s) => s,
         Err(e) => {
@@ -78,8 +140,14 @@ pub fn run_compare(a: CompareArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
+    // A warning only: the run goes on.
+    if let Ok(setup) = spiderlens_compare::setup(&previous, &current)
+        && let Some(w) = setup.disk_warning
+    {
+        eprintln!("warning: {w}");
+    }
     let cancel = AtomicBool::new(false);
-    let mut c = match Comparison::run(&a.previous, &a.current, settings, &cancel, &mut |_| {}) {
+    let mut c = match Comparison::run(&previous, &current, settings, None, &cancel, &mut |_| {}) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -122,6 +190,23 @@ pub fn run_compare(a: CompareArgs) -> ExitCode {
             "{} pages went from indexable to non-indexable (limit {n})",
             s.lost_indexable
         ));
+    }
+    if let Some(p) = a.fail_on_new_issues {
+        let worse: Vec<String> = report
+            .summary
+            .issues
+            .iter()
+            .filter(|i| i.comparable && i.priority <= p && i.newly_affected > 0)
+            .map(|i| format!("{} ({})", i.name, i.newly_affected))
+            .collect();
+        if !worse.is_empty() {
+            failed.push(format!(
+                "{} issues at {} priority or higher have newly affected URLs: {}",
+                worse.len(),
+                p.label().to_lowercase(),
+                worse.join("; ")
+            ));
+        }
     }
     if failed.is_empty() {
         ExitCode::from(exit::FETCHED)
@@ -179,6 +264,7 @@ fn print_summary(r: &spiderlens_compare::ComparisonReport) {
             );
         }
     }
+    print_issues(r);
     println!();
     println!("Changed pages:");
     for e in &r.elements {
@@ -187,6 +273,55 @@ fn print_summary(r: &spiderlens_compare::ComparisonReport) {
         } else {
             println!("  {}: not comparable", e.label);
         }
+    }
+}
+
+/// The issue deltas: newly affected and fixed per priority, then the issues
+/// that changed.
+fn print_issues(r: &spiderlens_compare::ComparisonReport) {
+    let b = &r.issue_basis;
+    let whose = match b.settings {
+        IssueSettingsChoice::Current => "the current crawl's",
+        IssueSettingsChoice::Previous => "the previous crawl's",
+        IssueSettingsChoice::App => "the app's",
+    };
+    println!();
+    println!(
+        "Issues (rule set v{}, {whose} issue settings{}):",
+        b.rules_version,
+        if b.custom { ", customised" } else { "" }
+    );
+    for p in Priority::ALL {
+        let at = r
+            .summary
+            .issues
+            .iter()
+            .filter(|i| i.comparable && i.priority == p);
+        let (newly, fixed) = at.fold((0, 0), |(n, f), i| (n + i.newly_affected, f + i.fixed));
+        println!("  {}: newly affected {newly}, fixed {fixed}", p.label());
+    }
+    if r.issues.is_empty() {
+        println!("  No issue changed.");
+    }
+    for i in &r.issues {
+        println!(
+            "  [{}] {}: {} -> {} ({:+})  newly affected {}  fixed {}  gone {}",
+            i.priority.label(),
+            i.name,
+            i.previous.unwrap_or(0),
+            i.current.unwrap_or(0),
+            i.change(),
+            i.newly_affected,
+            i.fixed,
+            i.gone
+        );
+    }
+    for i in r.summary.issues.iter().filter(|i| !i.comparable) {
+        println!(
+            "  {}: not comparable ({})",
+            i.name,
+            i.reason.as_deref().unwrap_or("")
+        );
     }
 }
 
@@ -226,6 +361,23 @@ fn export_all(c: &mut Comparison, dir: &Path) -> spiderlens_compare::Result<()> 
                 element: e.element.clone(),
             },
         ));
+    }
+    for i in s.issues.iter().filter(|i| i.comparable) {
+        for (n, change, word) in [
+            (i.newly_affected, IssueChange::NewlyAffected, "newly-affected"),
+            (i.fixed, IssueChange::Fixed, "fixed"),
+            (i.gone, IssueChange::Gone, "gone"),
+        ] {
+            if n > 0 {
+                groups.push((
+                    format!("issue-{}-{word}.csv", slug(&i.rule)),
+                    Group::Issue {
+                        rule: i.rule.clone(),
+                        change,
+                    },
+                ));
+            }
+        }
     }
     for (n, which, word) in [
         (s.new, UrlGroup::New, "new"),

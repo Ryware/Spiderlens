@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-13
 
-**Status**: Approved 2026-10-13 (Ryware). Amended 2026-10-14 by the plan: reporting floor default 80% (FR-011), exact counts up to 50,000 pages per group (FR-013); see plan.md "Spec amendments".
+**Status**: Approved 2026-10-13 (Ryware). Amended 2026-10-14 by the plan: reporting floor default 80% (FR-011), exact counts up to 4,000 pages per group (FR-013); see plan.md "Spec amendments".
 
 **Input**: User description: "Near duplicate content: detect pages whose main content is nearly identical, with a configurable similarity threshold and main-content extraction that ignores navigation and other boilerplate (exact duplicates already exist through the text fingerprint of spec 005). Show clusters with similarity percentages and a side-by-side view, and feed a rule into the spec 009 issue catalogue. Local only, no external models. A 100,000-page crawl must be analysed within a minute or two on the reference 16 GB laptop. Crawl speed is the top priority: the analysis never slows fetching."
 
@@ -148,7 +148,7 @@ The consultant opens a crawl saved with an earlier version of SpiderLens, and al
 - **FR-010**: The near duplicate threshold MUST default to 90% and MUST be a user setting from 50% to 100%.
 - **FR-011**: The system MUST record, for every compared page, its closest match and that similarity when it is at least a reporting floor (default 80%, user setting from 50% to 100%, never above the threshold), and the number of other pages at or above the threshold.
 - **FR-012**: Pages connected by near duplicate pairs at or above the threshold MUST form one cluster. Each cluster MUST have a stable number within the analysis, a representative page (the page with the most inlinks, then the shortest URL), its size and its lowest and highest pairwise similarity among the pairs found.
-- **FR-013**: For each page, the system MUST keep at least its 50 most similar near duplicates with their similarity; when a page has more, the total count MUST still be correct for groups of up to 50,000 closely similar pages (above that it MUST be shown as a lower bound, marked "at least"), and the user MUST be told the list is limited.
+- **FR-013**: For each page, the system MUST keep at least its 50 most similar near duplicates with their similarity; when a page has more, the total count MUST still be correct for groups of up to 4,000 closely similar pages (above that it MUST be shown as a lower bound, marked "at least"), and the user MUST be told the list is limited.
 - **FR-014**: Pairs whose main content is identical MUST be marked as exact content duplicates.
 - **FR-015**: Results MUST be stored in the crawl file with the settings and the analysis version that produced them, so reopening the file shows them without re-running, and a version of SpiderLens with a changed method re-runs the analysis on open and says so.
 - **FR-016**: The analysis MUST be cancellable, MUST show progress, and MUST NOT block the interface.

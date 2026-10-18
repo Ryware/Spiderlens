@@ -410,6 +410,9 @@ async fn content_filters_list_exactly_the_seeded_pages() {
                 && f.need != Need::Spelling
                 && f.need != Need::Amp
                 && f.need != Need::Rendering
+                && f.need != Need::AccessibilityStatic
+                && f.need != Need::AccessibilityFull
+                && f.need != Need::MobileLayout
                 && f.need != Need::SitemapAudit
                 && f.need != Need::Orphans
         }) {

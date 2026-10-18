@@ -298,7 +298,10 @@ export function ResultsView({
         }))
       : [];
 
-  const filterLabel = tab.filters.find((f) => f.id === session.filter)?.label ?? "";
+  const activeFilter = tab.filters.find((f) => f.id === session.filter);
+  const filterLabel = activeFilter?.label ?? "";
+  const a11yTab = tab.id === "accessibility" || tab.id === "mobile";
+  const noA11yTitle = activeFilter && !available(activeFilter.need) && activeFilter.need === "accessibility_full" ? "Full checks need JavaScript rendering" : "This crawl has no accessibility data";
   const totalText = view.ready ? view.total.toLocaleString() : `${view.total.toLocaleString()}+`;
 
   // FR-034: a crawl that was not rendered has nothing to list here.
@@ -426,7 +429,7 @@ export function ResultsView({
             onOpen={onInspect}
             empty={
               !view.loading && (
-                <EmptyState icon={<SearchX className="size-6" />} title={session.search ? "No URLs match the search" : `No ${filterLabel === "All" ? "" : `${filterLabel} `}URLs`}>
+                <EmptyState icon={<SearchX className="size-6" />} title={session.search ? "No URLs match the search" : a11yTab && view.total === 0 && !available(activeFilter?.need ?? "base") ? noA11yTitle : `No ${filterLabel === "All" ? "" : `${filterLabel} `}URLs`}>
                   {session.search ? "Try fewer words, or another filter." : live ? "They appear here as the crawl finds them." : null}
                 </EmptyState>
               )

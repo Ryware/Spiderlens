@@ -14,6 +14,9 @@ import type { PairsPage } from "../generated/PairsPage";
 import type { AgentField } from "../generated/AgentField";
 import type { PageAgentFindings } from "../generated/PageAgentFindings";
 import type { AmpDetail } from "../generated/AmpDetail";
+import type { A11yDetail } from "../generated/A11yDetail";
+import type { A11yCheckDetail } from "../generated/A11yCheckDetail";
+import type { MobileDetail } from "../generated/MobileDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
 import type { ElementChange } from "../generated/ElementChange";
@@ -66,6 +69,108 @@ const ampCheck: Record<string, string> = {
   style_size: "Custom CSS size",
   disallowed: "Disallowed element",
 };
+
+const impactClass: Record<string, string> = {
+  critical: "text-impact-critical",
+  serious: "text-impact-serious",
+  moderate: "text-impact-moderate",
+  minor: "text-impact-minor",
+};
+
+const NODE_CAP = 20;
+
+function A11yCheck({ check, capped }: { check: A11yCheckDetail; capped: boolean }) {
+  const impact = check.impact ?? "none";
+  return (
+    <li className="flex flex-col gap-0.5 border-t border-line pt-1.5 first:border-t-0 first:pt-0">
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className={cn("text-xs font-semibold", impactClass[impact] ?? "text-fg-2")}>{impact.charAt(0).toUpperCase() + impact.slice(1)}</span>
+        <span className="text-sm font-medium">{check.title}</span>
+        {check.kind !== "violation" && <Badge tone="neutral">{check.kind === "incomplete" ? "Needs review" : check.kind}</Badge>}
+      </span>
+      <span className="text-xs text-fg-3">
+        {check.wcag ? check.wcag.split(" ").join(", ") : "Best practice"} · {check.nodes_total.toLocaleString()} {check.nodes_total === 1 ? "element" : "elements"}
+        {check.help_url && (
+          <>
+            {" · "}
+            <a className="text-accent-text underline" href={check.help_url} target="_blank" rel="noreferrer noopener">
+              How to fix
+            </a>
+          </>
+        )}
+      </span>
+      {(capped || check.nodes_total > check.nodes.length) && check.nodes.length > 0 && check.nodes_total > check.nodes.length && (
+        <span className="text-xs text-fg-3">
+          Showing the first {check.nodes.length.toLocaleString()} elements of {check.nodes_total.toLocaleString()}
+        </span>
+      )}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0" data-selectable>
+        {check.nodes.slice(0, NODE_CAP).map((n, i) => (
+          <li key={`${n.selector}-${i}`} className="flex flex-col">
+            <code className="font-mono text-xs break-all">{n.selector}</code>
+            {n.excerpt && <code className="font-mono text-xs break-all text-fg-3">{n.excerpt}</code>}
+          </li>
+        ))}
+      </ul>
+    </li>
+  );
+}
+
+/** Accessibility checks on this page (spec 026). */
+function AccessibilitySection({ a }: { a: A11yDetail }) {
+  const failed = a.checks.filter((c) => c.kind === "violation").length;
+  return (
+    <Section title={`Accessibility (${failed === 0 ? "no failures" : `${failed} failed`})`}>
+      {a.full_reason && <p className="m-0 text-xs text-fg-3">Full checks: {a.full_reason}</p>}
+      {a.checks.length === 0 && <p className="m-0 text-sm text-fg-3">No problems found by the checks that ran.</p>}
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+        {a.checks.map((c) => (
+          <A11yCheck key={`${c.source}-${c.check_id}`} check={c} capped={a.capped} />
+        ))}
+      </ul>
+      <p className="m-0 text-xs text-fg-3">{a.disclaimer}</p>
+    </Section>
+  );
+}
+
+/** Mobile friendliness of this page (spec 026). */
+function MobileSection({ m }: { m: MobileDetail }) {
+  const px = (v: number | null) => (v === null ? null : `${Math.round(v).toLocaleString()} px`);
+  const rows: [string, ReactNode][] = [
+    ["Viewport", m.viewport ? <code className="font-mono">{m.viewport}</code> : "None"],
+    ["Viewport state", m.viewport_state],
+    ["Measured", m.measured],
+    ["Content width", px(m.content_px)],
+    ["Window width", px(m.window_px)],
+    ["Widest element", m.widest ? <code className="font-mono break-all">{m.widest}</code> : null],
+    ["Small text", m.small_text_share === null ? null : `${Math.round(m.small_text_share).toLocaleString()}% of text`],
+    ["Small tap targets", m.small_targets === null ? null : m.small_targets.toLocaleString()],
+  ];
+  return (
+    <Section title="Mobile">
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm" data-selectable>
+        {rows
+          .filter(([, v]) => v !== null && v !== undefined && v !== "")
+          .map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-fg-3">{k}</dt>
+              <dd className="m-0">{v}</dd>
+            </div>
+          ))}
+      </dl>
+      {m.examples.length > 0 && (
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0" data-selectable>
+          {m.examples.map((e, i) => (
+            <li key={`${e.selector}-${i}`} className="text-xs">
+              <code className="font-mono break-all">{e.selector}</code>
+              <span className="text-fg-3">{` · ${Math.round(e.w)} x ${Math.round(e.h)} px`}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
 
 /** What the AMP checks found (spec 027 part E). */
 function AmpSection({ amp }: { amp: AmpDetail }) {
@@ -1002,6 +1107,8 @@ export function Inspector({
 
       <AgentsSection transport={transport} path={path} id={d.id} />
       {d.amp && <AmpSection amp={d.amp} />}
+      {d.accessibility && <AccessibilitySection a={d.accessibility} />}
+      {d.mobile && <MobileSection m={d.mobile} />}
       <CustomSection transport={transport} path={path} id={d.id} epoch={epoch} rules={rules} htmlStored={d.html_stored} />
       {d.spelling && <SpellingSection spell={d.spelling} ignored={ignored} onIgnore={onIgnoreWord} />}
 

@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use rusqlite::Connection;
 
 use super::{
-    Bounds, Category, Layout, LegendEntry, Omitted, PAGE, Scene, SceneNode, SizeBy, TREE_BUDGET,
-    TREE_BUDGET_MAX, ViewState, layout, now_ms,
+    Bounds, Category, GRAPH_BUDGET, GRAPH_BUDGET_MAX, Layout, LegendEntry, Omitted, PAGE, Scene, SceneNode,
+    SizeBy, TREE_BUDGET, TREE_BUDGET_MAX, ViewState, force, layout, now_ms,
 };
 use crate::Result;
 
@@ -196,16 +196,27 @@ fn page(tree: &Tree, i: u32, pages: u32) -> Vec<Shown> {
     out
 }
 
+/// Most nodes a scene may show: the tree budget, or the smaller graph
+/// budget when the trees use the force layout (FR-019).
+fn budget(state: &ViewState) -> u32 {
+    let (default, max) = if state.layout == Layout::Force {
+        (GRAPH_BUDGET, GRAPH_BUDGET_MAX)
+    } else {
+        (TREE_BUDGET, TREE_BUDGET_MAX)
+    };
+    if state.expanded.is_some() {
+        max
+    } else {
+        state.budget.unwrap_or(default).clamp(1, max)
+    }
+}
+
 /// Decides what to show (plan D4): breadth first from the root, a node
 /// opens only if its shown children fit in what is left of the budget.
 /// With `expanded`, exactly those nodes open, as the user asked, up to the
 /// largest budget; otherwise any may, within the budget.
 pub fn visible(tree: &Tree, state: &ViewState) -> Visible {
-    let budget = if state.expanded.is_some() {
-        TREE_BUDGET_MAX
-    } else {
-        state.budget.unwrap_or(TREE_BUDGET).clamp(1, TREE_BUDGET_MAX)
-    };
+    let budget = budget(state);
     let wanted: Option<HashSet<&str>> = state
         .expanded
         .as_ref()
@@ -293,6 +304,57 @@ fn radius(n: &TreeNode, size: SizeBy, scores: bool) -> f32 {
     }
 }
 
+/// Force layout of the shown hierarchy (FR-009): parent-child edges,
+/// starts seeded from the URL id (a hash of the key for folders and
+/// groups), the root pinned at the centre.
+fn force_positions(tree: &Tree, order: &[(Shown, u32, u32)], parents: &[u32]) -> (Vec<(f32, f32)>, bool) {
+    let seed_id = |s: &Shown| -> i64 {
+        match s {
+            Shown::Node(i) => match tree.nodes[*i as usize].key {
+                Key::Url(id) => id,
+                ref key => fnv(&key.text()),
+            },
+            // "+N more" is keyed by its parent, like in the scene.
+            Shown::More { parent, .. } => fnv(&format!("m:{}", tree.nodes[*parent as usize].key.text())),
+        }
+    };
+    let start: Vec<(f64, f64)> = order
+        .iter()
+        .enumerate()
+        .map(|(k, (s, _, _))| {
+            if k == 0 {
+                (0.0, 0.0)
+            } else {
+                force::seed_position(seed_id(s))
+            }
+        })
+        .collect();
+    let mut pinned = vec![false; order.len()];
+    if let Some(p) = pinned.first_mut() {
+        *p = true;
+    }
+    let edges: Vec<(u32, u32)> = parents
+        .iter()
+        .enumerate()
+        .filter(|&(_, &p)| p != NONE)
+        .map(|(k, &p)| (p, k as u32))
+        .collect();
+    let (pos, settled) = force::layout(start, &edges, &pinned);
+    (
+        pos.into_iter().map(|(x, y)| (x as f32, y as f32)).collect(),
+        settled,
+    )
+}
+
+/// FNV-1a, for seeds of nodes that have no URL id.
+fn fnv(s: &str) -> i64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in s.bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    (h >> 1) as i64
+}
+
 /// Builds the scene for `tree` under `state`.
 pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) -> Result<Scene> {
     let vis = visible(tree, state);
@@ -314,9 +376,15 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
     }
     let parents: Vec<u32> = order.iter().map(|o| o.1).collect();
     let levels: Vec<u32> = order.iter().map(|o| o.2).collect();
+    let mut settled = true;
     let pos = match state.layout {
-        Layout::Tree | Layout::Force | Layout::Cloud => layout::tidy(&parents, &levels),
+        Layout::Tree | Layout::Cloud => layout::tidy(&parents, &levels),
         Layout::Radial => layout::radial(&parents, &levels),
+        Layout::Force => {
+            let (pos, done) = force_positions(tree, &order, &parents);
+            settled = done;
+            pos
+        }
     };
 
     let ids: Vec<i64> = order
@@ -400,7 +468,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
     let left = total.saturating_sub(shown_urls);
     let omitted = (left > 0).then(|| Omitted {
         count: left,
-        reason: if vis.count >= state.budget.unwrap_or(TREE_BUDGET).clamp(1, TREE_BUDGET_MAX) * 9 / 10 {
+        reason: if vis.count >= budget(state) * 9 / 10 {
             "The rest are in folded branches: the view is near its node budget, set in Settings › Visualisations.".into()
         } else {
             "The rest are in folded branches: open one to see its URLs.".into()
@@ -423,7 +491,7 @@ pub fn scene(conn: &Connection, tree: &Tree, state: &ViewState, scores: bool) ->
         nodes,
         edges: Vec::new(),
         directed: false,
-        settled: true,
+        settled,
         legend: tree.legend(),
         size_legend,
         omitted,

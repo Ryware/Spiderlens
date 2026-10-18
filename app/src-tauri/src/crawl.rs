@@ -8,7 +8,9 @@
 //! - `crawl-warning` once per warning,
 //! - `crawl-notice` when a host pauses, resumes or is given up, or the
 //!   network drops (spec 004),
-//! - `crawl-finished` when it completes, pauses, stops or fails.
+//! - `crawl-finished` when it completes, pauses, stops or fails. A crawl that
+//!   ended with pages then starts the near duplicate analysis on its own
+//!   thread (spec 020); starting another crawl cancels it.
 //!
 //! One crawl runs at a time, as in other desktop crawlers.
 
@@ -585,6 +587,8 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
         commands: command_tx,
     });
     drop(active);
+    // The near duplicate analysis never competes with a crawl for CPU.
+    app.state::<crate::near_dup::State>().cancel_all();
 
     let file = path.clone();
     // The crawl gets its own thread and runtime, exactly as in the CLI, so a
@@ -613,7 +617,9 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                     .expect("issues lock")
                     .clone();
                 crate::results::record_issues(&at, &issues);
-                if let Err(e) = crate::results::analyse(&app, &at, &state.quitting) {
+                // Link analysis follows the crawl's own setting (spec 023 FR-012).
+                let skip = spiderlens_results::analysis::auto_skips(&at).unwrap_or_default();
+                if let Err(e) = crate::results::analyse(&app, &at, &skip, &state.quitting) {
                     let message = format!("Crawl analysis did not finish: {e}");
                     let _ = app.emit("crawl-warning", WarningEvent { id, message });
                 }
@@ -638,6 +644,15 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                 ),
                 Err(e) => (None, Some(e.to_string()), None),
             };
+            // Claimed before `crawl-finished` so the window never sees the
+            // file as "not analysed" in between; the work starts after it.
+            let analysis = if !state.quitting.load(Ordering::SeqCst)
+                && report.as_ref().is_some_and(|r| r.summary.crawled > 0)
+            {
+                crate::near_dup::claim_after_crawl(&app, &file)
+            } else {
+                None
+            };
             let urls = report.as_ref().map(|r| r.summary.discovered);
             app.state::<crate::files::State>().touch(&file, urls);
             let _ = app.emit(
@@ -650,6 +665,12 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                     local,
                 },
             );
+            if let Some(cancel) = analysis {
+                if state.quitting.load(Ordering::SeqCst) {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                crate::near_dup::spawn_after_crawl(&app, &file, cancel);
+            }
             if ai_checks && !state.quitting.load(Ordering::SeqCst) {
                 let aeo = app.state::<crate::aeo::State>();
                 let _ = crate::aeo::start(app.clone(), &aeo, file);

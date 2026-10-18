@@ -548,7 +548,7 @@ export interface StoragePrefs {
   last_cleanup: string | null;
 }
 
-export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge";
+export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge" | "schedule_retention";
 
 export interface CleanupRecord {
   at: string;
@@ -559,6 +559,8 @@ export interface CleanupRecord {
 
 export interface CleanupReport {
   removed: string[];
+  /** Older runs of schedules that keep only their last N runs. */
+  schedule_removed: string[];
   leftovers: number;
   freed_bytes: number;
   /** Named by the one-time notice: removed at a later start. */
@@ -642,10 +644,17 @@ export interface McpSelfTest {
 /** A running comparison's progress (spec 012); ends with done, failed or cancelled. */
 export interface CompareProgress {
   comparison: number;
-  phase: "open" | "previous" | "current" | "match" | "counts" | "done" | "failed" | "cancelled";
+  phase: "open" | "previous" | "current" | "issues" | "match" | "counts" | "done" | "failed" | "cancelled";
   done: number;
   total: number;
   error: string | null;
+}
+
+/** The earlier run of a schedule that a scheduled crawl is compared with (spec 012 FR-002a). */
+export interface ScheduleBaseline {
+  path: string;
+  schedule: string;
+  run: number;
 }
 
 // Custom extraction and search (spec 013, contracts/desktop-commands.md).
@@ -739,6 +748,8 @@ export interface Transport {
   scopeTest(config: CrawlConfig, startUrl: string, urls: string[], fetchRobots: boolean): Promise<ScopeVerdict[]>;
   parseListText(text: string): Promise<ListSummary>;
   parseListFile(path: string): Promise<ListSummary>;
+  /** Reads a sitemap (address or file, with the address a file will have) into the list (spec 011 FR-005). */
+  listLoadSitemap(location: string, baseUrl: string | null, config: CrawlConfig): Promise<ListSummary>;
   onListProgress(cb: (lines: number) => void): Promise<() => void>;
   pickListFile(): Promise<string | null>;
   pickSitemapFile(): Promise<string | null>;
@@ -933,6 +944,8 @@ export interface Transport {
   onSpellProgress(cb: (p: SpellProgress) => void): Promise<() => void>;
   // Crawl comparison (spec 012, contracts/desktop-commands.md).
   compareSuggest(current: string): Promise<string | null>;
+  /** The previous finished run of the schedule the crawl belongs to; null when it is not a scheduled run, an error when there is none. */
+  compareScheduleBaseline(current: string): Promise<ScheduleBaseline | null>;
   compareSetup(previous: string, current: string): Promise<Setup>;
   compareTestMapping(previous: string, current: string, rules: MapRule[], samples: string[], fromPrevious: number): Promise<MappingTest[]>;
   compareStart(previous: string, current: string, settings: CompareSettings): Promise<number>;
@@ -1028,9 +1041,10 @@ export interface Transport {
   pickFolder(): Promise<string | null>;
 
   // Report and exports (spec 010, contracts/desktop-commands.md).
-  report(path: string, running: boolean, profile: string | null): Promise<Report>;
-  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean): Promise<Written>;
-  printReport(path: string, file: FileOptions): Promise<void>;
+  /** `comparison` is an open comparison whose current crawl is `path`: its section is added (spec 012 FR-033). */
+  report(path: string, running: boolean, profile: string | null, comparison: number | null): Promise<Report>;
+  exportReportHtml(path: string, dest: string, file: FileOptions, overwrite: boolean, comparison: number | null): Promise<Written>;
+  printReport(path: string, file: FileOptions, comparison: number | null): Promise<void>;
   bulkExport(path: string, options: BulkOptions): Promise<BulkResult>;
   bulkExportCancel(): Promise<void>;
   onBulkProgress(cb: (p: BulkProgress) => void): Promise<() => void>;
@@ -1054,6 +1068,7 @@ export const tauriTransport: Transport = {
   scopeTest: (config, startUrl, urls, fetchRobots) => invoke("scope_test", { config, startUrl, urls, fetchRobots }),
   parseListText: (text) => invoke("list_parse_text", { text }),
   parseListFile: (path) => invoke("list_parse_file", { path }),
+  listLoadSitemap: (location, baseUrl, config) => invoke("list_load_sitemap", { location, baseUrl, config }),
   onListProgress: (cb) => listen<number>("list-progress", (e) => cb(e.payload)),
   pickListFile: async () =>
     asPath(await open({ filters: [{ name: "URL lists", extensions: ["txt", "csv", "tsv", "list"] }] })),
@@ -1209,6 +1224,7 @@ export const tauriTransport: Transport = {
   spellSummary: (path) => invoke("spell_summary", { path }),
   onSpellProgress: (cb) => listen<SpellProgress>("spell-progress", (e) => cb(e.payload)),
   compareSuggest: (current) => invoke("compare_suggest", { current }),
+  compareScheduleBaseline: (current) => invoke("compare_schedule_baseline", { current }),
   compareSetup: (previous, current) => invoke("compare_setup", { previous, current }),
   compareTestMapping: (previous, current, rules, samples, fromPrevious) =>
     invoke("compare_test_mapping", { previous, current, rules, samples, fromPrevious }),
@@ -1287,9 +1303,9 @@ export const tauriTransport: Transport = {
   schedulesRemoveAll: () => invoke("schedules_remove_all"),
   scheduleDefaultOutput: () => invoke("schedule_default_output"),
 
-  report: (path, running, profile) => invoke("report", { path, running, profile }),
-  exportReportHtml: (path, dest, file, overwrite) => invoke("export_report_html", { path, dest, file, overwrite }),
-  printReport: (path, file) => invoke("print_report", { path, file }),
+  report: (path, running, profile, comparison) => invoke("report", { path, running, profile, comparison }),
+  exportReportHtml: (path, dest, file, overwrite, comparison) => invoke("export_report_html", { path, dest, file, overwrite, comparison }),
+  printReport: (path, file, comparison) => invoke("print_report", { path, file, comparison }),
   bulkExport: (path, options) => invoke("bulk_export", { path, options }),
   bulkExportCancel: () => invoke("bulk_export_cancel"),
   onBulkProgress: (cb) => listen<BulkProgress>("bulk-export-progress", (e) => cb(e.payload)),

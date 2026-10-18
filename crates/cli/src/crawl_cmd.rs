@@ -21,13 +21,17 @@ use crate::{exit, print_issues, print_json, read_input};
 #[derive(Args)]
 pub struct CrawlCmd {
     /// Start URL (Spider mode).
-    #[arg(required_unless_present_any = ["list", "resume"])]
+    #[arg(required_unless_present_any = ["list", "list_sitemap", "resume"])]
     url: Option<String>,
     /// URL list file, text or CSV (List mode).
     #[arg(long, value_name = "FILE", conflicts_with = "url")]
     list: Option<PathBuf>,
+    /// Sitemap address or file whose page URLs are the list (List mode); a
+    /// file may be followed by =BASE-URL for relative addresses.
+    #[arg(long, value_name = "URL-OR-PATH[=BASE-URL]", conflicts_with_all = ["url", "list"])]
+    list_sitemap: Option<String>,
     /// Continue a paused or stopped crawl with its stored settings.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "out"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["url", "list", "list_sitemap", "out"])]
     resume: Option<PathBuf>,
     /// Crawl file to create [default: <host>-<time>.spiderlens].
     #[arg(long, value_name = "FILE")]
@@ -38,6 +42,13 @@ pub struct CrawlCmd {
     /// No progress on stderr.
     #[arg(long)]
     quiet: bool,
+    /// Skip the Crawl Analysis phase at the end (link positions, Link Score,
+    /// sitemap checks); run `spiderlens analyse <file>` later.
+    #[arg(long)]
+    no_analyse: bool,
+    /// Also find near duplicate content when the crawl ends (otherwise run `spiderlens duplicates`).
+    #[arg(long)]
+    near_duplicates: bool,
     /// Pause when less than this much space (MB) is free on the crawl
     /// file's drive.
     #[arg(long, value_name = "MB", default_value_t = DEFAULT_DISK_RESERVE / (1024 * 1024))]
@@ -115,6 +126,10 @@ pub struct ReportArgs {
     /// Issue settings JSON (rule overrides) for --audit and --html.
     #[arg(long, value_name = "FILE")]
     issues: Option<PathBuf>,
+    /// With --audit or --html: add a section on what changed since this
+    /// earlier crawl file.
+    #[arg(long, value_name = "PREVIOUS", conflicts_with_all = ["not_crawled", "crawled", "reason", "log"])]
+    compare_with: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -175,7 +190,7 @@ pub fn run_retry(args: RetryArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    execute(crawler, args.file, args.quiet, args.json)
+    execute(crawler, args.file, args.quiet, args.json, true, false)
 }
 
 #[derive(Args)]
@@ -221,13 +236,15 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 15] = [
+        const ALLOWED: [&str; 17] = [
             "resume",
             "cookies_file",
             "browser",
             "allow_browser_download",
             "json",
             "quiet",
+            "no_analyse",
+            "near_duplicates",
             "disk_reserve",
             "no_backup",
             "header_secret",
@@ -348,7 +365,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
             }
         }
     } else {
-        let mode = if cmd.list.is_some() {
+        let mode = if cmd.list.is_some() || cmd.list_sitemap.is_some() {
             spiderlens_config::Mode::List
         } else {
             spiderlens_config::Mode::Spider
@@ -363,10 +380,15 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
         for n in &resolved.notices {
             eprintln!("notice: {n}");
         }
-        let input = match read_input(cmd.url.as_deref(), cmd.list.as_deref()) {
+        let input = match read_input(
+            cmd.url.as_deref(),
+            cmd.list.as_deref(),
+            cmd.list_sitemap.as_deref(),
+            &resolved.config,
+        ) {
             Ok(Some(i)) => i,
             Ok(None) => {
-                eprintln!("error: give a start URL or --list FILE");
+                eprintln!("error: give a start URL, --list FILE or --list-sitemap URL-OR-PATH");
                 return ExitCode::from(exit::USAGE);
             }
             Err(code) => return code,
@@ -441,7 +463,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());
     }
-    execute(crawler, file, cmd.quiet, cmd.json)
+    execute(
+        crawler,
+        file,
+        cmd.quiet,
+        cmd.json,
+        !cmd.no_analyse,
+        cmd.near_duplicates,
+    )
 }
 
 /// Reads a browser's `cookies.txt` as a login session, keeping the start
@@ -515,14 +544,42 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
     }
 }
 
+/// Runs the near duplicate analysis (spec 020) into the file, as the process
+/// that wrote it. A failure is a warning: the crawl itself succeeded and
+/// `spiderlens duplicates` can run it again.
+fn analyse_after_crawl(file: &Path, quiet: bool) {
+    use spiderlens_results::near_dup;
+    let settings = near_dup::open_read_only(file)
+        .ok()
+        .and_then(|c| near_dup::stored_settings(&c).ok())
+        .unwrap_or_default();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match near_dup::analyse_file(file, &settings, true, &cancel, |_, _, _| {}) {
+        Ok((_, s)) if !quiet => eprintln!(
+            "near duplicates: {} pages compared, {} clusters ({} ms)",
+            s.compared, s.clusters, s.ms
+        ),
+        Ok(_) | Err(spiderlens_results::Error::Unavailable(_)) => {}
+        Err(e) => eprintln!("warning: near duplicate analysis did not finish: {e}"),
+    }
+}
+
 /// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and
 /// prints its progress and summary.
-fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode {
+fn execute(
+    crawler: Crawler,
+    file: PathBuf,
+    quiet: bool,
+    json: bool,
+    analyse: bool,
+    near_dup: bool,
+) -> ExitCode {
     let rt = match runtime() {
         Ok(rt) => rt,
         Err(code) => return code,
     };
     let ai_auto = crawler.config().ai_checks.auto;
+    let a11y_level = crawler.config().accessibility.level.clone();
     let result = rt.block_on(async move {
         let (control_tx, control_rx) = watch::channel(Control::Run);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -608,14 +665,35 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
     record_issue_settings(&file);
     // The Crawl Analysis phase, while this process still owns the file
     // (spec 009 plan D12).
-    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
-        eprintln!(
-            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
-            file.display()
-        );
+    if !analyse {
+        // --no-analyse (spec 023 FR-028); the exit code still reflects the
+        // crawl only.
+        if !json && !quiet {
+            eprintln!(
+                "crawl analysis skipped; run spiderlens analyse {}",
+                file.display()
+            );
+        }
+    } else {
+        // Link analysis follows the crawl's own setting (FR-012).
+        let skip = spiderlens_results::analysis::auto_skips(&file).unwrap_or_default();
+        if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet, &skip) {
+            eprintln!(
+                "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+                file.display()
+            );
+        }
+    }
+    if !json && !quiet {
+        crate::accessibility_cmd::print_crawl_summary(&file, &a11y_level);
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
+    // Opt-in: it adds to the process's run time, which the crawl benchmark
+    // measures.
+    if near_dup && summary.crawled > 0 {
+        analyse_after_crawl(&file, quiet || json);
     }
     if !json && !quiet {
         eprintln!(
@@ -807,12 +885,22 @@ fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::Rend
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
+    if args.compare_with.is_some() && !args.audit && args.html.is_none() {
+        eprintln!("error: --compare-with needs --audit or --html");
+        return ExitCode::from(exit::USAGE);
+    }
     if args.audit {
-        return crate::report_cmd::run_audit(&args.file, args.issues.as_deref(), args.json);
+        return crate::report_cmd::run_audit(
+            &args.file,
+            args.issues.as_deref(),
+            args.json,
+            args.compare_with.as_deref(),
+        );
     }
     if let Some(out) = args.html {
         let a = crate::report_cmd::HtmlArgs {
             out,
+            compare_with: args.compare_with,
             title: args.title,
             note: args.note,
             urls_per_issue: args.urls_per_issue,

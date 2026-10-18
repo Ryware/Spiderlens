@@ -39,8 +39,9 @@ pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage}
 pub use counts::{FilterCounts, TabCounts};
 pub use custom::CustomResult;
 pub use detail::{
-    AmpDetail, AmpFailure, ConsoleRow, ElementChange, HeadingRow, HtmlMissing, HtmlVersion, LinkMetrics,
-    LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, RenderComparison, RenderDetail,
+    A11Y_DISCLAIMER, A11yCheckDetail, A11yDetail, A11yNodeDetail, AmpDetail, AmpFailure, ConsoleRow,
+    ElementChange, HeadingRow, HtmlMissing, HtmlVersion, LinkMetrics, LinkRow, ListKind, ListPage,
+    MobileDetail, MobileExample, PageHtml, PdfDetail, RedirectHop, RenderComparison, RenderDetail,
     ResourceRow, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
@@ -49,7 +50,7 @@ pub use export::{
 };
 pub use features::Features;
 pub use html_diff::{DiffHunk, HtmlDiff, HunkKind};
-pub use reader::{Reader, connect_attachable};
+pub use reader::{Reader, connect_attachable, connect_attachable_with};
 pub use rusqlite::InterruptHandle;
 pub use segments::SegmentCounts;
 pub use sitemaps::{

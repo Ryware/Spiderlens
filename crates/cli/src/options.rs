@@ -553,6 +553,46 @@ pub struct CrawlArgs {
     /// version next to the raw HTML (spec 014).
     #[arg(long, help_heading = "Rendering")]
     pub render: bool,
+
+    /// Accessibility checks: off, static (from the HTML) or full (also in the
+    /// rendered page; needs --render). Default static.
+    #[arg(long, value_enum, value_name = "LEVEL", help_heading = "Accessibility")]
+    pub accessibility: Option<A11yArg>,
+    /// WCAG version and level to count against, such as 2.2-aa (the default).
+    #[arg(
+        long,
+        value_name = "TARGET",
+        value_parser = crate::accessibility_cmd::parse_wcag,
+        help_heading = "Accessibility"
+    )]
+    pub wcag: Option<spiderlens_config::WcagTarget>,
+    /// Leave best practice checks out of the accessibility results.
+    #[arg(long, help_heading = "Accessibility")]
+    pub no_a11y_best_practice: bool,
+    /// Do not measure mobile usability.
+    #[arg(long, help_heading = "Accessibility")]
+    pub no_a11y_mobile: bool,
+    /// Time limit for the full checks on one page, in seconds (1 to 30,
+    /// default 5).
+    #[arg(long, value_name = "SECONDS", help_heading = "Accessibility")]
+    pub a11y_budget: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum A11yArg {
+    Off,
+    Static,
+    Full,
+}
+
+impl From<A11yArg> for spiderlens_config::A11yLevel {
+    fn from(a: A11yArg) -> Self {
+        match a {
+            A11yArg::Off => Self::Off,
+            A11yArg::Static => Self::Static,
+            A11yArg::Full => Self::Full,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -904,6 +944,27 @@ impl CrawlArgs {
         }
         if self.render {
             c.rendering.mode = spiderlens_config::RenderMode::Javascript;
+        }
+        if let Some(level) = self.accessibility {
+            c.accessibility.level = level.into();
+        }
+        if let Some(target) = &self.wcag {
+            c.accessibility.wcag = target.clone();
+        }
+        if self.no_a11y_best_practice {
+            c.accessibility.best_practice = false;
+        }
+        if self.no_a11y_mobile {
+            c.accessibility.mobile = false;
+        }
+        if let Some(secs) = self.a11y_budget {
+            c.accessibility.budget_secs = secs;
+        }
+        if matches!(c.accessibility.level, spiderlens_config::A11yLevel::Full)
+            && !matches!(c.rendering.mode, spiderlens_config::RenderMode::Javascript)
+        {
+            notices
+                .push("full accessibility checks need JavaScript rendering; static checks will run".into());
         }
         Ok(Resolved { config: c, notices })
     }

@@ -68,6 +68,14 @@ impl Pass for Orphans {
             &format!("INSERT OR IGNORE INTO temp.orphan_reached SELECT l.to_id FROM links l {from_pages}"),
             [],
         )?;
+        // The start URL is where the crawl came in: what it redirects to is
+        // reached too.
+        for table in ["orphan_linked", "orphan_reached"] {
+            conn.execute(
+                &format!("INSERT OR IGNORE INTO temp.{table} SELECT id FROM urls WHERE source = 'start'"),
+                [],
+            )?;
+        }
         cx.progress(1, 3, "Orphan pages")?;
         // Redirect and meta refresh targets of reached URLs are reached too,
         // hop by hop, at most the crawl's redirect limit deep.
@@ -171,6 +179,8 @@ pub struct OrphanRow {
     /// As the results table shows it: "Indexable", "Not crawled: found only
     /// in sitemap".
     pub state: String,
+    /// As the results table's Indexability column shows it.
+    pub indexability: Option<String>,
     /// The first sitemap file that lists it.
     pub sitemap: Option<String>,
 }
@@ -246,6 +256,7 @@ impl Reader {
         let mut stmt = self.conn.prepare(
             "SELECT u.id, u.url, o.class, o.sources, u.status,
                     final_state(u.state, u.reason, u.reason_detail, u.check_only, u.fetched_at, u.error_class, u.status),
+                    indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url),
                     (SELECT f.location FROM sitemap_entries e JOIN sitemap_files f ON f.id = e.file_id
                      WHERE e.url_id = u.id ORDER BY e.id LIMIT 1)
              FROM orphans o JOIN urls u ON u.id = o.url_id
@@ -261,7 +272,8 @@ impl Reader {
                 sources: sources.split(',').map(str::to_string).collect(),
                 status: r.get(4)?,
                 state: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                sitemap: r.get(6)?,
+                indexability: r.get(6)?,
+                sitemap: r.get(7)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)

@@ -18,6 +18,10 @@ sources: Array<string>, status: number | null,
  */
 state: string, 
 /**
+ * As the results table's Indexability column shows it.
+ */
+indexability: string | null, 
+/**
  * The first sitemap file that lists it.
  */
 sitemap: string | null, };
