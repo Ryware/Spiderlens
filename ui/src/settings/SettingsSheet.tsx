@@ -129,7 +129,7 @@ export function SettingsSheet({
               <AssistantsSettings transport={transport} />
             ) : (
               <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0">
-                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} crawlRunning={crawlRunning} />
+                <CategoryBody id={current.id} setup={setup} transport={transport} live={live} crawlPath={crawlPath} crawlRunning={crawlRunning} onCategory={onCategory} />
 
               </fieldset>
             )}

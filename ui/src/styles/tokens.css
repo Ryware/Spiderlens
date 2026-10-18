@@ -61,6 +61,12 @@
   /* Words only on one side of a comparison (spec 020): the warning fill, so it follows every step. */
   --diff-changed: var(--warn-soft);
 
+  /* Accessibility impact (spec 026): a word always sits beside the colour. */
+  --impact-critical: oklch(0.50 0.19 25);
+  --impact-serious: oklch(0.50 0.15 45);
+  --impact-moderate: oklch(0.50 0.11 80);
+  --impact-minor: oklch(0.48 0.04 240);
+
   /* Segment colours (spec 027 part B): dots and stripes, never text. */
   --seg-teal: oklch(0.58 0.10 188);
   --seg-blue: oklch(0.56 0.14 250);
@@ -158,6 +164,11 @@
   --warn-soft: oklch(0.85 0.12 80 / 0.12);
   --bad-soft: oklch(0.80 0.12 25 / 0.12);
 
+  --impact-critical: oklch(0.80 0.13 25);
+  --impact-serious: oklch(0.82 0.12 50);
+  --impact-moderate: oklch(0.85 0.12 90);
+  --impact-minor: oklch(0.78 0.04 240);
+
   --seg-teal: oklch(0.76 0.10 185);
   --seg-blue: oklch(0.72 0.12 250);
   --seg-violet: oklch(0.72 0.13 295);
@@ -198,6 +209,10 @@
   --bad: oklch(0.475 0.18 27);
   --bad-soft: oklch(0.475 0.18 27 / 0.11);
   --scrim: oklch(0.2 0.01 80 / 0.32);
+  --impact-critical: oklch(0.455 0.19 25);
+  --impact-serious: oklch(0.455 0.15 45);
+  --impact-moderate: oklch(0.455 0.11 80);
+  --impact-minor: oklch(0.44 0.04 240);
   --frame: oklch(0.945 0.009 80);
 }
 
