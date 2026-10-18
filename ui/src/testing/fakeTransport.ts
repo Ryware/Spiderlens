@@ -3,6 +3,7 @@
 
 import type { PassProgress } from "../generated/PassProgress";
 import type { CrawlConfig } from "../generated/CrawlConfig";
+import type { RenderSettings } from "../generated/RenderSettings";
 import type { Issue } from "../generated/Issue";
 import type { GenerateReport } from "../generated/GenerateReport";
 import type { SitemapFileRow } from "../generated/SitemapFileRow";
@@ -197,6 +198,8 @@ type Listeners<T> = Set<(v: T) => void>;
 export interface FakeCrawls {
   started: { config: CrawlConfig; startUrl: string | null }[];
   resumed: string[];
+  /** Crawls "Render this crawl" ran on, with the settings sent. */
+  rendered: { path: string; rendering: RenderSettings }[];
   controls: string[];
   /** "Resume now" calls, as "id host". */
   resumedHosts: string[];
@@ -325,6 +328,7 @@ export function fakeTransport(
   const crawls: FakeCrawls = {
     started: [],
     resumed: [],
+    rendered: [],
     controls: [],
     resumedHosts: [],
     applied: [],
@@ -573,6 +577,13 @@ export function fakeTransport(
       }
       crawls.started.push({ config, startUrl });
       return { id: nextId++, path: "/crawls/example.com.spiderlens" };
+    },
+    crawlRender: async (path, rendering) => {
+      if (render.requireBrowser && !render.status.usable) {
+        throw `browser_unavailable: ${render.status.problem}`;
+      }
+      crawls.rendered.push({ path, rendering });
+      return { id: nextId++, path };
     },
     crawlPause: async (id) => void crawls.controls.push(`pause ${id}`),
     crawlStop: async (id) => void crawls.controls.push(`stop ${id}`),

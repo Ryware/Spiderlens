@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import { Command as CommandIcon, ListPlus, Pause, Play, RotateCcw, SlidersHorizontal, Square, TriangleAlert } from "lucide-react";
+import { Command as CommandIcon, Globe, ListPlus, Pause, Play, RotateCcw, SlidersHorizontal, Square, TriangleAlert } from "lucide-react";
 import type { CrawlRun } from "../crawl/useCrawlRun";
 import type { CrawlSetup } from "../crawl/useCrawlSetup";
 import type { RetryAvailability } from "../crawl/RetryFailed";
@@ -28,7 +28,10 @@ export const Toolbar = forwardRef<HTMLInputElement, {
   onAppearance: (patch: Partial<Appearance>) => void;
   retry: RetryAvailability;
   onRetry: () => void;
-}>(function Toolbar({ setup, run, onStart, onResume, onOpenSettings, onOpenPalette, appearance, level, systemDark, onAppearance, retry, onRetry }, urlRef) {
+  /** "Render this crawl" is offered for a finished crawl whose HTML is stored and that was not rendered (spec 014 FR-006). */
+  canRender?: boolean;
+  onRender?: () => void;
+}>(function Toolbar({ setup, run, onStart, onResume, onOpenSettings, onOpenPalette, appearance, level, systemDark, onAppearance, retry, onRetry, canRender = false, onRender }, urlRef) {
   const { config, list } = setup;
   const locked = run.active;
   const mode = config?.mode ?? "spider";
@@ -99,6 +102,11 @@ export const Toolbar = forwardRef<HTMLInputElement, {
             </Button>
           </span>
         </Tooltip>
+      )}
+      {canRender && (
+        <Button variant="quiet" onClick={onRender} aria-label="Render this crawl">
+          <Globe aria-hidden className="size-3.5" /> Render this crawl
+        </Button>
       )}
       <CrawlControls setup={setup} run={run} onStart={onStart} onResume={onResume} firstError={firstError} />
       <Button onClick={() => onOpenSettings()} aria-label="Configure">

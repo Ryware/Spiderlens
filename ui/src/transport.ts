@@ -17,6 +17,7 @@ import type { ProxySettings } from "./generated/ProxySettings";
 import type { CookiePage } from "./generated/CookiePage";
 import type { CookieUrlPage } from "./generated/CookieUrlPage";
 import type { CrawlConfig } from "./generated/CrawlConfig";
+import type { RenderSettings } from "./generated/RenderSettings";
 import type { CustomResult } from "./generated/CustomResult";
 import type { CustomRules } from "./generated/CustomRules";
 import type { MembersPage } from "./generated/MembersPage";
@@ -847,6 +848,12 @@ export interface Transport {
   crawlStart(config: CrawlConfig, startUrl: string | null): Promise<CrawlStarted>;
   /** Rejects with "needs_upgrade:", "needs_secrets:", "read_only:", "in_use:" or "browser_unavailable:" plus a message. */
   crawlResume(path: string, options?: ResumeOptions): Promise<CrawlStarted>;
+  /**
+   * Renders a finished crawl from its stored HTML, without requesting its pages again (spec 014 FR-006).
+   * Rejects with "browser_unavailable:" plus a message when no browser is usable, or with the reason the crawl cannot be rendered.
+   * Progress and the end arrive as the usual crawl events.
+   */
+  crawlRender(path: string, rendering: RenderSettings): Promise<CrawlStarted>;
   crawlPause(id: number): Promise<void>;
   crawlStop(id: number): Promise<void>;
   crawlSummary(path: string): Promise<CrawlReport>;
@@ -1185,6 +1192,7 @@ export const tauriTransport: Transport = {
   importProfile: (path) => invoke("profile_import", { path }),
   crawlStart: (config, startUrl) => invoke("crawl_start", { config, startUrl }),
   crawlResume: (path, options) => invoke("crawl_resume", { path, ...options }),
+  crawlRender: (path, rendering) => invoke("crawl_render", { path, rendering }),
   crawlPause: (id) => invoke("crawl_pause", { id }),
   crawlStop: (id) => invoke("crawl_stop", { id }),
   crawlSummary: (path) => invoke("crawl_summary", { path }),
