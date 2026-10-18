@@ -3016,7 +3016,14 @@ impl Run {
     /// Fetches each internal host's AI site files, one at a time per host
     /// and spaced by its crawl-delay, honouring robots.txt for our own token.
     fn start_site_files(&mut self) -> Result<(), CrawlError> {
-        if !self.c.config.ai_checks.site_files {
+        let mut wanted: Vec<&'static str> = Vec::new();
+        if self.c.config.ai_checks.site_files {
+            wanted.extend(site_files::PATHS);
+        }
+        if self.c.config.agents.entry_points {
+            wanted.extend(site_files::AGENT_PATHS);
+        }
+        if wanted.is_empty() {
             self.site_files = SiteFiles::Done;
             return Ok(());
         }
@@ -3030,7 +3037,7 @@ impl Run {
             };
             // A host the crawl gave up on gets no more requests (spec 004).
             let given_up = host.is_some_and(|h| h.health.is_given_up());
-            let paths: Vec<(String, Option<String>)> = site_files::PATHS
+            let paths: Vec<(String, Option<String>)> = wanted
                 .iter()
                 .map(|path| {
                     if given_up {

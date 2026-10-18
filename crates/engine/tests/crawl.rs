@@ -1176,6 +1176,21 @@ async fn ai_site_files_once_per_internal_host() {
         rows,
         [
             (
+                "/.well-known/agent-card.json".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            (
+                "/.well-known/ai-catalog.json".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            (
+                "/.well-known/api-catalog".to_string(),
+                "skipped".to_string(),
+                None
+            ),
+            (
                 "/.well-known/tdmrep.json".to_string(),
                 "skipped".to_string(),
                 None

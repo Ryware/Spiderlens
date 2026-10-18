@@ -39,6 +39,8 @@ pub struct CrawlConfig {
     pub links: LinkAnalysisSettings,
     pub access: AccessSettings,
     pub ai_checks: AiChecks,
+    /// AI agent readiness (spec 016).
+    pub agents: AgentSettings,
     /// The last options used to generate XML sitemaps (spec 011 FR-025).
     pub sitemap_generate: SitemapGenerateOptions,
     /// URL groups shown across the results (spec 027 part B). Results-only:
@@ -1136,6 +1138,23 @@ impl Default for AiChecks {
             auto: true,
             site_files: true,
         }
+    }
+}
+
+/// AI agent readiness settings (spec 016 data-model, `agent_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct AgentSettings {
+    /// Fetch `/.well-known/ai-catalog.json`, `/.well-known/api-catalog` and
+    /// `/.well-known/agent-card.json` once per internal host at the end of
+    /// the crawl.
+    pub entry_points: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self { entry_points: true }
     }
 }
 

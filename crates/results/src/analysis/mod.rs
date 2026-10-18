@@ -199,7 +199,11 @@ impl Reader {
 
 /// Every pass, in tie-break order. A feature adds its pass file and one
 /// line here.
-pub static PASSES: &[&dyn Pass] = &[&crate::sitemaps::SitemapAudit, &crate::sitemaps::Orphans];
+pub static PASSES: &[&dyn Pass] = &[
+    &crate::sitemaps::SitemapAudit,
+    &crate::sitemaps::Orphans,
+    &crate::agents::AgentEntryPoints,
+];
 
 /// One global computation over the crawl.
 pub trait Pass: Sync {

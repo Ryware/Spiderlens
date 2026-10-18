@@ -3,8 +3,10 @@
 //! agent rules in spec 009's catalogue reuse (009 FR-005).
 
 mod detail;
+mod entry_points;
 
 pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFindings};
+pub use entry_points::{AgentEntryPoints, EntryPointRow, EntryProblem, Evaluated, evaluate};
 
 use std::borrow::Cow;
 

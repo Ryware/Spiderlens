@@ -12,6 +12,15 @@ use crate::fetch::{BodyPolicy, OnLimit, get_following};
 
 pub const PATHS: [&str; 3] = ["/llms.txt", "/llms-full.txt", "/.well-known/tdmrep.json"];
 
+/// The agent entry points of spec 016 (plan D4), fetched the same way when
+/// `agents.entry_points` is on: AI Catalog, API catalog (RFC 9727) and the
+/// A2A agent card.
+pub const AGENT_PATHS: [&str; 3] = [
+    "/.well-known/ai-catalog.json",
+    "/.well-known/api-catalog",
+    "/.well-known/agent-card.json",
+];
+
 /// Bodies above this are cut and marked `too_large`.
 pub const MAX_BYTES: u64 = 1024 * 1024;
 

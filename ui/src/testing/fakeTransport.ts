@@ -117,6 +117,7 @@ export function defaultConfig(): CrawlConfig {
       proxy: { mode: "none", kind: "http", host: "", port: 0, user: null, password: { secret: true }, bypass: [] },
     },
     ai_checks: { auto: true, site_files: true },
+    agents: { entry_points: true },
     segments: [],
     spelling: { check: false, default_lang: "en", skip_all_caps: true, ignore: [] },
     rendering: {
