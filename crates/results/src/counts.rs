@@ -118,7 +118,8 @@ impl Reader {
                 unavailable.insert(f.id.to_string(), f.need.unavailable_reason().to_string());
             }
         }
-        let values = self.thresholds.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut values = self.thresholds.read().unwrap_or_else(|e| e.into_inner()).clone();
+        values.extend(self.features.render_thresholds.as_map());
         let labels = t
             .filters
             .iter()

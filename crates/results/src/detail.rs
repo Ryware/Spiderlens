@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use crate::reader::Reader;
 use crate::tabs::{Derived, Need};
+use crate::values::Values;
 use crate::{Error, Result, sql};
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -276,9 +277,145 @@ pub struct UrlDetail {
     pub snippet: Option<Snippet>,
     /// Spelling results, when the page was checked.
     pub spelling: Option<SpellDetail>,
+    /// Rendering (spec 014): for a page that has a `renders` row.
+    pub render: Option<RenderDetail>,
     /// Fields and sections this file has no data for, with the reason.
     #[ts(type = "Record<string, string>")]
     pub unavailable: BTreeMap<String, String>,
+}
+
+/// One element that rendering may change, with both values (spec 014
+/// FR-024). The values are given only when the element differs.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ElementChange {
+    /// same | added | removed | changed
+    pub diff: String,
+    pub raw: Option<String>,
+    pub rendered: Option<String>,
+}
+
+/// How the rendered page differs from the raw one (spec 014 FR-024,
+/// FR-029).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct RenderComparison {
+    pub words_raw: u32,
+    pub words_rendered: u32,
+    #[ts(type = "number")]
+    pub words_change: i64,
+    pub links_raw: u32,
+    pub links_rendered: u32,
+    pub links_rendered_only: u32,
+    pub links_raw_only: u32,
+    pub title: ElementChange,
+    pub description: ElementChange,
+    pub h1: ElementChange,
+    pub canonical: ElementChange,
+    pub noindex: ElementChange,
+    pub nofollow: ElementChange,
+    pub hreflang: ElementChange,
+    pub structured_rendered_only: u32,
+    /// Overall JavaScript dependence, 0 to 100.
+    pub dependence: f64,
+    /// Shares of each content type that exist only in the rendered page,
+    /// 0 to 1; null when the rendered page has none of that type.
+    pub dep_text: Option<f64>,
+    pub dep_headings: Option<f64>,
+    pub dep_internal_links: Option<f64>,
+    pub dep_structured: Option<f64>,
+    pub dep_images: Option<f64>,
+    pub raw_has_title: bool,
+    pub raw_has_description: bool,
+    pub raw_has_canonical: bool,
+    pub raw_has_directives: bool,
+}
+
+/// The rendering section of the detail pane (spec 014 FR-028).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct RenderDetail {
+    /// queued | rendering | rendered | timed_out | failed | not_rendered
+    pub state: String,
+    pub reason: Option<String>,
+    pub reason_label: Option<String>,
+    pub reason_detail: Option<String>,
+    pub attempts: u32,
+    #[ts(type = "number | null")]
+    pub render_ms: Option<i64>,
+    /// The window used, CSS pixels.
+    pub window_w: Option<u32>,
+    pub window_h: Option<u32>,
+    /// Where a script navigated to, as written.
+    pub js_redirect: Option<String>,
+    #[ts(type = "number | null")]
+    pub js_redirect_id: Option<i64>,
+    pub console_errors: u32,
+    pub console_warnings: u32,
+    pub resources_failed: u32,
+    pub resources_blocked: u32,
+    pub bot_challenge: bool,
+    /// None when the page has no rendered version.
+    pub comparison: Option<RenderComparison>,
+    pub rendered_html_stored: bool,
+    pub screenshot_stored: bool,
+}
+
+/// The sentence for a render's reason code.
+pub(crate) fn render_reason_label(reason: &str) -> &'static str {
+    match reason {
+        "crash" => "The browser crashed",
+        "renderer_error" => "The browser reported an error",
+        "page_too_large" => "The page was too large to render",
+        "navigation_error" => "The page could not be loaded in the browser",
+        "outside_rules" => "Outside the rendering rules",
+        "crawl_stopped" => "The crawl was stopped first",
+        "browser_unavailable" => "No usable browser",
+        "html_not_stored" => "The raw HTML was not stored",
+        _ => "Not rendered",
+    }
+}
+
+/// One request a rendered page made (spec 014 FR-018).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ResourceRow {
+    pub url: String,
+    /// script, stylesheet, image, media, font, xhr, fetch, document, other
+    pub kind: String,
+    pub host: String,
+    pub third_party: bool,
+    /// loaded | cached | failed | blocked_setting | blocked_robots
+    pub outcome: String,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+    pub robots_rule: Option<String>,
+    #[ts(type = "number | null")]
+    pub bytes: Option<i64>,
+}
+
+/// One console error or warning of a rendered page (spec 014 FR-043).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct ConsoleRow {
+    /// error | warning | exception
+    pub level: String,
+    pub message: String,
+    pub source_url: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+/// Which stored HTML of a page to read (spec 014 FR-032).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HtmlVersion {
+    /// As the server sent it.
+    #[default]
+    Raw,
+    /// The DOM after scripts ran.
+    Rendered,
 }
 
 /// The PDF section of the detail pane (spec 027 FR-C02).
@@ -339,6 +476,10 @@ pub enum ListKind {
     Outlinks,
     Images,
     Headings,
+    /// Requests a rendered page made (spec 014).
+    Resources,
+    /// Console errors and warnings of a rendered page (spec 014).
+    Console,
 }
 
 /// One link in the Inlinks, Outlinks or Images list.
@@ -366,6 +507,10 @@ pub struct LinkRow {
     /// "unknown" (HTML not stored). Null when not worked out yet, or not
     /// an anchor.
     pub position: Option<String>,
+    /// Where the link was found, for a rendered page (spec 014 FR-028):
+    /// raw (only in the raw HTML), rendered (only after rendering) or
+    /// both. Null for pages that were not rendered.
+    pub origin: Option<String>,
 }
 
 /// One heading of a page, in document order (FR-023).
@@ -374,6 +519,8 @@ pub struct LinkRow {
 pub struct HeadingRow {
     pub level: u8,
     pub text: String,
+    /// As [`LinkRow::origin`].
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -385,6 +532,10 @@ pub struct ListPage {
     pub rows: Vec<LinkRow>,
     /// The rows of the Headings list (empty for the link lists).
     pub headings: Vec<HeadingRow>,
+    /// The rows of the Resources list (empty for the other lists).
+    pub resources: Vec<ResourceRow>,
+    /// The rows of the Console list (empty for the other lists).
+    pub console: Vec<ConsoleRow>,
     /// Set when this file cannot list this section.
     pub unavailable: Option<String>,
 }
@@ -652,6 +803,11 @@ impl Reader {
         } else {
             None
         };
+        let render = if self.features.has(Need::Rendering) {
+            self.render_detail(id)?
+        } else {
+            None
+        };
         let accessibility =
             if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::AccessibilityFull) {
                 self.accessibility(id)?
@@ -714,8 +870,187 @@ impl Reader {
             pdf,
             snippet,
             spelling,
+            render,
             unavailable,
         })
+    }
+
+    /// The rendering section of one page: its `renders` row and, for a
+    /// page with a rendered version, the comparison with both values of
+    /// every element that changed. Reads `main` tables only, so it gives
+    /// the same answer whichever values the connection shows.
+    fn render_detail(&self, id: i64) -> Result<Option<RenderDetail>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT r.state, r.reason, r.reason_detail, r.attempts, r.render_ms, r.window_w, r.window_h,
+                        r.js_redirect, r.js_redirect_id, r.console_errors, r.console_warnings,
+                        r.resources_failed, r.resources_blocked, r.bot_challenge,
+                        EXISTS (SELECT 1 FROM main.rendered_bodies b WHERE b.url_id = r.url_id),
+                        EXISTS (SELECT 1 FROM main.screenshots s WHERE s.url_id = r.url_id)
+                 FROM main.renders r WHERE r.url_id = ?1",
+                [id],
+                |r| {
+                    let reason: Option<String> = r.get(1)?;
+                    Ok(RenderDetail {
+                        state: r.get(0)?,
+                        reason_label: reason.as_deref().map(|x| render_reason_label(x).to_string()),
+                        reason,
+                        reason_detail: r.get(2)?,
+                        attempts: r.get::<_, Option<u32>>(3)?.unwrap_or(0),
+                        render_ms: r.get(4)?,
+                        window_w: r.get(5)?,
+                        window_h: r.get(6)?,
+                        js_redirect: r.get(7)?,
+                        js_redirect_id: r.get(8)?,
+                        console_errors: r.get::<_, Option<u32>>(9)?.unwrap_or(0),
+                        console_warnings: r.get::<_, Option<u32>>(10)?.unwrap_or(0),
+                        resources_failed: r.get::<_, Option<u32>>(11)?.unwrap_or(0),
+                        resources_blocked: r.get::<_, Option<u32>>(12)?.unwrap_or(0),
+                        bot_challenge: r.get::<_, Option<bool>>(13)?.unwrap_or(false),
+                        comparison: None,
+                        rendered_html_stored: r.get(14)?,
+                        screenshot_stored: r.get(15)?,
+                    })
+                },
+            )
+            .optional()?;
+        let Some(mut detail) = row else {
+            return Ok(None);
+        };
+        detail.comparison = self.render_comparison(id)?;
+        Ok(Some(detail))
+    }
+
+    fn render_comparison(&self, id: i64) -> Result<Option<RenderComparison>> {
+        type Diffs = [String; 7];
+        let row = self
+            .conn
+            .query_row(
+                "SELECT words_raw, words_rendered, words_change, links_raw, links_rendered, links_rendered_only,
+                        links_raw_only, title_diff, description_diff, h1_diff, canonical_diff, noindex_diff,
+                        nofollow_diff, hreflang_diff, structured_rendered_only, dependence, dep_text,
+                        dep_headings, dep_internal_links, dep_structured, dep_images, raw_has_title,
+                        raw_has_description, raw_has_canonical, raw_has_directives
+                 FROM main.render_comparisons WHERE url_id = ?1",
+                [id],
+                |r| {
+                    let diffs: Diffs = std::array::from_fn(|i| {
+                        r.get::<_, Option<String>>(7 + i)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| "same".to_string())
+                    });
+                    let n = |i: usize| -> rusqlite::Result<u32> { Ok(r.get::<_, Option<u32>>(i)?.unwrap_or(0)) };
+                    let flag = |i: usize| -> rusqlite::Result<bool> {
+                        Ok(r.get::<_, Option<bool>>(i)?.unwrap_or(false))
+                    };
+                    Ok((
+                        (n(0)?, n(1)?, r.get::<_, Option<i64>>(2)?.unwrap_or(0)),
+                        (n(3)?, n(4)?, n(5)?, n(6)?),
+                        diffs,
+                        (n(14)?, r.get::<_, Option<f64>>(15)?.unwrap_or(0.0)),
+                        [
+                            r.get::<_, Option<f64>>(16)?,
+                            r.get::<_, Option<f64>>(17)?,
+                            r.get::<_, Option<f64>>(18)?,
+                            r.get::<_, Option<f64>>(19)?,
+                            r.get::<_, Option<f64>>(20)?,
+                        ],
+                        [flag(21)?, flag(22)?, flag(23)?, flag(24)?],
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((words, links, diffs, (structured, dependence), dep, has)) = row else {
+            return Ok(None);
+        };
+        let one = |sql: &str| -> Result<Option<String>> {
+            Ok(self
+                .conn
+                .query_row(sql, [id], |r| r.get::<_, Option<String>>(0))
+                .optional()?
+                .flatten())
+        };
+        // Both values of an element, read only when it differs.
+        let change = |diff: &str, raw_sql: &str, rendered_sql: &str| -> Result<ElementChange> {
+            let (raw, rendered) = if diff == "same" {
+                (None, None)
+            } else {
+                (one(raw_sql)?, one(rendered_sql)?)
+            };
+            Ok(ElementChange {
+                diff: diff.to_string(),
+                raw,
+                rendered,
+            })
+        };
+        // A flag has no text of its own: name it on the side that has it.
+        let flag_change = |diff: &str, name: &str| ElementChange {
+            diff: diff.to_string(),
+            raw: matches!(diff, "removed").then(|| name.to_string()),
+            rendered: matches!(diff, "added").then(|| name.to_string()),
+        };
+        let [title, description, h1, canonical, noindex, nofollow, hreflang] = &diffs;
+        let hreflang_list = |extra: &str| {
+            format!(
+                "SELECT group_concat(x.v, ', ') FROM (SELECT l.lang || ' ' || l.raw AS v FROM main.links l
+                 WHERE l.from_id = ?1 AND l.kind = 'hreflang'{extra} ORDER BY l.rowid) x"
+            )
+        };
+        Ok(Some(RenderComparison {
+            words_raw: words.0,
+            words_rendered: words.1,
+            words_change: words.2,
+            links_raw: links.0,
+            links_rendered: links.1,
+            links_rendered_only: links.2,
+            links_raw_only: links.3,
+            title: change(
+                title,
+                "SELECT title FROM main.urls WHERE id = ?1",
+                "SELECT title FROM main.rendered_pages WHERE url_id = ?1",
+            )?,
+            description: change(
+                description,
+                "SELECT meta_description FROM main.pages WHERE url_id = ?1",
+                "SELECT meta_description FROM main.rendered_pages WHERE url_id = ?1",
+            )?,
+            h1: change(
+                h1,
+                "SELECT h1_1 FROM main.pages WHERE url_id = ?1",
+                "SELECT h1_1 FROM main.rendered_pages WHERE url_id = ?1",
+            )?,
+            canonical: change(
+                canonical,
+                "SELECT canonical FROM main.urls WHERE id = ?1",
+                "SELECT canonical FROM main.rendered_pages WHERE url_id = ?1",
+            )?,
+            noindex: flag_change(noindex, "noindex"),
+            nofollow: flag_change(nofollow, "nofollow"),
+            hreflang: change(
+                hreflang,
+                &hreflang_list(""),
+                "SELECT group_concat(v, ', ') FROM (
+                       SELECT l.lang || ' ' || l.raw AS v FROM main.links l
+                       WHERE l.from_id = ?1 AND l.kind = 'hreflang' AND NOT EXISTS
+                         (SELECT 1 FROM main.raw_only_links g WHERE g.from_id = l.from_id AND g.pos = l.pos)
+                       UNION ALL
+                       SELECT l.lang || ' ' || l.raw FROM main.rendered_links l
+                       WHERE l.from_id = ?1 AND l.kind = 'hreflang')",
+            )?,
+            structured_rendered_only: structured,
+            dependence,
+            dep_text: dep[0],
+            dep_headings: dep[1],
+            dep_internal_links: dep[2],
+            dep_structured: dep[3],
+            dep_images: dep[4],
+            raw_has_title: has[0],
+            raw_has_description: has[1],
+            raw_has_canonical: has[2],
+            raw_has_directives: has[3],
+        }))
     }
 
     fn accessibility(&self, id: i64) -> Result<Option<A11yDetail>> {
@@ -962,6 +1297,99 @@ impl Reader {
         })
     }
 
+    /// The stored HTML of one page, the raw version or the rendered one
+    /// (spec 014 FR-032). The rendered version is the serialised DOM,
+    /// always UTF-8.
+    pub fn page_html_version(&mut self, id: i64, version: HtmlVersion) -> Result<PageHtml> {
+        if version == HtmlVersion::Raw {
+            return self.page_html(id);
+        }
+        let exists: bool =
+            self.conn
+                .query_row("SELECT EXISTS (SELECT 1 FROM urls WHERE id = ?1)", [id], |r| {
+                    r.get(0)
+                })?;
+        if !exists {
+            return Err(Error::invalid(format!("URL {id} is not in this crawl")));
+        }
+        let none = |missing| PageHtml {
+            html: None,
+            missing: Some(missing),
+            bytes: 0,
+            encoding: None,
+            encoding_errors: false,
+        };
+        if !self.features.has(Need::RenderedHtml) {
+            return Ok(none(HtmlMissing::NotStored));
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT codec, size, body FROM main.rendered_bodies WHERE url_id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((codec, size, packed)) = row else {
+            return Ok(none(HtmlMissing::NoBody));
+        };
+        let bytes = body::unpack(&codec, size, &packed).map_err(Error::Unavailable)?;
+        let text = String::from_utf8_lossy(&bytes);
+        Ok(PageHtml {
+            encoding_errors: matches!(text, std::borrow::Cow::Owned(_)),
+            html: Some(text.into_owned()),
+            missing: None,
+            bytes: bytes.len() as u64,
+            encoding: Some("utf-8".to_string()),
+        })
+    }
+
+    /// Both stored versions of a page: the raw and the rendered HTML with
+    /// their sizes in bytes.
+    fn html_pair(&mut self, id: i64) -> Result<(String, String, u64, u64)> {
+        let raw = self.page_html_version(id, HtmlVersion::Raw)?;
+        let rendered = self.page_html_version(id, HtmlVersion::Rendered)?;
+        let (raw_bytes, rendered_bytes) = (raw.bytes, rendered.bytes);
+        match (raw.html, rendered.html) {
+            (Some(a), Some(b)) => Ok((a, b, raw_bytes, rendered_bytes)),
+            (_, None) => Err(Error::Unavailable(
+                "The rendered HTML of this page is not stored in this crawl.".into(),
+            )),
+            (None, _) => Err(Error::Unavailable(
+                "The raw HTML of this page is not stored in this crawl.".into(),
+            )),
+        }
+    }
+
+    /// The differences between a page's normalised raw and rendered HTML
+    /// (spec 014 FR-028): `max_hunks` hunks from hunk `from_hunk`. Needs
+    /// both versions stored.
+    pub fn html_diff(
+        &mut self,
+        id: i64,
+        from_hunk: u32,
+        max_hunks: u32,
+    ) -> Result<crate::html_diff::HtmlDiff> {
+        let (a, b, raw_bytes, rendered_bytes) = self.html_pair(id)?;
+        let mut d = crate::html_diff::diff(&a, &b, from_hunk, max_hunks.min(1000));
+        d.raw_bytes = raw_bytes;
+        d.rendered_bytes = rendered_bytes;
+        Ok(d)
+    }
+
+    /// The same differences as a unified diff of the normalised versions
+    /// (`spiderlens html --diff`); empty when there are none.
+    pub fn html_unified(&mut self, id: i64) -> Result<String> {
+        let (a, b, _, _) = self.html_pair(id)?;
+        Ok(crate::html_diff::unified(&a, &b))
+    }
+
     /// Follows stored redirect targets from `id`, stopping at the first URL
     /// that does not redirect, at a loop, or after 100 hops.
     fn redirect_chain(&self, id: i64) -> Result<(Vec<RedirectHop>, bool)> {
@@ -1021,7 +1449,25 @@ impl Reader {
         from: u32,
         count: u32,
     ) -> Result<ListPage> {
+        self.list_values(id, kind, position, None, from, count)
+    }
+
+    /// [`Reader::list_at`] for the raw or the rendered version of the page
+    /// (spec 014): `None` shows rendered values when the crawl has them.
+    /// In rendered mode the link lists also hold the links JavaScript
+    /// removed, and every entry says whether it was found in the raw HTML
+    /// only, the rendered page only, or both.
+    pub fn list_values(
+        &mut self,
+        id: i64,
+        kind: ListKind,
+        position: Option<&str>,
+        values: Option<Values>,
+        from: u32,
+        count: u32,
+    ) -> Result<ListPage> {
         let count = count.min(1000);
+        let rendered = Values::resolve(values, &self.features) == Values::Rendered;
         if let Some(p) = position {
             if p != "unknown" && !spiderlens_config::Position::ALL.iter().any(|x| x.as_str() == p) {
                 return Err(Error::invalid(format!("unknown position {p}")));
@@ -1039,7 +1485,39 @@ impl Reader {
             ListKind::Inlinks => ("l.to_id = ?1", "l.from_id"),
             ListKind::Outlinks => ("l.from_id = ?1", "l.to_id"),
             ListKind::Images => ("l.from_id = ?1 AND l.kind = 'image'", "l.to_id"),
-            ListKind::Headings => return self.headings(id, from, count),
+            ListKind::Headings => return self.headings(id, from, count, rendered),
+            ListKind::Resources | ListKind::Console => return self.render_list(id, kind, from, count),
+        };
+        // The links of rendered pages (spec 014): the raw ones, the ones
+        // JavaScript removed marked, and the ones found only after rendering.
+        let (source, origin) = if self.features.has(Need::Rendering) {
+            let raw_branch = format!(
+                "SELECT l.rowid AS ord, l.from_id, l.to_id, l.raw, l.kind, l.nofollow, l.followed, l.text, l.alt,
+                        l.sponsored, l.ugc, l.pos,
+                        CASE WHEN rp.url_id IS NULL THEN NULL WHEN g.pos IS NULL THEN 'both' ELSE 'raw' END AS origin
+                 FROM links l LEFT JOIN main.rendered_pages rp ON rp.url_id = l.from_id
+                 LEFT JOIN main.raw_only_links g ON g.from_id = l.from_id AND g.pos = l.pos
+                 WHERE {cond}"
+            );
+            let src = if rendered {
+                format!(
+                    "({raw_branch} UNION ALL
+                      SELECT 1099511627776 + l.rowid, l.from_id, l.to_id, l.raw, l.kind, l.nofollow, l.followed,
+                             l.text, l.alt, l.sponsored, l.ugc, l.pos, 'rendered'
+                      FROM main.rendered_links l WHERE {cond})"
+                )
+            } else {
+                format!("({raw_branch})")
+            };
+            (src, "l.origin")
+        } else {
+            ("links".to_string(), "NULL")
+        };
+        // The conditions are inside the branches already.
+        let cond = if source == "links" {
+            cond.to_string()
+        } else {
+            "1".to_string()
         };
         let position_of = "CASE WHEN l.kind = 'anchor' THEN COALESCE((SELECT CASE p.position WHEN 1 THEN 'navigation' \
              WHEN 2 THEN 'header' WHEN 3 THEN 'content' WHEN 4 THEN 'sidebar' WHEN 5 THEN 'footer' END \
@@ -1067,9 +1545,9 @@ impl Reader {
         };
         let sql = format!(
             "SELECT x.id, x.url, l.raw, l.kind, l.nofollow, l.followed, x.internal, x.status, {FINAL_STATE}, {text},
-                    {position_col}
-             FROM links l JOIN urls x ON x.id = {join}
-             WHERE {cond} ORDER BY l.rowid LIMIT ?2 OFFSET ?3"
+                    {position_col}, {origin}
+             FROM {source} l JOIN urls x ON x.id = {join}
+             WHERE {cond} ORDER BY {order} LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
@@ -1088,6 +1566,7 @@ impl Reader {
                     sponsored: r.get(10)?,
                     ugc: r.get(11)?,
                     position: r.get(12)?,
+                    origin: r.get(13)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1096,43 +1575,139 @@ impl Reader {
             from,
             rows,
             headings: vec![],
+            resources: vec![],
+            console: vec![],
             unavailable: None,
         })
     }
 
-    fn headings(&self, id: i64, from: u32, count: u32) -> Result<ListPage> {
+    fn headings(&self, id: i64, from: u32, count: u32, rendered: bool) -> Result<ListPage> {
+        let empty = |unavailable| ListPage {
+            total: 0,
+            from,
+            rows: vec![],
+            headings: vec![],
+            resources: vec![],
+            console: vec![],
+            unavailable,
+        };
         if !self.features.has(Need::Extraction) {
-            return Ok(ListPage {
-                total: 0,
-                from,
-                rows: vec![],
-                headings: vec![],
-                unavailable: Some(Need::Extraction.unavailable_reason().to_string()),
-            });
+            return Ok(empty(Some(Need::Extraction.unavailable_reason().to_string())));
         }
+        // A rendered page's headings in rendered order, then the ones
+        // JavaScript removed; otherwise the raw ones, marked when they are
+        // gone after rendering (spec 014 FR-028).
+        let page_rendered = self.features.has(Need::Rendering)
+            && self.conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM main.rendered_pages WHERE url_id = ?1)",
+                [id],
+                |r| r.get::<_, bool>(0),
+            )?;
+        let (table, order, origin) = if page_rendered && rendered {
+            (
+                "main.rendered_text",
+                "CASE t.origin WHEN 'raw' THEN 1 ELSE 0 END, t.pos",
+                "t.origin",
+            )
+        } else if page_rendered {
+            (
+                "page_text",
+                "t.pos",
+                "CASE WHEN EXISTS (SELECT 1 FROM main.rendered_text g WHERE g.url_id = t.url_id \
+                 AND g.kind = 'heading' AND g.origin = 'raw' AND g.pos = t.pos) THEN 'raw' ELSE 'both' END",
+            )
+        } else {
+            ("page_text", "t.pos", "NULL")
+        };
         let total: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM page_text WHERE url_id = ?1 AND kind = 'heading'",
+            &format!("SELECT COUNT(*) FROM {table} t WHERE t.url_id = ?1 AND t.kind = 'heading'"),
             [id],
             |r| r.get(0),
         )?;
-        let mut stmt = self.conn.prepare(
-            "SELECT level, text FROM page_text WHERE url_id = ?1 AND kind = 'heading'
-             ORDER BY pos LIMIT ?2 OFFSET ?3",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT t.level, t.text, {origin} FROM {table} t WHERE t.url_id = ?1 AND t.kind = 'heading'
+             ORDER BY {order} LIMIT ?2 OFFSET ?3"
+        ))?;
         let headings = stmt
             .query_map(rusqlite::params![id, count, from], |r| {
                 Ok(HeadingRow {
                     level: r.get(0)?,
                     text: r.get(1)?,
+                    origin: r.get(2)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(ListPage {
             total: total as u64,
+            headings,
+            ..empty(None)
+        })
+    }
+
+    /// The Resources or Console list of a rendered page (spec 014 FR-018,
+    /// FR-043), in the order the browser reported them.
+    fn render_list(&self, id: i64, kind: ListKind, from: u32, count: u32) -> Result<ListPage> {
+        let mut page = ListPage {
+            total: 0,
             from,
             rows: vec![],
-            headings,
+            headings: vec![],
+            resources: vec![],
+            console: vec![],
             unavailable: None,
-        })
+        };
+        if !self.features.has(Need::Rendering) {
+            page.unavailable = Some(Need::Rendering.unavailable_reason().to_string());
+            return Ok(page);
+        }
+        let table = if kind == ListKind::Resources {
+            "render_resources"
+        } else {
+            "console_entries"
+        };
+        let total: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM main.{table} WHERE url_id = ?1"),
+            [id],
+            |r| r.get(0),
+        )?;
+        page.total = total as u64;
+        if kind == ListKind::Resources {
+            let mut stmt = self.conn.prepare(
+                "SELECT url, type, host, third_party, outcome, status, error, robots_rule, bytes
+                 FROM main.render_resources WHERE url_id = ?1 ORDER BY pos LIMIT ?2 OFFSET ?3",
+            )?;
+            page.resources = stmt
+                .query_map(rusqlite::params![id, count, from], |r| {
+                    Ok(ResourceRow {
+                        url: r.get(0)?,
+                        kind: r.get(1)?,
+                        host: r.get(2)?,
+                        third_party: r.get(3)?,
+                        outcome: r.get(4)?,
+                        status: r.get(5)?,
+                        error: r.get(6)?,
+                        robots_rule: r.get(7)?,
+                        bytes: r.get(8)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT level, message, source_url, line, col
+                 FROM main.console_entries WHERE url_id = ?1 ORDER BY pos LIMIT ?2 OFFSET ?3",
+            )?;
+            page.console = stmt
+                .query_map(rusqlite::params![id, count, from], |r| {
+                    Ok(ConsoleRow {
+                        level: r.get(0)?,
+                        message: r.get(1)?,
+                        source_url: r.get(2)?,
+                        line: r.get(3)?,
+                        col: r.get(4)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+        }
+        Ok(page)
     }
 }

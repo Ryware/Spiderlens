@@ -23,6 +23,7 @@ flate2.workspace = true
 unicode-segmentation.workspace = true
 resvg.workspace = true
 scraper.workspace = true
+similar.workspace = true
 ego-tree.workspace = true
 rust_xlsxwriter.workspace = true
 

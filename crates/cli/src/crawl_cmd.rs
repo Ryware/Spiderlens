@@ -1087,6 +1087,13 @@ pub struct HtmlArgs {
     /// Write to this file instead of standard output.
     #[arg(long, value_name = "PATH")]
     out: Option<PathBuf>,
+    /// The stored rendered HTML, as the browser serialised it.
+    #[arg(long, conflicts_with = "diff")]
+    rendered: bool,
+    /// The differences between the normalised raw and rendered HTML, as a
+    /// unified diff.
+    #[arg(long)]
+    diff: bool,
 }
 
 /// Finds the URL as given, then in its normalized form.
@@ -1267,15 +1274,33 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
         Ok(Some(id)) => id,
         _ => return ExitCode::FAILURE,
     };
-    let html = match store.page_html(id) {
-        Ok(Some(h)) => h,
-        Ok(None) => {
-            eprintln!("error: this crawl did not store the HTML of {url}");
-            return ExitCode::FAILURE;
+    let html = if args.diff {
+        let diff =
+            spiderlens_results::Reader::open(&args.file).and_then(|mut reader| reader.html_unified(id));
+        match diff {
+            Ok(d) => d.into_bytes(),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
         }
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
+    } else {
+        let stored = if args.rendered {
+            store.rendered_html(id)
+        } else {
+            store.page_html(id)
+        };
+        match stored {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                let which = if args.rendered { "rendered HTML" } else { "HTML" };
+                eprintln!("error: this crawl did not store the {which} of {url}");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
         }
     };
     let written = match &args.out {
