@@ -79,6 +79,11 @@ impl State {
         }))?;
         answer.await.map_err(|_| STOPPED.to_string())?
     }
+
+    /// The open comparison's section for the crawl report (FR-033).
+    pub async fn report_section(&self, id: u32) -> Cmd<spiderlens_results::report::Section> {
+        self.with(id, |c| c.report()).await.map(|r| r.section())
+    }
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -136,6 +141,7 @@ fn phase_name(p: Phase) -> &'static str {
         Phase::Open => "open",
         Phase::Previous => "previous",
         Phase::Current => "current",
+        Phase::Issues => "issues",
         Phase::Match => "match",
         Phase::Counts => "counts",
         Phase::Done => "done",
@@ -148,11 +154,14 @@ fn phase_name(p: Phase) -> &'static str {
 pub fn compare_start(
     app: AppHandle,
     state: tauri::State<'_, State>,
+    results: tauri::State<'_, crate::results::State>,
     previous: PathBuf,
     current: PathBuf,
     settings: CompareSettings,
 ) -> Cmd<u32> {
     settings.validate().map_err(err)?;
+    // The app's issue settings now, for a comparison that asks for them.
+    let app_issues = results.issues.lock().expect("issues lock").clone();
     let id = state.next.fetch_add(1, Ordering::Relaxed);
     let cancel = Arc::new(AtomicBool::new(false));
     state
@@ -175,17 +184,24 @@ pub fn compare_start(
         };
         let mut last = std::time::Instant::now();
         let mut last_phase = None;
-        let result = Comparison::run(&previous, &current, settings, &cancel, &mut |p| {
-            // Phase changes always go out; batches at most four times a second.
-            if p.phase == Phase::Done {
-                return;
-            }
-            if last_phase != Some(p.phase) || last.elapsed().as_millis() >= 250 {
-                last = std::time::Instant::now();
-                last_phase = Some(p.phase);
-                emit(phase_name(p.phase), p.done, p.total, None);
-            }
-        });
+        let result = Comparison::run(
+            &previous,
+            &current,
+            settings,
+            Some(&app_issues),
+            &cancel,
+            &mut |p| {
+                // Phase changes always go out; batches at most four times a second.
+                if p.phase == Phase::Done {
+                    return;
+                }
+                if last_phase != Some(p.phase) || last.elapsed().as_millis() >= 250 {
+                    last = std::time::Instant::now();
+                    last_phase = Some(p.phase);
+                    emit(phase_name(p.phase), p.done, p.total, None);
+                }
+            },
+        );
         match result {
             Ok(c) => {
                 open.insert(id, c);

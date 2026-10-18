@@ -55,6 +55,38 @@ the results live only for that command) and says on stderr when the crawl did
 not reach every page. A List mode crawl follows no links, so it prints the
 reason and no rows. Details: [specs/011-sitemaps-orphan-pages](specs/011-sitemaps-orphan-pages/contracts/cli.md).
 
+## Comparing crawls
+
+A comparison shows what changed between a previous and a current crawl of the
+same site. For every filter of every tab it counts the URLs that are New,
+Added, Removed, Missing or Not reached; it detects changes in the tracked
+elements (titles, headings, canonicals, directives and the rest) on pages in
+both crawls; and it lists issues as newly affected, fixed or gone. For a
+migration, URL mapping rules rewrite the previous URLs before they are
+matched. Crawl files are only ever opened read-only; the work happens in a
+temporary file that is deleted afterwards, and the setup warns when the temp
+folder is low on space.
+
+In the app, start a comparison with Compare crawls… on the start screen or in
+the command palette; the open crawl is pre-selected as the current one.
+
+```sh
+spiderlens compare old.spiderlens new.spiderlens
+spiderlens compare old.spiderlens new.spiderlens --map 'https://old.example.com/=>https://www.example.com/'
+spiderlens compare old.spiderlens new.spiderlens --map-regex '^https://old\.example\.com/blog/(.*)=>https://www.example.com/news/$1'
+spiderlens compare old.spiderlens new.spiderlens --settings compare.json --json
+spiderlens compare old.spiderlens new.spiderlens --export changes   # one CSV per non-empty group
+spiderlens compare new.spiderlens --baseline schedule              # against the schedule's previous run
+spiderlens report new.spiderlens --html report.html --compare-with old.spiderlens
+```
+
+`--issue-settings current|previous|app` picks whose issue settings both crawls
+are evaluated with. For a pipeline, `--fail-on-missing N` (internal HTML pages
+missing), `--fail-on-lost-indexable N` (pages that stopped being indexable) and
+`--fail-on-new-issues PRIORITY` (an issue at that priority or higher with newly
+affected URLs) make the command exit with code 8 and say which condition failed.
+Details: [specs/012-crawl-comparison](specs/012-crawl-comparison/contracts/cli.md).
+
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
 Signing in to password-protected sites, cookies and proxies: [docs/site-login.md](docs/site-login.md).

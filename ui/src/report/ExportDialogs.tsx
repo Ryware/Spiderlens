@@ -30,6 +30,7 @@ export function ExportReportDialog({
   name,
   initial,
   onRemember,
+  comparison = null,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -38,6 +39,8 @@ export function ExportReportDialog({
   name: string;
   initial: FileOptions;
   onRemember: (f: FileOptions) => void;
+  /** The open comparison of this file, whose section the saved report includes. */
+  comparison?: number | null;
 }) {
   const [file, setFile] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +59,7 @@ export function ExportReportDialog({
   const write = async (dest: string, overwrite: boolean) => {
     setError(null);
     try {
-      const w = await transport.exportReportHtml(path, dest, file, overwrite);
+      const w = await transport.exportReportHtml(path, dest, file, overwrite, comparison);
       onRemember(file);
       setReplace(null);
       setSaved(w.path);
@@ -72,7 +75,7 @@ export function ExportReportDialog({
   const print = async () => {
     setError(null);
     try {
-      await transport.printReport(path, file);
+      await transport.printReport(path, file, comparison);
       onRemember(file);
     } catch (e) {
       setError(String(e));

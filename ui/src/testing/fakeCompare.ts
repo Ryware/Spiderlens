@@ -9,9 +9,10 @@ import type { ElementSetting } from "../generated/ElementSetting";
 import type { Group } from "../generated/Group";
 import type { GroupColumn } from "../generated/GroupColumn";
 import type { GroupRow } from "../generated/GroupRow";
+import type { IssueDelta } from "../generated/IssueDelta";
 import type { Summary } from "../generated/Summary";
 import type { UrlDetail } from "../generated/UrlDetail";
-import type { CompareProgress, ExportProgress, Transport } from "../transport";
+import type { CompareProgress, ExportProgress, ScheduleBaseline, Transport } from "../transport";
 
 export const PREVIOUS = "/crawls/example.com-old.spiderlens";
 
@@ -29,6 +30,8 @@ export interface FakeCompare {
   fail(error: string): void;
   /** Origin of the previous crawl; a different one makes setup suggest a mapping. */
   previousStart: string;
+  /** What the schedule baseline lookup answers: null is "not a scheduled run", a string is the error. */
+  scheduleBaseline: ScheduleBaseline | string | null;
 }
 
 const info = (path: string, start: string, urls: number, complete = true): CrawlInfo => ({
@@ -52,6 +55,14 @@ const ELEMENTS: ElementDelta[] = [
   { element: "h1", label: "H1", kind: "text", on: true, threshold: null, changed: 0, comparable: false, reason: "The previous crawl did not read page content." },
 ];
 
+export const ISSUES: IssueDelta[] = [
+  { rule: "response.internal_4xx", name: "Internal URL: client error (4xx)", category: "response_codes", priority: "high", previous: 4, current: 9, newly_affected: 6, fixed: 1, gone: 0, comparable: true, reason: null },
+  { rule: "title.missing", name: "Page title: missing", category: "page_titles", priority: "high", previous: 3, current: 1, newly_affected: 0, fixed: 2, gone: 0, comparable: true, reason: null },
+  { rule: "title.duplicate", name: "Page title: duplicate", category: "page_titles", priority: "medium", previous: 5, current: 5, newly_affected: 0, fixed: 0, gone: 0, comparable: true, reason: null },
+  { rule: "title.over", name: "Page title: over 60 characters", category: "page_titles", priority: "medium", previous: 8, current: 6, newly_affected: 1, fixed: 2, gone: 1, comparable: true, reason: null },
+  { rule: "h1.missing", name: "H1: missing", category: "h1", priority: "medium", previous: null, current: 7, newly_affected: 0, fixed: 0, gone: 0, comparable: false, reason: "The previous crawl: The crawl did not read page content." },
+];
+
 function summary(cur: string, prevStart: string, elements: ElementDelta[]): Summary {
   return {
     previous: info(PREVIOUS, prevStart, 120),
@@ -73,6 +84,8 @@ function summary(cur: string, prevStart: string, elements: ElementDelta[]): Summ
       { tab: "h1", tab_title: "H1", filter: "missing", filter_label: "Missing", previous: null, current: 7, new: 0, added: 0, removed: 0, missing: 0, not_reached: 0, comparable: false, reason: "The previous crawl did not read page content." },
     ],
     elements,
+    issues: ISSUES,
+    issue_basis: { rules_version: 2, settings: "current", custom: false },
   };
 }
 
@@ -85,9 +98,10 @@ const COLUMNS: GroupColumn[] = [
 
 function rows(group: Group): GroupRow[] {
   const n = group.kind === "urls" && group.which === "missing" ? 10 : group.kind === "urls" ? 20 : 12;
+  const gone = group.kind === "issue" && group.change === "gone";
   return Array.from({ length: n }, (_, i) => {
     const prev = group.kind === "urls" && group.which === "new" ? null : i + 1;
-    const cur = group.kind === "urls" && group.which === "missing" ? null : 500 + i;
+    const cur = (group.kind === "urls" && group.which === "missing") || gone ? null : 500 + i;
     const path = `/page-${i + 1}`;
     return {
       prev_id: prev,
@@ -153,6 +167,7 @@ function detail(id: number, title: string): UrlDetail {
 type CompareApi = Pick<
   Transport,
   | "compareSuggest"
+  | "compareScheduleBaseline"
   | "compareSetup"
   | "compareTestMapping"
   | "compareStart"
@@ -189,6 +204,7 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
     finish: () => send({ phase: "done", done: 1, total: 1 }),
     fail: (error) => send({ phase: "failed", error }),
     previousStart: "https://example.com/",
+    scheduleBaseline: null,
   };
   const page = (v: number, from: number, count: number) => {
     const all = views.get(v)!;
@@ -197,6 +213,10 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
   return {
     compare,
     compareSuggest: async (cur) => (cur === PREVIOUS ? null : PREVIOUS),
+    compareScheduleBaseline: async () => {
+      if (typeof compare.scheduleBaseline === "string") throw new Error(compare.scheduleBaseline);
+      return compare.scheduleBaseline;
+    },
     compareSetup: async (previous, cur) => {
       if (previous === cur) throw new Error("Choose two different crawl files: a crawl compared with itself has no changes.");
       const s = summary(cur, compare.previousStart, elements);
@@ -206,6 +226,7 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
         current: s.current,
         config_diffs: s.config_diffs,
         suggested_mapping: prevOrigin === "https://example.com" ? null : { find: `${prevOrigin}/`, replace: "https://example.com/", regex: false },
+        disk_warning: null,
       };
     },
     compareTestMapping: async (_p, _c, rules, samples) =>
@@ -252,7 +273,15 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
       previous: prev === null ? null : detail(prev, "Old"),
       current: cur === null ? null : detail(cur, "New"),
     }),
-    compareReport: async () => ({ summary: summary(current, compare.previousStart, elements), top_filters: [], elements: [], issues_available: false, mapping: [] }),
+    compareReport: async () => ({
+      summary: summary(current, compare.previousStart, elements),
+      top_filters: [],
+      elements: [],
+      issues_available: true,
+      issues: ISSUES.filter((i) => i.comparable && (i.newly_affected > 0 || i.fixed > 0 || i.gone > 0)),
+      issue_basis: { rules_version: 2, settings: "current", custom: false },
+      mapping: [],
+    }),
     compareExport: async (_id, v, dest) => {
       compare.exports.push({ view: v, dest });
       setTimeout(() => exportProgress({ job: 7, state: "done", rows_written: views.get(v)?.length ?? 0, total: views.get(v)?.length ?? 0, path: dest }));

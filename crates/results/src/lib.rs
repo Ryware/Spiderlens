@@ -47,7 +47,7 @@ pub use export::{
     write_csv_in, write_csv_with, write_tsv_row,
 };
 pub use features::Features;
-pub use reader::{Reader, connect_attachable};
+pub use reader::{Reader, connect_attachable, connect_attachable_with};
 pub use rusqlite::InterruptHandle;
 pub use segments::SegmentCounts;
 pub use sitemaps::{

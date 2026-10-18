@@ -56,7 +56,7 @@ pub struct IssuesArgs {
     only: Vec<String>,
 }
 
-fn parse_priority(s: &str) -> Result<Priority, String> {
+pub(crate) fn parse_priority(s: &str) -> Result<Priority, String> {
     Priority::parse(s).ok_or_else(|| "expected high, medium, low or opportunity".into())
 }
 
@@ -279,7 +279,7 @@ pub struct AnalyseArgs {
 /// `spiderlens analyse`: runs the Crawl Analysis passes that have not run on
 /// this crawl's data (spec 009 plan D12).
 pub fn run_analyse(a: AnalyseArgs) -> ExitCode {
-    match analyse(&a.file, !a.json) {
+    match analyse(&a.file, !a.json, &[]) {
         Ok(report) => {
             if a.json {
                 println!(
@@ -306,11 +306,12 @@ pub fn run_analyse(a: AnalyseArgs) -> ExitCode {
     }
 }
 
-/// Runs the stale analysis passes on `file`, printing "Analysing: Link
-/// Score 40%" lines to stderr when `show`.
+/// Runs the stale analysis passes on `file` except those named in `skip`,
+/// printing "Analysing: Link Score 40%" lines to stderr when `show`.
 pub(crate) fn analyse(
     file: &Path,
     show: bool,
+    skip: &[&str],
 ) -> spiderlens_results::Result<spiderlens_results::analysis::AnalysisReport> {
     let mut last = (String::new(), u64::MAX);
     let mut progress = |p: spiderlens_results::analysis::PassProgress| {
@@ -320,5 +321,5 @@ pub(crate) fn analyse(
             last = (p.label, pct);
         }
     };
-    spiderlens_results::analysis::analyse_file(file, &mut progress, &AtomicBool::new(false))
+    spiderlens_results::analysis::analyse_file_with(file, skip, &mut progress, &AtomicBool::new(false))
 }

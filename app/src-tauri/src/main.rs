@@ -277,6 +277,7 @@ fn main() {
             schedules::schedule_run_now,
             schedules::schedule_stop,
             schedules::schedule_history,
+            schedules::compare_schedule_baseline,
             schedules::schedule_update_from_profile,
             schedules::schedules_repair,
             schedules::schedules_remove_all,

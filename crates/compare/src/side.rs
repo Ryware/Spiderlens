@@ -44,17 +44,23 @@ pub(crate) fn create_tables(ws: &Connection, layout: &Layout, elements: &[Elemen
            key TEXT NOT NULL,
            grp INTEGER NOT NULL
          );
-         CREATE TABLE info (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+         CREATE TABLE info (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE issue_hits (
+           side INTEGER NOT NULL,
+           rule TEXT NOT NULL,
+           id INTEGER NOT NULL,
+           PRIMARY KEY (side, rule, id)
+         ) WITHOUT ROWID;",
         cols.join(",\n           ")
     ))?;
     Ok(())
 }
 
-/// Which filters and elements a side can evaluate.
+/// Which filters a side can evaluate.
 pub(crate) fn filter_available(features: &Features, layout: &Layout, k: usize) -> bool {
     let f = layout.slots[k].filter;
-    // Issue hits depend on the issue settings, which a comparison does not
-    // carry yet (issue deltas are spec 012 follow-up work).
+    // Filters that read the issue hits stay out of the bit columns: the
+    // issue deltas have their own table (`issue_hits`, see `issues.rs`).
     features.has(f.need) && f.derived != Some(Derived::IssueHits)
 }
 
@@ -69,7 +75,7 @@ pub(crate) fn fill(
     mapped: bool,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
-) -> Result<()> {
+) -> Result<Vec<Derived>> {
     conn.execute("ATTACH DATABASE ?1 AS cmp", [ws_file.to_string_lossy()])?;
     let result = fill_attached(conn, side, features, layout, elements, mapped, cancel, progress);
     if result.is_err() {
@@ -89,7 +95,7 @@ fn fill_attached(
     mapped: bool,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
-) -> Result<()> {
+) -> Result<Vec<Derived>> {
     // One transaction: a snapshot of a crawl that is still running, and one
     // commit of the workspace rows.
     conn.execute_batch("BEGIN")?;
@@ -206,5 +212,5 @@ fn fill_attached(
     }
     drop(stmt);
     conn.execute_batch("COMMIT")?;
-    Ok(())
+    Ok(derived)
 }
