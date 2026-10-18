@@ -85,9 +85,11 @@ impl Pass for LinkMetrics {
         // The positions pass ran just before in the same run; its time is
         // in the `analysis` record.
         let positions_ms = super::records(conn)?.get("link_positions").map_or(0, |r| r.ms);
-        let links: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {schema}.link_positions"), [], |r| {
-            r.get(0)
-        })?;
+        let links: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM {schema}.link_positions"),
+            [],
+            |r| r.get(0),
+        )?;
         let without_html: i64 = conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM urls u WHERE {} AND NOT EXISTS (
@@ -187,9 +189,10 @@ pub(crate) fn stored_run(conn: &Connection, settings: &LinkAnalysisSettings) -> 
     let recs = super::records(conn)?;
     let stamp = super::data_stamp(conn)?;
     let passes: [&dyn Pass; 2] = [&LinkPositions, &LinkMetrics];
-    let current = passes
-        .iter()
-        .all(|p| recs.get(p.id()).is_some_and(|r| r.version == p.version() && r.data_version == stamp));
+    let current = passes.iter().all(|p| {
+        recs.get(p.id())
+            .is_some_and(|r| r.version == p.version() && r.data_version == stamp)
+    });
     if !current {
         return Ok(None);
     }
@@ -202,7 +205,11 @@ pub(crate) fn stored_run(conn: &Connection, settings: &LinkAnalysisSettings) -> 
         return Ok(None);
     }
     let raw: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'link_analysis_run'", [], |r| r.get(0))
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'link_analysis_run'",
+            [],
+            |r| r.get(0),
+        )
         .optional()?;
     let Some(run) = raw.and_then(|r| serde_json::from_str::<StoredRun>(&r).ok()) else {
         return Ok(None);
@@ -213,7 +220,12 @@ pub(crate) fn stored_run(conn: &Connection, settings: &LinkAnalysisSettings) -> 
 /// The pass ids to leave out of a crawl-end run for this file: the link
 /// passes when its settings turn automatic analysis off (FR-012).
 pub fn auto_skips(path: &std::path::Path) -> Result<Vec<&'static str>> {
-    let conn = spiderlens_engine::crawl::store::connect_read_only(path).map_err(|e| Error::invalid(e.to_string()))?;
+    let conn = spiderlens_engine::crawl::store::connect_read_only(path)
+        .map_err(|e| Error::invalid(e.to_string()))?;
     let settings = Features::detect(&conn)?.link_settings;
-    Ok(if settings.auto_analyse { Vec::new() } else { LINK_PASSES.to_vec() })
+    Ok(if settings.auto_analyse {
+        Vec::new()
+    } else {
+        LINK_PASSES.to_vec()
+    })
 }

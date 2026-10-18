@@ -38,6 +38,10 @@ pub struct CrawlCmd {
     /// No progress on stderr.
     #[arg(long)]
     quiet: bool,
+    /// Skip the Crawl Analysis phase at the end (link positions, Link Score,
+    /// sitemap checks); run `spiderlens analyse <file>` later.
+    #[arg(long)]
+    no_analyse: bool,
     /// Pause when less than this much space (MB) is free on the crawl
     /// file's drive.
     #[arg(long, value_name = "MB", default_value_t = DEFAULT_DISK_RESERVE / (1024 * 1024))]
@@ -175,7 +179,7 @@ pub fn run_retry(args: RetryArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    execute(crawler, args.file, args.quiet, args.json)
+    execute(crawler, args.file, args.quiet, args.json, true)
 }
 
 #[derive(Args)]
@@ -221,13 +225,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 15] = [
+        const ALLOWED: [&str; 16] = [
             "resume",
             "cookies_file",
             "browser",
             "allow_browser_download",
             "json",
             "quiet",
+            "no_analyse",
             "disk_reserve",
             "no_backup",
             "header_secret",
@@ -441,7 +446,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());
     }
-    execute(crawler, file, cmd.quiet, cmd.json)
+    execute(crawler, file, cmd.quiet, cmd.json, !cmd.no_analyse)
 }
 
 /// Reads a browser's `cookies.txt` as a login session, keeping the start
@@ -517,7 +522,7 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
 
 /// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and
 /// prints its progress and summary.
-fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode {
+fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool, analyse: bool) -> ExitCode {
     let rt = match runtime() {
         Ok(rt) => rt,
         Err(code) => return code,
@@ -608,11 +613,21 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
     record_issue_settings(&file);
     // The Crawl Analysis phase, while this process still owns the file
     // (spec 009 plan D12).
-    if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet) {
-        eprintln!(
-            "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
-            file.display()
-        );
+    if !analyse {
+        // --no-analyse (spec 023 FR-028); the exit code still reflects the
+        // crawl only.
+        if !json && !quiet {
+            eprintln!("crawl analysis skipped; run spiderlens analyse {}", file.display());
+        }
+    } else {
+        // Link analysis follows the crawl's own setting (FR-012).
+        let skip = spiderlens_results::analysis::auto_skips(&file).unwrap_or_default();
+        if let Err(e) = crate::issues_cmd::analyse(&file, !json && !quiet, &skip) {
+            eprintln!(
+                "warning: crawl analysis did not finish: {e}; run spiderlens analyse {}",
+                file.display()
+            );
+        }
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);

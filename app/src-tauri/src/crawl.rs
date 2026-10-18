@@ -613,7 +613,9 @@ fn launch(app: AppHandle, state: &State, path: PathBuf, open: Open) -> Cmd<Start
                     .expect("issues lock")
                     .clone();
                 crate::results::record_issues(&at, &issues);
-                if let Err(e) = crate::results::analyse(&app, &at, &state.quitting) {
+                // Link analysis follows the crawl's own setting (spec 023 FR-012).
+                let skip = spiderlens_results::analysis::auto_skips(&at).unwrap_or_default();
+                if let Err(e) = crate::results::analyse(&app, &at, &skip, &state.quitting) {
                     let message = format!("Crawl analysis did not finish: {e}");
                     let _ = app.emit("crawl-warning", WarningEvent { id, message });
                 }
