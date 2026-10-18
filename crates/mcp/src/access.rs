@@ -40,6 +40,10 @@ impl Access {
         Self { dirs, overrides }
     }
 
+    pub fn dirs(&self) -> Option<&AppDirs> {
+        self.dirs.as_ref()
+    }
+
     pub fn settings(&self) -> AssistantSettings {
         let mut s = self
             .dirs

@@ -16,7 +16,7 @@ pub struct ToolDef {
     pub schema: fn() -> Value,
 }
 
-fn crawl_prop() -> Value {
+pub(crate) fn crawl_prop() -> Value {
     json!({"type": "string", "description": "Crawl id from list_crawls."})
 }
 
@@ -28,7 +28,7 @@ fn page_props() -> Value {
     })
 }
 
-fn obj(props: Value, required: &[&str]) -> Value {
+pub(crate) fn obj(props: Value, required: &[&str]) -> Value {
     json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
 }
 

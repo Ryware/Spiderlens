@@ -25,7 +25,10 @@ mod stored;
 mod url_norm;
 mod validate;
 
-pub use assistants::{APP_IDENTIFIER, AppDirs, AssistantSettings, AssistantStore};
+pub use assistants::{
+    APP_IDENTIFIER, AppDirs, AssistantProfile, AssistantSettings, AssistantStore, assistant_profiles,
+    crawl_profile_problem,
+};
 pub use compare::{CompareSettings, CompareSettingsError, ElementSetting, IssueSettingsChoice, MapRule};
 pub use custom::{
     CustomRules, ElementKind, ElementLimit, ExtractMode, Extractor, ExtractorKind, Search, SearchCondition,
@@ -36,12 +39,12 @@ pub use list_input::{
     InvalidLine, ListEntry, ListFormat, ListInput, list_from_urls, parse_list_bytes, parse_list_text,
 };
 pub use model::{
-    A11yLevel, AccessSettings, AccessibilitySettings, AgentSettings, AiChecks, AuthMethod, Changefreq, CheckCondition,
-    ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, DEFAULT_SIGN_OUT_PATTERNS, ExtractionSettings,
-    HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits, LocalSitemap, LoginSettings,
-    Mode, ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource, ProxyKind, ProxyMode,
-    ProxySettings, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings, RenderWindow,
-    RetrySettings, RobotsMode, RobotsSettings, RuleOverride, Scope, SignIn, SignedOutCheck,
+    A11yLevel, AccessSettings, AccessibilitySettings, AgentSettings, AiChecks, AuthMethod, Changefreq,
+    CheckCondition, ContentSettings, CookiePolicy, CrawlConfig, CustomHeader, DEFAULT_SIGN_OUT_PATTERNS,
+    ExtractionSettings, HeaderTarget, Identity, ImageEntries, IssueSettings, LastmodSource, Limits,
+    LocalSitemap, LoginSettings, Mode, ModeInput, NetworkSettings, PdfSettings, Priority, PrioritySource,
+    ProxyKind, ProxyMode, ProxySettings, QueryMode, QueryParams, RenderBlock, RenderMode, RenderSettings,
+    RenderWindow, RetrySettings, RobotsMode, RobotsSettings, RuleOverride, Scope, SignIn, SignedOutCheck,
     SitemapGenerateOptions, SitemapSettings, SpeedSettings, SpellingSettings, SubdomainMode, SuppliedCookie,
     UserAgent, WcagLevel, WcagTarget, WcagVersion, WindowPreset, env_suffix,
 };
