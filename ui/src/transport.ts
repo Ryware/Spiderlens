@@ -216,6 +216,10 @@ export interface CrawlProgress {
   sites: SitePace[];
   /** Sites with work in progress in all. */
   sites_total: number;
+  /** Pages whose accessibility was checked so far (spec 026). */
+  a11y_checked: number;
+  /** Average time of a page's full accessibility checks, in ms (spec 026). */
+  a11y_avg_ms: number | null;
 }
 
 /** The main limit on the crawl's speed (spec 008 FR-028). */

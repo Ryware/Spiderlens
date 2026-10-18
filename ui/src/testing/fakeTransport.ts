@@ -343,6 +343,8 @@ export function fakeTransport(
           limit: null,
           sites: [],
           sites_total: 0,
+          a11y_checked: 0,
+          a11y_avg_ms: null,
           ...p,
         }),
       ),
