@@ -21,7 +21,8 @@ use url::Url;
 
 use super::a11y_probe::{self, ProbeReport};
 use super::net::{EngineNet, NetShared, Note};
-use crate::crawl::store::{CrawlStore, RenderEntry, Result as StoreResult};
+use super::progress::{Meter, RenderProgress};
+use crate::crawl::store::{CrawlStore, RenderEntry, RenderStatus, Result as StoreResult};
 use crate::extract::compare::{Comparison, compare};
 use crate::extract::{self, HeaderFacts, PageData, PageInput, body, challenge};
 
@@ -85,6 +86,9 @@ pub(crate) struct RenderStage {
     filter: UrlFilter,
     /// Also render internal 4xx and 5xx HTML pages (FR-004).
     error_pages: bool,
+    /// Sizes of the queue and of the finished work, for progress and
+    /// back-pressure. The queue itself is in the crawl file.
+    meter: Meter,
 }
 
 /// What happens to a fetched page when the crawl renders (plan D2).
@@ -202,6 +206,7 @@ impl RenderStage {
                 .max(1),
             filter,
             error_pages: r.render_error_pages,
+            meter: Meter::new(0, 0),
         })
     }
 
@@ -219,9 +224,45 @@ impl RenderStage {
         }
     }
 
+    /// Counts the queue and the finished renders already in the file (a
+    /// resumed crawl) and sets the back-pressure marks.
+    pub(crate) fn init_counts(&mut self, store: &CrawlStore, high: u64, low: u64) -> StoreResult<()> {
+        let (mut queued, mut done) = (0, 0);
+        for (state, n) in store.render_counts()? {
+            match state {
+                RenderStatus::Queued | RenderStatus::Rendering => queued += n,
+                RenderStatus::Rendered | RenderStatus::TimedOut | RenderStatus::Failed => done += n,
+                RenderStatus::NotRendered => {}
+            }
+        }
+        self.meter = Meter::new(queued, done);
+        self.meter.set_marks(high, low);
+        Ok(())
+    }
+
     /// A page was queued for rendering after the last refill.
     pub(crate) fn on_enqueued(&mut self) {
         self.exhausted = false;
+        self.meter.queued += 1;
+    }
+
+    /// A queued render started.
+    pub(crate) fn on_started(&mut self) {
+        self.meter.queued = self.meter.queued.saturating_sub(1);
+    }
+
+    /// A render reached a final state.
+    pub(crate) fn on_done(&mut self) {
+        self.meter.done += 1;
+    }
+
+    /// Fetching must not start page requests now (FR-035, back-pressure).
+    pub(crate) fn queue_full(&mut self) -> bool {
+        self.meter.queue_full()
+    }
+
+    pub(crate) fn progress(&mut self, fetching_done: bool) -> RenderProgress {
+        self.meter.progress(self.open, self.limit, fetching_done)
     }
 
     /// The next queued render, in queue order.
@@ -254,6 +295,7 @@ impl RenderStage {
     /// A render to try again goes back to the head of the window (its queue
     /// place is earlier than anything refilled since).
     pub(crate) fn retry(&mut self, entry: RenderEntry) {
+        self.meter.queued += 1;
         self.queue.push_front(entry);
     }
 

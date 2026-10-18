@@ -29,6 +29,7 @@ use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
+use super::render::progress::{QUEUE_HIGH, QUEUE_LOW, RenderProgress};
 use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
@@ -237,6 +238,10 @@ pub struct Progress {
     pub sites: Vec<SitePace>,
     /// How many sites have work in progress in all.
     pub sites_total: u32,
+    /// Rendering progress (spec 014 D13); absent for crawls that do not
+    /// render, so their progress payload is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -856,6 +861,9 @@ pub struct Crawler {
     browser: Option<spiderlens_render::BrowserInfo>,
     /// How to start it; through the guard process when not given.
     render_launch: Option<spiderlens_render::LaunchOptions>,
+    /// Back-pressure marks: fetching pauses above the first number of
+    /// queued renders and resumes below the second (FR-035).
+    render_queue_marks: (u64, u64),
     page_hook: Option<PageHook>,
     /// The login session the crawl signs in with (spec 025 plan D5); held
     /// in memory only.
@@ -997,6 +1005,7 @@ impl Crawler {
             retry_base: Duration::from_secs(1),
             browser: None,
             render_launch: None,
+            render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
         })
@@ -1108,6 +1117,7 @@ impl Crawler {
             retry_base: Duration::from_secs(1),
             browser: None,
             render_launch: None,
+            render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
         })
@@ -1131,6 +1141,13 @@ impl Crawler {
     /// closed even if this process is killed (research R12).
     pub fn with_render_launch(mut self, launch: spiderlens_render::LaunchOptions) -> Self {
         self.render_launch = Some(launch);
+        self
+    }
+
+    /// Overrides the render queue marks that hold fetching back (tests use
+    /// small ones).
+    pub fn with_render_queue_marks(mut self, high: u64, low: u64) -> Self {
+        self.render_queue_marks = (high, low);
         self
     }
 
@@ -1664,6 +1681,8 @@ impl Run {
                     .all(|(h, _)| self.hosts.get(h).is_some_and(|x| x.health.is_blocked()));
             let load = self.load.load(Instant::now());
             let (limit, sites, sites_total) = self.pace(urls_per_sec, load);
+            let fetching_done = self.fetch_completed;
+            let render = self.render.as_mut().map(|r| r.progress(fetching_done));
             self.emit(CrawlEvent::Progress(Progress {
                 discovered: self.discovered,
                 crawled: self.crawled,
@@ -1681,6 +1700,7 @@ impl Run {
                 limit,
                 sites,
                 sites_total,
+                render,
             }));
         }
     }
@@ -2353,6 +2373,9 @@ impl Run {
             }
             self.window.refill(&self.c.store)?;
             let now = Instant::now();
+            // Back-pressure (FR-035): while too many renders wait, only
+            // external checks start; robots.txt is fetched below as usual.
+            let queue_full = self.render.as_mut().is_some_and(RenderStage::queue_full);
 
             // Hosts seen for the first time: fetch robots.txt (or skip it).
             let mut need_robots = Vec::new();
@@ -2395,29 +2418,39 @@ impl Run {
             // The earliest queued URL among hosts that may start now.
             let mut best: Option<QueueKey> = None;
             let mut held_back = false;
-            for (key, head) in self.window.host_heads() {
-                let Some(host) = self.hosts.get_mut(key) else {
-                    continue;
+            {
+                let (mut all_heads, mut check_heads);
+                let heads: &mut dyn Iterator<Item = (&str, QueueKey)> = if queue_full {
+                    check_heads = self.window.check_heads();
+                    &mut check_heads
+                } else {
+                    all_heads = self.window.host_heads();
+                    &mut all_heads
                 };
-                if !matches!(host.robots, RobotsState::Known(..)) {
-                    continue;
-                }
-                host.health.tick(now);
-                if let Some(until) = host.health.paused_until() {
-                    soonest(until, &mut wake);
-                    held_back = true;
-                    continue;
-                }
-                if host.in_flight >= host.limit() {
-                    continue;
-                }
-                if host.next_start > now {
-                    soonest(host.next_start, &mut wake);
-                    held_back = true;
-                    continue;
-                }
-                if best.is_none_or(|b| head < b) {
-                    best = Some(head);
+                for (key, head) in heads {
+                    let Some(host) = self.hosts.get_mut(key) else {
+                        continue;
+                    };
+                    if !matches!(host.robots, RobotsState::Known(..)) {
+                        continue;
+                    }
+                    host.health.tick(now);
+                    if let Some(until) = host.health.paused_until() {
+                        soonest(until, &mut wake);
+                        held_back = true;
+                        continue;
+                    }
+                    if host.in_flight >= host.limit() {
+                        continue;
+                    }
+                    if host.next_start > now {
+                        soonest(host.next_start, &mut wake);
+                        held_back = true;
+                        continue;
+                    }
+                    if best.is_none_or(|b| head < b) {
+                        best = Some(head);
+                    }
                 }
             }
             let Some(best) = best else {
@@ -2578,6 +2611,9 @@ impl Run {
             "source": source,
         });
         self.c.store.set_renderer(&renderer.to_string())?;
+        let mut stage = stage;
+        let (high, low) = self.c.render_queue_marks;
+        stage.init_counts(&self.c.store, high, low)?;
         self.render = Some(stage);
         Ok(())
     }
@@ -2617,6 +2653,7 @@ impl Run {
             if !store.mark_rendering(e.url_id)? {
                 continue;
             }
+            stage.on_started();
             e.attempts += 1;
             let (Some((status, headers)), Some(raw)) =
                 (store.render_main(e.url_id)?, store.render_input(e.url_id)?)
@@ -2659,6 +2696,7 @@ impl Run {
             stage.retry(r.entry);
             return Ok(());
         }
+        stage.on_done();
         let o = &r.outcome;
         let (status, reason) = match o.state {
             RenderState::Rendered => (RenderStatus::Rendered, None),
@@ -4074,8 +4112,9 @@ impl Run {
                             .and_then(|p| p.html.as_ref())
                             .filter(|_| !store_html)
                             .map(|(b, n)| (b.as_slice(), *n));
-                        store.enqueue_render(entry.id, input)?;
-                        stage.on_enqueued();
+                        if store.enqueue_render(entry.id, input)? {
+                            stage.on_enqueued();
+                        }
                     }
                 }
             }

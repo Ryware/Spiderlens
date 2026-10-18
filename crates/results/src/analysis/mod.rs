@@ -19,8 +19,8 @@ pub mod link_metrics;
 mod link_passes;
 pub mod link_positions;
 
-pub use link_passes::{LINK_PASSES, LinkMetrics, LinkPositions, auto_skips};
 pub(crate) use link_passes::stored_run;
+pub use link_passes::{LINK_PASSES, LinkMetrics, LinkPositions, auto_skips};
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -410,7 +410,11 @@ fn without<'p>(passes: &[&'p dyn Pass], skip: &[&str]) -> Vec<&'p dyn Pass> {
             break;
         }
     }
-    passes.iter().copied().filter(|p| !left.contains(p.id())).collect()
+    passes
+        .iter()
+        .copied()
+        .filter(|p| !left.contains(p.id()))
+        .collect()
 }
 
 /// Runs `passes` (the stale ones) on `conn` into `schema`. Each pass and its
@@ -520,7 +524,13 @@ impl crate::Reader {
         progress: &mut dyn FnMut(PassProgress),
         cancel: &AtomicBool,
     ) -> Result<AnalysisReport> {
-        let report = run(&self.conn, "temp", &without(PASSES, &LINK_PASSES), progress, cancel)?;
+        let report = run(
+            &self.conn,
+            "temp",
+            &without(PASSES, &LINK_PASSES),
+            progress,
+            cancel,
+        )?;
         if !report.ran.is_empty() {
             for n in crate::features::pass_needs(&self.conn)? {
                 if !self.features.available.contains(&n) {

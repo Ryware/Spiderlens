@@ -185,6 +185,16 @@ impl QueueWindow {
             .filter_map(|(h, keys)| Some((h.as_str(), *keys.first()?)))
     }
 
+    /// Each host's earliest external check in the window: what may still be
+    /// requested while page fetches are held back (spec 014 FR-035).
+    pub fn check_heads(&self) -> impl Iterator<Item = (&str, QueueKey)> {
+        self.by_host.iter().filter_map(|(h, keys)| {
+            keys.iter()
+                .find(|k| self.entries.get(k).is_some_and(|e| e.check_only))
+                .map(|k| (h.as_str(), *k))
+        })
+    }
+
     /// Removes every entry matching `pred` (used when the URL limit is hit).
     pub fn retain(&mut self, mut keep: impl FnMut(&QueueEntry) -> bool) {
         self.entries.retain(|_, e| keep(e));
