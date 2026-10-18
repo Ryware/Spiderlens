@@ -584,6 +584,92 @@ impl JsSiteBuilder {
         )
     }
 
+    /// Pages for failure handling (spec 014 US5, T056). The home page
+    /// links to all of them:
+    ///
+    /// - `/throws`: an uncaught exception ("boom from the fixture").
+    /// - `/logs`: `console.error` and `console.warn` calls.
+    /// - `/missing-script`: a script that answers 404.
+    /// - `/heavy`: allocates until the page's JavaScript heap limit is hit.
+    /// - `/challenge`: a bot challenge page ("Just a moment..." with a
+    ///   challenge form) built by a script, over a raw page with content.
+    /// - `/steady`: a plain page that renders without trouble.
+    ///
+    /// The renderer-crash page is not a fixture page: the tests kill the
+    /// browser process (CDP `Page.crash` needs the test to hold the
+    /// connection, which the engine owns).
+    pub fn us5_pages(self) -> Self {
+        let page = |title: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!("<script>{script}</script>")
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
+                 {script}</head><body>{body}</body></html>"
+            )
+        };
+        let on_ready = |js: &str| format!("document.addEventListener('DOMContentLoaded', () => {{ {js} }});");
+        self.page(
+            "/",
+            &page(
+                "Failures home",
+                "<h1>Failures home</h1><p>Pages that go wrong in different ways.</p>\
+                 <a href=\"/throws\">Throws</a> <a href=\"/logs\">Logs</a> \
+                 <a href=\"/missing-script\">Missing script</a> <a href=\"/heavy\">Heavy</a> \
+                 <a href=\"/challenge\">Challenge</a> <a href=\"/steady\">Steady</a>",
+                "",
+            ),
+        )
+        .page(
+            "/throws",
+            &page(
+                "Throws",
+                "<h1>Throws</h1><p>A script fails after the page loads.</p>",
+                &on_ready("throw new Error('boom from the fixture');"),
+            ),
+        )
+        .page(
+            "/logs",
+            &page(
+                "Logs",
+                "<h1>Logs</h1><p>A script writes to the console.</p>",
+                &on_ready("console.error('fixture error message'); console.warn('fixture warning message');"),
+            ),
+        )
+        .page(
+            "/missing-script",
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Missing script</title>\
+             <script src=\"/missing.js\"></script></head>\
+             <body><h1>Missing script</h1><p>Its script is gone.</p></body></html>",
+        )
+        .page(
+            "/heavy",
+            &page(
+                "Heavy",
+                "<h1>Heavy</h1><p>A script allocates without end.</p>",
+                &on_ready("const keep = []; for (;;) { keep.push(new Array(1000000).fill(1.5)); }"),
+            ),
+        )
+        .page(
+            "/challenge",
+            &page(
+                "Welcome",
+                "<h1>Welcome</h1><p>The real content is here for people who get past the check.</p>",
+                &on_ready(
+                    "document.title = 'Just a moment...'; \
+                     document.body.innerHTML = '<form id=\"challenge-form\" action=\"/cdn-cgi/challenge-platform/h/b\">\
+                     <p>Checking your browser before accessing the site.</p></form>';",
+                ),
+            ),
+        )
+        .page(
+            "/steady",
+            &page("Steady", "<h1>Steady</h1><p>Nothing goes wrong here.</p>", ""),
+        )
+    }
+
     /// Starts on a random loopback port.
     pub fn start(self) -> JsSite {
         let listener = StdListener::bind("127.0.0.1:0").expect("bind fixture port");
@@ -1026,6 +1112,31 @@ mod tests {
         assert_eq!(get(&site, JS_HOST, "/redirect-target").0, 200);
         let (_, _, server) = get(&site, JS_HOST, "/server-rendered");
         assert!(!server.contains("<script"));
+    }
+
+    #[test]
+    fn us5_pages_are_linked_from_the_home_page_and_the_missing_script_is_404() {
+        let site = JsSiteBuilder::new().us5_pages().start();
+        let (_, _, home) = get(&site, JS_HOST, "/");
+        for p in [
+            "/throws",
+            "/logs",
+            "/missing-script",
+            "/heavy",
+            "/challenge",
+            "/steady",
+        ] {
+            assert!(home.contains(&format!("href=\"{p}\"")), "{p}");
+            assert_eq!(get(&site, JS_HOST, p).0, 200, "{p}");
+        }
+        assert_eq!(get(&site, JS_HOST, "/missing.js").0, 404);
+        let (_, _, challenge) = get(&site, JS_HOST, "/challenge");
+        assert!(
+            !challenge.contains("challenge-form\" action"),
+            "the form comes from the script"
+        );
+        let (_, _, throws) = get(&site, JS_HOST, "/throws");
+        assert!(throws.contains("boom from the fixture"));
     }
 
     #[test]

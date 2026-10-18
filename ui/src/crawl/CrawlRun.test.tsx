@@ -177,3 +177,43 @@ test("enter_on_a_host_without_a_dot_shows_an_error_and_does_not_crawl", async ()
   expect(field.value).toBe("ryware");
   expect(button(/Start$/).disabled).toBe(true);
 });
+
+test("rendering_block_shows_counts_reasons_and_the_renderer", async () => {
+  // Spec 014 FR-041: the states are listed with their reasons.
+  const t = await startCrawl();
+  const report = fakeReport("completed", 12);
+  report.summary.render = {
+    by_state: { rendered: 7, timed_out: 1, failed: 2, not_rendered: 1 },
+    by_reason: { crash: 1, page_too_large: 1, outside_rules: 1 },
+    avg_render_ms: 420,
+    max_render_ms: 1800,
+    js_errors: 3,
+    failed_resources: 4,
+    blocked_resources: 9,
+    renderer: { name: "Chrome Headless Shell", version: "155.0.8059.39", source: "downloaded" },
+  };
+  report.render_reasons = [
+    { reason: "crash", label: "Browser crash", count: 1 },
+    { reason: "page_too_large", label: "Page too large", count: 1 },
+    { reason: "outside_rules", label: "Outside rendering rules", count: 1 },
+  ];
+  await act(async () => t.crawls.finish({ report }));
+  const block = await screen.findByRole("region", { name: "Rendering" });
+  const row = (state: string) => block.querySelector(`[data-render-state="${state}"]`)?.textContent;
+  expect(row("rendered")).toBe("Rendered7");
+  expect(row("timed_out")).toBe("Timed out1");
+  expect(row("failed")).toBe("Failed2");
+  expect(row("not_rendered")).toBe("Not rendered1");
+  expect(block.querySelector('[data-render-reason="crash"]')?.textContent).toBe("Browser crash1");
+  expect(block.querySelector('[data-render-figure="time"]')?.textContent).toContain("420 ms average, 1,800 ms slowest");
+  expect(block.querySelector('[data-render-figure="js_errors"]')?.textContent).toBe("JavaScript errors3");
+  expect(block.querySelector('[data-render-figure="resources"]')?.textContent).toContain("4 failed, 9 blocked");
+  expect(within(block).getByText("Chrome Headless Shell 155.0.8059.39")).toBeTruthy();
+});
+
+test("raw_crawls_have_no_rendering_block", async () => {
+  const t = await startCrawl();
+  await act(async () => t.crawls.finish({ report: fakeReport("completed", 5) }));
+  await screen.findByRole("region", { name: "Overview" });
+  expect(screen.queryByRole("region", { name: "Rendering" })).toBeNull();
+});

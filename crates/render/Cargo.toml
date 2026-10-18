@@ -13,7 +13,6 @@ publish = false
 spike = [
     "dep:cdp_oxide",
     "dep:cdp_chromey",
-    "dep:reqwest",
 ]
 
 [dependencies]
@@ -26,12 +25,18 @@ serde_json.workspace = true
 # Bodies cross the DevTools connection base64-encoded. Already in the tree
 # through chromiumoxide, so no new crate is compiled.
 base64 = "0.22"
+# The browser download (research R14, R15). `reqwest`'s `Response::chunk`
+# streams the body, so no extra feature is needed.
+reqwest.workspace = true
+sha2.workspace = true
+# Workspace pins zip 9, but nothing in the tree uses it yet and the lock
+# holds 8.6.0 (pulled in by another crate); 8.6 has the same API used here.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 # Spike only. Both crates name their library `chromiumoxide`, so they are
 # renamed here.
 cdp_oxide = { package = "chromiumoxide", version = "0.9.1", default-features = false, optional = true }
 cdp_chromey = { package = "chromey", version = "2.58", default-features = false, optional = true }
-reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 spiderlens-test-fixtures.workspace = true
