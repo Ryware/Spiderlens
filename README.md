@@ -67,9 +67,8 @@ matched. Crawl files are only ever opened read-only; the work happens in a
 temporary file that is deleted afterwards, and the setup warns when the temp
 folder is low on space.
 
-In the app, start a comparison from the start screen, the command palette
-(Compare crawls…) or the File menu, or choose Compare with… on an open crawl to
-make it the current one.
+In the app, start a comparison with Compare crawls… on the start screen or in
+the command palette; the open crawl is pre-selected as the current one.
 
 ```sh
 spiderlens compare old.spiderlens new.spiderlens
