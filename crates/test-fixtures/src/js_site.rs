@@ -31,6 +31,28 @@ pub const JS_HOST: &str = "js.test";
 /// A third-party host for CDN scripts, fonts and beacons.
 pub const CDN_HOST: &str = "cdn.test";
 
+/// The paths [`JsSiteBuilder::us3_pages`] serves (besides `/`), in link order.
+pub const US3_PATHS: [&str; 18] = [
+    "/title-changed",
+    "/title-added",
+    "/description-added",
+    "/description-changed",
+    "/h1-removed",
+    "/h1-added",
+    "/h1-changed",
+    "/canonical-changed",
+    "/canonical-added",
+    "/noindex-added",
+    "/noindex-removed",
+    "/nofollow-added",
+    "/nofollow-removed",
+    "/links-added",
+    "/text-grown",
+    "/jsonld-added",
+    "/hreflang-changed",
+    "/unchanged",
+];
+
 /// A smallest valid PNG (1 x 1, transparent).
 const PNG_1X1: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00,
@@ -313,6 +335,222 @@ impl JsSiteBuilder {
                 "About us",
                 "<h1>About us</h1><p>Everything here is in the HTML.</p><a href=\"/\">Home</a>",
                 "",
+            ),
+        )
+    }
+
+    /// The difference pages of spec 014 user story 3 (task T039), linked
+    /// from `/`. Each page is described by the raw HTML first, then by what a
+    /// script changes. Paths are listed in [`US3_PATHS`].
+    ///
+    /// - `/title-changed`: title `Loading` becomes `Red Shoes | Shop`.
+    /// - `/title-added`: no title; a script adds `Added title`.
+    /// - `/description-added`: no description; a script adds one.
+    /// - `/description-changed`: a description a script replaces.
+    /// - `/h1-removed`: an H1 a script removes.
+    /// - `/h1-added`: no H1; a script adds one.
+    /// - `/h1-changed`: an H1 a script rewrites.
+    /// - `/canonical-changed`: canonical to itself; a script points it to `/`.
+    /// - `/canonical-added`: no canonical; a script adds one to itself.
+    /// - `/noindex-added`, `/noindex-removed`, `/nofollow-added`,
+    ///   `/nofollow-removed`: a robots meta tag a script adds or removes.
+    /// - `/links-added`: 28 anchors in the HTML and 12 more from a script
+    ///   (40 after rendering).
+    /// - `/text-grown`: 50 words in the HTML, about 900 after rendering.
+    /// - `/jsonld-added`: a script adds a JSON-LD `Product` block.
+    /// - `/hreflang-changed`: two alternates; a script adds a third.
+    /// - `/unchanged`: a script that changes nothing extracted.
+    pub fn us3_pages(self) -> Self {
+        let page = |head: &str, body: &str, script: &str| {
+            let script = if script.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<script>document.addEventListener('DOMContentLoaded', () => {{ {script} }});</script>"
+                )
+            };
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">{head}{script}</head>\
+                 <body>{body}</body></html>"
+            )
+        };
+        let text = "<p>This paragraph keeps the page long enough that a heading does not dominate it, \
+                    so small changes stay small.</p>";
+        let add_meta = |name: &str, content: &str| {
+            format!(
+                "const m = document.createElement('meta'); m.name = '{name}'; m.content = '{content}'; \
+                 document.head.appendChild(m);"
+            )
+        };
+        let remove_meta = |name: &str| format!("document.querySelector('meta[name={name}]').remove();");
+        let anchors: String = (0..28)
+            .map(|i| format!("<a href=\"/links-added#l{i}\">go</a> "))
+            .collect();
+        let raw_words = "alpha ".repeat(50);
+        let links: String = US3_PATHS
+            .iter()
+            .map(|p| format!("<a href=\"{p}\">{}</a> ", p.trim_start_matches('/')))
+            .collect();
+        self.page(
+            "/",
+            &page(
+                "<title>Home</title>",
+                &format!("<h1>Home</h1><p>The difference pages.</p>{links}"),
+                "",
+            ),
+        )
+        .page(
+            "/title-changed",
+            &page(
+                "<title>Loading</title>",
+                &format!("<h1>Red shoes</h1>{text}"),
+                "document.title = 'Red Shoes | Shop';",
+            ),
+        )
+        .page(
+            "/title-added",
+            &page(
+                "",
+                &format!("<h1>Untitled</h1>{text}"),
+                "document.title = 'Added title';",
+            ),
+        )
+        .page(
+            "/description-added",
+            &page(
+                "<title>Description added</title>",
+                &format!("<h1>Description added</h1>{text}"),
+                &add_meta("description", "Added by a script"),
+            ),
+        )
+        .page(
+            "/description-changed",
+            &page(
+                "<title>Description changed</title><meta name=\"description\" content=\"Old description\">",
+                &format!("<h1>Description changed</h1>{text}"),
+                "document.querySelector('meta[name=description]').content = 'New description';",
+            ),
+        )
+        .page(
+            "/h1-removed",
+            &page(
+                "<title>H1 removed</title>",
+                &format!("<h1>Old heading</h1>{text}"),
+                "document.querySelector('h1').remove();",
+            ),
+        )
+        .page(
+            "/h1-added",
+            &page(
+                "<title>H1 added</title>",
+                text,
+                "const h = document.createElement('h1'); h.textContent = 'Added heading'; \
+                 document.body.insertBefore(h, document.body.firstChild);",
+            ),
+        )
+        .page(
+            "/h1-changed",
+            &page(
+                "<title>H1 changed</title>",
+                &format!("<h1>Old heading</h1>{text}"),
+                "document.querySelector('h1').textContent = 'New heading';",
+            ),
+        )
+        .page(
+            "/canonical-changed",
+            &page(
+                "<title>Canonical changed</title><link rel=\"canonical\" href=\"/canonical-changed\">",
+                &format!("<h1>Canonical changed</h1>{text}"),
+                "document.querySelector('link[rel=canonical]').href = '/';",
+            ),
+        )
+        .page(
+            "/canonical-added",
+            &page(
+                "<title>Canonical added</title>",
+                &format!("<h1>Canonical added</h1>{text}"),
+                "const l = document.createElement('link'); l.rel = 'canonical'; l.href = '/canonical-added'; \
+                 document.head.appendChild(l);",
+            ),
+        )
+        .page(
+            "/noindex-added",
+            &page(
+                "<title>Noindex added</title>",
+                &format!("<h1>Noindex added</h1>{text}"),
+                &add_meta("robots", "noindex"),
+            ),
+        )
+        .page(
+            "/noindex-removed",
+            &page(
+                "<title>Noindex removed</title><meta name=\"robots\" content=\"noindex\">",
+                &format!("<h1>Noindex removed</h1>{text}"),
+                &remove_meta("robots"),
+            ),
+        )
+        .page(
+            "/nofollow-added",
+            &page(
+                "<title>Nofollow added</title>",
+                &format!("<h1>Nofollow added</h1>{text}"),
+                &add_meta("robots", "nofollow"),
+            ),
+        )
+        .page(
+            "/nofollow-removed",
+            &page(
+                "<title>Nofollow removed</title><meta name=\"robots\" content=\"nofollow\">",
+                &format!("<h1>Nofollow removed</h1>{text}"),
+                &remove_meta("robots"),
+            ),
+        )
+        .page(
+            "/links-added",
+            &page(
+                "<title>Links added</title>",
+                &format!("<h1>Links added</h1>{text}<div id=\"more\"></div>{anchors}"),
+                "const d = document.getElementById('more'); \
+                 for (let i = 28; i < 40; i++) { const a = document.createElement('a'); \
+                 a.href = '/links-added#l' + i; a.textContent = 'go'; d.appendChild(a); }",
+            ),
+        )
+        .page(
+            "/text-grown",
+            &page(
+                "<title>Text grown</title>",
+                &format!("<p>{raw_words}</p>"),
+                "const p = document.createElement('p'); p.textContent = 'alpha '.repeat(850); \
+                 document.body.appendChild(p);",
+            ),
+        )
+        .page(
+            "/jsonld-added",
+            &page(
+                "<title>Product</title>",
+                &format!("<h1>Product</h1>{text}"),
+                "const s = document.createElement('script'); s.type = 'application/ld+json'; \
+                 s.textContent = JSON.stringify({'@context': 'https://schema.org', '@type': 'Product', \
+                 name: 'Red Shoes'}); document.head.appendChild(s);",
+            ),
+        )
+        .page(
+            "/hreflang-changed",
+            &page(
+                "<title>Hreflang changed</title>\
+                 <link rel=\"alternate\" hreflang=\"en\" href=\"/\">\
+                 <link rel=\"alternate\" hreflang=\"de\" href=\"/unchanged\">",
+                &format!("<h1>Hreflang changed</h1>{text}"),
+                "const l = document.createElement('link'); l.rel = 'alternate'; l.hreflang = 'fr'; \
+                 l.href = '/title-changed'; document.head.appendChild(l);",
+            ),
+        )
+        .page(
+            "/unchanged",
+            &page(
+                "<title>Unchanged</title><meta name=\"description\" content=\"Nothing changes\">",
+                &format!("<h1>Unchanged</h1>{text}"),
+                "document.body.setAttribute('data-ready', '1');",
             ),
         )
     }

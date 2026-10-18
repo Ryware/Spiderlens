@@ -184,6 +184,7 @@ fn main() {
             crawl::proxy_test,
             results::cookie_urls,
             results::url_html,
+            results::url_html_diff,
             results::url_tabs,
             results::copy_text,
             results::copy_rows,

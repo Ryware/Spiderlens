@@ -31,6 +31,7 @@ cookie_store = { version = "0.22", default-features = false }
 cookie = "0.18"
 url = { version = "2", features = ["serde"] }
 scraper = "0.24"
+similar = "2"
 html5ever = "0.35"
 ego-tree = "0.10"
 zstd = "0.13"

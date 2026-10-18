@@ -17,6 +17,7 @@ mod custom;
 mod detail;
 mod export;
 mod features;
+pub mod html_diff;
 pub mod issues;
 pub mod near_dup;
 mod reader;
@@ -38,14 +39,16 @@ pub use cookies::{CookieFilter, CookiePage, CookieRow, CookieUrl, CookieUrlPage}
 pub use counts::{FilterCounts, TabCounts};
 pub use custom::CustomResult;
 pub use detail::{
-    AmpDetail, AmpFailure, HeadingRow, HtmlMissing, LinkMetrics, LinkRow, ListKind, ListPage, PageHtml,
-    PdfDetail, RedirectHop, Snippet, SpellDetail, SpellFinding, UrlDetail,
+    AmpDetail, AmpFailure, ConsoleRow, ElementChange, HeadingRow, HtmlMissing, HtmlVersion, LinkMetrics,
+    LinkRow, ListKind, ListPage, PageHtml, PdfDetail, RedirectHop, RenderComparison, RenderDetail,
+    ResourceRow, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
     COPY_LIMIT, ExportError, csv_field, export_file, export_file_in, export_file_with, write_csv,
     write_csv_in, write_csv_with, write_tsv_row,
 };
 pub use features::Features;
+pub use html_diff::{DiffHunk, HtmlDiff, HunkKind};
 pub use reader::{Reader, connect_attachable};
 pub use rusqlite::InterruptHandle;
 pub use segments::SegmentCounts;
