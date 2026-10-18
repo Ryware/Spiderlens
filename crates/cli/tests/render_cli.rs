@@ -527,7 +527,7 @@ fn render_refuses_bad_flags_before_touching_the_file() {
         .args(["--render-timeout", "0"])
         .assert()
         .code(2)
-        .stderr(contains("--render-timeout takes 1 to 60 seconds"));
+        .stderr(contains("must be between 1 and 60 seconds"));
     spiderlens()
         .arg("render")
         .arg(&file)

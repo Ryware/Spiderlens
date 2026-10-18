@@ -8,13 +8,15 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use clap::Args;
-use spiderlens_config::{RenderSettings, UrlFilter, WindowPreset};
+use spiderlens_config::{CrawlConfig, RenderMode, RenderSettings, validate_config};
 use spiderlens_engine::crawl::{Control, CrawlError, CrawlEvent, Crawler};
 use tokio::sync::{mpsc, watch};
 
 use crate::browser::BrowserChoice;
 use crate::crawl_cmd::{duration, print_summary, render_line, runtime};
 use crate::exit;
+use crate::options::RenderingArgs;
+use crate::print_issues;
 
 #[derive(Args)]
 pub struct RenderArgs {
@@ -27,34 +29,8 @@ pub struct RenderArgs {
     /// Download the pinned browser if none is usable, without asking.
     #[arg(long, help_heading = "Rendering")]
     allow_browser_download: bool,
-    /// The longest one page may take, 1 to 60 seconds [default: 10].
-    #[arg(long, value_name = "SECONDS", help_heading = "Rendering")]
-    render_timeout: Option<f64>,
-    /// Seconds waited before the page counts as settled [default: 0].
-    #[arg(long, value_name = "SECONDS", help_heading = "Rendering")]
-    render_min_wait: Option<f64>,
-    /// auto, mobile, desktop or WIDTHxHEIGHT [default: auto].
-    #[arg(long, value_name = "WINDOW", help_heading = "Rendering")]
-    render_window: Option<String>,
-    /// Resource types not loaded: a comma list of images, media, fonts,
-    /// stylesheets, third-party, or none [default: images,media,fonts].
-    #[arg(long, value_name = "LIST", help_heading = "Rendering")]
-    render_block: Option<String>,
-    /// Only render URLs matching this regex. Repeatable.
-    #[arg(long, value_name = "REGEX", help_heading = "Rendering")]
-    render_include: Vec<String>,
-    /// Do not render URLs matching this regex. Repeatable.
-    #[arg(long, value_name = "REGEX", help_heading = "Rendering")]
-    render_exclude: Vec<String>,
-    /// Also render internal 4xx and 5xx HTML pages.
-    #[arg(long, help_heading = "Rendering")]
-    render_error_pages: bool,
-    /// Pages rendered at once, 1 to 16, or auto [default: auto].
-    #[arg(long, value_name = "N", help_heading = "Rendering")]
-    render_tabs: Option<String>,
-    /// Browser memory budget in MB, or auto [default: auto].
-    #[arg(long, value_name = "MB", help_heading = "Rendering")]
-    render_memory: Option<String>,
+    #[command(flatten)]
+    rendering: RenderingArgs,
     /// Print the summary as JSON.
     #[arg(long)]
     json: bool,
@@ -63,88 +39,20 @@ pub struct RenderArgs {
     quiet: bool,
 }
 
-/// The rendering settings the flags ask for, over the defaults.
+/// The rendering settings the flags ask for, over the defaults, checked with
+/// the same validation `crawl --render` gets.
 fn settings(a: &RenderArgs) -> Result<RenderSettings, String> {
-    let mut s = spiderlens_config::CrawlConfig::default().rendering;
-    s.mode = spiderlens_config::RenderMode::Javascript;
-    if let Some(t) = a.render_timeout {
-        if !(1.0..=60.0).contains(&t) {
-            return Err("--render-timeout takes 1 to 60 seconds".into());
-        }
-        s.max_render_secs = t;
+    let mut c = CrawlConfig::default();
+    c.rendering.mode = RenderMode::Javascript;
+    a.rendering.apply(&mut c.rendering)?;
+    let issues: Vec<_> = validate_config(&c)
+        .into_iter()
+        .filter(|i| i.path.starts_with("rendering."))
+        .collect();
+    if print_issues(&issues) {
+        return Err("the rendering settings are not valid".into());
     }
-    if let Some(w) = a.render_min_wait {
-        if !(0.0..=s.max_render_secs).contains(&w) {
-            return Err("--render-min-wait takes 0 up to --render-timeout seconds".into());
-        }
-        s.min_wait_secs = w;
-    }
-    if let Some(w) = &a.render_window {
-        match w.to_ascii_lowercase().as_str() {
-            "auto" => s.window.preset = WindowPreset::Auto,
-            "mobile" => s.window.preset = WindowPreset::Mobile,
-            "desktop" => s.window.preset = WindowPreset::Desktop,
-            other => {
-                let size = other
-                    .split_once('x')
-                    .and_then(|(w, h)| Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?)));
-                match size {
-                    Some((w, h)) if (320..=3840).contains(&w) && (480..=4320).contains(&h) => {
-                        s.window.preset = WindowPreset::Custom;
-                        s.window.width = Some(w);
-                        s.window.height = Some(h);
-                    }
-                    _ => {
-                        return Err(
-                            "--render-window takes auto, mobile, desktop or WIDTHxHEIGHT (320 to 3840 by 480 to 4320)"
-                                .into(),
-                        );
-                    }
-                }
-            }
-        }
-    }
-    if let Some(list) = &a.render_block {
-        s.block.images = false;
-        s.block.media = false;
-        s.block.fonts = false;
-        s.block.stylesheets = false;
-        s.block.third_party = false;
-        for item in list.split(',').map(|i| i.trim().to_ascii_lowercase()) {
-            match item.as_str() {
-                "images" => s.block.images = true,
-                "media" => s.block.media = true,
-                "fonts" => s.block.fonts = true,
-                "stylesheets" => s.block.stylesheets = true,
-                "third-party" => s.block.third_party = true,
-                "none" | "" => {}
-                other => return Err(format!("--render-block does not know \"{other}\"")),
-            }
-        }
-    }
-    s.include = a.render_include.clone();
-    s.exclude = a.render_exclude.clone();
-    if UrlFilter::new(&s.include, &s.exclude).is_err() {
-        return Err("--render-include or --render-exclude is not a valid regex".into());
-    }
-    s.render_error_pages = a.render_error_pages;
-    if let Some(t) = &a.render_tabs
-        && !t.eq_ignore_ascii_case("auto")
-    {
-        match t.parse::<u32>() {
-            Ok(n) if (1..=16).contains(&n) => s.concurrency = Some(n),
-            _ => return Err("--render-tabs takes 1 to 16, or auto".into()),
-        }
-    }
-    if let Some(m) = &a.render_memory
-        && !m.eq_ignore_ascii_case("auto")
-    {
-        match m.parse::<u32>() {
-            Ok(n) if (256..=65_536).contains(&n) => s.memory_budget_mb = Some(n),
-            _ => return Err("--render-memory takes 256 to 65536 MB, or auto".into()),
-        }
-    }
-    Ok(s)
+    Ok(c.rendering)
 }
 
 pub fn run_render(args: RenderArgs) -> ExitCode {
