@@ -651,10 +651,6 @@ async fn us2_pause_and_resume_render_every_page_exactly_once() {
         assert!(render_rows(&store, "queued") > 0, "the queue was kept");
         assert!(render_rows(&store, "rendered") >= 2);
     }
-    let before: Vec<u64> = (0..PAGES)
-        .map(|i| site.count(JS_HOST, &format!("/slow/{i}")))
-        .collect();
-
     let (control, _keep) = watch::channel(Control::Run);
     let summary = run_observed(resumed(&site, &path, browser), &control, |_, _| {}).await;
     assert_eq!(summary.status, "completed");
@@ -974,4 +970,180 @@ async fn us2_rendering_off_leaves_no_trace() {
     for key in ["renderer", "fetch_completed_at"] {
         assert_eq!(store.meta(key).unwrap(), None, "meta.{key}");
     }
+}
+
+// ---------------------------------------------------------------------
+// T038: the raw fetch rate while rendering (SC-002, second half)
+// ---------------------------------------------------------------------
+
+/// `bench-site`, started on a free port and stopped when dropped.
+struct BenchSite {
+    child: std::process::Child,
+    port: u16,
+}
+
+impl BenchSite {
+    fn start(pages: u64) -> Self {
+        // The binary sits next to the test's own directory; build it when it
+        // is not there yet, in the profile the test was built with.
+        let exe = std::env::current_exe().unwrap();
+        let profile_dir = exe.parent().and_then(Path::parent).unwrap().to_path_buf();
+        let bin = profile_dir.join("bench-site");
+        if !bin.exists() {
+            let mut build = std::process::Command::new(env!("CARGO"));
+            build.args(["build", "-p", "spiderlens-test-fixtures", "--bin", "bench-site"]);
+            if profile_dir.ends_with("release") {
+                build.arg("--release");
+            }
+            assert!(build.status().unwrap().success(), "bench-site builds");
+        }
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let child = std::process::Command::new(bin)
+            .args([
+                "--spa",
+                "--pages",
+                &pages.to_string(),
+                "--port",
+                &port.to_string(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let site = Self { child, port };
+        for _ in 0..100 {
+            if site.get("/__stats").is_some() {
+                return site;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("bench-site did not start");
+    }
+
+    fn get(&self, path: &str) -> Option<String> {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).ok()?;
+        write!(s, "GET {path} HTTP/1.0\r\nHost: bench\r\n\r\n").ok()?;
+        let mut out = String::new();
+        s.read_to_string(&mut out).ok()?;
+        Some(out.split_once("\r\n\r\n")?.1.to_string())
+    }
+
+    fn stats(&self) -> serde_json::Value {
+        serde_json::from_str(&self.get("/__stats").expect("stats")).expect("stats are JSON")
+    }
+}
+
+impl Drop for BenchSite {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// One crawl of the bench site. Returns the pages per second the site saw
+/// its page requests arrive at (first to last), and how many renders were
+/// done when fetching ended. With rendering on, the crawl is stopped once
+/// every page is fetched: the renders still waiting then are not what is
+/// measured. `cap` is a URLs-per-second cap.
+async fn spa_fetch_rate(
+    site: &BenchSite,
+    pages: u64,
+    browser: Option<BrowserInfo>,
+    cap: Option<f64>,
+) -> (f64, u64) {
+    let _ = site.get("/__reset");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spa.spiderlens");
+    let mut c = config(false);
+    c.speed.max_urls_per_sec = cap;
+    if browser.is_some() {
+        c.rendering.mode = RenderMode::Javascript;
+    }
+    let mut crawler = Crawler::create(
+        &path,
+        c,
+        &ModeInput::Spider {
+            start_url: format!("http://127.0.0.1:{}/p/0", site.port),
+        },
+    )
+    .unwrap();
+    if let Some(b) = browser.clone() {
+        crawler = crawler
+            .with_browser(b)
+            .with_render_launch(LaunchOptions::default());
+    }
+    let (control, _keep) = watch::channel(Control::Run);
+    let mut rendered = 0;
+    let summary = run_observed(crawler, &control, |p, c| {
+        if browser.is_some() && site.stats()["pages"].as_u64() >= Some(pages) {
+            rendered = p.render.as_ref().map_or(0, |r| r.rendered);
+            let _ = c.send(Control::Stop);
+        }
+    })
+    .await;
+    assert!(matches!(summary.status.as_str(), "completed" | "stopped"));
+    let stats = site.stats();
+    assert_eq!(stats["pages"], pages, "every page was requested once");
+    let ms = stats["last_page_ms"].as_u64().unwrap() - stats["first_page_ms"].as_u64().unwrap();
+    (pages as f64 / (ms as f64 / 1000.0), rendered)
+}
+
+/// Fetching while rendering runs as fast as with rendering off, until the
+/// queue mark (10,000 pages never reach 50,000 waiting renders).
+///
+/// Two cases, three alternating rounds each, medians compared:
+/// - capped at 300 URLs per second, as a crawl is held back by a site or
+///   a network and not by this computer: asserted, at least 95% of the
+///   rate with rendering off;
+/// - uncapped: only printed. The site, the crawler and the browser share
+///   the CPUs of one machine here, so the browser's own work takes cycles
+///   from the other two.
+///
+/// Run it on its own, in release mode, and record the numbers in
+/// `specs/014-javascript-rendering/benchmarks.md`:
+///
+/// `SPIDERLENS_BROWSER=... cargo test --release -p spiderlens-engine --test rendering -- --ignored --nocapture spa_raw_fetch_rate`
+#[tokio::test]
+#[ignore = "benchmark: needs a browser and a quiet machine"]
+async fn spa_raw_fetch_rate_while_rendering_is_not_lower() {
+    let _serial = SERIAL.lock().await;
+    let browser = browser().expect("a browser is needed for the benchmark");
+    const PAGES: u64 = 10_000;
+    const ROUNDS: usize = 3;
+    let site = BenchSite::start(PAGES);
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    let mut medians = Vec::new();
+    for cap in [Some(300.0), None] {
+        let (mut off, mut on) = (Vec::new(), Vec::new());
+        for round in 0..ROUNDS {
+            let (rate_off, _) = spa_fetch_rate(&site, PAGES, None, cap).await;
+            let (rate_on, rendered) = spa_fetch_rate(&site, PAGES, Some(browser.clone()), cap).await;
+            println!(
+                "cap {cap:?}, round {}: off {rate_off:.0} pages/s, on {rate_on:.0} pages/s \
+                 ({rendered} rendered when fetching ended)",
+                round + 1
+            );
+            off.push(rate_off);
+            on.push(rate_on);
+        }
+        let (off, on) = (median(&mut off), median(&mut on));
+        println!(
+            "cap {cap:?}, median: off {off:.0} pages/s, on {on:.0} pages/s ({:+.1}%)",
+            (on / off - 1.0) * 100.0
+        );
+        medians.push((cap, off, on));
+    }
+    let (_, off, on) = medians[0];
+    assert!(
+        on >= off * 0.95,
+        "fetching while rendering ({on:.0}/s) is slower than with rendering off ({off:.0}/s)"
+    );
 }
