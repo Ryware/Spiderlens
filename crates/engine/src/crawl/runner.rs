@@ -2570,6 +2570,22 @@ impl Run {
         stage.guard_tick();
         stage.restart_if_needed();
         let store = &self.c.store;
+        // A browser that cannot be started again: everything still waiting
+        // ends as "Browser unavailable", with one warning (FR-046).
+        if stage.unavailable() {
+            let mut skipped = 0;
+            while let Some(e) = stage.next(store)? {
+                store.skip_render(e.url_id, "browser_unavailable", None)?;
+                skipped += 1;
+            }
+            if skipped > 0 {
+                self.warn(
+                    "The browser stopped and could not be started again. The pages still waiting were not rendered."
+                        .into(),
+                )?;
+            }
+            return Ok(());
+        }
         while stage.open < stage.limit {
             let Some(mut e) = stage.next(store)? else { break };
             if !store.mark_rendering(e.url_id)? {
@@ -2611,6 +2627,10 @@ impl Run {
         stage.open -= 1;
         stage.page_done();
         let id = r.entry.url_id;
+        if let RenderState::Failed { retryable: true, .. } = r.outcome.state {
+            // The browser may have died with the page (FR-042).
+            stage.browser_suspect();
+        }
         if let RenderState::Failed { retryable: true, .. } = r.outcome.state
             && r.entry.attempts < MAX_ATTEMPTS
         {
@@ -2659,6 +2679,11 @@ impl Run {
                 let note = take_note(&x.url);
                 let (outcome, error, robots_rule) = match (&note, x.failed) {
                     (Some(Note::BlockedByRobots(rule)), _) => ("blocked_robots", None, Some(rule.clone())),
+                    // An answer of 4xx or 5xx is a failed resource too (FR-018, FR-043).
+                    (_, None) if x.status.is_some_and(|c| c >= 400) => {
+                        let code = x.status.unwrap_or_default();
+                        ("failed", Some(format!("HTTP {code}")), None)
+                    }
                     (Some(Note::Cached), None) => ("cached", None, None),
                     (Some(Note::RobotsIgnored(rule)), None) => ("loaded", None, Some(rule.clone())),
                     (_, None) => ("loaded", None, None),

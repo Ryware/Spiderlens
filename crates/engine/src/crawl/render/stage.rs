@@ -84,6 +84,12 @@ pub(crate) struct RenderStage {
     /// The guard asked for a restart between pages (over budget at a limit
     /// of 1, or 1,000 pages since the last one).
     restart_asked: AtomicBool,
+    /// A render failed in a way that may mean the browser died: check it
+    /// before the next page and start a new one if it is gone (FR-042).
+    suspect: Arc<AtomicBool>,
+    /// The browser died and could not be started again: the rest of the
+    /// queue becomes `browser_unavailable` (FR-046).
+    unavailable: Arc<AtomicBool>,
 }
 
 /// What happens to a fetched page when the crawl renders (plan D2).
@@ -202,6 +208,8 @@ impl RenderStage {
             memory: Box::new(SystemMemory),
             last_tick: None,
             restart_asked: AtomicBool::new(false),
+            suspect: Arc::new(AtomicBool::new(false)),
+            unavailable: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -261,15 +269,44 @@ impl RenderStage {
     /// Renders started meanwhile wait for the new process.
     pub(crate) fn restart_if_needed(&self) {
         let asked = self.restart_asked.swap(false, Ordering::AcqRel);
-        let needs = asked || self.browser.try_read().is_ok_and(|b| b.needs_restart());
-        if needs && !self.restarting.swap(true, Ordering::AcqRel) {
+        let stuck = self.browser.try_read().is_ok_and(|b| b.needs_restart());
+        let suspect = self.suspect.swap(false, Ordering::AcqRel);
+        if (asked || stuck || suspect) && !self.restarting.swap(true, Ordering::AcqRel) {
             let browser = self.browser.clone();
             let flag = self.restarting.clone();
+            let unavailable = self.unavailable.clone();
+            // A suspect browser is replaced only if it is gone; one that
+            // was asked for (memory, 1,000 pages) or is stuck always is.
+            let always = asked || stuck;
             tokio::spawn(async move {
-                let _ = browser.write().await.restart().await;
+                // Waits for the renders in progress to end.
+                let mut b = browser.write().await;
+                if always || !b.is_alive().await {
+                    // One more try: a first launch can fail while the old
+                    // process is still being cleaned up.
+                    let mut relaunched = b.restart().await.is_ok();
+                    if !relaunched {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        relaunched = b.restart().await.is_ok();
+                    }
+                    if !relaunched {
+                        unavailable.store(true, Ordering::Release);
+                    }
+                }
+                drop(b);
                 flag.store(false, Ordering::Release);
             });
         }
+    }
+
+    /// A render failed in a way that may mean the browser is gone.
+    pub(crate) fn browser_suspect(&self) {
+        self.suspect.store(true, Ordering::Release);
+    }
+
+    /// The browser is gone and could not be started again.
+    pub(crate) fn unavailable(&self) -> bool {
+        self.unavailable.load(Ordering::Acquire)
     }
 
     /// Once a second: reads memory and lowers or raises the render limit

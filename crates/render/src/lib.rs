@@ -82,6 +82,17 @@ impl Browser {
         out
     }
 
+    /// Whether the browser process still answers (a `Browser.getVersion`
+    /// within 3 s). False after it was killed or crashed.
+    pub async fn is_alive(&self) -> bool {
+        match &self.running {
+            Some(r) => tokio::time::timeout(std::time::Duration::from_secs(3), r.cdp.version())
+                .await
+                .is_ok_and(|v| v.is_ok()),
+            None => false,
+        }
+    }
+
     /// Whether a render had to be abandoned at the hard stop, so the browser
     /// should be restarted before the next page.
     pub fn needs_restart(&self) -> bool {
