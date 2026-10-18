@@ -70,7 +70,11 @@ fn installed_sources() -> Vec<(BrowserName, PathBuf)> {
 pub(crate) fn find_downloaded(data_dir: &Path) -> Result<BrowserInfo, NotUsable> {
     let mut last = NotUsable::NotFound;
     for path in downloaded_candidates(data_dir) {
-        match check(&path, Some(BrowserName::ChromeHeadlessShell), BrowserSource::Downloaded) {
+        match check(
+            &path,
+            Some(BrowserName::ChromeHeadlessShell),
+            BrowserSource::Downloaded,
+        ) {
             Ok(info) => return Ok(info),
             Err(e) => last = e,
         }

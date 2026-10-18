@@ -395,8 +395,9 @@ pub fn build(
         |r| r.get(0),
     )?;
     Watch::savepoint(conn, "metrics", || {
-        let mut ins =
-            conn.prepare(&format!("INSERT INTO {t} VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"))?;
+        let mut ins = conn.prepare(&format!(
+            "INSERT INTO {t} VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+        ))?;
         for (i, &id) in g.ids.iter().enumerate() {
             let pct = if pages > 0 {
                 f64::from(g.unique_in[i]) * 100.0 / pages as f64

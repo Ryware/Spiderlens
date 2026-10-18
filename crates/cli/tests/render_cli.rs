@@ -66,7 +66,12 @@ fn browser_status_with_a_missing_path_exits_9() {
     assert_eq!(out.status.code(), Some(9));
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["usable"], false);
-    assert!(v["problem"].as_str().unwrap().contains("No browser at this path."));
+    assert!(
+        v["problem"]
+            .as_str()
+            .unwrap()
+            .contains("No browser at this path.")
+    );
 }
 
 /// Offline: the download host cannot be reached (a proxy that refuses), so
@@ -389,7 +394,11 @@ fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
         b = b.page(&format!("/p{i}"), &page(""));
     }
     let site = b
-        .script(spiderlens_test_fixtures::js_site::JS_HOST, "/slow.js", "document.title = 'Done';")
+        .script(
+            spiderlens_test_fixtures::js_site::JS_HOST,
+            "/slow.js",
+            "document.title = 'Done';",
+        )
         .delay(
             spiderlens_test_fixtures::js_site::JS_HOST,
             "/slow.js",
@@ -399,7 +408,15 @@ fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("killed.spiderlens");
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_spiderlens"))
-        .args(["crawl", &site.local_url("/"), "--render", "--speed", "fast", "--browser", &browser])
+        .args([
+            "crawl",
+            &site.local_url("/"),
+            "--render",
+            "--speed",
+            "fast",
+            "--browser",
+            &browser,
+        ])
         .arg("--out")
         .arg(&file)
         .arg("--quiet")
@@ -412,7 +429,10 @@ fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
     let marker = format!("spiderlens-render-{}-", child.id());
     let started = std::time::Instant::now();
     while processes_with(&marker).is_empty() {
-        assert!(started.elapsed().as_secs() < 30, "the crawl never started a browser");
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "the crawl never started a browser"
+        );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     child.kill().unwrap(); // SIGKILL

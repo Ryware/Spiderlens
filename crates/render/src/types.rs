@@ -134,10 +134,13 @@ impl std::fmt::Display for DownloadError {
         match self {
             Self::NoPlan => f.write_str("No browser download is available for this platform."),
             Self::Cancelled => f.write_str("The download was cancelled."),
-            Self::Checksum => f.write_str(
-                "The downloaded browser does not match its expected checksum and was removed.",
+            Self::Checksum => {
+                f.write_str("The downloaded browser does not match its expected checksum and was removed.")
+            }
+            Self::Network(m) => write!(
+                f,
+                "No internet connection: the browser can't be downloaded now ({m})."
             ),
-            Self::Network(m) => write!(f, "No internet connection: the browser can't be downloaded now ({m})."),
             Self::ConnectionLost => f.write_str(
                 "Connection lost. The part already downloaded is kept; run the command again to resume.",
             ),

@@ -851,13 +851,23 @@ mod tests {
     fn us5_pages_are_linked_from_the_home_page_and_the_missing_script_is_404() {
         let site = JsSiteBuilder::new().us5_pages().start();
         let (_, _, home) = get(&site, JS_HOST, "/");
-        for p in ["/throws", "/logs", "/missing-script", "/heavy", "/challenge", "/steady"] {
+        for p in [
+            "/throws",
+            "/logs",
+            "/missing-script",
+            "/heavy",
+            "/challenge",
+            "/steady",
+        ] {
             assert!(home.contains(&format!("href=\"{p}\"")), "{p}");
             assert_eq!(get(&site, JS_HOST, p).0, 200, "{p}");
         }
         assert_eq!(get(&site, JS_HOST, "/missing.js").0, 404);
         let (_, _, challenge) = get(&site, JS_HOST, "/challenge");
-        assert!(!challenge.contains("challenge-form\" action"), "the form comes from the script");
+        assert!(
+            !challenge.contains("challenge-form\" action"),
+            "the form comes from the script"
+        );
         let (_, _, throws) = get(&site, JS_HOST, "/throws");
         assert!(throws.contains("boom from the fixture"));
     }

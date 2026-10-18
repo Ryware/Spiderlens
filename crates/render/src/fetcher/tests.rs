@@ -28,11 +28,15 @@ fn fake_archive() -> Vec<u8> {
     {
         let mut zip = zip::ZipWriter::new(&mut out);
         let exe = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
-        zip.start_file(format!("chrome-headless-shell-{PLATFORM}/chrome-headless-shell"), exe)
-            .unwrap();
+        zip.start_file(
+            format!("chrome-headless-shell-{PLATFORM}/chrome-headless-shell"),
+            exe,
+        )
+        .unwrap();
         zip.write_all(b"#!/bin/sh\necho 'Chrome Headless Shell 155.0.8059.39'\n")
             .unwrap();
-        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let stored =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file(format!("chrome-headless-shell-{PLATFORM}/blob.bin"), stored)
             .unwrap();
         let blob: Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(31) >> 3) as u8).collect();
@@ -111,7 +115,9 @@ fn serve(listener: TcpListener, body: Vec<u8>, cut_first_at: Option<usize>) -> F
                 .and_then(|l| l.split("bytes=").nth(1))
                 .and_then(|v| v.trim().trim_end_matches('-').parse::<usize>().ok());
             if let Some(l) = &range_line {
-                seen.lock().unwrap().push(l.split("bytes=").nth(1).unwrap_or("").trim().to_owned());
+                seen.lock()
+                    .unwrap()
+                    .push(l.split("bytes=").nth(1).unwrap_or("").trim().to_owned());
             }
             let total = body.len();
             if head.starts_with("HEAD") {
@@ -201,9 +207,16 @@ async fn a_good_archive_is_downloaded_verified_and_unpacked() {
     assert_eq!(info.source, BrowserSource::Downloaded);
     assert_eq!(info.version, "155.0.8059.39");
     assert!(info.path.starts_with(dir.path().join("browsers/155.0.8059.39")));
-    assert!(!dir.path().join("browsers/.download").exists(), "the archive is deleted");
+    assert!(
+        !dir.path().join("browsers/.download").exists(),
+        "the archive is deleted"
+    );
     let steps = steps.lock().unwrap();
-    for stage in [DownloadStage::Download, DownloadStage::Verify, DownloadStage::Unpack] {
+    for stage in [
+        DownloadStage::Download,
+        DownloadStage::Verify,
+        DownloadStage::Unpack,
+    ] {
         assert!(steps.contains(&stage), "{stage:?}");
     }
     // Found again later without downloading.
@@ -246,9 +259,14 @@ async fn cancel_removes_the_partial_files() {
             flag.cancel();
         }
     };
-    let err = download(&plan(addr, &body, leak(sha(&body))), dir.path(), &progress, &cancel)
-        .await
-        .unwrap_err();
+    let err = download(
+        &plan(addr, &body, leak(sha(&body))),
+        dir.path(),
+        &progress,
+        &cancel,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, DownloadError::Cancelled), "{err:?}");
     let left: Vec<_> = std::fs::read_dir(dir.path().join("browsers"))
         .map(|d| d.filter_map(Result::ok).map(|e| e.file_name()).collect())
@@ -306,7 +324,10 @@ async fn a_connection_dropped_mid_file_resumes_from_the_bytes_written() {
     )
     .await
     .unwrap();
-    assert!(waited.load(Ordering::Relaxed), "the dialog is told the connection was lost");
+    assert!(
+        waited.load(Ordering::Relaxed),
+        "the dialog is told the connection was lost"
+    );
     // The second request asked only for the rest; the hash covers the whole.
     assert!(
         server.ranges.lock().unwrap().contains(&format!("{cut}-")),
@@ -338,6 +359,8 @@ async fn giving_up_keeps_the_partial_file_for_a_later_resume() {
         .await
         .unwrap_err();
     assert!(matches!(err, DownloadError::ConnectionLost), "{err:?}");
-    let part = dir.path().join("browsers/.download/155.0.8059.39-linux64.zip.part");
+    let part = dir
+        .path()
+        .join("browsers/.download/155.0.8059.39-linux64.zip.part");
     assert_eq!(std::fs::metadata(part).unwrap().len(), 50_000);
 }

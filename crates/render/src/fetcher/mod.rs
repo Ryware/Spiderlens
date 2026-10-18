@@ -217,8 +217,18 @@ async fn fetch(
         let mut response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
-                wait_for_connection(&client, plan, opts, cancel, have, total, &mut lost_since, &emit, &e.to_string())
-                    .await?;
+                wait_for_connection(
+                    &client,
+                    plan,
+                    opts,
+                    cancel,
+                    have,
+                    total,
+                    &mut lost_since,
+                    &emit,
+                    &e.to_string(),
+                )
+                .await?;
                 continue;
             }
         };
@@ -268,8 +278,18 @@ async fn fetch(
                 return Ok(done);
             }
             Some(message) => {
-                wait_for_connection(&client, plan, opts, cancel, done, total, &mut lost_since, &emit, &message)
-                    .await?;
+                wait_for_connection(
+                    &client,
+                    plan,
+                    opts,
+                    cancel,
+                    done,
+                    total,
+                    &mut lost_since,
+                    &emit,
+                    &message,
+                )
+                .await?;
             }
         }
     }
@@ -346,10 +366,12 @@ fn valid_sha256(s: &str) -> bool {
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 fn unpack(archive: &Path, dest: &Path) -> Result<(), DownloadError> {

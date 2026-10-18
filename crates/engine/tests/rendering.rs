@@ -511,7 +511,15 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
     let store = CrawlStore::open_read_only(&path).unwrap();
 
     // Every eligible page ends in exactly one final state.
-    let eligible = ["/", "/throws", "/logs", "/missing-script", "/heavy", "/challenge", "/steady"];
+    let eligible = [
+        "/",
+        "/throws",
+        "/logs",
+        "/missing-script",
+        "/heavy",
+        "/challenge",
+        "/steady",
+    ];
     for p in eligible {
         let (state, _) = render_state(&store, &site, p).unwrap_or_else(|| panic!("{p} has no render row"));
         assert!(
@@ -540,12 +548,31 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
     assert!(message.contains("boom from the fixture"), "{message}");
     assert!(source.is_some_and(|s| s.ends_with("/throws")));
     assert!(line.is_some_and(|l| l >= 1));
-    assert!(one::<i64>(&store, "SELECT console_errors FROM renders WHERE url_id = ?1", throws) >= 1);
+    assert!(
+        one::<i64>(
+            &store,
+            "SELECT console_errors FROM renders WHERE url_id = ?1",
+            throws
+        ) >= 1
+    );
 
     // console.error and console.warn.
     let logs = id(&store, &site, "/logs");
-    assert!(one::<i64>(&store, "SELECT console_errors FROM renders WHERE url_id = ?1", logs) >= 1);
-    assert_eq!(one::<i64>(&store, "SELECT console_warnings FROM renders WHERE url_id = ?1", logs), 1);
+    assert!(
+        one::<i64>(
+            &store,
+            "SELECT console_errors FROM renders WHERE url_id = ?1",
+            logs
+        ) >= 1
+    );
+    assert_eq!(
+        one::<i64>(
+            &store,
+            "SELECT console_warnings FROM renders WHERE url_id = ?1",
+            logs
+        ),
+        1
+    );
     let messages: Vec<(String, String)> = {
         let conn = store.conn_for_tests();
         let mut stmt = conn
@@ -556,13 +583,29 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
             .collect::<Result<_, _>>()
             .unwrap()
     };
-    assert!(messages.contains(&("error".into(), "fixture error message".into())), "{messages:?}");
-    assert!(messages.contains(&("warning".into(), "fixture warning message".into())), "{messages:?}");
+    assert!(
+        messages.contains(&("error".into(), "fixture error message".into())),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(&("warning".into(), "fixture warning message".into())),
+        "{messages:?}"
+    );
 
     // Scenario 2: the 404 script is a failed resource of that page only.
     let missing = id(&store, &site, "/missing-script");
-    assert_eq!(render_state(&store, &site, "/missing-script").unwrap().0, "rendered");
-    assert_eq!(one::<i64>(&store, "SELECT resources_failed FROM renders WHERE url_id = ?1", missing), 1);
+    assert_eq!(
+        render_state(&store, &site, "/missing-script").unwrap().0,
+        "rendered"
+    );
+    assert_eq!(
+        one::<i64>(
+            &store,
+            "SELECT resources_failed FROM renders WHERE url_id = ?1",
+            missing
+        ),
+        1
+    );
     let (outcome, status, error): (String, Option<i64>, Option<String>) = store
         .conn_for_tests()
         .query_row(
@@ -571,27 +614,46 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
-    assert_eq!((outcome.as_str(), status, error.as_deref()), ("failed", Some(404), Some("HTTP 404")));
+    assert_eq!(
+        (outcome.as_str(), status, error.as_deref()),
+        ("failed", Some(404), Some("HTTP 404"))
+    );
     // The pages the "JavaScript errors" and "Has failed resources" filters list.
     let ids = |sql: &str| -> Vec<i64> {
         let conn = store.conn_for_tests();
         let mut stmt = conn.prepare(sql).unwrap();
-        stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
     };
     let with_errors = ids("SELECT url_id FROM renders WHERE console_errors > 0 ORDER BY url_id");
     assert!(with_errors.contains(&throws) && with_errors.contains(&logs));
-    assert_eq!(ids("SELECT url_id FROM renders WHERE resources_failed > 0"), vec![missing]);
+    assert_eq!(
+        ids("SELECT url_id FROM renders WHERE resources_failed > 0"),
+        vec![missing]
+    );
 
     // Scenario 3 (heap limit): not retried, raw row untouched.
     let (state, reason) = render_state(&store, &site, "/heavy").unwrap();
-    assert_eq!((state.as_str(), reason.as_deref()), ("failed", Some("page_too_large")));
+    assert_eq!(
+        (state.as_str(), reason.as_deref()),
+        ("failed", Some("page_too_large"))
+    );
     let heavy = id(&store, &site, "/heavy");
-    assert_eq!(one::<i64>(&store, "SELECT attempts FROM renders WHERE url_id = ?1", heavy), 1);
+    assert_eq!(
+        one::<i64>(&store, "SELECT attempts FROM renders WHERE url_id = ?1", heavy),
+        1
+    );
     assert_eq!(url_state(&store, &site, "/heavy").as_deref(), Some("crawled"));
     let title: String = one(&store, "SELECT title FROM urls WHERE id = ?1", heavy);
     assert_eq!(title, "Heavy");
     assert_eq!(
-        one::<i64>(&store, "SELECT COUNT(*) FROM rendered_pages WHERE url_id = ?1", heavy),
+        one::<i64>(
+            &store,
+            "SELECT COUNT(*) FROM rendered_pages WHERE url_id = ?1",
+            heavy
+        ),
         0,
         "a failed render stores no rendered values"
     );
@@ -616,7 +678,9 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
 fn kill_browsers() -> usize {
     let marker = format!("spiderlens-render-{}-", std::process::id());
     let mut killed = 0;
-    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
     for e in dir.flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
             continue;
@@ -626,7 +690,9 @@ fn kill_browsers() -> usize {
         };
         let text = String::from_utf8_lossy(&raw).replace('\0', " ");
         if text.contains(&marker) && !text.contains("--type=") && !text.contains("--render-guard") {
-            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .status();
             killed += 1;
         }
     }
@@ -646,9 +712,13 @@ fn slow_site() -> JsSite {
     for i in 1..=6 {
         b = b.page(&format!("/p{i}"), &page(""));
     }
-    b.script(JS_HOST, "/slow.js", "document.body.setAttribute('data-slow', '1');")
-        .delay(JS_HOST, "/slow.js", std::time::Duration::from_secs(1))
-        .start()
+    b.script(
+        JS_HOST,
+        "/slow.js",
+        "document.body.setAttribute('data-slow', '1');",
+    )
+    .delay(JS_HOST, "/slow.js", std::time::Duration::from_secs(1))
+    .start()
 }
 
 /// SC-008, SC-009: the browser is killed three times during the crawl. The
@@ -696,7 +766,11 @@ async fn us5_killing_the_browser_repeatedly_leaves_every_page_in_one_final_state
         );
         // Raw data is untouched, and the page was requested once.
         assert_eq!(url_state(&store, &site, p).as_deref(), Some("crawled"), "{p}");
-        let title: String = one(&store, "SELECT title FROM urls WHERE id = ?1", id(&store, &site, p));
+        let title: String = one(
+            &store,
+            "SELECT title FROM urls WHERE id = ?1",
+            id(&store, &site, p),
+        );
         assert_eq!(title, "Slow");
         assert_eq!(site.count(JS_HOST, p), 1, "{p} was requested more than once");
     }
@@ -711,7 +785,9 @@ async fn us5_killing_the_browser_repeatedly_leaves_every_page_in_one_final_state
     assert_eq!(open, 0);
     let rendered: i64 = store
         .conn_for_tests()
-        .query_row("SELECT COUNT(*) FROM renders WHERE state = 'rendered'", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM renders WHERE state = 'rendered'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert!(rendered >= 1, "the browser was started again and rendered pages");
 }
@@ -768,7 +844,10 @@ async fn us5_a_browser_that_cannot_be_relaunched_makes_the_rest_browser_unavaila
     assert!(killer.join().unwrap(), "the test killed no browser");
     assert_eq!(summary.status, "completed");
     assert!(
-        summary.warnings.iter().any(|w| w.contains("could not be started again")),
+        summary
+            .warnings
+            .iter()
+            .any(|w| w.contains("could not be started again")),
         "{:?}",
         summary.warnings
     );

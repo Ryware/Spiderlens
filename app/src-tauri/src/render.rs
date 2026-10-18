@@ -134,7 +134,8 @@ fn view(b: &BrowserInfo) -> BrowserView {
 
 /// Why no browser is usable, in the window's words.
 pub fn problem_text(e: &NotUsable) -> String {
-    const FIX: &str = "Download the browser, choose an installed Chrome or Edge, or turn JavaScript rendering off.";
+    const FIX: &str =
+        "Download the browser, choose an installed Chrome or Edge, or turn JavaScript rendering off.";
     match e {
         NotUsable::NotFound => {
             format!("JavaScript rendering needs a Chromium-based browser and none was found. {FIX}")
@@ -145,7 +146,10 @@ pub fn problem_text(e: &NotUsable) -> String {
             found.version
         ),
         NotUsable::Broken { path, message } => {
-            format!("The browser at {} cannot be used: {message} {FIX}", path.display())
+            format!(
+                "The browser at {} cannot be used: {message} {FIX}",
+                path.display()
+            )
         }
     }
 }
@@ -189,7 +193,11 @@ pub fn render_browser_install(app: AppHandle, state: tauri::State<'_, State>) ->
     let plan = download_plan().ok_or("No browser download is available for this platform.")?;
     let job = state.next.fetch_add(1, Ordering::Relaxed) + 1;
     let cancel = CancellationFlag::new();
-    state.jobs.lock().expect("render lock").insert(job, cancel.clone());
+    state
+        .jobs
+        .lock()
+        .expect("render lock")
+        .insert(job, cancel.clone());
     let dir = data_dir().unwrap_or_else(std::env::temp_dir);
     tauri::async_runtime::spawn(async move {
         let events = app.clone();
@@ -211,7 +219,11 @@ pub fn render_browser_install(app: AppHandle, state: tauri::State<'_, State>) ->
         };
         // Waits for a lost connection and resumes; only cancel ends the wait.
         let result = download(&plan, &dir, &progress, &cancel).await;
-        app.state::<State>().jobs.lock().expect("render lock").remove(&job);
+        app.state::<State>()
+            .jobs
+            .lock()
+            .expect("render lock")
+            .remove(&job);
         let probe = app.clone();
         let status = tauri::async_runtime::spawn_blocking(move || status_of(&probe))
             .await
@@ -242,7 +254,10 @@ pub fn render_browser_cancel(state: tauri::State<'_, State>, job: u64) {
 #[tauri::command]
 pub async fn render_browser_set_path(app: AppHandle, path: Option<String>) -> Cmd<BrowserStatus> {
     tauri::async_runtime::spawn_blocking(move || {
-        match path.map(|p| PathBuf::from(p.trim())).filter(|p| !p.as_os_str().is_empty()) {
+        match path
+            .map(|p| PathBuf::from(p.trim()))
+            .filter(|p| !p.as_os_str().is_empty())
+        {
             None => {
                 save_browser_path(&app, None)?;
                 Ok(status_of(&app))

@@ -265,8 +265,9 @@ fn write(
 ) -> rusqlite::Result<()> {
     // A savepoint, not a transaction, so it nests inside a whole run's.
     Watch::savepoint(conn, "positions", || {
-        let mut ins =
-            conn.prepare_cached(&format!("INSERT OR IGNORE INTO {schema}.link_positions VALUES (?1, ?2, ?3, ?4)"))?;
+        let mut ins = conn.prepare_cached(&format!(
+            "INSERT OR IGNORE INTO {schema}.link_positions VALUES (?1, ?2, ?3, ?4)"
+        ))?;
         for (page, links) in pages.iter().zip(results) {
             stats.pages += 1;
             if page.body.is_none() {

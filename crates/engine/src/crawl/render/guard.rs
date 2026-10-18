@@ -128,7 +128,10 @@ impl MemoryGuard {
             } else if over_budget {
                 restart = true;
             }
-        } else if known && r.free.saturating_mul(5) > r.total && r.browser.saturating_mul(10) < budget.saturating_mul(8) {
+        } else if known
+            && r.free.saturating_mul(5) > r.total
+            && r.browser.saturating_mul(10) < budget.saturating_mul(8)
+        {
             let since = *self.calm_since.get_or_insert(now);
             if now.duration_since(since) >= RAISE_AFTER && self.limit < self.configured {
                 self.limit += 1;
@@ -269,6 +272,9 @@ mod tests {
         let mut g = MemoryGuard::new(2, None);
         let t = Instant::now();
         assert!(g.tick(src.read(0), t).limited);
-        assert!(g.tick(src.read(0), t).limited, "still limited until ten calm seconds pass");
+        assert!(
+            g.tick(src.read(0), t).limited,
+            "still limited until ten calm seconds pass"
+        );
     }
 }

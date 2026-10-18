@@ -166,9 +166,9 @@ fn progress_line(quiet: bool) -> impl Fn(DownloadProgress) + Send + Sync {
 /// the missing connection.
 fn failure_text(e: &DownloadError) -> String {
     match e {
-        DownloadError::Network(_) | DownloadError::ConnectionLost => format!(
-            "{e} Give an installed Chrome or Edge with --browser <path>, or crawl without --render."
-        ),
+        DownloadError::Network(_) | DownloadError::ConnectionLost => {
+            format!("{e} Give an installed Chrome or Edge with --browser <path>, or crawl without --render.")
+        }
         other => other.to_string(),
     }
 }
@@ -227,7 +227,9 @@ fn status(args: StatusArgs) -> ExitCode {
         data_dir: data,
     });
     let plan = download_plan();
-    let download = plan.as_ref().map(|p| serde_json::json!({ "version": p.version, "bytes": p.bytes }));
+    let download = plan
+        .as_ref()
+        .map(|p| serde_json::json!({ "version": p.version, "bytes": p.bytes }));
     match found {
         Ok(b) => {
             if args.json {
@@ -339,7 +341,12 @@ fn report_installed(b: &BrowserInfo, json: bool) {
             })
         );
     } else {
-        println!("{} {} is installed at {}", b.name.label(), b.version, b.path.display());
+        println!(
+            "{} {} is installed at {}",
+            b.name.label(),
+            b.version,
+            b.path.display()
+        );
     }
 }
 
