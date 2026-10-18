@@ -504,6 +504,9 @@ pub struct Counts {
     pub external_blocked: u64,
 }
 
+/// Prepared statements kept per connection (rusqlite's default is 16).
+const STATEMENT_CACHE: usize = 128;
+
 impl CrawlStore {
     /// Creates a new crawl file. An existing file is never overwritten.
     pub fn create(path: &Path) -> Result<Self> {
@@ -757,6 +760,10 @@ impl CrawlStore {
             conn.pragma_update(None, "cache_size", v.as_str())?;
         }
         conn.pragma_update(None, "foreign_keys", "OFF")?;
+        // The page path alone uses more statements than rusqlite's default
+        // cache of 16, so each page re-prepared the ones the cache had
+        // dropped; the render queue's two inserts made that cost visible.
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         Ok(())
     }
 
