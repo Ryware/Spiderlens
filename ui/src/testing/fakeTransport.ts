@@ -790,7 +790,7 @@ function fakeFilesTransport(crawls: FakeCrawls, nextCrawlId: () => number) {
     prefs: defaultStoragePrefs(),
     history: [],
     leftoverBytes: 0,
-    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
+    cleanupDone: (r) => cleanupDone.forEach((cb) => cb({ removed: [], schedule_removed: [], leftovers: 0, freed_bytes: 0, announced: [], ...r })),
     crawlsChanged: () => crawlsChanged.forEach((cb) => cb()),
   };
 

@@ -2,6 +2,7 @@
 //! category.
 
 pub mod accessibility;
+pub mod amp;
 pub mod canonicals;
 pub mod content;
 pub mod directives;
@@ -12,9 +13,12 @@ pub mod links;
 pub mod meta;
 pub mod mobile;
 pub mod other;
+pub mod pdf;
 pub mod response;
 pub mod security;
+pub mod serp;
 pub mod sitemaps;
+pub mod spelling;
 pub mod titles;
 pub mod url;
 

@@ -38,6 +38,9 @@ pub struct CrawlCmd {
     /// No progress on stderr.
     #[arg(long)]
     quiet: bool,
+    /// Also find near duplicate content when the crawl ends (otherwise run `spiderlens duplicates`).
+    #[arg(long)]
+    near_duplicates: bool,
     /// Pause when less than this much space (MB) is free on the crawl
     /// file's drive.
     #[arg(long, value_name = "MB", default_value_t = DEFAULT_DISK_RESERVE / (1024 * 1024))]
@@ -175,7 +178,7 @@ pub fn run_retry(args: RetryArgs) -> ExitCode {
             return ExitCode::from(exit::USAGE);
         }
     };
-    execute(crawler, args.file, args.quiet, args.json)
+    execute(crawler, args.file, args.quiet, args.json, false)
 }
 
 #[derive(Args)]
@@ -221,13 +224,14 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     let (crawler, file) = if let Some(path) = &cmd.resume {
         // The stored configuration decides; only speed and the URL limit may
         // change (spec 006 FR-011). Other options are refused, not ignored.
-        const ALLOWED: [&str; 15] = [
+        const ALLOWED: [&str; 16] = [
             "resume",
             "cookies_file",
             "browser",
             "allow_browser_download",
             "json",
             "quiet",
+            "near_duplicates",
             "disk_reserve",
             "no_backup",
             "header_secret",
@@ -441,7 +445,7 @@ pub fn run_crawl(cmd: CrawlCmd, matches: &ArgMatches) -> ExitCode {
     if crawler.config().ai_checks.auto {
         crawler.set_page_hook(spiderlens_aeo::content::page_hook());
     }
-    execute(crawler, file, cmd.quiet, cmd.json)
+    execute(crawler, file, cmd.quiet, cmd.json, cmd.near_duplicates)
 }
 
 /// Reads a browser's `cookies.txt` as a login session, keeping the start
@@ -515,9 +519,29 @@ fn proxy_test(config: &spiderlens_config::CrawlConfig, input: &spiderlens_config
     }
 }
 
+/// Runs the near duplicate analysis (spec 020) into the file, as the process
+/// that wrote it. A failure is a warning: the crawl itself succeeded and
+/// `spiderlens duplicates` can run it again.
+fn analyse_after_crawl(file: &Path, quiet: bool) {
+    use spiderlens_results::near_dup;
+    let settings = near_dup::open_read_only(file)
+        .ok()
+        .and_then(|c| near_dup::stored_settings(&c).ok())
+        .unwrap_or_default();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match near_dup::analyse_file(file, &settings, true, &cancel, |_, _, _| {}) {
+        Ok((_, s)) if !quiet => eprintln!(
+            "near duplicates: {} pages compared, {} clusters ({} ms)",
+            s.compared, s.clusters, s.ms
+        ),
+        Ok(_) | Err(spiderlens_results::Error::Unavailable(_)) => {}
+        Err(e) => eprintln!("warning: near duplicate analysis did not finish: {e}"),
+    }
+}
+
 /// Runs a crawl that is ready (new, resumed or re-queued by `retry`) and
 /// prints its progress and summary.
-fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode {
+fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool, near_dup: bool) -> ExitCode {
     let rt = match runtime() {
         Ok(rt) => rt,
         Err(code) => return code,
@@ -620,6 +644,11 @@ fn execute(crawler: Crawler, file: PathBuf, quiet: bool, json: bool) -> ExitCode
     }
     if ai_auto && summary.status == "completed" {
         crate::aeo_cmd::run_after_crawl(&file, quiet || json);
+    }
+    // Opt-in: it adds to the process's run time, which the crawl benchmark
+    // measures.
+    if near_dup && summary.crawled > 0 {
+        analyse_after_crawl(&file, quiet || json);
     }
     if !json && !quiet {
         eprintln!(
