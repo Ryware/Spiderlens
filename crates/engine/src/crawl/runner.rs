@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::Serialize;
 use spiderlens_config::{
-    A11yLevel, Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RobotsMode, StoredCrawlConfig,
-    normalize_url,
+    A11yLevel, Change, CrawlConfig, HeaderValue, LinkProblem, Mode, ModeInput, RenderMode, RenderSettings,
+    RobotsMode, StoredCrawlConfig, UrlFilter, normalize_url,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use url::Url;
@@ -30,7 +30,7 @@ use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
 use super::render::progress::{QUEUE_HIGH, QUEUE_LOW, RenderProgress};
-use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
+use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered, eligibility_of};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
 use super::site_files::{self, SiteFileRow};
@@ -898,6 +898,10 @@ pub struct Crawler {
     /// The login session the crawl signs in with (spec 025 plan D5); held
     /// in memory only.
     login: Option<LoginSession>,
+    /// Opened by [`Crawler::open_for_render`]: the fetch stage stays idle
+    /// (nothing is requeued or requested, no site files or sitemaps are
+    /// read) and only the render stage works.
+    render_only: bool,
 }
 
 impl Crawler {
@@ -1038,6 +1042,7 @@ impl Crawler {
             render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
+            render_only: false,
         })
     }
 
@@ -1100,25 +1105,7 @@ impl Crawler {
             opened.recovered = file::recover(&store)?;
         }
         if !options.changes.is_empty() {
-            let now = jiff::Timestamp::now();
-            for change in &options.changes {
-                stored.record(now, change.clone());
-                store.record_event(
-                    "config_changed",
-                    Some(&serde_json::to_string(change).expect("changes serialize")),
-                )?;
-            }
-            // The stored copy never holds secret values.
-            let mut on_disk = stored.clone();
-            for h in &mut on_disk.config.identity.headers {
-                if h.value.is_secret() {
-                    h.value = HeaderValue::Secret(None);
-                }
-            }
-            store.set_meta(
-                "config",
-                &serde_json::to_string(&on_disk).expect("config serializes"),
-            )?;
+            Self::record_changes(&store, &mut stored, &options.changes)?;
         }
         let config = stored.effective();
         let start = store.meta("start_url")?.and_then(|u| Url::parse(&u).ok());
@@ -1150,7 +1137,183 @@ impl Crawler {
             render_queue_marks: (QUEUE_HIGH, QUEUE_LOW),
             page_hook: None,
             login: None,
+            render_only: false,
         })
+    }
+
+    /// Records configuration changes in the history and in the file.
+    fn record_changes(
+        store: &CrawlStore,
+        stored: &mut StoredCrawlConfig,
+        changes: &[Change],
+    ) -> Result<(), CrawlError> {
+        let now = jiff::Timestamp::now();
+        for change in changes {
+            stored.record(now, change.clone());
+            store.record_event(
+                "config_changed",
+                Some(&serde_json::to_string(change).expect("changes serialize")),
+            )?;
+        }
+        // The stored copy never holds secret values.
+        let mut on_disk = stored.clone();
+        for h in &mut on_disk.config.identity.headers {
+            if h.value.is_secret() {
+                h.value = HeaderValue::Secret(None);
+            }
+        }
+        store.set_meta(
+            "config",
+            &serde_json::to_string(&on_disk).expect("config serializes"),
+        )?;
+        Ok(())
+    }
+
+    /// Whether a crawl file can be rendered afterwards, without opening it
+    /// for writing: the refusals of [`Self::open_for_render`] as an error.
+    /// Callers check this before they look for (or download) a browser.
+    pub fn check_renderable(path: &Path) -> Result<(), CrawlError> {
+        if !path.exists() {
+            return Err(CrawlError::Config(format!("{} does not exist", path.display())));
+        }
+        let store = CrawlStore::open_read_only(path)?;
+        let on = store
+            .meta("config")?
+            .and_then(|c| serde_json::from_str::<StoredCrawlConfig>(&c).ok())
+            .is_some_and(|c| c.effective().rendering.is_on());
+        Self::render_plan(&store, on).map(|_| ())
+    }
+
+    /// What opening for render does with this file, or why it cannot.
+    fn render_plan(store: &CrawlStore, rendering_on: bool) -> Result<RenderPlan, CrawlError> {
+        let counts = store.render_counts()?;
+        let open: u64 = counts
+            .iter()
+            .filter(|(s, _)| matches!(s, RenderStatus::Queued | RenderStatus::Rendering))
+            .map(|(_, n)| n)
+            .sum();
+        if store.meta("render_existing")?.as_deref() == Some("1") && open > 0 {
+            return Ok(RenderPlan::Continue);
+        }
+        if rendering_on || !counts.is_empty() {
+            return Err(CrawlError::Config(
+                "This crawl was already rendered. Rendering it again is not supported; \
+                 crawl the site again with JavaScript rendering on."
+                    .into(),
+            ));
+        }
+        match store.meta("status")?.as_deref() {
+            Some("completed") => {}
+            Some("paused") => {
+                return Err(CrawlError::Config(
+                    "This crawl is paused. Resume it and let it finish, then render it.".into(),
+                ));
+            }
+            Some("stopped") => {
+                return Err(CrawlError::Config(
+                    "This crawl was stopped before it finished. Only a finished crawl can be rendered afterwards."
+                        .into(),
+                ));
+            }
+            _ => {
+                return Err(CrawlError::Config(
+                    "This crawl is not finished. Only a finished crawl can be rendered afterwards.".into(),
+                ));
+            }
+        }
+        if store.stored_html_pages()? == 0 {
+            return Err(CrawlError::Config(
+                "This crawl did not store the HTML of its pages, so they cannot be rendered without \
+                 requesting them again. Crawl the site again with \"Store page HTML\" turned on."
+                    .into(),
+            ));
+        }
+        Ok(RenderPlan::Fresh)
+    }
+
+    /// Opens a finished crawl to render its pages afterwards (spec 014
+    /// FR-006, T071). The main documents are not requested again: each
+    /// render starts from the raw HTML stored in the file, and the fetch
+    /// stage stays idle. Run the returned crawler like any other.
+    ///
+    /// Refused, with the explanation as a [`CrawlError::Config`], when the
+    /// crawl is not finished, was already rendered, or stored no page HTML.
+    /// A render pass that was paused (the file records it) is continued
+    /// with the settings it started with.
+    pub fn open_for_render(path: &Path, settings: RenderSettings) -> Result<Self, CrawlError> {
+        Self::open_for_render_with(path, settings, &ResumeOptions::default())
+    }
+
+    /// [`Self::open_for_render`] with options for upgrading an older file
+    /// and supplying secrets.
+    pub fn open_for_render_with(
+        path: &Path,
+        mut settings: RenderSettings,
+        options: &ResumeOptions,
+    ) -> Result<Self, CrawlError> {
+        let mut c = Self::open_with(
+            path,
+            &ResumeOptions {
+                changes: Vec::new(),
+                ..options.clone()
+            },
+        )?;
+        c.render_only = true;
+        if Self::render_plan(&c.store, c.config.rendering.is_on())? == RenderPlan::Continue {
+            // An earlier pass of this command was paused: carry on.
+            return Ok(c);
+        }
+        settings.mode = RenderMode::Javascript;
+        let filter = UrlFilter::new(&settings.include, &settings.exclude).map_err(|_| {
+            CrawlError::Config("the rendering include or exclude pattern is not a valid regex".into())
+        })?;
+        let error_pages = settings.render_error_pages;
+        Self::record_changes(&c.store, &mut c.stored, &[Change::Rendering(settings)])?;
+        c.config = c.stored.effective();
+        let (mut queued, mut skipped) = (0u64, 0u64);
+        c.store.begin()?;
+        let mut after = 0;
+        loop {
+            let batch = c.store.render_candidates(after, 1000)?;
+            let Some(last) = batch.last() else { break };
+            after = last.id;
+            for p in &batch {
+                match eligibility_of(&filter, error_pages, &p.url, true, true, p.status) {
+                    Eligibility::No => {}
+                    Eligibility::OutsideRules => {
+                        c.store.skip_render(p.id, "outside_rules", None)?;
+                        skipped += 1;
+                    }
+                    Eligibility::Queue if p.html_stored => {
+                        // The input is the page HTML already in the file.
+                        c.store.enqueue_render(p.id, None)?;
+                        queued += 1;
+                    }
+                    Eligibility::Queue => {
+                        c.store.skip_render(p.id, "html_not_stored", None)?;
+                        skipped += 1;
+                    }
+                }
+            }
+        }
+        c.store.set_meta("render_existing", "1")?;
+        // The results show the JavaScript tab and the rendered values for
+        // a file that now holds rendering data (the same list a rendering
+        // crawl writes when it starts).
+        let mut features = vec!["rendering"];
+        if c.config.extraction.store_html {
+            features.push("rendered_html");
+        }
+        if c.config.rendering.screenshots {
+            features.push("screenshots");
+        }
+        c.store.add_data_features(&features)?;
+        c.store.record_event(
+            "render_existing",
+            Some(&serde_json::json!({ "queued": queued, "not_rendered": skipped }).to_string()),
+        )?;
+        c.store.commit()?;
+        Ok(c)
     }
 
     /// Pins host names to addresses (tests serve `.test` hosts locally).
@@ -1366,6 +1529,15 @@ fn now_ms() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
+/// What [`Crawler::open_for_render`] does with a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderPlan {
+    /// Queue the eligible pages and render them.
+    Fresh,
+    /// A paused pass of the same command: render what is still queued.
+    Continue,
+}
+
 /// State of one running crawl.
 struct Run {
     c: Crawler,
@@ -1471,11 +1643,14 @@ impl Run {
         commands: Option<mpsc::UnboundedReceiver<RunCommand>>,
     ) -> Result<Self, CrawlError> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let render_only = c.render_only;
         let mut c = c;
         c.store.note_attempts_feature()?;
         c.store.checkpoint_in_background()?;
         c.store.drop_result_indexes()?;
-        c.store.requeue_for_resume()?;
+        if !c.render_only {
+            c.store.requeue_for_resume()?;
+        }
         c.store.requeue_rendering()?;
         c.store.set_meta("status", "running")?;
         // URLs that were waiting for a retry keep their remaining wait
@@ -1624,7 +1799,11 @@ impl Run {
             limit_reached,
             sitemaps_pending: false,
             sitemap_ids: HashMap::new(),
-            site_files: SiteFiles::NotStarted,
+            site_files: if render_only {
+                SiteFiles::Done
+            } else {
+                SiteFiles::NotStarted
+            },
             discovered,
             crawled,
             errors,
@@ -2193,7 +2372,9 @@ impl Run {
     }
 
     async fn main_loop(&mut self) -> Result<(), CrawlError> {
-        self.maybe_start_sitemaps()?;
+        if !self.c.render_only {
+            self.maybe_start_sitemaps()?;
+        }
         loop {
             self.open_tx()?;
             self.check_disk();
@@ -2203,7 +2384,12 @@ impl Run {
             let permit_wake = self.serve_permits()?;
             let mut wake = if running {
                 self.requeue_due_retries()?;
-                let wake = self.dispatch()?;
+                // Rendering an existing crawl never fetches pages.
+                let wake = if self.c.render_only {
+                    None
+                } else {
+                    self.dispatch()?
+                };
                 if self.render.is_some() {
                     self.dispatch_renders()?;
                 }
@@ -2263,15 +2449,19 @@ impl Run {
                     }
                     Control::Run => {
                         self.window.refill(&self.c.store)?;
-                        let fetch_done = self.window.is_empty()
-                            && self.window.holds_everything()
-                            && !self.sitemaps_pending
-                            && self.retries.is_empty();
+                        let fetch_done = self.c.render_only
+                            || (self.window.is_empty()
+                                && self.window.holds_everything()
+                                && !self.sitemaps_pending
+                                && self.retries.is_empty());
                         let rendering = match &mut self.render {
                             Some(r) if fetch_done => r.busy(&self.c.store)?,
                             _ => false,
                         };
                         if fetch_done && !rendering {
+                            if self.c.render_only {
+                                self.leave_found_unfetched()?;
+                            }
                             match self.site_files {
                                 SiteFiles::NotStarted => self.start_site_files()?,
                                 SiteFiles::Pending => {}
@@ -2651,6 +2841,27 @@ impl Run {
         Ok(())
     }
 
+    /// Rendering an existing crawl: pages that only the rendered versions
+    /// linked to are not fetched by this run. They are left as "Crawl
+    /// stopped", so that resuming the crawl fetches (and renders) them.
+    fn leave_found_unfetched(&mut self) -> Result<(), CrawlError> {
+        let queued = self
+            .c
+            .store
+            .counts()?
+            .by_state
+            .iter()
+            .find(|(s, _)| *s == UrlState::Queued)
+            .map_or(0, |(_, n)| *n);
+        if queued == 0 {
+            return Ok(());
+        }
+        self.c.store.stop_queue()?;
+        self.warn(format!(
+            "Rendering found {queued} pages that were not in the crawl. They were not fetched; resume the crawl to fetch them."
+        ))
+    }
+
     /// Records when the fetch stage finished while renders go on
     /// (`meta.fetch_completed_at`, plan D2).
     fn note_fetch_completed(&mut self) -> Result<(), CrawlError> {
@@ -2713,11 +2924,22 @@ impl Run {
                 continue;
             };
             let tx = self.tx.clone();
+            // The page's clean context starts with the crawl's cookies for
+            // this internal page and its proxy (FR-011, spec 025); pages
+            // are internal by construction, and the jar returns none for
+            // any other host.
+            let cookies = match (self.net.jar(), Url::parse(&e.url)) {
+                (Some(jar), Ok(page)) => jar.seed_for(&page),
+                _ => Vec::new(),
+            };
+            let proxy = self.net.browser_proxy();
             stage.spawn(
                 e,
                 status,
                 headers,
                 raw,
+                cookies,
+                proxy,
                 self.opts.robots_token.clone(),
                 self.c.config.extraction.store_html,
                 self.extract_budget.clone(),

@@ -115,6 +115,41 @@ impl CrawlJar {
         (!pairs.is_empty()).then(|| pairs.join("; "))
     }
 
+    /// The cookies a page's fresh browser context starts with (spec 014
+    /// FR-011 as amended by spec 025): those the jar would send with a
+    /// request for `url`, and none at all when `url` is not an internal
+    /// host, so crawl cookies never reach a third party.
+    pub fn seed_for(&self, url: &Url) -> Vec<spiderlens_render::SeedCookie> {
+        if !self.is_internal(url) {
+            return Vec::new();
+        }
+        let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+        store
+            .matches(url)
+            .into_iter()
+            .map(|c| {
+                // Chromium: a leading dot makes a domain cookie, none a
+                // host-only one.
+                let domain = match &c.domain {
+                    cookie_store::CookieDomain::Suffix(d) => format!(".{d}"),
+                    other => String::from(other),
+                };
+                spiderlens_render::SeedCookie {
+                    name: c.name().to_string(),
+                    value: c.value().to_string(),
+                    domain,
+                    path: String::from(&c.path),
+                    secure: c.secure().unwrap_or(false),
+                    http_only: c.http_only().unwrap_or(false),
+                    expires: match &c.expires {
+                        cookie_store::CookieExpiration::AtUtc(t) => Some(t.unix_timestamp() as f64),
+                        cookie_store::CookieExpiration::SessionEnd => None,
+                    },
+                }
+            })
+            .collect()
+    }
+
     /// Stores cookies a response set, by the policy.
     pub fn receive<'a>(&self, set_cookie: impl Iterator<Item = &'a str>, url: &Url) {
         if !self.is_internal(url) {
@@ -193,6 +228,23 @@ mod tests {
             Some("consent=yes")
         );
         assert_eq!(j.header_for(&url("https://other.test/")), None);
+    }
+
+    #[test]
+    fn a_browser_is_seeded_with_internal_cookies_only() {
+        let mut j = jar(CookiePolicy::Ignore);
+        j.supply(&[supplied("consent", "yes", false)]);
+        let seeded = j.seed_for(&url("https://shop.example.com/a/b"));
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(seeded[0].name, "consent");
+        assert_eq!(seeded[0].value, "yes");
+        assert_eq!(seeded[0].domain, ".example.com", "a domain cookie, as supplied");
+        assert_eq!(seeded[0].path, "/");
+        assert!(seeded[0].expires.is_none(), "a session cookie");
+        assert!(
+            j.seed_for(&url("https://other.test/")).is_empty(),
+            "never to a third party"
+        );
     }
 
     #[test]

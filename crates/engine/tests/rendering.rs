@@ -1536,3 +1536,170 @@ async fn us5_a_browser_that_cannot_be_relaunched_makes_the_rest_browser_unavaila
         assert_eq!(site.count(JS_HOST, p), 1);
     }
 }
+
+// ---- Rendering an existing crawl (spec 014 T071, FR-006) ----
+
+/// Crawls a site raw with a crawler that has no browser, and checks that it
+/// completed.
+async fn raw_crawl(site: &JsSite, path: &Path, config: CrawlConfig) {
+    let crawler = Crawler::create(
+        path,
+        config,
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve());
+    let (_tx, rx) = watch::channel(Control::Run);
+    let s = crawler.run(rx, None).await.unwrap();
+    assert_eq!(s.status, "completed");
+}
+
+fn javascript_settings() -> spiderlens_config::RenderSettings {
+    let mut settings = CrawlConfig::default().rendering;
+    settings.mode = RenderMode::Javascript;
+    settings.concurrency = Some(2);
+    settings
+}
+
+/// The refusal message of `Crawler::open_for_render`, or a panic if it opened.
+fn refusal(path: &Path) -> String {
+    match Crawler::open_for_render(path, javascript_settings()) {
+        Ok(_) => panic!("opening for render should have been refused"),
+        Err(e) => e.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn an_existing_crawl_renders_without_requesting_its_pages_again() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("existing.spiderlens");
+    raw_crawl(&site, &path, config(true)).await;
+    let before: Vec<u64> = ["/", "/a", "/b"].iter().map(|p| site.count(JS_HOST, p)).collect();
+    assert_eq!(before, [1, 1, 1]);
+
+    let crawler = Crawler::open_for_render(&path, javascript_settings())
+        .unwrap()
+        .with_resolve(site.resolve())
+        .with_browser(browser)
+        .with_render_launch(LaunchOptions::default());
+    let (_tx, rx) = watch::channel(Control::Run);
+    let summary = crawler.run(rx, None).await.unwrap();
+    assert_eq!(summary.status, "completed");
+
+    let after: Vec<u64> = ["/", "/a", "/b"].iter().map(|p| site.count(JS_HOST, p)).collect();
+    assert_eq!(after, before, "the main documents are not requested again");
+    assert!(
+        site.count(JS_HOST, "/app.js") >= 1,
+        "page resources are requested for the render"
+    );
+
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    for p in ["/", "/a", "/b"] {
+        let id = store.id_of(&site.url(JS_HOST, p)).unwrap().expect("crawled");
+        let state: String = one(&store, "SELECT state FROM renders WHERE url_id = ?1", id);
+        assert_eq!(state, "rendered", "{p}");
+        let title: String = one(&store, "SELECT title FROM rendered_pages WHERE url_id = ?1", id);
+        assert_eq!(title, format!("Rendered {p}"));
+        let raw_title: String = one(&store, "SELECT title FROM urls WHERE id = ?1", id);
+        assert_eq!(raw_title, "Loading", "raw rows are never updated (FR-020)");
+    }
+    let changes: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = 'config_changed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(changes, 1, "the rendering run is recorded as a settings change");
+    drop(store);
+
+    assert!(
+        refusal(&path).contains("already rendered"),
+        "re-rendering is out of scope"
+    );
+}
+
+#[tokio::test]
+async fn a_crawl_without_stored_html_is_not_opened_for_render() {
+    let _serial = SERIAL.lock().await;
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no-html.spiderlens");
+    raw_crawl(&site, &path, config(false)).await;
+    assert!(refusal(&path).contains("did not store"), "{}", refusal(&path));
+    // Nothing was changed by the refusal.
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert!(store.meta("render_existing").unwrap().is_none());
+    assert!(store.render_counts().unwrap().is_empty());
+}
+
+// ---- Cookies and proxy of the crawl reach the render (FR-011, spec 025) ----
+
+/// One page whose script reports the cookies the browser context holds.
+fn cookie_site() -> JsSite {
+    JsSiteBuilder::new()
+        .page(
+            "/",
+            "<!doctype html><html><head><title>Loading</title>\
+             <script>document.addEventListener('DOMContentLoaded', function () {\
+               document.title = 'cookies:' + document.cookie;\
+             });</script></head><body><p>Cookie echo page.</p></body></html>",
+        )
+        .start()
+}
+
+async fn rendered_title_of_root(site: &JsSite, path: &Path, browser: BrowserInfo) -> String {
+    let crawler = Crawler::open_for_render(path, javascript_settings())
+        .unwrap()
+        .with_resolve(site.resolve())
+        .with_browser(browser)
+        .with_render_launch(LaunchOptions::default());
+    let (_tx, rx) = watch::channel(Control::Run);
+    assert_eq!(crawler.run(rx, None).await.unwrap().status, "completed");
+    let store = CrawlStore::open_read_only(path).unwrap();
+    let id = store.id_of(&site.url(JS_HOST, "/")).unwrap().expect("crawled");
+    one(&store, "SELECT title FROM rendered_pages WHERE url_id = ?1", id)
+}
+
+#[tokio::test]
+async fn t071a_the_crawl_cookie_jar_seeds_each_clean_context() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let dir = tempfile::tempdir().unwrap();
+
+    // With a cookie supplied to the crawl, the page's script sees it.
+    let site = cookie_site();
+    let mut with_cookie = config(true);
+    with_cookie
+        .access
+        .cookies
+        .push(spiderlens_config::SuppliedCookie {
+            name: "session".into(),
+            value: spiderlens_config::HeaderValue::Plain("abc123".into()),
+            domain: JS_HOST.into(),
+            path: "/".into(),
+            secure_only: false,
+        });
+    let path = dir.path().join("cookie.spiderlens");
+    raw_crawl(&site, &path, with_cookie).await;
+    assert_eq!(
+        rendered_title_of_root(&site, &path, browser.clone()).await,
+        "cookies:session=abc123"
+    );
+
+    // Without one, the context is clean.
+    let site = cookie_site();
+    let path = dir.path().join("clean.spiderlens");
+    raw_crawl(&site, &path, config(true)).await;
+    assert_eq!(
+        rendered_title_of_root(&site, &path, browser).await,
+        "cookies:",
+        "no cookies without a jar"
+    );
+}
