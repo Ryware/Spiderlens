@@ -353,3 +353,77 @@ fn page_shows_the_rendered_version_with_origins() {
         assert!(p.get(k).is_none(), "{k}");
     }
 }
+
+/// Processes (pid and command line) whose command line holds `needle`.
+#[cfg(unix)]
+fn processes_with(needle: &str) -> Vec<u32> {
+    let out = std::process::Command::new("ps")
+        .args(["-axww", "-o", "pid=", "-o", "args="])
+        .output()
+        .expect("ps");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.contains(needle))
+        .filter_map(|l| l.split_whitespace().next()?.parse().ok())
+        .collect()
+}
+
+/// FR-046, SC-009: killing `spiderlens` (SIGKILL) during a rendered crawl
+/// leaves no browser process of it behind after 10 s. The guard process
+/// notices and closes the browser. (The Windows leg, `taskkill /F`, runs in
+/// CI on Windows through the same guard; `ps` is Unix only.)
+#[cfg(unix)]
+#[test]
+fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
+    let Some(browser) = browser_path() else { return };
+    // Pages that take a while, so the crawl is still rendering when killed.
+    let page = |links: &str| {
+        format!(
+            "<!doctype html><html><head><title>Slow</title><script src=\"/slow.js\"></script></head>\
+             <body><p>Words.</p>{links}</body></html>"
+        )
+    };
+    let links: String = (1..=8).map(|i| format!("<a href=\"/p{i}\">P{i}</a>")).collect();
+    let mut b = JsSiteBuilder::new().page("/", &page(&links));
+    for i in 1..=8 {
+        b = b.page(&format!("/p{i}"), &page(""));
+    }
+    let site = b
+        .script(spiderlens_test_fixtures::js_site::JS_HOST, "/slow.js", "document.title = 'Done';")
+        .delay(
+            spiderlens_test_fixtures::js_site::JS_HOST,
+            "/slow.js",
+            std::time::Duration::from_secs(2),
+        )
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("killed.spiderlens");
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_spiderlens"))
+        .args(["crawl", &site.local_url("/"), "--render", "--speed", "fast", "--browser", &browser])
+        .arg("--out")
+        .arg(&file)
+        .arg("--quiet")
+        .env("SPIDERLENS_ACCEPT_OLD_BROWSER", "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Each browser of this process has a profile folder named after its pid.
+    let marker = format!("spiderlens-render-{}-", child.id());
+    let started = std::time::Instant::now();
+    while processes_with(&marker).is_empty() {
+        assert!(started.elapsed().as_secs() < 30, "the crawl never started a browser");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    child.kill().unwrap(); // SIGKILL
+    child.wait().unwrap();
+    let killed = std::time::Instant::now();
+    while !processes_with(&marker).is_empty() {
+        assert!(
+            killed.elapsed().as_secs() < 10,
+            "browser processes remain 10 s after the kill: {:?}",
+            processes_with(&marker)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
