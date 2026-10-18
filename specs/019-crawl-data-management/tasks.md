@@ -6,7 +6,7 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `trash` to `app/src-tauri/Cargo.toml` only; CI check that `spiderlens-engine` and `spiderlens-cli` do not depend on it.
+- [x] T001 Add `trash` to `app/src-tauri/Cargo.toml` only; CI check that `spiderlens-engine` and `spiderlens-cli` do not depend on it.
 - [ ] T002 [P] Test helper in `crates/test-fixtures`: build a crawl file with N pages and stored HTML, plus helper files with chosen ages (`filetime`, dev-dependency).
 
 ## Phase 2: Foundation (engine and config)
@@ -22,7 +22,7 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 - [ ] T008 Tests then code: `manage::list(unsaved_dir, recent, added)` builds `ManagedCrawl` rows from metadata and `meta` only; unavailable entries keep last known size; non-crawl files in the unsaved folder go to `other_files`. Test: 200 files listed in under 2 s (SC-006).
 - [x] T009 App commands `crawls_manage_list`, `crawls_html_size`, `crawls_add`; the active crawl reports `running` and its live size.
 - [x] T010 [P] Vitest: `ManageCrawls` sheet renders rows, totals, lazy HTML size placeholder, sort, filter chips, unavailable rows with Locate / Remove from list (US1.1 to US1.5).
-- [ ] T011 [P] Open the sheet from File menu, command palette and the start screen's unsaved total; Vitest for each entry point.
+- [ ] T011 [P] Open the sheet from File menu, command palette and the start screen's unsaved total; Vitest for each entry point. (palette covered and tested; no native File menu exists in the app, so no File menu entry yet)
 
 ## Phase 4: US2 Delete safely (P1)
 
@@ -60,7 +60,7 @@ Tests come first in each phase (constitution VII). `[P]` = can run in parallel w
 
 - [x] T032 Playwright: Settings › Storage keyboard flow; manager filter and sort.
 - [ ] T033 100k bench once to confirm crawl speed unchanged (33 to 35 s).
-- [ ] T034 Update `docs/` user notes: where crawls live, what cleanup does and never does.
+- [x] T034 Update `docs/` user notes: where crawls live, what cleanup does and never does.
 - [ ] T035 Run the quickstart on the Mac build.
 
 ## Phase 9: US6 Keep the last runs of a schedule (P2)
