@@ -54,7 +54,7 @@ export function AssistantsSettings({ transport }: { transport: Transport }) {
       <Group>
         <Row
           label="Allow AI assistants to read my crawls"
-          help="Assistants you connect can read your recent crawls and the crawl files in the folders below. They cannot start crawls, change files or go online through SpiderLens."
+          help="Assistants you connect can read your recent crawls and the crawl files in the folders below. They cannot change files. Starting crawls is a separate switch below."
         >
           {(_, l) => <Switch labelledBy={l} checked={s.allow_read} onChange={(v) => save({ allow_read: v })} />}
         </Row>
@@ -80,6 +80,39 @@ export function AssistantsSettings({ transport }: { transport: Transport }) {
               </Button>
             </div>
           )}
+        </Row>
+      </Group>
+      <Group title="Crawling">
+        <Row
+          label="Allow AI assistants to start crawls"
+          help="An assistant can then start, watch, pause and stop crawls with the profiles you allow below. Those crawls send requests to websites from this computer, under your name and address. Assistants cannot use profiles that ignore robots.txt or change a profile's settings. Crawls they start are marked “Started by an AI assistant”, and if the assistant disconnects they are paused."
+        >
+          {(_, l) => <Switch labelledBy={l} checked={s.allow_crawl} onChange={(v) => save({ allow_crawl: v })} />}
+        </Row>
+        <Row label="Profiles assistants may use" stacked help="Only saved profiles that respect robots.txt can be allowed.">
+          {() =>
+            view.profiles.length === 0 ? (
+              <p className="m-0 text-sm text-fg-3">No saved profiles yet. Save a profile first, then allow it here.</p>
+            ) : (
+              <ul aria-label="Allowed profiles" className="m-0 flex list-none flex-col divide-y divide-line rounded-md border border-line p-0">
+                {view.profiles.map((p) => {
+                  const on = s.allowed_profiles.includes(p.name);
+                  return (
+                    <li key={p.name} className="flex items-center gap-2 px-2.5 py-1.5 text-sm">
+                      <span className="min-w-0 flex-1 truncate text-fg">{p.name}</span>
+                      {p.reason && <span className="shrink-0 text-xs text-fg-3">{p.reason}</span>}
+                      <Switch
+                        label={`Allow ${p.name}`}
+                        checked={on && p.respects_robots}
+                        disabled={!s.allow_crawl || !p.respects_robots}
+                        onChange={(v) => save({ allowed_profiles: v ? [...s.allowed_profiles, p.name] : s.allowed_profiles.filter((x) => x !== p.name) })}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          }
         </Row>
       </Group>
       {error && (
@@ -185,7 +218,8 @@ function Connect({ view, transport }: { view: AssistantsView; transport: Transpo
           {"ok" in test ? (
             <Notice kind="info">
               The server works: {test.ok.tools.length} tools, protocol {test.ok.protocol}.{" "}
-              {test.ok.read_access ? "Read access is on." : "Read access is off, so assistants are told to turn it on here."}
+              {test.ok.read_access ? "Read access is on." : "Read access is off, so assistants are told to turn it on here."}{" "}
+              {test.ok.crawl_access ? "Starting crawls is on." : "Starting crawls is off."}
             </Notice>
           ) : (
             <Notice kind="bad">{test.error}</Notice>

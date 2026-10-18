@@ -13,7 +13,7 @@ allow_read: boolean,
  */
 allowed_folders: string[], 
 /**
- * Start, pause and stop crawls (P3, off by default).
+ * Start, watch, pause and stop crawls (P3, off by default).
  */
 allow_crawl: boolean, 
 /**

@@ -8,14 +8,17 @@
 //! - per-page rules over the `page_agent` summary of the raw HTML;
 //! - rules over the 014 rendering tables (`renders`, `render_comparisons`),
 //!   which read what a browser saw and the raw HTML did not hold;
-//! - site-wide rules counted once on the crawl's start URL: entry points,
-//!   `llms.txt` and the `SearchAction` of the site.
+//! - site-wide rules counted once on the crawl's start URL: entry points
+//!   (including the MCP discovery answers the `agent_entry_points` pass copies
+//!   from `agent_mcp_checks`), `llms.txt` and the `SearchAction` of the site.
 //!
 //! Not here, because the data they need is not stored yet:
 //! `form_rendered_only` (rendered `page_agent` rows are never written),
-//! `markdown_alternate_broken` (`md_outcome` is never filled),
-//! `search_action_out_of_scope`, `mcp_endpoint_unreachable`,
-//! `robots_blocks_agents`, `probe_blocked` and `prompt_injection_text`.
+//! `search_action_out_of_scope` and `prompt_injection_text`.
+//!
+//! `robots_blocks_agents` and `probe_blocked` read spec 015's stored robots
+//! evaluation (`aeo_bot_access`) and user agent probe (`aeo_probe`) for the
+//! crawlers the registry marks as user-fetch (`ai_bot_purpose`).
 
 use crate::agents::conditions as cond;
 use crate::issues::{Category::Agents as A, Priority::*, Rule, Scope, rule};
@@ -227,6 +230,48 @@ pub const RULES: &[Rule] = &[
         "Serve a Markdown version of the page and point to it with <link rel=\"alternate\" type=\"text/markdown\" href=...>.",
     ),
     rule(
+        "agents.markdown_alternate_broken",
+        "Markdown version does not work",
+        A,
+        Medium,
+        Scope::Pages,
+        cond::MARKDOWN_BROKEN,
+    )
+    .needs(Need::Agents)
+    .evidence(
+        "(SELECT CASE a.md_outcome WHEN 'wrong_type' THEN 'The Markdown version at ' || a.md_alternate || ' is served as something other than Markdown' \
+         ELSE 'The Markdown version at ' || a.md_alternate || ' did not load' || COALESCE(' (HTTP ' || a.md_status || ')', '') END \
+         FROM page_agent a WHERE a.url_id = u.id AND a.source = 'raw')",
+    )
+    .explain(
+        "The page points to a Markdown version, but the address does not answer with Markdown: it fails, or it returns HTML or another type. An agent that trusts the link gets nothing useful.",
+        "Make the address return the page as Markdown with a text/markdown (or text/plain) content type, or remove the link.",
+    ),
+    rule(
+        "agents.mcp_endpoint_unreachable",
+        "MCP endpoint does not answer",
+        A,
+        Medium,
+        Scope::Known,
+        site!(
+            "EXISTS (SELECT 1 FROM agent_entry_points e WHERE e.mcp_discovery IS NOT NULL \
+             AND json_extract(e.mcp_discovery, '$.answered') = 0 \
+             AND json_extract(e.mcp_discovery, '$.requires_sign_in') = 0)"
+        ),
+    )
+    .site_wide()
+    .needs(Need::Agents)
+    .evidence(
+        "(SELECT COUNT(*) || CASE COUNT(*) WHEN 1 THEN ' MCP endpoint did not answer: ' ELSE ' MCP endpoints did not answer, first: ' END \
+         || MIN(e.url) FROM agent_entry_points e WHERE e.mcp_discovery IS NOT NULL \
+         AND json_extract(e.mcp_discovery, '$.answered') = 0 \
+         AND json_extract(e.mcp_discovery, '$.requires_sign_in') = 0)",
+    )
+    .explain(
+        "The site's catalog or card lists an MCP server, but a discovery request to it got no MCP answer (an error, a timeout or a page that is not MCP). Agents that follow the listing cannot connect.",
+        "Check that the address in the catalog or card is the MCP endpoint, that it accepts POST requests with JSON, and that it is reachable without a browser.",
+    ),
+    rule(
         "agents.entry_point_invalid",
         "Agent entry point invalid",
         A,
@@ -286,6 +331,50 @@ pub const RULES: &[Rule] = &[
     .explain(
         "The llms.txt file does not follow the llms.txt proposal (a title, an optional summary, then sections of links), so tools that read it may skip it or misread it.",
         "Fix the problems the AI search checks list for the file, or publish the draft SpiderLens generates.",
+    ),
+    rule(
+        "agents.robots_blocks_agents",
+        "robots.txt blocks AI agents acting for a person",
+        A,
+        High,
+        Scope::Known,
+        site!(
+            "EXISTS (SELECT 1 FROM aeo_bot_access b WHERE ai_bot_purpose(b.bot) = 'user_fetch' \
+             AND (b.home_verdict = 'blocked' OR b.urls_blocked > 0))"
+        ),
+    )
+    .site_wide()
+    .needs(Need::AiChecks)
+    .evidence(
+        "(SELECT 'robots.txt blocks ' || group_concat(n, ', ') FROM (SELECT DISTINCT ai_bot_name(b.bot) AS n \
+         FROM aeo_bot_access b WHERE ai_bot_purpose(b.bot) = 'user_fetch' \
+         AND (b.home_verdict = 'blocked' OR b.urls_blocked > 0) ORDER BY b.bot))",
+    )
+    .explain(
+        "robots.txt turns away at least one AI agent that fetches pages because a person asked an assistant to. The person gets no answer from your site, or an answer built from other sources.",
+        "Allow the user-fetch agents the evidence names in robots.txt, or keep the block on purpose and accept that assistants cannot open these pages for people.",
+    ),
+    rule(
+        "agents.probe_blocked",
+        "AI agents blocked when tested",
+        A,
+        High,
+        Scope::Known,
+        site!(
+            "EXISTS (SELECT 1 FROM aeo_probe p WHERE ai_bot_purpose(p.bot) = 'user_fetch' \
+             AND p.outcome IN ('blocked', 'challenge'))"
+        ),
+    )
+    .site_wide()
+    .needs(Need::AiChecks)
+    .evidence(
+        "(SELECT group_concat(n, ', ') FROM (SELECT DISTINCT ai_bot_name(p.bot) || CASE p.outcome \
+         WHEN 'challenge' THEN ' was challenged' ELSE ' was blocked' END AS n FROM aeo_probe p \
+         WHERE ai_bot_purpose(p.bot) = 'user_fetch' AND p.outcome IN ('blocked', 'challenge') ORDER BY p.bot))",
+    )
+    .explain(
+        "When SpiderLens fetched pages with the user agent of an AI agent that acts for a person, the site refused it or answered with a challenge page. Bot protection is turning these agents away whatever robots.txt says.",
+        "Let the agents the evidence names through your firewall or bot protection, using the vendor's published IP ranges, or serve them the page without a challenge.",
     ),
     rule(
         "agents.content_rendered_only",

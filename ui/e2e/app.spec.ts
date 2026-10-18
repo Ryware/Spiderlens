@@ -1056,6 +1056,17 @@ test("ai_assistants_settings_from_the_palette_fit_and_save", async ({ page }) =>
   await expect(panel.getByLabel("Claude Code configuration")).toContainText("claude mcp add spiderlens --");
   await panel.getByRole("button", { name: "Test" }).click();
   await expect(panel.getByRole("status")).toContainText("The server works: 8 tools");
+  // Crawling is a separate switch, off by default; profiles that ignore robots.txt cannot be allowed.
+  const crawl = panel.getByRole("switch", { name: "Allow AI assistants to start crawls" });
+  await expect(crawl).toHaveAttribute("aria-checked", "false");
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toBeDisabled();
+  await crawl.click();
+  await expect(crawl).toHaveAttribute("aria-checked", "true");
+  await panel.getByRole("switch", { name: "Allow Polite" }).click();
+  await expect(panel.getByRole("switch", { name: "Allow Polite" })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("switch", { name: "Allow Stress test" })).toBeDisabled();
+  await expect(panel.getByRole("list", { name: "Allowed profiles" })).toContainText("Ignores robots.txt");
+  expect(await page.evaluate(() => window.spiderlens.assistants.settings.allowed_profiles)).toEqual(["Polite"]);
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
 });

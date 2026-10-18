@@ -19,6 +19,8 @@ import type { A11yCheckDetail } from "../generated/A11yCheckDetail";
 import type { MobileDetail } from "../generated/MobileDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
+import type { ElementChange } from "../generated/ElementChange";
+import type { RenderDetail } from "../generated/RenderDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { UrlIssue } from "../generated/UrlIssue";
 import { PriorityBadge } from "../issues/priority";
@@ -29,6 +31,7 @@ import { AiPageSection } from "./AiPageSection";
 import { CookieFlags, expiresText } from "./CookiesView";
 
 import { cellTone, formatBytes, toneText } from "./format";
+import { HtmlDiffSheet } from "./HtmlDiff";
 import { HtmlViewer } from "./HtmlViewer";
 import { SearchPreview } from "./SearchPreview";
 import { SitemapEntryList, useSitemapEntries } from "../sitemaps/InspectorSitemaps";
@@ -300,6 +303,92 @@ function LinkScoreSection({ m }: { m: LinkMetrics }) {
   );
 }
 
+/** Where a link or heading was found on a rendered page (spec 014 FR-028). */
+function OriginBadge({ origin }: { origin: string | null }) {
+  if (origin === "raw") return <Badge tone="warn" className="shrink-0">raw only</Badge>;
+  if (origin === "rendered") return <Badge tone="ok" className="shrink-0">rendered only</Badge>;
+  return null;
+}
+
+const changeText: Record<string, string> = {
+  added: "Only in rendered HTML",
+  removed: "Removed by JavaScript",
+  changed: "Updated by JavaScript",
+};
+const flagText: Record<string, string> = { added: "Only in rendered HTML", removed: "Only in original HTML" };
+
+/** Both values of an element rendering changed. */
+function ChangeValues({ change }: { change: ElementChange }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-fg-3">{changeText[change.diff] ?? change.diff}</span>
+      <span className="break-words">
+        <span className="text-fg-3">Raw: </span>
+        {change.raw ?? <span className="text-fg-3">none</span>}
+      </span>
+      <span className="break-words">
+        <span className="text-fg-3">Rendered: </span>
+        {change.rendered ?? <span className="text-fg-3">none</span>}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * What JavaScript changed on a rendered page, and the side-by-side
+ * comparison of its raw and rendered HTML (spec 014 FR-028, US3).
+ */
+function RenderSection({ transport, path, id, url, render, htmlStored }: { transport: Transport; path: string; id: number; url: string; render: RenderDetail; htmlStored: boolean }) {
+  const [open, setOpen] = useState(false);
+  const c = render.comparison;
+  if (!c) {
+    return (
+      <Section title="Raw vs rendered">
+        <p className="m-0 text-sm text-fg-3" data-selectable>
+          {render.reason_label ?? "This page has no rendered version to compare."}
+          {render.reason_detail ? `: ${render.reason_detail}` : ""}
+        </p>
+      </Section>
+    );
+  }
+  const n = (v: number) => v.toLocaleString();
+  const rows: [string, ReactNode][] = [
+    ["Words", `${n(c.words_raw)} raw, ${n(c.words_rendered)} rendered (${c.words_change > 0 ? "+" : ""}${n(c.words_change)})`],
+    ["Links", `${n(c.links_raw)} raw, ${n(c.links_rendered)} rendered, ${n(c.links_rendered_only)} only after rendering`],
+    ["JavaScript dependence", `${Math.round(c.dependence)}% of the visible text exists only in the rendered page`],
+  ];
+  const elements: [string, ElementChange][] = [
+    ["Title", c.title],
+    ["Meta description", c.description],
+    ["H1", c.h1],
+    ["Canonical", c.canonical],
+    ["Hreflang", c.hreflang],
+  ];
+  for (const [label, change] of elements) if (change.diff !== "same") rows.push([label, <ChangeValues change={change} />]);
+  for (const [label, change] of [["Noindex", c.noindex], ["Nofollow", c.nofollow]] as const) if (change.diff !== "same") rows.push([label, flagText[change.diff] ?? change.diff]);
+  if (c.structured_rendered_only > 0) rows.push(["Structured data", `${n(c.structured_rendered_only)} ${c.structured_rendered_only === 1 ? "block" : "blocks"} only in rendered HTML`]);
+  const canCompare = htmlStored && render.rendered_html_stored;
+  return (
+    <Section
+      title="Raw vs rendered"
+      aside={
+        <Button size="sm" disabled={!canCompare} onClick={() => setOpen(true)}>
+          <Columns2 className="size-3.5" /> Compare HTML
+        </Button>
+      }
+    >
+      {c.noindex.diff === "removed" && (
+        <Notice kind="warn">
+          Noindex only in original HTML: search engines read the raw noindex first and may never render this page, so a script that removes it may not make the page indexable.
+        </Notice>
+      )}
+      <Facts rows={rows} />
+      {!canCompare && <p className="m-0 text-xs text-fg-3">Turn on Store page HTML in the crawl settings and crawl again to compare the HTML side by side.</p>}
+      <HtmlDiffSheet transport={transport} path={path} id={id} url={url} open={open} onOpenChange={setOpen} />
+    </Section>
+  );
+}
+
 function Facts({ rows }: { rows: [string, ReactNode][] }) {
   return (
     <dl className="m-0 grid grid-cols-3 gap-x-3 gap-y-1 text-sm" data-selectable>
@@ -441,6 +530,7 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
             <li key={i} className="flex items-baseline gap-2 border-b border-line py-1 text-sm last:border-b-0">
               <span className="w-6 shrink-0 text-xs font-medium text-fg-3">H{h.level}</span>
               <span className={cn("min-w-0 flex-1 break-words", h.level === 1 ? "text-fg" : "text-fg-2")}>{h.text || <span className="text-fg-3">(empty)</span>}</span>
+              <OriginBadge origin={h.origin} />
             </li>
           ))}
         </ol>
@@ -455,6 +545,7 @@ function LinkList({ transport, path, id, kind, total, actions }: { transport: Tr
                 {r.url}
               </span>
               <LinkText kind={kind} text={r.text} />
+              <OriginBadge origin={r.origin} />
               {r.position && (
                 <span className="shrink-0 text-xs text-fg-3" title="Where the link sits on its page">
                   {positionLabel[r.position] ?? r.position}
@@ -904,7 +995,8 @@ export function Inspector({
     facts.push(["Indexability", <span className={non ? "text-warn" : undefined}>{d.indexability}</span>]);
   }
   if (d.fetched_at !== null) facts.push(["Fetched", new Date(d.fetched_at).toLocaleString()]);
-  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings };
+  // The Resources and Console lists have their own sections.
+  const counts: Record<ListKind, number> = { inlinks: d.inlinks, outlinks: d.outlinks, images: d.images, headings: d.headings, resources: 0, console: 0 };
   // Fields the file has no data for, grouped by why. Page HTML has its own
   // section, which says how to get it.
   const missing = new Map<string, string[]>();
@@ -1010,6 +1102,8 @@ export function Inspector({
           </Button>
         )}
       </Section>
+
+      {d.render && <RenderSection transport={transport} path={path} id={d.id} url={d.url} render={d.render} htmlStored={d.html_stored} />}
 
       <AgentsSection transport={transport} path={path} id={d.id} />
       {d.amp && <AmpSection amp={d.amp} />}

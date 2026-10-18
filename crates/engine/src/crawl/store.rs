@@ -2355,6 +2355,60 @@ impl CrawlStore {
         Ok(())
     }
 
+    /// The Markdown alternate of every internal page's raw HTML, in page
+    /// order: page id, page address, host key and the alternate as found
+    /// (spec 016 FR-012).
+    pub fn for_each_md_alternate(&self, mut f: impl FnMut(i64, &str, &str, &str)) -> Result<()> {
+        let mut st = self.conn.prepare(
+            "SELECT a.url_id, u.url, u.host_key, a.md_alternate FROM page_agent a
+             JOIN urls u ON u.id = a.url_id
+             WHERE a.source = 'raw' AND u.internal = 1 AND a.md_alternate IS NOT NULL
+             ORDER BY a.url_id",
+        )?;
+        let mut rows = st.query([])?;
+        while let Some(r) = rows.next()? {
+            f(
+                r.get(0)?,
+                &r.get::<_, String>(1)?,
+                &r.get::<_, String>(2)?,
+                &r.get::<_, String>(3)?,
+            );
+        }
+        Ok(())
+    }
+
+    /// What requesting a Markdown alternate found, for each page pointing at it.
+    pub fn record_md_check(&self, url_ids: &[i64], status: Option<u16>, outcome: &str) -> Result<()> {
+        let mut st = self.conn.prepare_cached(
+            "UPDATE page_agent SET md_status = ?2, md_outcome = ?3 WHERE url_id = ?1 AND source = 'raw'",
+        )?;
+        for id in url_ids {
+            st.execute(params![id, status, outcome])?;
+        }
+        Ok(())
+    }
+
+    /// One MCP endpoint's discovery answer (spec 016 FR-011).
+    pub fn record_mcp_check(&self, m: &super::agent_checks::McpRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO agent_mcp_checks
+                     (host_key, url, status, answered, protocol_versions, requires_sign_in, error, checked_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?
+            .execute(params![
+                m.host_key,
+                m.url,
+                m.status,
+                m.answered,
+                serde_json::to_string(&m.protocol_versions).unwrap_or_else(|_| "[]".into()),
+                m.requires_sign_in,
+                m.error,
+                m.checked_at
+            ])?;
+        Ok(())
+    }
+
     pub fn upsert_host(&self, h: &HostRow) -> Result<()> {
         self.conn
             .prepare_cached(

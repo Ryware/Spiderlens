@@ -147,3 +147,18 @@ test("palette_offers_the_first_five_recent_crawls", async () => {
   fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(t.files.opened).toEqual(["/crawls/c.spiderlens"]));
 });
+
+test("a_crawl_an_ai_assistant_started_carries_a_badge_and_others_do_not", async () => {
+  const t = fakeTransport();
+  t.files.seedRecent(
+    fakeRecent("/data/Unsaved/shop.spiderlens", { status: "running", unsaved: true, started_by: "assistant:claude-code", last_used: "2026-10-14T10:00:00Z" }),
+    fakeRecent("/crawls/blog.spiderlens", { last_used: "2026-10-01T10:00:00Z" }),
+  );
+  await renderStart(t);
+  await screen.findByRole("list", { name: "Recent crawls" });
+  const shop = row("/data/Unsaved/shop.spiderlens");
+  expect(within(shop).getByText("Started by an AI assistant")).toBeTruthy();
+  expect(within(shop).getByText("Started by an AI assistant").closest("[title]")?.getAttribute("title")).toContain("claude-code");
+  expect(within(shop).getByText("Running")).toBeTruthy();
+  expect(within(row("/crawls/blog.spiderlens")).queryByText("Started by an AI assistant")).toBeNull();
+});

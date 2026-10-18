@@ -31,11 +31,50 @@ pub struct Features {
     #[serde(skip)]
     #[ts(skip)]
     pub link_settings: spiderlens_config::LinkAnalysisSettings,
+    /// The thresholds of the JavaScript tab's "Contains JavaScript content"
+    /// and "Content hidden from non-rendering crawlers" filters, as stored
+    /// with the crawl (spec 014 FR-027, FR-030).
+    #[serde(skip)]
+    #[ts(skip)]
+    pub render_thresholds: RenderThresholds,
     /// Accessibility settings the crawl was made with (spec 026): the WCAG
     /// target and the mobile thresholds the rules read.
     #[serde(skip)]
     #[ts(skip)]
     pub a11y: spiderlens_config::AccessibilitySettings,
+}
+
+/// Rendering thresholds stored with a crawl.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderThresholds {
+    /// Percent of the raw word count the rendered count must exceed.
+    pub js_content_percent: f64,
+    /// Words the rendered count must exceed the raw count by.
+    pub js_content_words: f64,
+    /// Overall JavaScript dependence, percent, above which content counts as hidden.
+    pub hidden_percent: f64,
+}
+
+impl Default for RenderThresholds {
+    fn default() -> Self {
+        Self {
+            js_content_percent: 20.0,
+            js_content_words: 50.0,
+            hidden_percent: 50.0,
+        }
+    }
+}
+
+impl RenderThresholds {
+    /// The same values by label key, for filter labels (see
+    /// `FilterDef::label_with`).
+    pub fn as_map(&self) -> crate::sql::Thresholds {
+        crate::sql::Thresholds::from([
+            ("render.js_content", self.js_content_percent),
+            ("render.js_content.2", self.js_content_words),
+            ("render.hidden", self.hidden_percent),
+        ])
+    }
 }
 
 impl Features {
@@ -122,6 +161,17 @@ impl Features {
             .as_ref()
             .map(|s| s.config.links.clone())
             .unwrap_or_default();
+        // The settings in force, so rendering an existing crawl later
+        // (a stored change) is taken into account.
+        let render_thresholds = stored
+            .as_ref()
+            .map(|s| s.effective().rendering)
+            .map(|r| RenderThresholds {
+                js_content_percent: f64::from(r.js_content_min_percent),
+                js_content_words: f64::from(r.js_content_min_words),
+                hidden_percent: f64::from(r.hidden_content_percent),
+            })
+            .unwrap_or_default();
         let a11y = stored
             .as_ref()
             .map(|s| s.config.accessibility.clone())
@@ -135,6 +185,7 @@ impl Features {
             redirect_limit,
             robots_token,
             link_settings,
+            render_thresholds,
             a11y,
         })
     }

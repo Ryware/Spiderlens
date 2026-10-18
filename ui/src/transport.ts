@@ -24,6 +24,8 @@ import type { NearDupStatus } from "./generated/NearDupStatus";
 import type { PairsPage } from "./generated/PairsPage";
 import type { Features } from "./generated/Features";
 import type { FilterCounts } from "./generated/FilterCounts";
+import type { HtmlDiff } from "./generated/HtmlDiff";
+import type { HtmlVersion } from "./generated/HtmlVersion";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
 import type { PageHtml } from "./generated/PageHtml";
@@ -64,6 +66,7 @@ import type { SpeedPreset } from "./generated/SpeedPreset";
 import type { SpeedSettings } from "./generated/SpeedSettings";
 import type { UaPreset } from "./generated/UaPreset";
 import type { ActivityEntry } from "./generated/ActivityEntry";
+import type { AssistantProfile } from "./generated/AssistantProfile";
 import type { AssistantSettings } from "./generated/AssistantSettings";
 import type { AssistantSnippet } from "./generated/AssistantSnippet";
 import type { AgentsSummary } from "./generated/AgentsSummary";
@@ -477,6 +480,8 @@ export interface CrawlInfo {
   status: CrawlStatus;
   pause_reason: string | null;
   recovered: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
   mode: "spider" | "list";
   start_url: string | null;
   /** The stored configuration; null when the file has none it can read. */
@@ -503,6 +508,8 @@ export interface RecentEntry {
   last_used: string;
   available: boolean;
   unsaved: boolean;
+  /** `assistant:<name>` when an AI assistant started the crawl (spec 016 US6). */
+  started_by?: string | null;
 }
 
 export interface UnsavedCrawls {
@@ -675,6 +682,8 @@ export interface AssistantsView {
   settings: AssistantSettings;
   executable: string;
   snippets: AssistantSnippet[];
+  /** Saved profiles, with whether an assistant may crawl with each. */
+  profiles: AssistantProfile[];
 }
 
 /** What `<app> mcp --self-test` printed: the tools an assistant would see. */
@@ -921,8 +930,8 @@ export interface Transport {
   segmentsCounts(path: string): Promise<SegmentCounts>;
   viewClose(path: string, view: number): Promise<void>;
   urlDetail(path: string, id: number): Promise<UrlDetail>;
-  /** `position` keeps only links at that position (spec 023 FR-024). */
-  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null): Promise<ListPage>;
+  /** `position` keeps only links at that position (spec 023 FR-024). `values`: raw or rendered lists of a rendered crawl (spec 014); omitted means rendered when the crawl has rendering. */
+  urlList(path: string, id: number, kind: ListKind, from: number, count: number, position?: string | null, values?: Values): Promise<ListPage>;
   // Site login and proxy (spec 025, contracts/desktop-commands.md).
   /** Opens the login page in a private window; its addresses arrive through onLoginNavigated. */
   loginOpen(loginUrl: string, internalHosts: string[], userAgent: string | null): Promise<void>;
@@ -957,8 +966,10 @@ export interface Transport {
   cookiesList(path: string, filter: CookieFilter, sort: string | null, descending: boolean, offset: number, limit: number): Promise<CookiePage>;
   /** The URLs that set one cookie, in crawl order. */
   cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
-  /** The page's stored HTML, or why there is none. */
-  urlHtml(path: string, id: number): Promise<PageHtml>;
+  /** The page's stored HTML, or why there is none. `version`: the HTML as received (default) or as rendered (spec 014 FR-032). */
+  urlHtml(path: string, id: number, version?: HtmlVersion): Promise<PageHtml>;
+  /** The normalised raw and rendered HTML compared: `maxHunks` differences from number `fromHunk` (spec 014 FR-028). Rejects when either version is not stored. */
+  urlHtmlDiff(path: string, id: number, fromHunk: number, maxHunks: number): Promise<HtmlDiff>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
   urlTabs(path: string, id: number): Promise<string[]>;
   /** Puts one value on the clipboard. */
@@ -1245,7 +1256,7 @@ export const tauriTransport: Transport = {
   segmentsCounts: (path) => invoke("segments_counts", { path }),
   viewClose: (path, view) => invoke("view_close", { path, view }),
   urlDetail: (path, id) => invoke("url_detail", { path, id }),
-  urlList: (path, id, kind, from, count, position) => invoke("url_list", { path, id, kind, from, count, position: position ?? null }),
+  urlList: (path, id, kind, from, count, position, values) => invoke("url_list", { path, id, kind, from, count, position: position ?? null, values: values ?? null }),
   loginOpen: (loginUrl, internalHosts, userAgent) => invoke("login_open", { loginUrl, internalHosts, userAgent }),
   loginDone: () => invoke("login_done"),
   loginCancel: () => invoke("login_cancel"),
@@ -1268,7 +1279,8 @@ export const tauriTransport: Transport = {
   proxyTest: (proxy, probeUrl) => invoke("proxy_test", { proxy, probeUrl }),
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
-  urlHtml: (path, id) => invoke("url_html", { path, id }),
+  urlHtml: (path, id, version) => invoke("url_html", { path, id, version: version ?? null }),
+  urlHtmlDiff: (path, id, fromHunk, maxHunks) => invoke("url_html_diff", { path, id, fromHunk, maxHunks }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),
   copyRows: (path, view, ranges, columns) => invoke("copy_rows", { path, view, ranges, columns }),

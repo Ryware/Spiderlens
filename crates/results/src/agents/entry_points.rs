@@ -2,24 +2,28 @@
 //! FR-010): what each internal host offers to AI agents, into
 //! `agent_entry_points`.
 //!
-//! Two sources, both read from data the crawl already stored, so the pass
+//! Three sources, all read from data the crawl already stored, so the pass
 //! makes no request:
 //!
 //! - the three `/.well-known/` files the site file fetch kept in
 //!   `site_files` (AI Catalog, API catalog, A2A agent card), parsed here;
 //! - the `service-desc`, `service-doc` and `api-catalog` links found on pages
-//!   (`agent_links`, raw HTML), listed as `not_fetched`.
+//!   (`agent_links`, raw HTML), listed as `not_fetched`;
+//! - the MCP discovery answers (`agent_mcp_checks`, spec 016 FR-011): copied
+//!   to the row of the same address as `mcp_discovery`, or listed as an
+//!   `mcp_server` row found via the catalog or card that named the endpoint.
 //!
 //! Parsing is defensive: documents are capped by the fetch at 1 MB, `serde_json`
 //! limits nesting, lists are cut at [`MAX_ITEMS`] and nothing indexes or
 //! unwraps input.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use spiderlens_engine::crawl::agent_checks::mcp_endpoints;
 use spiderlens_engine::extract::body;
 use ts_rs::TS;
 use url::Url;
@@ -54,7 +58,7 @@ impl Pass for AgentEntryPoints {
         "agent_entry_points"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn needs(&self) -> &'static [Need] {
         &[Need::Agents]
@@ -68,11 +72,13 @@ impl Pass for AgentEntryPoints {
         let s = cx.schema;
         create(conn, s)?;
         conn.execute(&format!("DELETE FROM {s}.agent_entry_points"), [])?;
-        const STEPS: u64 = 2;
+        const STEPS: u64 = 3;
         cx.progress(0, STEPS, "Agent entry points")?;
         well_known(conn, s)?;
         cx.progress(1, STEPS, "Agent entry points")?;
         page_links(conn, s)?;
+        cx.progress(2, STEPS, "Agent entry points")?;
+        mcp_checks(conn, s)?;
         cx.progress(STEPS, STEPS, "Agent entry points")?;
         Ok(())
     }
@@ -221,6 +227,104 @@ fn page_links(conn: &Connection, s: &str) -> Result<()> {
             Option::<String>::None,
             Option::<String>::None,
         ])?;
+    }
+    Ok(())
+}
+
+/// The MCP discovery answers: onto the row of the same address, else as a
+/// new `mcp_server` row. Files from before the check have no table.
+fn mcp_checks(conn: &Connection, s: &str) -> Result<()> {
+    let has_table: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_mcp_checks')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_table {
+        return Ok(());
+    }
+    // Which document named each endpoint: the same extraction the crawl used.
+    let mut named: HashMap<(String, String), &'static str> = HashMap::new();
+    let mut docs = conn.prepare(
+        "SELECT host_key, path, final_url, size, body FROM site_files
+         WHERE path IN (?1, ?2) AND outcome = 'ok' ORDER BY host_key, path",
+    )?;
+    let files = docs
+        .query_map([WELL_KNOWN[0].0, WELL_KNOWN[2].0], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, Option<Vec<u8>>>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (host_key, path, final_url, size, packed) in files {
+        let kind = WELL_KNOWN
+            .iter()
+            .find(|(p, _)| *p == path)
+            .map_or("well_known", |(_, k)| *k);
+        let base = final_url
+            .and_then(|u| Url::parse(&u).ok())
+            .or_else(|| Url::parse(&format!("{host_key}{path}")).ok());
+        let bytes = packed
+            .as_deref()
+            .and_then(|p| body::decompress(p, size.unwrap_or(0).clamp(0, MAX_BODY as i64) as usize).ok());
+        if let (Some(base), Some(bytes)) = (base, bytes) {
+            for url in mcp_endpoints(&base, &bytes) {
+                named.entry((host_key.clone(), url.to_string())).or_insert(kind);
+            }
+        }
+    }
+    let mut read = conn.prepare(
+        "SELECT host_key, url, status, answered, protocol_versions, requires_sign_in, error
+         FROM agent_mcp_checks ORDER BY host_key, url",
+    )?;
+    let mut set = conn.prepare(&format!(
+        "UPDATE {s}.agent_entry_points SET mcp_discovery = ?3 WHERE host_key = ?1 AND url = ?2"
+    ))?;
+    let mut insert = conn.prepare(&format!("INSERT INTO {s}.agent_entry_points {INSERT}"))?;
+    let mut rows = read.query([])?;
+    while let Some(r) = rows.next()? {
+        let host_key: String = r.get(0)?;
+        let url: String = r.get(1)?;
+        let status: Option<i64> = r.get(2)?;
+        let answered: bool = r.get(3)?;
+        let versions: Vec<String> = r
+            .get::<_, Option<String>>(4)?
+            .and_then(|v| serde_json::from_str(&v).ok())
+            .unwrap_or_default();
+        let sign_in: bool = r.get(5)?;
+        let error: Option<String> = r.get(6)?;
+        let discovery = json!({
+            "answered": answered,
+            "protocol_versions": versions,
+            "requires_sign_in": sign_in,
+            "error": error,
+        })
+        .to_string();
+        if set.execute(params![host_key, url, discovery])? > 0 {
+            continue;
+        }
+        let found_via = named
+            .get(&(host_key.clone(), url.clone()))
+            .copied()
+            .unwrap_or("well_known");
+        insert.execute(params![
+            host_key,
+            "mcp_server",
+            url,
+            found_via,
+            Option::<i64>::None,
+            status,
+            if answered || sign_in { "ok" } else { "error" },
+            Option::<String>::None,
+            Option::<i64>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+        ])?;
+        set.execute(params![host_key, url, discovery])?;
     }
     Ok(())
 }
@@ -578,10 +682,12 @@ pub struct EntryPointRow {
     #[ts(type = "number")]
     pub id: i64,
     pub host_key: String,
-    /// ai_catalog, api_catalog, a2a_card, service_desc or service_doc.
+    /// ai_catalog, api_catalog, a2a_card, service_desc, service_doc or
+    /// mcp_server.
     pub kind: String,
     pub url: String,
-    /// well_known, page_link or link_header.
+    /// well_known, page_link or link_header; for an `mcp_server`, the kind of
+    /// the catalog or card that named it.
     pub found_via: String,
     /// The page that linked it; None for well-known files.
     #[ts(type = "number | null")]
@@ -597,7 +703,8 @@ pub struct EntryPointRow {
     pub problems: Vec<EntryProblem>,
     /// name, description and endpoints or entries.
     pub summary: Option<Value>,
-    /// Reserved for the MCP discovery request (spec 016 FR-011).
+    /// What the MCP discovery request found (spec 016 FR-011): answered,
+    /// protocol_versions, requires_sign_in and error.
     pub mcp_discovery: Option<Value>,
 }
 

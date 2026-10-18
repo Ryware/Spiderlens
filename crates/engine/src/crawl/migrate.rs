@@ -330,6 +330,22 @@ pub const STEPS: &[Step] = &[
         additive: true,
         sql: LINK_PASSES,
     },
+    // Spec 016: what the MCP discovery request of each endpoint answered.
+    Step {
+        version: 21,
+        additive: true,
+        sql: "CREATE TABLE agent_mcp_checks (
+    host_key TEXT NOT NULL,
+    url TEXT NOT NULL,
+    status INTEGER,
+    answered INTEGER NOT NULL,
+    protocol_versions TEXT,
+    requires_sign_in INTEGER NOT NULL,
+    error TEXT,
+    checked_at INTEGER,
+    PRIMARY KEY (host_key, url)
+);",
+    },
 ];
 
 /// Step 19's tables (spec 026 data-model.md). They stay empty when the
