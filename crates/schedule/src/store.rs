@@ -207,6 +207,7 @@ pub(crate) mod tests {
             catch_up: true,
             notify: NotifyLevel::Problems,
             after: vec![],
+            keep_last: None,
             created_at: now,
             updated_at: now,
         }
