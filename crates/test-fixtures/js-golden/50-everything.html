@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boot {i}</title>
+</head>
+<body>
+<div id="app">Loading</div>
+<script>
+requestAnimationFrame(function () {
+  document.title = 'Full page 5';
+  var head = document.head;
+  var d = document.createElement('meta'); d.name = 'description'; d.content = 'Everything is rendered 5.'; head.appendChild(d);
+  var c = document.createElement('link'); c.rel = 'canonical'; c.href = 'https://links.example.org/full/5'; head.appendChild(c);
+  var r = document.createElement('meta'); r.name = 'robots'; r.content = 'noarchive'; head.appendChild(r);
+  var s = document.createElement('script'); s.type = 'application/ld+json';
+  s.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "WebPage", "name": "Full 5" });
+  head.appendChild(s);
+  document.getElementById('app').innerHTML = '<h1>Full 5</h1><h2>Part one</h2><a href="https://links.example.org/full/5/one">One</a><h2>Part two</h2><a href="https://links.example.org/full/5/two">Two</a>';
+});
+</script>
+</body>
+</html>

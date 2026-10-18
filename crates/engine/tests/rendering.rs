@@ -2093,3 +2093,303 @@ async fn us6_screenshots_exist_only_when_turned_on() {
     assert_eq!(n, 0);
     assert!(store.screenshot(id(&store, &site, "/")).unwrap().is_none());
 }
+
+/// The rendered title of a page, if it has a rendered row.
+fn rendered_title(store: &CrawlStore, site: &JsSite, p: &str) -> Option<String> {
+    let id = store.id_of(&site.url(JS_HOST, p)).unwrap()?;
+    store
+        .conn_for_tests()
+        .query_row("SELECT title FROM rendered_pages WHERE url_id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .ok()
+}
+
+/// FR-011: a cookie and a `localStorage` value set by one page are not seen
+/// by the next, and no service worker controls a later page (T076).
+#[tokio::test]
+async fn edge_each_page_starts_with_a_clean_state() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    // Every page reports what it can see, then leaves a cookie, a stored
+    // value and a service worker registration behind.
+    let page = |links: &str| {
+        format!(
+            "<!doctype html><html><head><title>Loading</title></head><body><p>Words.</p>{links}\
+             <script>\
+               var ls = '';\
+               try {{ ls = localStorage.getItem('k') || ''; }} catch (e) {{ ls = 'error'; }}\
+               var sw = (navigator.serviceWorker && navigator.serviceWorker.controller) ? 'yes' : 'no';\
+               document.title = 'cookie=[' + document.cookie + '] ls=[' + ls + '] sw=' + sw;\
+               document.cookie = 'seen=1; path=/';\
+               try {{ localStorage.setItem('k', 'v'); }} catch (e) {{}}\
+               try {{ navigator.serviceWorker.register('/sw.js'); }} catch (e) {{}}\
+             </script></body></html>"
+        )
+    };
+    let site = JsSiteBuilder::new()
+        .page("/", &page("<a href=\"/p1\">1</a><a href=\"/p2\">2</a>"))
+        .page("/p1", &page(""))
+        .page("/p2", &page(""))
+        .script(JS_HOST, "/sw.js", "self.addEventListener('fetch', () => {});")
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("clean.spiderlens");
+    // One page at a time, so each later page could see what an earlier one left.
+    let status = crawl_rendering(&site, &path, browser, |c| c.rendering.concurrency = Some(1)).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    for p in ["/", "/p1", "/p2"] {
+        assert_eq!(
+            rendered_title(&store, &site, p).as_deref(),
+            Some("cookie=[] ls=[] sw=no"),
+            "{p}"
+        );
+    }
+}
+
+/// FR-012: dialogs, pop-ups, downloads, print and permission requests are
+/// dismissed or refused and never stop a render (T076).
+#[tokio::test]
+async fn edge_dialogs_popups_downloads_and_permissions_do_not_block() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let mut file =
+        spiderlens_test_fixtures::js_site::Resource::new("application/octet-stream", vec![0u8; 16]);
+    file.headers.push((
+        "Content-Disposition".into(),
+        "attachment; filename=\"f.bin\"".into(),
+    ));
+    let site = JsSiteBuilder::new()
+        .page(
+            "/",
+            "<!doctype html><html><head><title>Loading</title></head><body><p>Words.</p>\
+             <script>\
+               alert('hello'); confirm('sure?'); prompt('name?');\
+               window.open('/popup');\
+               try { navigator.geolocation.getCurrentPosition(function () {}, function () {}); } catch (e) {}\
+               try { Notification.requestPermission(); } catch (e) {}\
+               try { navigator.mediaDevices.getUserMedia({ video: true }).catch(function () {}); } catch (e) {}\
+               var a = document.createElement('a'); a.href = '/f.bin'; a.download = 'f.bin';\
+               document.body.appendChild(a); a.click();\
+               try { window.print(); } catch (e) {}\
+               document.title = 'finished';\
+             </script></body></html>",
+        )
+        .page("/popup", "<!doctype html><html><head><title>Popup</title></head><body>Popup</body></html>")
+        .resource(JS_HOST, "/f.bin", file)
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dialogs.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, |_| {}).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_state(&store, &site, "/").unwrap().0, "rendered");
+    assert_eq!(rendered_title(&store, &site, "/").as_deref(), Some("finished"));
+    assert_eq!(site.count(JS_HOST, "/popup"), 0, "the pop-up was not opened");
+}
+
+/// A route such as `#!/products` is the same URL as the page without the
+/// fragment: no separate URL, no separate render (T076, spec 003).
+#[tokio::test]
+async fn edge_fragment_routes_are_one_url() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let page = |links: &str| {
+        format!(
+            "<!doctype html><html><head><title>Fragments</title></head><body><p>Words.</p>{links}</body></html>"
+        )
+    };
+    let site = JsSiteBuilder::new()
+        .page(
+            "/",
+            &page(
+                "<a href=\"/app#!/products\">P</a><a href=\"/app#!/about\">A</a><a href=\"/#!/home\">H</a>",
+            ),
+        )
+        .page("/app", &page(""))
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fragments.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, |_| {}).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM urls WHERE url LIKE '%#%'"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM urls"), 2);
+    assert_eq!(count("SELECT COUNT(*) FROM renders"), 2);
+    assert_eq!(site.count(JS_HOST, "/app"), 1);
+}
+
+/// Redirects, non-HTML responses, external pages and pages blocked by
+/// robots.txt never get a render row (T076, FR-001 and FR-039).
+#[tokio::test]
+async fn edge_urls_that_are_not_pages_are_never_rendered() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let mut redirect = spiderlens_test_fixtures::js_site::Resource::new("text/html", "");
+    redirect.status = 302;
+    redirect.headers.push(("Location".into(), "/target".into()));
+    let page = |links: &str| {
+        format!(
+            "<!doctype html><html><head><title>Page</title></head><body><p>Words.</p>{links}</body></html>"
+        )
+    };
+    let site = JsSiteBuilder::new()
+        .page(
+            "/",
+            &page(
+                "<a href=\"/redir\">R</a><a href=\"/data.json\">J</a><a href=\"/private/page\">B</a>\
+                 <a href=\"https://external.example.org/x\">E</a>",
+            ),
+        )
+        .page("/target", &page(""))
+        .page("/private/page", &page(""))
+        .resource(JS_HOST, "/redir", redirect)
+        .json(JS_HOST, "/data.json", "{}")
+        .robots(JS_HOST, "User-agent: *\nDisallow: /private/\n")
+        .start();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kinds.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, |_| {}).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+    assert_eq!(render_state(&store, &site, "/").unwrap().0, "rendered");
+    assert_eq!(render_state(&store, &site, "/target").unwrap().0, "rendered");
+    for p in ["/redir", "/data.json", "/private/page"] {
+        assert_eq!(render_state(&store, &site, p), None, "{p}");
+    }
+    let external: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM renders r JOIN urls u ON u.id = r.url_id WHERE u.url LIKE '%external.example.org%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(external, 0);
+    let total: i64 = store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM renders", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(total, 2, "only the two internal HTML pages were queued");
+}
+
+/// The expected values for the pages in `crates/test-fixtures/js-golden`, as
+/// Chromium sees them after the scripts ran, one JSON object per page.
+fn golden_pages(dir: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let text = std::fs::read_to_string(dir.join("golden.json")).expect("golden.json");
+    serde_json::from_str(&text).expect("golden.json is JSON")
+}
+
+/// What the stored rendered row of a page says, in the shape
+/// `scripts/render-golden.mjs` writes.
+fn rendered_values(store: &CrawlStore, id: i64) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let conn = store.conn_for_tests();
+    let strings = |sql: &str| -> Vec<String> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([id], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    let (title, description, canonical): (Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT title, meta_description, canonical FROM rendered_pages WHERE url_id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    let headings: Vec<Value> = conn
+        .prepare(
+            "SELECT level, text FROM rendered_text
+             WHERE url_id = ?1 AND kind = 'heading' AND origin != 'raw' ORDER BY pos",
+        )
+        .unwrap()
+        .query_map([id], |r| Ok(json!([r.get::<_, i64>(0)?, r.get::<_, String>(1)?])))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let robots = strings(
+        "SELECT DISTINCT directive FROM rendered_directives
+         WHERE url_id = ?1 AND source = 'meta' AND origin != 'raw' ORDER BY directive",
+    );
+    // Links present in both versions are in `links`; links only the rendered
+    // page has are in `rendered_links`.
+    let mut links: Vec<String> = strings(
+        "SELECT TRIM(l.raw) FROM links l
+         WHERE l.from_id = ?1 AND l.kind = 'anchor'
+           AND NOT EXISTS (SELECT 1 FROM raw_only_links g WHERE g.from_id = l.from_id AND g.pos = l.pos)
+         UNION ALL
+         SELECT TRIM(raw) FROM rendered_links WHERE from_id = ?1 AND kind = 'anchor'",
+    );
+    links.sort();
+    let structured: Vec<Value> = strings(
+        "SELECT raw FROM rendered_structured_data
+         WHERE url_id = ?1 AND kind = 'json_ld' AND origin != 'raw' ORDER BY pos",
+    )
+    .iter()
+    .filter_map(|raw| serde_json::from_str(raw).ok())
+    .collect();
+    json!({
+        "title": title,
+        "description": description,
+        "headings": headings,
+        "canonical": canonical.into_iter().collect::<Vec<_>>(),
+        "robots": robots,
+        "links": links,
+        "structured_data": structured,
+    })
+}
+
+/// SC-004: on at least 50 JavaScript-dependent pages, the rendered values
+/// agree with headless Chromium on at least 98% of pages (title, description,
+/// headings, canonical, robots directives, links and structured data).
+#[tokio::test]
+#[ignore = "golden.json not generated yet: run scripts/render-golden.mjs"]
+async fn sc_004_rendered_pages_agree_with_chromium() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-fixtures/js-golden");
+    let golden = golden_pages(&dir);
+    assert!(golden.len() >= 50, "SC-004 needs at least 50 pages");
+
+    let mut builder = JsSiteBuilder::new();
+    let mut index = String::from("<!doctype html><html><head><title>Index</title></head><body>");
+    for file in golden.keys() {
+        let html = std::fs::read_to_string(dir.join(file)).unwrap();
+        builder = builder.page(&format!("/{file}"), &html);
+        index.push_str(&format!("<a href=\"/{file}\">{file}</a>"));
+    }
+    index.push_str("</body></html>");
+    let site = builder.page("/", &index).start();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("golden.spiderlens");
+    let status = crawl_rendering(&site, &path, browser, |c| c.rendering.concurrency = Some(4)).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&path).unwrap();
+
+    let mut differ = Vec::new();
+    for (file, expected) in &golden {
+        let ours = match store.id_of(&site.url(JS_HOST, &format!("/{file}"))).unwrap() {
+            Some(id)
+                if render_state(&store, &site, &format!("/{file}")).is_some_and(|s| s.0 == "rendered") =>
+            {
+                rendered_values(&store, id)
+            }
+            _ => serde_json::Value::Null,
+        };
+        if &ours != expected {
+            differ.push(format!("{file}\n  browser: {expected}\n  ours:    {ours}"));
+        }
+    }
+    let agree = (golden.len() - differ.len()) as f64 / golden.len() as f64;
+    println!("{} of {} pages agree", golden.len() - differ.len(), golden.len());
+    for d in &differ {
+        println!("{d}");
+    }
+    assert!(agree >= 0.98, "agreement {:.1}% is under 98%", agree * 100.0);
+}

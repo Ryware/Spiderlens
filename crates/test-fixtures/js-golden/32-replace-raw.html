@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Please wait</title>
+<meta name="description" content="Raw description {i}">
+</head>
+<body>
+<h1>Raw heading {i}</h1><p>Raw text.</p>
+<script>
+document.title = 'Replaced title 2';
+document.querySelector('meta[name=description]').setAttribute('content', 'Replaced description 2');
+document.querySelector('h1').textContent = 'Replaced heading 2';
+var h2 = document.createElement('h2');
+h2.textContent = 'Added subheading 2';
+document.body.appendChild(h2);
+</script>
+</body>
+</html>

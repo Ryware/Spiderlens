@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Async {i}</title>
+</head>
+<body>
+<div id="out"></div>
+<script>
+async function load() {
+  await Promise.resolve();
+  var data = await new Promise(function (resolve) { resolve({ title: 'Async result 5', items: ['One', 'Two', 'Three'] }); });
+  document.title = data.title;
+  var out = document.getElementById('out');
+  var h = document.createElement('h1');
+  h.textContent = data.title;
+  out.appendChild(h);
+  data.items.forEach(function (t, k) {
+    var a = document.createElement('a');
+    a.href = 'https://links.example.org/async/5/' + k;
+    a.textContent = t;
+    out.appendChild(a);
+  });
+}
+load();
+</script>
+</body>
+</html>
