@@ -8,4 +8,4 @@ export type Schedule = { id: string, name: string, enabled: boolean, config: imp
 /**
  * Hash of the source profile when the configuration was copied (FR-003).
  */
-source_hash: string | null, input: ScheduleInput, frequency: Frequency, output_dir: string, catch_up: boolean, notify: NotifyLevel, after: Array<AfterStep>, created_at: string, updated_at: string, };
+source_hash: string | null, input: ScheduleInput, frequency: Frequency, output_dir: string, catch_up: boolean, notify: NotifyLevel, after: Array<AfterStep>, keep_last: number | null, created_at: string, updated_at: string, };

@@ -568,7 +568,7 @@ export interface StoragePrefs {
   last_cleanup: string | null;
 }
 
-export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge";
+export type CleanupReason = "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge" | "schedule_retention";
 
 export interface CleanupRecord {
   at: string;
@@ -579,6 +579,8 @@ export interface CleanupRecord {
 
 export interface CleanupReport {
   removed: string[];
+  /** Older runs of schedules that keep only their last N runs. */
+  schedule_removed: string[];
   leftovers: number;
   freed_bytes: number;
   /** Named by the one-time notice: removed at a later start. */

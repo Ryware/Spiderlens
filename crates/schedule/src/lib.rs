@@ -14,6 +14,7 @@ pub mod model;
 pub mod naming;
 pub mod notify;
 pub mod os;
+pub mod retention;
 pub mod runner;
 pub mod store;
 pub mod validate;
@@ -27,6 +28,11 @@ pub use model::{
     StepStatus, Trigger,
 };
 pub use store::{Paths, Store, StoreError};
+
+/// How many runs a new schedule keeps unless told otherwise.
+pub const DEFAULT_KEEP_LAST: u32 = 10;
+/// The largest number of runs a schedule can be asked to keep.
+pub const MAX_KEEP_LAST: u32 = 999;
 
 /// The app's identifier, which names its configuration folder.
 pub const APP_ID: &str = "com.ryware.spiderlens";

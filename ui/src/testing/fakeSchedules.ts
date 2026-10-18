@@ -98,6 +98,7 @@ export function fakeSchedule(patch: Partial<Schedule> = {}): Schedule {
     catch_up: true,
     notify: "problems",
     after: [],
+    keep_last: 10,
     created_at: FAKE_NOW.toISOString(),
     updated_at: FAKE_NOW.toISOString(),
     ...patch,
@@ -128,6 +129,9 @@ function validate(s: Schedule): Issue[] {
   if (f) err("frequency", "frequency_invalid", f);
   if (!s.output_dir.trim() || !(s.output_dir.startsWith("/") || /^[A-Za-z]:\\/.test(s.output_dir))) {
     err("output_dir", "output_relative", "Choose a full folder path for the crawl files.");
+  }
+  if (s.keep_last !== null && (!Number.isInteger(s.keep_last) || s.keep_last < 1 || s.keep_last > 999)) {
+    err("keep_last", "keep_last_range", "Keep between 1 and 999 runs, or keep all of them.");
   }
   const secret = s.config.identity.headers.find((h) => "secret" in h.value);
   if (secret) {

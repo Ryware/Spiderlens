@@ -83,6 +83,10 @@ pub struct Schedule {
     pub catch_up: bool,
     pub notify: NotifyLevel,
     pub after: Vec<AfterStep>,
+    // How many finished runs of this schedule to keep (1 to 999); `None`
+    // keeps them all. Old schedules saved without it keep everything.
+    #[serde(default)]
+    pub keep_last: Option<u32>,
     #[ts(type = "string")]
     pub created_at: Timestamp,
     #[ts(type = "string")]

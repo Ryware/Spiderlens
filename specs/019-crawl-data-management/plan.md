@@ -248,6 +248,46 @@ fake transport, Playwright for the sheet's keyboard and selection flows.
   code 6 (006: local error) when the disk is too full to compact.
 - No automatic cleanup in the CLI (FR-026).
 
+### D11. Keep the last N runs of a schedule
+
+Spec 021 saves one crawl file per scheduled run and asked this spec for
+retention. The owner chose: per schedule, default 10, configurable 1 to 999
+or keep all (US6, FR-027 to FR-033).
+
+- **Field.** `Schedule.keep_last: Option<u32>` in `crates/schedule`
+  (`None` = keep all). `Schedule::new` and the app's new-schedule form set
+  `Some(10)`. The field is `#[serde(default)]`, so a schedule file written
+  before this change has no field and reads as `None`. Nothing existing is
+  deleted unless the user chooses a limit. Validation: 1 to 999 (`validate.rs`).
+- **Pure decision.** `crates/schedule/src/retention.rs`:
+  `plan(runs: &[Run], keep_last: Option<u32>, exists: impl Fn(&Path) -> bool, in_dir: impl Fn(&Path) -> bool) -> Vec<PathBuf>`.
+  It returns the files to remove, nothing else. A file counts only if it is
+  `Run.file`, exists, and is inside the schedule's output folder; each path
+  once. Sorted by run number, newest first; the newest N are kept and the rest
+  are returned. `None` or too few files returns empty. Runs still in progress
+  are never returned. The checks are closures so the truth table needs no disk.
+- **Where it runs.** In the desktop app's existing cleanup pass
+  (`run_cleanup`, D8): after launch recovery, then hourly (at most once a
+  day). After the age and leftover steps, the app loads each schedule, calls
+  `retention::plan`, then drops any path that is open, running, or whose
+  `WriterLock` is held (the same `scan` facts as D5). The rest go through the
+  existing `remove_crawl(path, Removal::Trash(..))`, which takes the crawl and
+  its `-wal`, `-shm`, `.lock` and `.partial` helpers.
+- **Trash unavailable.** `remove_crawl` returns the error, the file stays,
+  and the next pass plans it again. There is no permanent-delete fallback.
+- **History and notice.** `CleanupReason::ScheduleRetention`
+  (`schedule_retention`) is a new record reason. `CleanupReport` gains
+  `retention_removed: u32`; the notice adds "N older scheduled runs were
+  moved to the Trash (each schedule keeps its last runs)."
+- **Engine and CLI.** `spiderlens-engine` and `spiderlens-cli` still do not
+  depend on `trash` (T001). The CLI only stores and shows the rule:
+  `spiderlens schedule add/edit --keep-last N|all`, shown in `schedule show`.
+  It never removes run files, like FR-026.
+- **No format change.** Crawl files are untouched, so no migrate step. The
+  schedule record gains one optional field. Nothing runs on the crawl hot path.
+
+Run files of a deleted schedule become ordinary saved crawls (spec edge case).
+
 ## Performance
 
 - Crawl speed: unchanged code path; the 100k bench is run once to confirm
@@ -265,6 +305,7 @@ crates/engine/src/crawl/manage.rs     # crawl_files, html_size, purge_html, left
 crates/engine/tests/manage.rs         # purge identity, crash points, leftovers, truth table
 crates/config/src/storage.rs          # StoragePrefs, CleanupHistory
 crates/cli/src/files_cmd.rs           # files, purge-html
+crates/schedule/src/retention.rs      # keep-last decision (pure, D11)
 app/src-tauri/src/manage.rs           # trash, cleanup run, commands
 ui/src/files/ManageCrawls.tsx         # sheet + tests
 ui/src/files/useManagedCrawls.ts
