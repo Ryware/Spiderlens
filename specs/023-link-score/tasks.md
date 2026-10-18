@@ -25,7 +25,7 @@
 ## Phase 4: US2 runs on its own (P1)
 
 - [ ] T010 [US2] App runs the analysis when a crawl finishes (if `auto_analyse`) and when a finished file without results is opened; status bar progress and cancel; Vitest tests
-- [ ] T011 [US2] `LinkAnalysisSettings.auto_analyse` in config with Settings switch; CLI `--no-analyse`; tests
+- [x] T011 [US2] `LinkAnalysisSettings.auto_analyse` in config with Settings switch; CLI `--no-analyse`; tests
 - [ ] T012 [US2] Benchmarks on `synth` 100k / 1M: record in `benchmarks.md`; check SC-002 to SC-005 (crawl speed via the 008 benchmark job)
 
 ## Phase 5: US3 Links tab and rules (P2)
@@ -49,8 +49,8 @@
 
 ## Phase 8: Stage 2 (after 009 runner and 006 migrations land)
 
-- [ ] T023 Migration step creating `link_metrics` and `link_positions` (number at merge); passes registered in `PASSES`; `meta.link_analysis_run`; read-only files compute into `temp`
-- [ ] T024 Remove the stage 1 trigger in favour of the runner; `spiderlens links analyse` becomes an alias of `spiderlens analyse`; tests that an analysed file reopens with scores and no recomputation
+- [x] T023 Migration step creating `link_metrics` and `link_positions` (number at merge); passes registered in `PASSES`; `meta.link_analysis_run`; read-only files compute into `temp`
+- [x] T024 Remove the stage 1 trigger in favour of the runner; `spiderlens links analyse` becomes an alias of `spiderlens analyse`; tests that an analysed file reopens with scores and no recomputation
 
 ## Phase 9: Polish
 
