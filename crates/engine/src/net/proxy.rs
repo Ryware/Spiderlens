@@ -635,7 +635,9 @@ mod tests {
         );
 
         assert_eq!(
-            parse_scutil("ProxyAutoConfigEnable : 1\nProxyAutoConfigURLString : http://wpad.corp/proxy.pac\n"),
+            parse_scutil(
+                "ProxyAutoConfigEnable : 1\nProxyAutoConfigURLString : http://wpad.corp/proxy.pac\n"
+            ),
             Ok(Some(SystemProxy::Pac("http://wpad.corp/proxy.pac".into())))
         );
         assert_eq!(

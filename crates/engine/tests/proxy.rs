@@ -80,14 +80,13 @@ fn probe(site: &Site) -> url::Url {
 fn assert_every_request_came_through(proxy: &ProxyServer) {
     let paths = proxy.paths_to(E);
     for p in ["/robots.txt", "/sitemap.xml", "/", "/a", "/b", "/c"] {
-        assert!(paths.iter().any(|x| x == p), "{p} did not go through the proxy: {paths:?}");
+        assert!(
+            paths.iter().any(|x| x == p),
+            "{p} did not go through the proxy: {paths:?}"
+        );
     }
     // The link to the other host is checked through the proxy too.
-    assert!(
-        proxy.paths_to(D).iter().any(|x| x == "/d"),
-        "{:?}",
-        proxy.hits()
-    );
+    assert!(proxy.paths_to(D).iter().any(|x| x == "/d"), "{:?}", proxy.hits());
 }
 
 /// US4 scenario 1 and FR-020: with a manual HTTP proxy, every request,
@@ -133,7 +132,11 @@ fn connect_tunnel_reaches_the_target() {
         head.push(byte[0]);
     }
     assert!(String::from_utf8_lossy(&head).contains(" 200 "), "{head:?}");
-    write!(s, "GET /a HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n").unwrap();
+    write!(
+        s,
+        "GET /a HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
     let mut answer = String::new();
     s.read_to_string(&mut answer).unwrap();
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");

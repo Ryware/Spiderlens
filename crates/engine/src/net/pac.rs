@@ -33,7 +33,11 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PacChoice {
     Direct,
-    Proxy { kind: ProxyKind, host: String, port: u16 },
+    Proxy {
+        kind: ProxyKind,
+        host: String,
+        port: u16,
+    },
 }
 
 impl PacChoice {
@@ -300,10 +304,18 @@ fn error_detail(e: &reqwest::Error) -> String {
 /// A context with the helper functions and the script loaded.
 fn build_context(script: &str) -> Result<Context, String> {
     let mut ctx = Context::default();
-    ctx.register_global_callable(js_string!("dnsResolve"), 1, NativeFunction::from_fn_ptr(dns_resolve))
-        .map_err(|e| e.to_string())?;
-    ctx.register_global_callable(js_string!("myIpAddress"), 0, NativeFunction::from_fn_ptr(my_ip_address))
-        .map_err(|e| e.to_string())?;
+    ctx.register_global_callable(
+        js_string!("dnsResolve"),
+        1,
+        NativeFunction::from_fn_ptr(dns_resolve),
+    )
+    .map_err(|e| e.to_string())?;
+    ctx.register_global_callable(
+        js_string!("myIpAddress"),
+        0,
+        NativeFunction::from_fn_ptr(my_ip_address),
+    )
+    .map_err(|e| e.to_string())?;
     ctx.eval(Source::from_bytes(PRELUDE)).map_err(|e| e.to_string())?;
     ctx.eval(Source::from_bytes(script)).map_err(|e| e.to_string())?;
     let kind = ctx
@@ -339,12 +351,15 @@ fn text_arg(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
 /// `dnsResolve(host)`: the first IPv4 address, or null.
 fn dns_resolve(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let host = text_arg(args, ctx)?;
-    let found: Option<String> = (host.as_str(), 0u16).to_socket_addrs().ok().and_then(|mut addrs| {
-        addrs.find_map(|a| match a.ip() {
-            IpAddr::V4(v4) => Some(v4.to_string()),
-            IpAddr::V6(_) => None,
-        })
-    });
+    let found: Option<String> = (host.as_str(), 0u16)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| {
+            addrs.find_map(|a| match a.ip() {
+                IpAddr::V4(v4) => Some(v4.to_string()),
+                IpAddr::V6(_) => None,
+            })
+        });
     match found {
         Some(ip) => Ok(JsValue::from(JsString::from(ip.as_str()))),
         None => Ok(JsValue::null()),
@@ -549,10 +564,26 @@ function FindProxyForURL(url, host) {
         assert_eq!(
             got,
             vec![
-                PacChoice::Proxy { kind: ProxyKind::Http, host: "a".into(), port: 8080 },
-                PacChoice::Proxy { kind: ProxyKind::Socks5, host: "b".into(), port: 1081 },
-                PacChoice::Proxy { kind: ProxyKind::Socks5, host: "c".into(), port: 1080 },
-                PacChoice::Proxy { kind: ProxyKind::Https, host: "d".into(), port: 443 },
+                PacChoice::Proxy {
+                    kind: ProxyKind::Http,
+                    host: "a".into(),
+                    port: 8080
+                },
+                PacChoice::Proxy {
+                    kind: ProxyKind::Socks5,
+                    host: "b".into(),
+                    port: 1081
+                },
+                PacChoice::Proxy {
+                    kind: ProxyKind::Socks5,
+                    host: "c".into(),
+                    port: 1080
+                },
+                PacChoice::Proxy {
+                    kind: ProxyKind::Https,
+                    host: "d".into(),
+                    port: 443
+                },
                 PacChoice::Direct,
             ]
         );
@@ -570,8 +601,14 @@ function FindProxyForURL(url, host) {
 
     #[test]
     fn script_gets_the_url_browsers_give() {
-        assert_eq!(script_url(&url("https://u:p@a.example/x?y=1#z")), "https://a.example/");
-        assert_eq!(script_url(&url("http://u:p@a.example:81/x?y=1#z")), "http://a.example:81/x?y=1");
+        assert_eq!(
+            script_url(&url("https://u:p@a.example/x?y=1#z")),
+            "https://a.example/"
+        );
+        assert_eq!(
+            script_url(&url("http://u:p@a.example:81/x?y=1#z")),
+            "http://a.example:81/x?y=1"
+        );
     }
 
     #[test]
@@ -581,13 +618,21 @@ function FindProxyForURL(url, host) {
         assert_eq!(
             pac.find(&url("http://app.corp.example/")),
             vec![
-                PacChoice::Proxy { kind: ProxyKind::Http, host: "inner.corp".into(), port: 8080 },
+                PacChoice::Proxy {
+                    kind: ProxyKind::Http,
+                    host: "inner.corp".into(),
+                    port: 8080
+                },
                 PacChoice::Direct,
             ]
         );
         assert_eq!(
             pac.find(&url("http://site.example/blocked/page")),
-            vec![PacChoice::Proxy { kind: ProxyKind::Socks5, host: "sock".into(), port: 1080 }]
+            vec![PacChoice::Proxy {
+                kind: ProxyKind::Socks5,
+                host: "sock".into(),
+                port: 1080
+            }]
         );
         assert_eq!(pac.find(&url("http://127.0.0.1/")), vec![PacChoice::Direct]);
         assert_eq!(
