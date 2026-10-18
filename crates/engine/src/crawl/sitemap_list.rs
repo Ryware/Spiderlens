@@ -46,9 +46,14 @@ impl SitemapListSource {
         }
         let base = match base_url.map(str::trim).filter(|b| !b.is_empty()) {
             Some(b) if is_http(b) => Some(
-                Url::parse(b).map_err(|e| format!("The base address \"{b}\" is not a valid web address ({e})."))?,
+                Url::parse(b)
+                    .map_err(|e| format!("The base address \"{b}\" is not a valid web address ({e})."))?,
             ),
-            Some(b) => return Err(format!("The base address \"{b}\" must start with http:// or https://.")),
+            Some(b) => {
+                return Err(format!(
+                    "The base address \"{b}\" must start with http:// or https://."
+                ));
+            }
             None => None,
         };
         Ok(Self::File {
@@ -213,7 +218,11 @@ pub async fn list_from_sitemap_resolving(
     let mut notices = vec![format!(
         "Read {files} sitemap file{}{}.",
         if files == 1 { "" } else { "s" },
-        if indexes > 0 { format!(" ({indexes} index)") } else { String::new() }
+        if indexes > 0 {
+            format!(" ({indexes} index)")
+        } else {
+            String::new()
+        }
     )];
     notices.extend(problems);
     let mut list = list_from_urls(entries, notices);
@@ -226,7 +235,9 @@ fn push_urls(out: &mut Vec<ListEntry>, place: &str, base: Option<&Url>, found: &
     for e in found {
         // An empty address would otherwise resolve to the sitemap itself.
         let url = match base {
-            Some(b) if !e.loc.trim().is_empty() => b.join(&e.loc).map(String::from).unwrap_or_else(|_| e.loc.clone()),
+            Some(b) if !e.loc.trim().is_empty() => {
+                b.join(&e.loc).map(String::from).unwrap_or_else(|_| e.loc.clone())
+            }
             _ => e.loc.clone(),
         };
         out.push(ListEntry {
@@ -256,7 +267,9 @@ mod tests {
     #[test]
     fn arg_url_with_query_stays_whole() {
         let s = SitemapListSource::parse_arg("https://a.test/s.xml?x=https://b.test/").unwrap();
-        assert!(matches!(s, SitemapListSource::Url(u) if u.as_str() == "https://a.test/s.xml?x=https://b.test/"));
+        assert!(
+            matches!(s, SitemapListSource::Url(u) if u.as_str() == "https://a.test/s.xml?x=https://b.test/")
+        );
     }
 
     #[test]

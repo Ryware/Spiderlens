@@ -144,7 +144,14 @@ fn list_sitemap_file_with_base_url() {
 #[test]
 fn list_sitemap_conflicts_with_list_file_and_missing_file_is_refused() {
     spiderlens()
-        .args(["config", "validate", "--list-sitemap", "s.xml", "--list", "urls.txt"])
+        .args([
+            "config",
+            "validate",
+            "--list-sitemap",
+            "s.xml",
+            "--list",
+            "urls.txt",
+        ])
         .assert()
         .code(2);
     spiderlens()

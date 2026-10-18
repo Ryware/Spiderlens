@@ -40,7 +40,10 @@ const MOBILE_BUDGET: Duration = Duration::from_secs(1);
 /// The probes a crawl's render jobs carry and the shared cap of all of them
 /// (`RenderJob::probes_max_total`). `mobile_window` is whether the rendering
 /// window is a mobile one. Empty when nothing is asked for.
-pub(crate) fn probes_for(settings: &AccessibilitySettings, mobile_window: bool) -> (Vec<PageProbe>, Duration) {
+pub(crate) fn probes_for(
+    settings: &AccessibilitySettings,
+    mobile_window: bool,
+) -> (Vec<PageProbe>, Duration) {
     let total = Duration::from_secs(u64::from(settings.budget_secs.max(1)));
     let mut probes = Vec::new();
     if settings.level == A11yLevel::Off {
@@ -162,7 +165,11 @@ pub(crate) fn parse_a11y(json: &str) -> Result<A11yFull, String> {
         .results
         .into_iter()
         .map(|r| OwnedA11yResult {
-            kind: if r.kind == "violation" { "violation" } else { "needs_review" },
+            kind: if r.kind == "violation" {
+                "violation"
+            } else {
+                "needs_review"
+            },
             wcag: r
                 .tags
                 .iter()
@@ -241,7 +248,9 @@ pub(crate) fn parse_mobile(json: &str) -> Result<MobileLayout, String> {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FullOutcome {
     Checked(A11yFull),
-    TimedOut { ms: i64 },
+    TimedOut {
+        ms: i64,
+    },
     /// `too_large`, `probe_failed` or `bot_challenge`.
     NotChecked(&'static str),
 }

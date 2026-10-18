@@ -371,9 +371,8 @@ impl AuthSiteBuilder {
         let first = random_token(&state.counter);
         *state.nonce.lock().expect("nonce lock") = first;
         let shared = state.clone();
-        let addr = serve(move |req: &Request, conn: usize, auth: &mut ConnAuth| {
-            handle(&shared, req, conn, auth)
-        });
+        let addr =
+            serve(move |req: &Request, conn: usize, auth: &mut ConnAuth| handle(&shared, req, conn, auth));
         AuthSite {
             addr,
             host: self.host,

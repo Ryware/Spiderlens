@@ -467,12 +467,10 @@ pub(crate) fn read_input(
                     eprintln!("error: could not start: {e}");
                     ExitCode::FAILURE
                 })?;
-            let list = runtime
-                .block_on(list_from_sitemap(source, config))
-                .map_err(|e| {
-                    eprintln!("error: --list-sitemap: {e}");
-                    ExitCode::from(exit::USAGE)
-                })?;
+            let list = runtime.block_on(list_from_sitemap(source, config)).map_err(|e| {
+                eprintln!("error: --list-sitemap: {e}");
+                ExitCode::from(exit::USAGE)
+            })?;
             for n in &list.notices {
                 eprintln!("notice: {n}");
             }

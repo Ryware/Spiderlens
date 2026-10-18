@@ -23,6 +23,7 @@ export function ReportView({
   onOpenOnFinish,
   reportFile,
   onReportFile,
+  comparison = null,
 }: {
   transport: Transport;
   path: string;
@@ -32,8 +33,10 @@ export function ReportView({
   onOpenOnFinish: (v: boolean) => void;
   reportFile: FileOptions;
   onReportFile: (f: FileOptions) => void;
+  /** An open comparison whose current crawl is this file: the report gets its section (spec 012 FR-033). */
+  comparison?: number | null;
 }) {
-  const { report, error, loading, reload } = useReport(transport, path, running);
+  const { report, error, loading, reload } = useReport(transport, path, running, comparison);
   const [saveOpen, setSaveOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const name = reportName(report?.meta.start_url ?? null);
@@ -92,7 +95,7 @@ export function ReportView({
           Show the report when a crawl finishes
         </label>
       </div>
-      <ExportReportDialog open={saveOpen} onOpenChange={setSaveOpen} transport={transport} path={path} name={name} initial={reportFile} onRemember={onReportFile} />
+      <ExportReportDialog open={saveOpen} onOpenChange={setSaveOpen} transport={transport} path={path} name={name} initial={reportFile} onRemember={onReportFile} comparison={comparison} />
       <BulkExportDialog open={bulkOpen} onOpenChange={setBulkOpen} transport={transport} path={path} name={name} />
     </section>
   );

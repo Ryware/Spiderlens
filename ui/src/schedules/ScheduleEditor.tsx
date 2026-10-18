@@ -187,6 +187,15 @@ function withExportTabs(after: AfterStep[], tabs: string[]): AfterStep[] {
   return tabs.length ? [{ kind: "export", tabs: tabs.map((tab) => ({ tab, filter: "all" })) }, ...rest] : rest;
 }
 
+function hasCompare(after: AfterStep[]): boolean {
+  return after.some((a) => a.kind === "compare");
+}
+
+function withCompare(after: AfterStep[], on: boolean): AfterStep[] {
+  const rest = after.filter((a) => a.kind !== "compare");
+  return on ? [...rest, { kind: "compare" }] : rest;
+}
+
 /**
  * Create or edit a schedule (spec 021 US1, US2): name, input, frequency with
  * the next five runs, output folder, missed runs, notifications and the
@@ -394,8 +403,13 @@ export function ScheduleEditor({
                 </div>
               )}
             </Row>
-            <Row label="Report and comparison" help="The crawl report and Compare with the previous run arrive in a later version.">
-              {() => <span className="text-sm text-fg-3">Not available yet</span>}
+            <Row label="Compare with the previous run" help="Written as comparison.json next to the crawl file, using the latest earlier run that finished. The crawl report arrives in a later version.">
+              {(_, labelId) => (
+                <span className="flex items-center gap-2 text-sm text-fg-2">
+                  <span id={labelId}>Compare</span>
+                  <Switch labelledBy={labelId} checked={hasCompare(draft.after)} onChange={(on) => set({ after: withCompare(draft.after, on) })} />
+                </span>
+              )}
             </Row>
             <Row label="Notify me">
               {() => <Segmented label="Notify me" value={draft.notify} options={notifyOptions} onChange={(notify) => set({ notify })} />}

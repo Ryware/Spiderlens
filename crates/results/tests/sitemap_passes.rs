@@ -23,7 +23,9 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use rusqlite::Connection;
-use spiderlens_config::{CrawlConfig, IssueSettings, ListInput, Mode, ModeInput, RuleOverride, SpeedSettings};
+use spiderlens_config::{
+    CrawlConfig, IssueSettings, ListInput, Mode, ModeInput, RuleOverride, SpeedSettings,
+};
 use spiderlens_engine::crawl::{Control, Crawler};
 use spiderlens_results::Reader;
 use spiderlens_results::analysis::analyse_file;
@@ -116,8 +118,20 @@ fn site() -> Site {
         .html(S, "/outside-user", &page(&[]))
         .raw(S, "/sitemap.xml", 200, "application/xml", main.as_bytes())
         .raw(S, "/same.xml", 200, "application/xml", same.as_bytes())
-        .raw(S, "/sub/robots-map.xml", 200, "application/xml", robots_map.as_bytes())
-        .raw(S, "/sub/user-map.xml", 200, "application/xml", user_map.as_bytes())
+        .raw(
+            S,
+            "/sub/robots-map.xml",
+            200,
+            "application/xml",
+            robots_map.as_bytes(),
+        )
+        .raw(
+            S,
+            "/sub/user-map.xml",
+            200,
+            "application/xml",
+            user_map.as_bytes(),
+        )
         .start()
 }
 
@@ -131,7 +145,9 @@ impl Crawled {
     /// The path part of a stored URL, `/orphan`.
     fn strip(&self, url: &str) -> String {
         let base = self.site.url(S, "/");
-        url.strip_prefix(base.trim_end_matches('/')).unwrap_or(url).to_string()
+        url.strip_prefix(base.trim_end_matches('/'))
+            .unwrap_or(url)
+            .to_string()
     }
 
     fn conn(&self) -> Connection {
@@ -154,7 +170,10 @@ impl Crawled {
         let report = analyse_file(&self.path, &mut |_| {}, &never).unwrap();
         assert!(report.saved);
         let ran: BTreeSet<&str> = report.ran.iter().map(|(id, _)| id.as_str()).collect();
-        assert!(ran.contains("orphans") && ran.contains("sitemap_audit"), "{report:?}");
+        assert!(
+            ran.contains("orphans") && ran.contains("sitemap_audit"),
+            "{report:?}"
+        );
         assert!(report.skipped.is_empty(), "{report:?}");
     }
 
@@ -198,7 +217,11 @@ async fn crawl() -> Crawled {
         start_url: site.url(S, "/"),
     };
     run(&path, &site, config, input).await;
-    Crawled { _dir: dir, path, site }
+    Crawled {
+        _dir: dir,
+        path,
+        site,
+    }
 }
 
 fn set(paths: &[&str]) -> BTreeSet<String> {
@@ -327,12 +350,17 @@ async fn us2_list_mode_has_no_orphans_and_says_why() {
     let r = Reader::open(&path).unwrap();
     let s = r.orphan_summary().unwrap();
     assert!(s.list_mode && !s.available);
-    assert!(s.reason.as_deref().is_some_and(|m| m.contains("Spider mode")), "{s:?}");
+    assert!(
+        s.reason.as_deref().is_some_and(|m| m.contains("Spider mode")),
+        "{s:?}"
+    );
     assert_eq!((s.orphans, s.nofollow_only), (0, 0));
     assert!(r.orphan_rows(false).unwrap().is_empty());
     assert!(r.orphan_rows(true).unwrap().is_empty());
     let conn = Connection::open(&path).unwrap();
-    let n: i64 = conn.query_row("SELECT COUNT(*) FROM orphans", [], |r| r.get(0)).unwrap();
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM orphans", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(n, 0);
 }
 
@@ -353,7 +381,10 @@ async fn us3_us4_audit_records_what_needs_the_whole_crawl() {
     assert_eq!(n, 2, "one problem for each entry");
     // US3 scenario 5: outside the file's folder, unless robots.txt of the
     // start host listed the file.
-    assert_eq!(c.problem_paths("sitemap.outside_location"), set(&["/outside-user"]));
+    assert_eq!(
+        c.problem_paths("sitemap.outside_location"),
+        set(&["/outside-user"])
+    );
     // US4 scenario 2: a date after the crawl started.
     assert_eq!(c.problem_paths("sitemap.lastmod_future"), set(&["/fut"]));
     // US4 scenario 4: older than the page's Last-Modified.
@@ -465,7 +496,10 @@ async fn passes_on_a_read_only_file_run_into_temp() {
     let report = r.analyse_in_session(&mut |_| {}, &never).unwrap();
     assert!(!report.saved);
     let ran: BTreeSet<&str> = report.ran.iter().map(|(id, _)| id.as_str()).collect();
-    assert!(ran.contains("orphans") && ran.contains("sitemap_audit"), "{report:?}");
+    assert!(
+        ran.contains("orphans") && ran.contains("sitemap_audit"),
+        "{report:?}"
+    );
 
     // The results show in this session ...
     let s = r.orphan_summary().unwrap();

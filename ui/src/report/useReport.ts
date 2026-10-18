@@ -7,9 +7,10 @@ export const LIVE_REFRESH_MS = 5000;
 
 /**
  * The open crawl file's report. Built by the engine from stored data; while
- * the crawl runs it is refreshed and marked provisional.
+ * the crawl runs it is refreshed and marked provisional. With an open
+ * comparison of this file, the report carries its section (spec 012 FR-033).
  */
-export function useReport(transport: Transport, path: string | null, running: boolean) {
+export function useReport(transport: Transport, path: string | null, running: boolean, comparison: number | null = null) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,7 +21,7 @@ export function useReport(transport: Transport, path: string | null, running: bo
     const n = ++seq.current;
     setLoading(true);
     try {
-      const r = await transport.report(path, running, null);
+      const r = await transport.report(path, running, null, comparison);
       if (n === seq.current) {
         setReport(r);
         setError(null);
@@ -30,7 +31,7 @@ export function useReport(transport: Transport, path: string | null, running: bo
     } finally {
       if (n === seq.current) setLoading(false);
     }
-  }, [transport, path, running]);
+  }, [transport, path, running, comparison]);
 
   useEffect(() => {
     setReport(null);

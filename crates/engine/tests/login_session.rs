@@ -147,7 +147,10 @@ async fn custom_sign_out_patterns_replace_the_defaults() {
     })
     .await;
     let guarded = row(&d.path, &site.url("/members/2"));
-    assert_eq!((guarded.1.as_str(), guarded.2.as_deref()), ("not_crawled", Some("session_guard")));
+    assert_eq!(
+        (guarded.1.as_str(), guarded.2.as_deref()),
+        ("not_crawled", Some("session_guard"))
+    );
     assert_eq!(site.count("/members/2"), 0);
     // "/logout" is no longer on the list, so it is requested.
     assert_eq!(site.count("/logout"), 1);

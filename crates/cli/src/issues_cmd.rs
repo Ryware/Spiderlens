@@ -56,7 +56,7 @@ pub struct IssuesArgs {
     only: Vec<String>,
 }
 
-fn parse_priority(s: &str) -> Result<Priority, String> {
+pub(crate) fn parse_priority(s: &str) -> Result<Priority, String> {
     Priority::parse(s).ok_or_else(|| "expected high, medium, low or opportunity".into())
 }
 

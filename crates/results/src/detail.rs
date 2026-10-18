@@ -652,12 +652,14 @@ impl Reader {
         } else {
             None
         };
-        let accessibility = if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::AccessibilityFull) {
-            self.accessibility(id)?
-        } else {
-            None
-        };
-        let mobile = if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::MobileLayout) {
+        let accessibility =
+            if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::AccessibilityFull) {
+                self.accessibility(id)?
+            } else {
+                None
+            };
+        let mobile = if self.features.has(Need::AccessibilityStatic) || self.features.has(Need::MobileLayout)
+        {
             self.mobile(id)?
         } else {
             None
@@ -784,9 +786,8 @@ impl Reader {
                 .collect::<rusqlite::Result<_>>()?;
             capped |= check.nodes_total as usize > check.nodes.len();
             check.title = a11y_title(&check.check_id);
-            check.help_url = (!check.check_id.starts_with("static.")).then(|| {
-                format!("https://dequeuniversity.com/rules/axe/4.14/{}", check.check_id)
-            });
+            check.help_url = (!check.check_id.starts_with("static."))
+                .then(|| format!("https://dequeuniversity.com/rules/axe/4.14/{}", check.check_id));
             checks.push(check);
         }
         let (static_state, full_state, full_reason) = audit.unwrap_or((None, None, None));

@@ -90,6 +90,7 @@ export const phaseLabel: Record<CompareProgress["phase"], string> = {
   open: "Opening both crawls",
   previous: "Reading the previous crawl",
   current: "Reading the current crawl",
+  issues: "Evaluating issues in both crawls",
   match: "Matching URLs",
   counts: "Counting changes",
   done: "Done",

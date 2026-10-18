@@ -377,7 +377,12 @@ fn socks5(mut client: TcpStream, state: &Arc<State>) -> std::io::Result<()> {
     };
     client.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])?;
     state.record(Via::Socks5, &host, port, None);
-    relay(client, upstream, Vec::new(), sniffer(state, Via::Socks5, host, port));
+    relay(
+        client,
+        upstream,
+        Vec::new(),
+        sniffer(state, Via::Socks5, host, port),
+    );
     Ok(())
 }
 

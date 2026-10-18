@@ -7,6 +7,7 @@ use ts_rs::TS;
 
 use crate::elements::{Element, ElementKind};
 use crate::info::{ConfigDiff, CrawlInfo};
+use crate::issues::{IssueBasis, IssueDelta};
 use crate::registry::Layout;
 use crate::side::filter_available;
 use crate::{Result, Side};
@@ -158,6 +159,10 @@ pub struct Summary {
     pub low_overlap: bool,
     pub filters: Vec<FilterDelta>,
     pub elements: Vec<ElementDelta>,
+    /// Every enabled issue rule, by priority (story 3).
+    pub issues: Vec<IssueDelta>,
+    /// What both crawls' issues were evaluated with (FR-023).
+    pub issue_basis: IssueBasis,
 }
 
 fn count(ws: &Connection, sql: &str) -> Result<u64> {
@@ -171,6 +176,8 @@ pub(crate) fn summary(
     sides: &[Side; 2],
     layout: &Layout,
     elements: &[Element],
+    issue_settings: &spiderlens_results::issues::ResolvedSettings,
+    issue_basis: IssueBasis,
 ) -> Result<Summary> {
     let mut by_state: Vec<StateDelta> = Vec::new();
     {
@@ -252,6 +259,8 @@ pub(crate) fn summary(
         low_overlap: smaller > 0 && matched * 10 < smaller,
         filters: filter_deltas(ws, sides, layout)?,
         elements: element_deltas(ws, sides, elements)?,
+        issues: crate::issues::deltas(ws, sides, issue_settings)?,
+        issue_basis,
     })
 }
 

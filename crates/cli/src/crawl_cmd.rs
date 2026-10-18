@@ -122,6 +122,10 @@ pub struct ReportArgs {
     /// Issue settings JSON (rule overrides) for --audit and --html.
     #[arg(long, value_name = "FILE")]
     issues: Option<PathBuf>,
+    /// With --audit or --html: add a section comparing this crawl with an
+    /// earlier crawl file (spec 012).
+    #[arg(long, value_name = "PREVIOUS", conflicts_with_all = ["not_crawled", "crawled", "reason", "log"])]
+    compare_with: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -849,12 +853,22 @@ fn print_render_summary(out: &mut impl Write, r: &spiderlens_engine::crawl::Rend
 }
 
 pub fn run_report(args: ReportArgs) -> ExitCode {
+    if args.compare_with.is_some() && !args.audit && args.html.is_none() {
+        eprintln!("error: --compare-with needs --audit or --html");
+        return ExitCode::from(exit::USAGE);
+    }
     if args.audit {
-        return crate::report_cmd::run_audit(&args.file, args.issues.as_deref(), args.json);
+        return crate::report_cmd::run_audit(
+            &args.file,
+            args.issues.as_deref(),
+            args.json,
+            args.compare_with.as_deref(),
+        );
     }
     if let Some(out) = args.html {
         let a = crate::report_cmd::HtmlArgs {
             out,
+            compare_with: args.compare_with,
             title: args.title,
             note: args.note,
             urls_per_issue: args.urls_per_issue,

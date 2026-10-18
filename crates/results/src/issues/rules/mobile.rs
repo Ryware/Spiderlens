@@ -10,8 +10,7 @@ const VIEWPORT_STATE: &str = "(SELECT m.viewport_state FROM mobile_measures m WH
 
 pub const VIEWPORT_MISSING: &str =
     "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state = 'missing')";
-pub const VIEWPORT_NOT_DEVICE: &str =
-    "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state = 'not_device_width')";
+pub const VIEWPORT_NOT_DEVICE: &str = "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state = 'not_device_width')";
 pub const ZOOM_DISABLED: &str =
     "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.viewport_state = 'zoom_disabled')";
 pub const PLUGINS: &str = "EXISTS (SELECT 1 FROM mobile_measures m WHERE m.url_id = u.id AND m.plugins > 0)";

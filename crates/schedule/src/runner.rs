@@ -16,12 +16,14 @@ use std::time::Duration;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use serde::{Deserialize, Serialize};
-use spiderlens_config::{ListFormat, ModeInput, Severity, parse_list_bytes, validate};
+use spiderlens_compare::Comparison;
+use spiderlens_config::{CompareSettings, ListFormat, ModeInput, Severity, parse_list_bytes, validate};
 use spiderlens_engine::crawl::file::free_space;
 use spiderlens_engine::crawl::{Control, CrawlEvent, CrawlSummary, Crawler};
 use spiderlens_results::{UrlScope, ViewQuery, export_file};
 use tokio::sync::{mpsc, watch};
 
+use crate::baseline;
 use crate::due::{Due, due};
 use crate::history;
 use crate::model::{
@@ -286,7 +288,7 @@ pub async fn run(
 
     execute(ctx, &schedule, &mut run).await;
     if run.file.is_some() {
-        run.steps = after_steps(&schedule, &run);
+        run.steps = after_steps(ctx, &schedule, &run);
     }
     run.ended_at = Some(Timestamp::now());
     history::append(&hist, &run)?;
@@ -460,13 +462,14 @@ fn probe_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// FR-020 to FR-023: in order, each independent of the others' outcome.
-fn after_steps(s: &Schedule, run: &Run) -> Vec<StepResult> {
+fn after_steps(ctx: &Context, s: &Schedule, run: &Run) -> Vec<StepResult> {
     let file = run.file.as_deref().expect("steps need a crawl file");
     s.after
         .iter()
         .map(|step| match step {
             AfterStep::Export { tabs } => export_step(file, tabs),
-            AfterStep::Report { .. } | AfterStep::Compare => StepResult {
+            AfterStep::Compare => compare_step(ctx, s, run, file),
+            AfterStep::Report { .. } => StepResult {
                 kind: step.kind().into(),
                 status: StepStatus::Skipped,
                 outputs: vec![],
@@ -474,6 +477,57 @@ fn after_steps(s: &Schedule, run: &Run) -> Vec<StepResult> {
             },
         })
         .collect()
+}
+
+/// FR-022: the comparison with the previous finished run of this schedule,
+/// written next to the exports as `comparison.json`.
+fn compare_step(ctx: &Context, s: &Schedule, run: &Run, file: &Path) -> StepResult {
+    let step = |status, outputs, reason: Option<String>| StepResult {
+        kind: "compare".into(),
+        status,
+        outputs,
+        reason,
+    };
+    let previous = match baseline::previous_complete_run(&ctx.paths, &s.id, run.run) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return step(
+                StepStatus::Skipped,
+                vec![],
+                Some("No earlier finished run to compare with.".into()),
+            );
+        }
+        Err(e) => {
+            return step(
+                StepStatus::Failed,
+                vec![],
+                Some(format!("The run history cannot be read: {e}")),
+            );
+        }
+    };
+    let dir = exports_dir(file);
+    let dest = dir.join("comparison.json");
+    let never = AtomicBool::new(false);
+    let written = fs::create_dir_all(&dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))
+        .and_then(|()| {
+            let mut cmp = Comparison::run(
+                &previous,
+                file,
+                CompareSettings::default(),
+                None,
+                &never,
+                &mut |_| {},
+            )
+            .map_err(|e| e.to_string())?;
+            let report = cmp.report().map_err(|e| e.to_string())?;
+            let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+            fs::write(&dest, json).map_err(|e| format!("{}: {e}", dest.display()))
+        });
+    match written {
+        Ok(()) => step(StepStatus::Done, vec![dest], None),
+        Err(e) => step(StepStatus::Failed, vec![], Some(e)),
+    }
 }
 
 fn export_step(file: &Path, tabs: &[crate::model::ExportTab]) -> StepResult {
