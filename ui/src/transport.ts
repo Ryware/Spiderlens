@@ -358,6 +358,23 @@ export interface CrawlSummary {
   pause_reason: string | null;
   /** Sites that slowed down, asked to wait or paused, one entry per run (spec 008 FR-021). */
   speed_events?: { host: string; summary: string }[];
+  /** Rendering completeness (spec 014 FR-041); absent for raw crawls. */
+  render?: RenderSummary;
+}
+
+/**
+ * The summary's Rendering block: the final states add up to the pages
+ * eligible for rendering.
+ */
+export interface RenderSummary {
+  by_state: Record<string, number>;
+  by_reason: Record<string, number>;
+  avg_render_ms: number | null;
+  max_render_ms: number | null;
+  js_errors: number;
+  failed_resources: number;
+  blocked_resources: number;
+  renderer: { name: string; version: string; source: string } | null;
 }
 
 export interface CrawlReport {
@@ -367,6 +384,8 @@ export interface CrawlReport {
   reasons: { reason: string; label: string; count: number }[];
   /** Crawled URLs that got no response, per error class, with labels. */
   failures?: { class: string; label: string; count: number }[];
+  /** Render failure and skip reasons with the engine's labels (spec 014); absent for raw crawls. */
+  render_reasons?: { reason: string; label: string; count: number }[];
 }
 
 export interface CrawlFinished {

@@ -330,6 +330,32 @@ pub struct RenderSummary {
     pub renderer: Option<RendererInfo>,
 }
 
+impl RenderSummary {
+    /// The window's and the CLI's words for a render failure or skip reason
+    /// (`renders.reason`), in the order the summary lists them.
+    pub const REASONS: [(&'static str, &'static str); 8] = [
+        ("crash", "Browser crash"),
+        ("renderer_error", "Renderer error"),
+        ("page_too_large", "Page too large"),
+        ("navigation_error", "Navigation error"),
+        ("outside_rules", "Outside rendering rules"),
+        ("crawl_stopped", "Crawl stopped"),
+        ("browser_unavailable", "Browser unavailable"),
+        ("html_not_stored", "Raw HTML not stored"),
+    ];
+
+    /// The reasons with a count, labelled, in listing order.
+    pub fn labelled_reasons(&self) -> Vec<(&'static str, &'static str, u64)> {
+        Self::REASONS
+            .iter()
+            .filter_map(|(key, label)| {
+                let n = self.by_reason.get(*key).copied().unwrap_or(0);
+                (n > 0).then_some((*key, *label, n))
+            })
+            .collect()
+    }
+}
+
 /// What slowed one site down during a run (spec 008 FR-021).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpeedNote {

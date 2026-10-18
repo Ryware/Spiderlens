@@ -159,6 +159,17 @@ pub struct Report {
     reasons: Vec<ReasonCount>,
     /// Crawled URLs that got no response, per error class (spec 007 FR-004).
     failures: Vec<FailureCount>,
+    /// Why pages failed or were not rendered, with the engine's labels
+    /// (spec 014 FR-041); absent for raw crawls.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    render_reasons: Vec<RenderReasonCount>,
+}
+
+#[derive(Serialize, Clone)]
+struct RenderReasonCount {
+    reason: &'static str,
+    label: &'static str,
+    count: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -188,11 +199,22 @@ impl Report {
                 count: *n,
             })
             .collect();
+        let render_reasons = summary
+            .render
+            .as_ref()
+            .map(|r| {
+                r.labelled_reasons()
+                    .into_iter()
+                    .map(|(reason, label, count)| RenderReasonCount { reason, label, count })
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             path,
             summary,
             reasons,
             failures,
+            render_reasons,
         }
     }
 }
