@@ -64,6 +64,9 @@ const WINDOW: usize = 4096;
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// The "current" speed is averaged over this long (spec 008 assumption).
 const RATE_WINDOW: Duration = Duration::from_secs(5);
+/// How lately the URLs-per-second cap must have held a URL back for the
+/// progress to name it as the limit.
+const RATE_HELD_RECENT: Duration = Duration::from_secs(2);
 const LONG_CRAWL_DELAY: Duration = Duration::from_secs(60);
 /// Results are written in one transaction committed this often, so a crash
 /// loses at most this much work (spec 008 plan D2, FR-024).
@@ -1271,6 +1274,8 @@ struct Run {
     hosts: HashMap<String, Host>,
     in_flight: u32,
     next_global: Instant,
+    /// When the URLs-per-second cap last held back a ready URL.
+    rate_held_at: Option<Instant>,
     /// Rendered pages' resource requests waiting for a slot (spec 014 D4).
     permits: Permits,
     /// A waiting resource holds the global caps: no new page may start.
@@ -1494,6 +1499,7 @@ impl Run {
             hosts,
             in_flight: 0,
             next_global: Instant::now(),
+            rate_held_at: None,
             permits: Permits::default(),
             permits_hold_global: false,
             render: None,
@@ -1692,6 +1698,7 @@ impl Run {
             max_concurrent: self.c.config.speed.max_concurrent,
             max_urls_per_sec: self.c.config.speed.max_urls_per_sec,
             urls_per_sec,
+            rate_held: self.rate_held_at.is_some_and(|t| t.elapsed() < RATE_HELD_RECENT),
             connection_slow: self.connection_hold.is_some(),
             load,
         };
@@ -2385,6 +2392,9 @@ impl Run {
                 continue;
             }
             if self.next_global > now {
+                if self.c.config.speed.max_urls_per_sec.is_some() {
+                    self.rate_held_at = Some(now);
+                }
                 soonest(self.next_global, &mut wake);
                 break;
             }
