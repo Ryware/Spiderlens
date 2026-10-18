@@ -646,6 +646,13 @@ export interface CompareProgress {
   error: string | null;
 }
 
+/** The earlier run of a schedule that a scheduled crawl is compared with (spec 012 FR-002a). */
+export interface ScheduleBaseline {
+  path: string;
+  schedule: string;
+  run: number;
+}
+
 // Custom extraction and search (spec 013, contracts/desktop-commands.md).
 
 /** What one rule found on a tested page (FR-018). */
@@ -929,6 +936,8 @@ export interface Transport {
   onSpellProgress(cb: (p: SpellProgress) => void): Promise<() => void>;
   // Crawl comparison (spec 012, contracts/desktop-commands.md).
   compareSuggest(current: string): Promise<string | null>;
+  /** The previous finished run of the schedule the crawl belongs to; null when it is not a scheduled run, an error when there is none. */
+  compareScheduleBaseline(current: string): Promise<ScheduleBaseline | null>;
   compareSetup(previous: string, current: string): Promise<Setup>;
   compareTestMapping(previous: string, current: string, rules: MapRule[], samples: string[], fromPrevious: number): Promise<MappingTest[]>;
   compareStart(previous: string, current: string, settings: CompareSettings): Promise<number>;
@@ -1205,6 +1214,7 @@ export const tauriTransport: Transport = {
   spellSummary: (path) => invoke("spell_summary", { path }),
   onSpellProgress: (cb) => listen<SpellProgress>("spell-progress", (e) => cb(e.payload)),
   compareSuggest: (current) => invoke("compare_suggest", { current }),
+  compareScheduleBaseline: (current) => invoke("compare_schedule_baseline", { current }),
   compareSetup: (previous, current) => invoke("compare_setup", { previous, current }),
   compareTestMapping: (previous, current, rules, samples, fromPrevious) =>
     invoke("compare_test_mapping", { previous, current, rules, samples, fromPrevious }),

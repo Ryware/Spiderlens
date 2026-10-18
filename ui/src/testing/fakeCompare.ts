@@ -12,7 +12,7 @@ import type { GroupRow } from "../generated/GroupRow";
 import type { IssueDelta } from "../generated/IssueDelta";
 import type { Summary } from "../generated/Summary";
 import type { UrlDetail } from "../generated/UrlDetail";
-import type { CompareProgress, ExportProgress, Transport } from "../transport";
+import type { CompareProgress, ExportProgress, ScheduleBaseline, Transport } from "../transport";
 
 export const PREVIOUS = "/crawls/example.com-old.spiderlens";
 
@@ -30,6 +30,8 @@ export interface FakeCompare {
   fail(error: string): void;
   /** Origin of the previous crawl; a different one makes setup suggest a mapping. */
   previousStart: string;
+  /** What the schedule baseline lookup answers: null is "not a scheduled run", a string is the error. */
+  scheduleBaseline: ScheduleBaseline | string | null;
 }
 
 const info = (path: string, start: string, urls: number, complete = true): CrawlInfo => ({
@@ -163,6 +165,7 @@ function detail(id: number, title: string): UrlDetail {
 type CompareApi = Pick<
   Transport,
   | "compareSuggest"
+  | "compareScheduleBaseline"
   | "compareSetup"
   | "compareTestMapping"
   | "compareStart"
@@ -199,6 +202,7 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
     finish: () => send({ phase: "done", done: 1, total: 1 }),
     fail: (error) => send({ phase: "failed", error }),
     previousStart: "https://example.com/",
+    scheduleBaseline: null,
   };
   const page = (v: number, from: number, count: number) => {
     const all = views.get(v)!;
@@ -207,6 +211,10 @@ export function fakeCompareTransport(exportProgress: (p: Partial<ExportProgress>
   return {
     compare,
     compareSuggest: async (cur) => (cur === PREVIOUS ? null : PREVIOUS),
+    compareScheduleBaseline: async () => {
+      if (typeof compare.scheduleBaseline === "string") throw new Error(compare.scheduleBaseline);
+      return compare.scheduleBaseline;
+    },
     compareSetup: async (previous, cur) => {
       if (previous === cur) throw new Error("Choose two different crawl files: a crawl compared with itself has no changes.");
       const s = summary(cur, compare.previousStart, elements);

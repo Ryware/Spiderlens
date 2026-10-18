@@ -157,7 +157,7 @@ pub struct EditArgs {
     spec: SpecArgs,
 }
 
-fn config_paths() -> Result<Paths, ExitCode> {
+pub(crate) fn config_paths() -> Result<Paths, ExitCode> {
     match spiderlens_schedule::default_config_dir() {
         Some(dir) => Ok(Paths::new(dir)),
         None => {
