@@ -506,7 +506,9 @@ fn show(m: &Manager, s: &Schedule, json: bool) {
     println!("{:<12} {}", "When", s.frequency.describe());
     println!("{:<12} {}", "Output", s.output_dir.display());
     println!("{:<12} {}", "Catch up", if s.catch_up { "yes" } else { "no" });
-    let keeps = s.keep_last.map_or("all runs".to_string(), |n| format!("last {n} runs"));
+    let keeps = s
+        .keep_last
+        .map_or("all runs".to_string(), |n| format!("last {n} runs"));
     println!("{:<12} {keeps}", "Keeps");
     println!("{:<12} {}", "System", registered_text(&m.state(s)));
     for step in &s.after {
