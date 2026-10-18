@@ -463,6 +463,29 @@ test("amp_tab_lists_amp_pages_with_the_core_subset_note", async ({ page }) => {
   await expect(page.getByTestId("row-count")).toHaveText("1 URL");
 });
 
+// Spec 026: the Accessibility tab, its Critical filter, and a page's detail section.
+test("accessibility_tab_filters_critical_pages_and_shows_the_inspector_section", async ({ page }) => {
+  await page.evaluate(() => {
+    const s = window.spiderlens;
+    s.results.features.push("accessibility_static");
+    s.results.urls[1].a11y = s.fakeA11y({ checks: s.fakeA11y().checks.slice(1, 2) });
+    s.results.urls[2].a11y = s.fakeA11y();
+    s.results.urls[2].mobile = s.fakeMobile();
+  });
+  await crawl(page);
+  await page.getByRole("button", { name: "Accessibility", exact: true }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("2 URLs");
+  const tab = page.getByRole("region", { name: "Accessibility" });
+  await tab.getByRole("button", { name: /^Critical/ }).click();
+  await page.evaluate(() => window.spiderlens.results.ready());
+  await expect(page.getByTestId("row-count")).toHaveText("1 URL");
+  await page.getByRole("grid").getByRole("row").nth(1).click();
+  const details = page.getByRole("complementary", { name: "Details" });
+  await expect(details.getByRole("heading", { name: /^Accessibility \(2 failed\)/ })).toBeVisible();
+  await expect(details.getByText("Text has too little contrast")).toBeVisible();
+});
+
 // Spec 027 part D: spelling is checked after the crawl, from the Spelling tab.
 test("check_spelling_from_the_spelling_tab", async ({ page }) => {
   await crawl(page);
