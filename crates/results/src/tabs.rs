@@ -70,6 +70,9 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
+    /// The near duplicate analysis has run (spec 020 FR-023): until it has,
+    /// no count means "none found", only "not compared yet".
+    NearDupAnalysis,
 }
 
 impl Need {
@@ -114,6 +117,7 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
+            Self::NearDupAnalysis => "Compared when the crawl ends. Near duplicates are not analysed yet.",
         }
     }
 
@@ -141,6 +145,7 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
+            Self::NearDupAnalysis => "near_dup_analysis",
         }
     }
 }
@@ -673,15 +678,12 @@ macro_rules! amp_failed {
     };
 }
 
-/// An AMP page whose canonical page has no `amphtml` link back to it.
-const AMP_UNPAIRED: &str = "EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id AND ap.format = 'website') \
-     AND u.canonical IS NOT NULL AND u.canonical <> u.url \
-     AND NOT EXISTS (SELECT 1 FROM urls c JOIN links l ON l.from_id = c.id \
-         WHERE c.url = u.canonical AND l.kind = 'amphtml' AND l.to_id = u.id)";
+/// An AMP page whose canonical page has no `amphtml` link back to it (the
+/// rule's own condition, spec 009 FR-005).
+const AMP_UNPAIRED: &str = crate::issues::rules::amp::UNPAIRED;
 
 /// Reached through an `amphtml` link but not marked as AMP.
-const AMP_UNMARKED: &str = "NOT EXISTS (SELECT 1 FROM amp_pages ap WHERE ap.url_id = u.id) \
-     AND EXISTS (SELECT 1 FROM links l WHERE l.to_id = u.id AND l.kind = 'amphtml')";
+const AMP_UNMARKED: &str = crate::issues::rules::amp::NOT_MARKED;
 
 const fn amp_col(
     id: &'static str,
@@ -1346,6 +1348,10 @@ fn home_tab(c: crate::issues::Category) -> Option<&'static str> {
         Directives => "directives",
         Url => "url",
         Sitemaps => "sitemaps",
+        Serp => "page-titles",
+        Pdf => "pdfs",
+        Spelling => "spelling",
+        Amp => "amp",
         _ => return None,
     })
 }
@@ -1435,7 +1441,9 @@ fn build_tabs() -> Vec<TabDef> {
     use ValueKind::*;
     // Filters that test what an issue rule tests share its condition
     // (spec 009 FR-005).
-    use crate::issues::rules::{canonicals as ca, headings as hd, images as im, meta as me, url as ur};
+    use crate::issues::rules::{
+        canonicals as ca, headings as hd, images as im, meta as me, serp as sp, url as ur,
+    };
     vec![
         TabDef {
             id: Cow::Borrowed("internal"),
@@ -1703,11 +1711,13 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", "COALESCE(x.t, '') = ''"),
                 filter("duplicate", "Duplicate", "x.n > 1"),
                 filter("over_60", "Over 60 characters", "x.len > thr('title.over')").thr("title.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 600 pixels (desktop)", concat!(px!("u.title", "title"), " > 600")),
-                filter("px_over_mobile", "Over 580 pixels (mobile)", concat!(px!("u.title", "title"), " > 580")),
+                filter("px_over_desktop", "Over 600 pixels (desktop)", sp::TITLE_OVER_DESKTOP)
+                    .thr("serp.title_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 580 pixels (mobile)", sp::TITLE_OVER_MOBILE)
+                    .thr("serp.title_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_30", "Below 30 characters", "x.t <> '' AND x.len < thr('title.below')")
                     .thr("title.below", "Below {n} characters"),
-                filter("px_below", "Below 200 pixels", concat!("x.t <> '' AND ", px!("u.title", "title"), " < 200")),
+                filter("px_below", "Below 200 pixels", sp::TITLE_BELOW).thr("serp.title_below", "Below {n} pixels"),
                 filter("same_as_h1", "Same as H1", "x.same_h1").needs(Need::Extraction),
                 filter("multiple", "Multiple", "x.count > 1").needs(Need::Extraction),
             ],
@@ -1738,8 +1748,10 @@ fn build_tabs() -> Vec<TabDef> {
                 filter("missing", "Missing", me::MISSING),
                 filter("duplicate", "Duplicate", me::DUPLICATE).reads(Derived::OccMeta),
                 filter("over_155", "Over 155 characters", me::OVER).thr("meta.over", "Over {n} characters"),
-                filter("px_over_desktop", "Over 990 pixels (desktop)", concat!(px!(md_expr!(), "desc"), " > 990")),
-                filter("px_over_mobile", "Over 680 pixels (mobile)", concat!(px!(md_expr!(), "desc"), " > 680")),
+                filter("px_over_desktop", "Over 990 pixels (desktop)", sp::DESC_OVER_DESKTOP)
+                    .thr("serp.desc_over_desktop", "Over {n} pixels (desktop)"),
+                filter("px_over_mobile", "Over 680 pixels (mobile)", sp::DESC_OVER_MOBILE)
+                    .thr("serp.desc_over_mobile", "Over {n} pixels (mobile)"),
                 filter("below_70", "Below 70 characters", me::BELOW).thr("meta.below", "Below {n} characters"),
                 filter("multiple", "Multiple", me::MULTIPLE),
             ],
@@ -2135,7 +2147,7 @@ fn near_dup_tab() -> TabDef {
             filter(
                 "near_duplicates",
                 "Near duplicates",
-                "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.near_count > 0)",
+                crate::issues::rules::content::NEAR_DUPLICATE,
             )
             .needs(Need::NearDup),
             filter(

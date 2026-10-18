@@ -118,4 +118,5 @@ export const needReason: Record<Need, string> = {
   ai_checks: "AI checks have not run on this crawl. Run them from the AI search tab.",
   spelling: "Spelling has not been checked for this crawl. Use Check spelling on the Spelling tab.",
   near_dup: "Not analysed: this crawl file was made before SpiderLens compared page content.",
+  near_dup_analysis: "Compared when the crawl ends. Near duplicates are not analysed yet.",
 };

@@ -15,6 +15,7 @@ pub use pass::{
     PASS_ID, PASS_VERSION, PassSummary, Schema, analyse_file, effective_settings, run_pass, stale_reason,
     stored_settings,
 };
+pub(crate) use query::has_results;
 pub use query::{
     ClusterRow, ClustersPage, MemberRow, MembersPage, NearDupState, NearDupStatus, PageSummaryRow,
     PairExportRow, PairRow, PairsPage, clusters, compare, members, page_rows, pair_rows, pairs, status,

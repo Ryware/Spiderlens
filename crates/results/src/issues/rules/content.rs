@@ -17,6 +17,10 @@ pub(crate) use readability;
 
 pub const READABILITY: &str = readability!();
 
+/// Pages whose main content is near-identical to another page's (spec 020
+/// FR-023); the Content tab's Near duplicates filter tests the same.
+pub const NEAR_DUPLICATE: &str = "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.near_count > 0)";
+
 pub const RULES: &[Rule] = &[
     rule(
         "content.duplicate",
@@ -33,6 +37,25 @@ pub const RULES: &[Rule] = &[
     .explain(
         "Several URLs show exactly the same text. Search engines pick one to show and may pick the wrong one; the others compete for nothing.",
         "Keep one URL for the content. Redirect or canonicalise the copies to it, or make each page's text distinct.",
+    ),
+    rule(
+        "content.near_duplicate",
+        "Near duplicate content",
+        C,
+        Medium,
+        Scope::Pages,
+        NEAR_DUPLICATE,
+    )
+    .site_wide()
+    .needs(Need::NearDupAnalysis)
+    .evidence(
+        "(SELECT n.near_count || CASE WHEN n.near_count_is_min = 1 THEN '+' ELSE '' END || ' near duplicates' \
+         || COALESCE(', closest ' || n.closest_sim || '% similar: ' || (SELECT c.url FROM urls c WHERE c.id = n.closest_id), '') \
+         FROM near_dup_pages n WHERE n.url_id = u.id)",
+    )
+    .explain(
+        "The main text of this page is almost the same as the text of other pages. Search engines may show only one of them, and visitors get little reason to open the others.",
+        "Merge the pages, or point the copies to the one you want shown with a canonical link or a redirect. If the pages are meant to differ, rewrite their text so each says something of its own.",
     ),
     rule(
         "content.thin",
