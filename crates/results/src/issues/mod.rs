@@ -29,7 +29,7 @@ use crate::tabs::{Derived, Need};
 
 /// Increases whenever a rule is added, removed or changes its condition
 /// (FR-003).
-pub const RULES_VERSION: u32 = 5;
+pub const RULES_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +58,7 @@ pub enum Category {
     Amp,
     Accessibility,
     Mobile,
+    Agents,
 }
 
 impl Category {
@@ -86,6 +87,7 @@ impl Category {
             Self::Amp => "AMP",
             Self::Accessibility => "Accessibility",
             Self::Mobile => "Mobile",
+            Self::Agents => "AI agents",
         }
     }
 }
@@ -329,6 +331,7 @@ pub fn catalogue() -> &'static [Rule] {
             rules::amp::RULES,
             rules::accessibility::RULES,
             rules::mobile::RULES,
+            rules::agents::RULES,
         ]
         .concat()
     });
@@ -495,8 +498,8 @@ mod tests {
         let all = catalogue();
         assert_eq!(
             all.len(),
-            146,
-            "first rule set (spec table, with readability), spec 011's 27, spec 020's near duplicate, spec 027's SERP (5), PDF (5), spelling (4) and AMP (9) rules, and spec 026's accessibility and mobile (21)"
+            161,
+            "first rule set (spec table, with readability), spec 011's 27, spec 020's near duplicate, spec 027's SERP (5), PDF (5), spelling (4) and AMP (9) rules, spec 026's accessibility and mobile (21) and spec 016's 15"
         );
         let mut ids = HashSet::new();
         let mut cats = HashSet::new();
@@ -536,7 +539,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(cats.len(), 23);
+        assert_eq!(cats.len(), 24);
     }
 
     #[test]

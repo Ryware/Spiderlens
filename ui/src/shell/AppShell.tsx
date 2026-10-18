@@ -5,6 +5,7 @@ import { useAnalysis } from "../results/useAnalysis";
 import { useCrawlSetup } from "../crawl/useCrawlSetup";
 import { CrawlLog } from "../crawl/CrawlLog";
 import { BrowserDialog } from "../crawl/BrowserDialog";
+import { RunAccessibilityDialog } from "../accessibility/RunAccessibility";
 import { RetryDialog, useRetryAvailability } from "../crawl/RetryFailed";
 import { SpellingBar } from "../spelling/SpellingBar";
 import { useSpelling } from "../spelling/useSpelling";
@@ -124,6 +125,7 @@ export function AppShell({ transport }: { transport: Transport }) {
   const reportComparison = comparison.state.phase === "ready" && comparison.state.summary.current.path === crawl.path ? comparison.state.id : null;
   const [sitemapOpen, setSitemapOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
+  const [a11yRunOpen, setA11yRunOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
   const [infoOpen, setInfoOpen] = useState(false);
   /** Crawl information for a file other than the open crawl (from Manage crawls). */
@@ -364,6 +366,14 @@ export function AppShell({ transport }: { transport: Transport }) {
       { id: "pause", title: "Pause crawl", group: "Crawl", enabled: crawl.phase === "running", run: crawl.pause },
       { id: "resume", title: "Resume crawl", group: "Crawl", enabled: crawl.phase === "paused", run: resume },
       { id: "retry", title: "Retry failed URLs", group: "Crawl", keywords: ["again", "errors", "transient"], enabled: retry.available, reason: retry.reason, run: () => setRetryOpen(true) },
+      {
+        id: "accessibility-run",
+        title: "Run accessibility checks",
+        group: "Crawl",
+        keywords: ["wcag", "mobile", "static", "again"],
+        enabled: crawl.path !== null && !crawl.active,
+        run: () => setA11yRunOpen(true),
+      },
       { id: "stop", title: "Stop crawl", group: "Crawl", keywords: ["cancel", "end"], enabled: crawl.phase === "running" || crawl.phase === "paused", run: crawl.stop },
       { id: "open", title: "Open crawl…", group: "Crawl", shortcut: "Mod+O", keywords: ["file", "load", "results"], run: () => void openPicker() },
       ...recentOpen.map((e) => ({ id: `open-recent:${e.path}`, title: `Open recent: ${e.name || e.start_url || e.path}`, group: "Crawl" as const, keywords: [e.path], run: () => void openFile(e.path) })),
@@ -451,7 +461,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || compare || compareOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
+      if (settingsOpen || paletteOpen || aboutOpen || infoOpen || retryOpen || a11yRunOpen || compare || compareOpen || sitemapOpen || manageOpen || editorOpen || file.prompt || file.quitting) return;
       const c = shortcutCommand(commands, e, matches);
       if (c) {
         e.preventDefault();
@@ -460,7 +470,7 @@ export function AppShell({ transport }: { transport: Transport }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, compare, compareOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
+  }, [commands, settingsOpen, paletteOpen, aboutOpen, infoOpen, retryOpen, a11yRunOpen, compare, compareOpen, sitemapOpen, manageOpen, editorOpen, file.prompt, file.quitting]);
 
   return (
     <div data-shell className="flex h-full flex-col bg-bg text-fg">
@@ -684,6 +694,7 @@ export function AppShell({ transport }: { transport: Transport }) {
         />
       )}
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} transport={transport} />
+      <RunAccessibilityDialog open={a11yRunOpen} onOpenChange={setA11yRunOpen} transport={transport} path={crawl.path} onDone={results.reload} />
       <RetryDialog open={retryOpen} onOpenChange={setRetryOpen} transport={transport} path={crawl.path} onConfirm={() => void crawl.retryFailed()} />
       <CrawlInfoSheet
         open={infoOpen}

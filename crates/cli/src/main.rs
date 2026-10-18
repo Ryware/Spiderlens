@@ -5,6 +5,7 @@
 
 mod accessibility_cmd;
 mod aeo_cmd;
+mod agents_cmd;
 mod browser;
 mod compare_cmd;
 mod cookies_cmd;
@@ -129,6 +130,9 @@ enum Command {
     /// AI search checks (AEO and GEO) on a crawl file.
     #[command(subcommand)]
     Aeo(aeo_cmd::AeoCommand),
+    /// AI agent readiness of a crawl file: score, parts and entry points.
+    #[command(subcommand)]
+    Agents(agents_cmd::AgentsCommand),
     /// URLs per segment of a crawl file.
     Segments(segments_cmd::SegmentsArgs),
     /// Check the spelling of a crawl file, or manage dictionaries.
@@ -282,6 +286,7 @@ fn main() -> ExitCode {
         Command::Viz(args) => viz_cmd::run_viz(*args),
         Command::Links(cmd) => links_cmd::run(cmd),
         Command::Aeo(cmd) => aeo_cmd::run(cmd),
+        Command::Agents(cmd) => agents_cmd::run(cmd),
         Command::Segments(args) => segments_cmd::run_segments(args),
         Command::Spell(args) => spell_cmd::run_spell(*args),
         Command::Scope(ScopeCommand::Test(args)) => crawl_cmd::run_scope_test(*args),

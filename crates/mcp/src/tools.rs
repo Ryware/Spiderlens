@@ -113,6 +113,24 @@ pub const TOOLS: &[ToolDef] = &[
         schema: || obj(page_props(), &["crawl"]),
     },
     ToolDef {
+        name: "agents_summary",
+        description: "How ready the whole site is for AI agents: the crawl score and its four parts (access, discovery, reading, acting), the rules that cost the most points and the checks that could not run, with the reasons.",
+        schema: || obj(json!({"crawl": crawl_prop()}), &["crawl"]),
+    },
+    ToolDef {
+        name: "host_entry_points",
+        description: "What each host of the crawl offers to AI agents: the AI Catalog, API catalog, agent card and the service links found on pages, with the outcome of each and the problems found in the document.",
+        schema: || {
+            obj(
+                json!({
+                    "crawl": crawl_prop(),
+                    "host": {"type": "string", "description": "Only this host, for example www.example.com."}
+                }),
+                &["crawl"],
+            )
+        },
+    },
+    ToolDef {
         name: "export_rows",
         description: "CSV text of a tab and filter (the same rows and columns as the app's export), at most 1,000 rows and 64 KB. Never writes a file.",
         schema: || {

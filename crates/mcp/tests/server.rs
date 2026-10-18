@@ -307,6 +307,21 @@ async fn an_assistant_reads_a_crawl_with_bounded_pages() {
     let a = ok(&s, "page_agent_findings", json!({"crawl": id, "url_id": d["id"]}));
     assert_eq!(a["checked"], true);
 
+    // The whole-crawl agent summary and the entry points: the crawl was not
+    // analysed, so the summary says so, and the filter by host narrows rows.
+    let sum = ok(&s, "agents_summary", json!({"crawl": id}));
+    assert!(sum["available"].is_boolean());
+    assert!(sum["parts"].is_array());
+    let eps = ok(&s, "host_entry_points", json!({"crawl": id}));
+    assert!(eps["total"].is_number());
+    assert!(eps["rows"].is_array());
+    let none = ok(
+        &s,
+        "host_entry_points",
+        json!({"crawl": id, "host": "other.test"}),
+    );
+    assert_eq!(none["total"], 0);
+
     let csv = ok(
         &s,
         "export_rows",
@@ -343,6 +358,8 @@ async fn crawled_text_never_appears_outside_crawled() {
         ok(&s, "page_details", json!({"crawl": id, "url_id": evil})),
         ok(&s, "page_html", json!({"crawl": id, "url_id": evil})),
         ok(&s, "page_agent_findings", json!({"crawl": id, "url_id": evil})),
+        ok(&s, "agents_summary", json!({"crawl": id})),
+        ok(&s, "host_entry_points", json!({"crawl": id})),
         ok(&s, "export_rows", json!({"crawl": id, "tab": "page-titles"})),
     ];
     for tab in ["internal", "page-titles", "h1", "agents"] {
@@ -409,6 +426,8 @@ async fn speaks_mcp_over_a_byte_stream() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert!(names.contains(&"query_pages"));
+    assert!(names.contains(&"agents_summary"));
+    assert!(names.contains(&"host_entry_points"));
     send(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_crawls", "arguments": {}}})).await;
     let call: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
     assert_eq!(call["result"]["isError"], false);

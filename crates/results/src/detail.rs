@@ -100,7 +100,7 @@ pub struct MobileDetail {
 }
 
 /// A readable name for a check id.
-fn a11y_title(check_id: &str) -> String {
+pub(crate) fn a11y_title(check_id: &str) -> String {
     if let Some(id) = check_id.strip_prefix("static.") {
         let title = match id {
             "form_label" => "Form field without a label",

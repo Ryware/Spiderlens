@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { App } from "../App";
 import { fakeReport, fakeTransport } from "../testing/fakeTransport";
 import { formatElapsed } from "./useCrawlRun";
+import type { RenderProgress } from "../transport";
 
 const button = (name: RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
 const status = () => screen.getByRole("contentinfo", { name: "Crawl status" });
@@ -35,6 +36,50 @@ test("start_runs_a_crawl_and_shows_live_figures", async () => {
   expect(figure("left")).toBe("~01:30 left");
   const overview = screen.getByRole("region", { name: "Overview" });
   expect(within(overview).getByText("Discovered").nextSibling?.textContent).toBe("40");
+});
+
+const renderProgress = (patch: Partial<RenderProgress> = {}): RenderProgress => ({
+  rendered: 120,
+  queued: 30,
+  rendering: 4,
+  pages_per_sec: 7.26,
+  avg_pages_per_sec: 6,
+  limit: 4,
+  limiting: null,
+  fetching_done: false,
+  ...patch,
+});
+
+test("the_rendering_row_is_hidden_for_raw_progress_events", async () => {
+  // Spec 014 US2 scenario 4: a raw crawl's events have no render figures.
+  const t = await startCrawl();
+  act(() => t.crawls.progress({ crawled: 12, queued: 25 }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
+  act(() => t.crawls.progress({ crawled: 13, render: null }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
+});
+
+test("the_rendering_row_shows_the_figures_and_why_rendering_is_the_limit", async () => {
+  const t = await startCrawl();
+  act(() => t.crawls.progress({ crawled: 12, render: renderProgress() }));
+  expect(status().querySelector('[data-row="rendering"]')).not.toBeNull();
+  expect(figure("rendered")).toBe("120 rendered");
+  expect(figure("render-waiting")).toBe("30 waiting to render");
+  expect(figure("rendering")).toBe("4 rendering");
+  expect(figure("render-rate")).toBe("7.3 pages/s");
+  expect(status().textContent).not.toMatch(/Limited by/);
+  expect(status().textContent).not.toMatch(/Fetching done/);
+
+  act(() => t.crawls.progress({ crawled: 40, render: renderProgress({ limiting: "queue_full", fetching_done: false }) }));
+  expect(status().textContent).toMatch(/Limited by: fetching is paused until fewer pages wait to be rendered/);
+
+  act(() => t.crawls.progress({ crawled: 40, render: renderProgress({ limiting: "concurrency", fetching_done: true }) }));
+  expect(status().textContent).toMatch(/Fetching done; rendering continues/);
+  expect(status().textContent).toMatch(/Limited by: rendering 4 pages at once/);
+
+  // The row goes away when a later event has no render figures.
+  act(() => t.crawls.progress({ crawled: 41, render: undefined }));
+  expect(status().querySelector('[data-row="rendering"]')).toBeNull();
 });
 
 test("analysis_phase_shows_in_the_status_bar_until_the_crawl_finishes", async () => {
