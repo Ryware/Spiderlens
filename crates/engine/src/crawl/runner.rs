@@ -28,6 +28,7 @@ use super::pace::{self, CrawlView, LoadMeter, SiteEvents, SitePace, SiteView, Sp
 use super::reason::{DiscoverySource, LinkKind, NotCrawledReason, UrlState};
 use super::render::cache::{DEFAULT_CAPACITY, ResourceCache};
 use super::render::net::{NetMsg, NetShared, Note, Permits, Slots as HostSlots};
+use super::render::a11y_probe::{AXE_VERSION, FullOutcome, MobileOutcome};
 use super::render::stage::{Eligibility, MAX_ATTEMPTS, RenderStage, Rendered};
 use super::retry::{self, Attempt, Decision};
 use super::scope::{Candidate, Nofollow, ScopeRules, Verdict, problem_verdict};
@@ -938,6 +939,17 @@ impl Crawler {
             }
             if config.rendering.screenshots {
                 features.push("screenshots");
+            }
+            // Spec 026: full checks and mobile layout need the render stage.
+            if config.accessibility.level == A11yLevel::Full {
+                features.push("accessibility_full");
+                store.set_meta(
+                    "a11y_engine",
+                    &format!("{{\"name\":\"axe-core\",\"version\":\"{}\"}}", AXE_VERSION),
+                )?;
+            }
+            if config.accessibility.mobile {
+                features.push("mobile_layout");
             }
             store.add_data_features(&features)?;
         }
@@ -2818,7 +2830,86 @@ impl Run {
                     .map(|s| (s.webp.as_slice(), s.width, s.height)),
             },
         )?;
+        self.record_probes(id, &r)?;
         self.finished += 1;
+        Ok(())
+    }
+
+    /// Stores what the spec 026 probes found on one rendered page: the full
+    /// accessibility result or why there is none, and the mobile layout. The
+    /// results were parsed on the render task; this only writes rows. A page
+    /// never rendered gets nothing (the UI reads a missing state as not
+    /// rendered).
+    fn record_probes(&self, id: i64, r: &Rendered) -> Result<(), CrawlError> {
+        use super::store::MobileRow;
+        use spiderlens_render::RenderState;
+        let a = &self.c.config.accessibility;
+        let store = &self.c.store;
+        if a.level == A11yLevel::Full {
+            let rendered = matches!(r.outcome.state, RenderState::Rendered);
+            let not_checked = |reason: &str| store.set_a11y_state(id, "full", "not_checked", Some(reason), None);
+            if !rendered {
+                not_checked(match r.outcome.state {
+                    RenderState::TimedOut => "render_timed_out",
+                    _ => "render_failed",
+                })?;
+            } else if r.rendered.is_none() || r.outcome.html.is_none() {
+                not_checked("render_failed")?;
+            } else if r.bot_challenge {
+                not_checked("bot_challenge")?;
+            } else {
+                match &r.probe_report.full {
+                    Some(FullOutcome::Checked(f)) => {
+                        let rows: Vec<_> = f.results.iter().map(|x| x.as_row()).collect();
+                        store.record_a11y(id, "full", &rows)?;
+                        store.set_a11y_state(id, "full", "checked", None, Some(f.ms))?;
+                    }
+                    Some(FullOutcome::TimedOut { ms }) => {
+                        store.set_a11y_state(id, "full", "timed_out", None, Some(*ms))?;
+                    }
+                    Some(FullOutcome::NotChecked(reason)) => not_checked(reason)?,
+                    None => not_checked("probe_failed")?,
+                }
+            }
+        }
+        if a.mobile && matches!(r.outcome.state, RenderState::Rendered) && !r.bot_challenge {
+            if !r.outcome.window.mobile {
+                store.record_mobile(
+                    id,
+                    &MobileRow {
+                        window: Some("desktop"),
+                        measured: Some("desktop_window"),
+                        ..MobileRow::default()
+                    },
+                )?;
+            } else {
+                match &r.probe_report.mobile {
+                    Some(MobileOutcome::Measured(m)) => store.record_mobile(
+                        id,
+                        &MobileRow {
+                            window: Some("mobile"),
+                            measured: Some("yes"),
+                            content_px: Some(m.content_px),
+                            window_px: Some(m.window_px),
+                            widest: m.widest.as_deref(),
+                            small_text_share: Some(m.small_text_share),
+                            small_targets: Some(m.small_targets),
+                            examples: Some(m.examples.clone()),
+                            ..MobileRow::default()
+                        },
+                    )?,
+                    Some(MobileOutcome::TimedOut) => store.record_mobile(
+                        id,
+                        &MobileRow {
+                            window: Some("mobile"),
+                            measured: Some("timed_out"),
+                            ..MobileRow::default()
+                        },
+                    )?,
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 
