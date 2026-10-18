@@ -301,3 +301,125 @@ fn sitemap_flags() {
         .assert()
         .code(2);
 }
+
+/// Spec 014 US4 scenario 9 and FR-047: the CLI defaults are the app's.
+#[test]
+fn rendering_defaults_equal_the_apps() {
+    let (c, code) = json(&["config", "show", "--json"]);
+    assert_eq!(code, 0);
+    let defaults = serde_json::to_value(spiderlens_config::RenderSettings::default()).unwrap();
+    assert_eq!(c["config"]["rendering"], defaults);
+    let (c, code) = json(&["config", "show", "--json", "--render"]);
+    assert_eq!(code, 0);
+    let mut on = defaults;
+    on["mode"] = "javascript".into();
+    assert_eq!(c["config"]["rendering"], on);
+}
+
+#[test]
+fn each_rendering_flag_sets_its_field() {
+    let (c, code) = json(&[
+        "config",
+        "show",
+        "--json",
+        "--render",
+        "--render-timeout",
+        "20",
+        "--render-min-wait",
+        "1.5",
+        "--render-window",
+        "800x600",
+        "--render-block",
+        "images,third-party",
+        "--render-include",
+        "/shop/",
+        "--render-include",
+        "/blog/",
+        "--render-exclude",
+        "/tmp/",
+        "--render-error-pages",
+        "--render-tabs",
+        "3",
+        "--render-memory",
+        "2048",
+        "--screenshots",
+        "--js-content-threshold",
+        "30,80",
+        "--js-hidden-threshold",
+        "60",
+    ]);
+    assert_eq!(code, 0);
+    let r = &c["config"]["rendering"];
+    assert_eq!(r["mode"], "javascript");
+    assert_eq!(r["max_render_secs"], 20.0);
+    assert_eq!(r["min_wait_secs"], 1.5);
+    assert_eq!(r["window"]["preset"], "custom");
+    assert_eq!(r["window"]["width"], 800);
+    assert_eq!(r["window"]["height"], 600);
+    assert_eq!(r["block"]["images"], true);
+    assert_eq!(r["block"]["media"], false);
+    assert_eq!(r["block"]["fonts"], false);
+    assert_eq!(r["block"]["stylesheets"], false);
+    assert_eq!(r["block"]["third_party"], true);
+    assert_eq!(r["include"], serde_json::json!(["/shop/", "/blog/"]));
+    assert_eq!(r["exclude"], serde_json::json!(["/tmp/"]));
+    assert_eq!(r["render_error_pages"], true);
+    assert_eq!(r["concurrency"], 3);
+    assert_eq!(r["memory_budget_mb"], 2048);
+    assert_eq!(r["screenshots"], true);
+    assert_eq!(r["js_content_min_percent"], 30);
+    assert_eq!(r["js_content_min_words"], 80);
+    assert_eq!(r["hidden_content_percent"], 60);
+
+    // The other spellings: presets, `none` and `auto`.
+    let (c, _) = json(&[
+        "config",
+        "show",
+        "--json",
+        "--render",
+        "--render-window",
+        "mobile",
+        "--render-block",
+        "none",
+        "--render-tabs",
+        "auto",
+        "--render-memory",
+        "auto",
+    ]);
+    let r = &c["config"]["rendering"];
+    assert_eq!(r["window"]["preset"], "mobile");
+    for k in ["images", "media", "fonts", "stylesheets", "third_party"] {
+        assert_eq!(r["block"][k], false, "{k}");
+    }
+    assert!(r["concurrency"].is_null() && r["memory_budget_mb"].is_null());
+}
+
+#[test]
+fn rendering_flags_without_render_are_an_error() {
+    for args in [
+        &["--render-timeout", "20"][..],
+        &["--render-window", "mobile"],
+        &["--render-block", "none"],
+        &["--render-include", "/a/"],
+        &["--render-error-pages"],
+        &["--screenshots"],
+        &["--js-hidden-threshold", "40"],
+    ] {
+        let mut full = vec!["config", "show"];
+        full.extend_from_slice(args);
+        spiderlens()
+            .args(&full)
+            .assert()
+            .code(2)
+            .stderr(contains("need --render"));
+    }
+    // Out-of-range values are reported by validation, with exit 2.
+    spiderlens()
+        .args(["config", "show", "--render", "--render-timeout", "90"])
+        .assert()
+        .code(2);
+    spiderlens()
+        .args(["config", "show", "--render", "--render-window", "wide"])
+        .assert()
+        .code(2);
+}

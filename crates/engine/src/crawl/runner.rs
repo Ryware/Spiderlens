@@ -329,6 +329,10 @@ pub struct RenderSummary {
     pub failed_resources: u64,
     pub blocked_resources: u64,
     pub renderer: Option<RendererInfo>,
+    /// The rendering settings stored in the crawl file, so a reopened crawl
+    /// shows what it was rendered with (US4 scenario 9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<spiderlens_config::RenderSettings>,
 }
 
 impl RenderSummary {
@@ -458,6 +462,10 @@ fn summarize(store: &CrawlStore) -> Result<CrawlSummary, CrawlError> {
                 renderer: store
                     .meta("renderer")?
                     .and_then(|r| serde_json::from_str(&r).ok()),
+                settings: store
+                    .meta("config")?
+                    .and_then(|c| serde_json::from_str::<StoredCrawlConfig>(&c).ok())
+                    .map(|c| c.config.rendering),
             }),
             None => None,
         },
