@@ -1536,3 +1536,87 @@ async fn us5_a_browser_that_cannot_be_relaunched_makes_the_rest_browser_unavaila
         assert_eq!(site.count(JS_HOST, p), 1);
     }
 }
+
+/// US6 scenarios 1 and 4 (T065): the rendered HTML is stored exactly as the
+/// browser serialised it when "Store page HTML" is on, and nothing is stored
+/// when it is off while every extracted rendered value still is.
+#[tokio::test]
+async fn us6_rendered_html_is_stored_only_with_store_page_html() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+
+    let on = dir.path().join("html-on.spiderlens");
+    let status = crawl_rendering(&site, &on, browser.clone(), |c| c.extraction.store_html = true).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&on).unwrap();
+    for p in ["/", "/a", "/b"] {
+        let id = id(&store, &site, p);
+        // The stored bytes are the serialised DOM: it starts with the
+        // doctype and holds what the script added.
+        let bytes = store.rendered_html(id).unwrap().expect("rendered HTML stored");
+        let html = String::from_utf8(bytes).unwrap();
+        assert!(html.to_ascii_lowercase().starts_with("<!doctype html"), "{p}");
+        assert!(html.contains(&format!("<title>Rendered {p}</title>")), "{p}");
+        assert!(html.contains("Hello from JavaScript"), "{p}");
+        let flag: bool = one(&store, "SELECT rendered_html_stored FROM rendered_pages WHERE url_id = ?1", id);
+        assert!(flag, "{p}");
+        // The raw HTML is still the raw one.
+        let raw = String::from_utf8(store.page_html(id).unwrap().unwrap()).unwrap();
+        assert!(raw.contains("<title>Loading</title>"), "{p}");
+    }
+
+    let off = dir.path().join("html-off.spiderlens");
+    let status = crawl_rendering(&site, &off, browser, |c| c.extraction.store_html = false).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&off).unwrap();
+    let count = |sql: &str| -> i64 { store.conn_for_tests().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM rendered_bodies"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM rendered_pages WHERE rendered_html_stored = 1"), 0);
+    // Everything extracted from the rendered pages is there.
+    assert_eq!(count("SELECT COUNT(*) FROM rendered_pages"), 3);
+    assert_eq!(count("SELECT COUNT(*) FROM render_comparisons"), 3);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM rendered_pages WHERE title LIKE 'Rendered /%'"),
+        3
+    );
+    for p in ["/", "/a", "/b"] {
+        assert!(store.rendered_html(id(&store, &site, p)).unwrap().is_none(), "{p}");
+    }
+}
+
+/// US6 scenarios 2 and 3 (T066): a WebP screenshot at the window width
+/// exists only with "Save screenshots", and never taller than 8,192 pixels.
+#[tokio::test]
+async fn us6_screenshots_exist_only_when_turned_on() {
+    let _serial = SERIAL.lock().await;
+    let Some(browser) = browser() else { return };
+    let site = site();
+    let dir = tempfile::tempdir().unwrap();
+
+    let on = dir.path().join("shots-on.spiderlens");
+    let status = crawl_rendering(&site, &on, browser.clone(), |c| c.rendering.screenshots = true).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&on).unwrap();
+    for p in ["/", "/a", "/b"] {
+        let id = id(&store, &site, p);
+        let (image, w, h) = store.screenshot(id).unwrap().expect("screenshot stored");
+        assert_eq!(&image[..4], b"RIFF", "{p}");
+        assert_eq!(&image[8..12], b"WEBP", "{p}");
+        let window_w: i64 = one(&store, "SELECT window_w FROM renders WHERE url_id = ?1", id);
+        assert_eq!(i64::from(w), window_w, "{p}: the image is as wide as the window");
+        assert!((1..=8_192).contains(&h), "{p}: {h}");
+    }
+
+    let off = dir.path().join("shots-off.spiderlens");
+    let status = crawl_rendering(&site, &off, browser, |_| {}).await;
+    assert_eq!(status, "completed");
+    let store = CrawlStore::open_read_only(&off).unwrap();
+    let n: i64 = store
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM screenshots", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0);
+    assert!(store.screenshot(id(&store, &site, "/")).unwrap().is_none());
+}

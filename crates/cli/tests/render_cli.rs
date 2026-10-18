@@ -282,6 +282,37 @@ fn cli_and_engine_render_the_same() {
 }
 
 /// `spiderlens page` for a rendered page (T026, contracts/cli.md).
+/// T065 and T066: `html --rendered` writes the stored serialised DOM; with
+/// no screenshots taken, `screenshot` says so and fails.
+#[test]
+fn html_rendered_and_screenshot_read_what_the_crawl_stored() {
+    let Some(browser) = browser_path() else { return };
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("stored.spiderlens");
+    crawl_with_cli(&site, &browser, &file);
+    let url = site.local_url("/title-changed");
+
+    let out = spiderlens()
+        .arg("html")
+        .arg(&file)
+        .args([url.as_str(), "--rendered"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let html = String::from_utf8(out.stdout).unwrap();
+    assert!(html.to_ascii_lowercase().starts_with("<!doctype html"), "{html}");
+    assert!(html.contains("Red Shoes | Shop"), "{html}");
+
+    spiderlens()
+        .arg("screenshot")
+        .arg(&file)
+        .arg(&url)
+        .assert()
+        .failure()
+        .stderr(contains("has no screenshot"));
+}
+
 #[test]
 fn page_shows_the_rendered_version_with_origins() {
     let Some(browser) = browser_path() else { return };

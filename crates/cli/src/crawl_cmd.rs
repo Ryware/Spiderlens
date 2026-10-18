@@ -1096,6 +1096,17 @@ pub struct HtmlArgs {
     diff: bool,
 }
 
+#[derive(Args)]
+pub struct ScreenshotArgs {
+    /// Crawl file.
+    file: PathBuf,
+    /// URL as crawled.
+    url: String,
+    /// Write the WebP image to this file instead of standard output.
+    #[arg(long, value_name = "PATH")]
+    out: Option<PathBuf>,
+}
+
 /// Finds the URL as given, then in its normalized form.
 fn find_url(store: &CrawlStore, url: &str) -> Option<String> {
     let mut candidates = vec![url.trim().to_string()];
@@ -1306,6 +1317,43 @@ pub fn run_html(args: HtmlArgs) -> ExitCode {
     let written = match &args.out {
         Some(path) => std::fs::write(path, &html),
         None => std::io::stdout().lock().write_all(&html),
+    };
+    match written {
+        Ok(()) => ExitCode::from(exit::FETCHED),
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `spiderlens screenshot` (spec 014 FR-033): the stored WebP screenshot of
+/// one rendered page.
+pub fn run_screenshot(args: ScreenshotArgs) -> ExitCode {
+    let (store, url) = match open_for_page(&args.file, &args.url) {
+        Ok(x) => x,
+        Err(code) => return code,
+    };
+    let id = match store.id_of(&url) {
+        Ok(Some(id)) => id,
+        _ => return ExitCode::FAILURE,
+    };
+    let image = match store.screenshot(id) {
+        Ok(Some((image, _, _))) => image,
+        Ok(None) => {
+            eprintln!(
+                "error: this crawl has no screenshot of {url}; crawl with --render and --screenshots to take them"
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let written = match &args.out {
+        Some(path) => std::fs::write(path, &image),
+        None => std::io::stdout().lock().write_all(&image),
     };
     match written {
         Ok(()) => ExitCode::from(exit::FETCHED),
