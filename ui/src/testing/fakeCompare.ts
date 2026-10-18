@@ -145,6 +145,7 @@ function detail(id: number, title: string): UrlDetail {
     pdf: null,
     snippet: null,
     spelling: null,
+    render: null,
   };
 }
 

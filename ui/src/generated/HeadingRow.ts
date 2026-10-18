@@ -3,4 +3,8 @@
 /**
  * One heading of a page, in document order (FR-023).
  */
-export type HeadingRow = { level: number, text: string, };
+export type HeadingRow = { level: number, text: string, 
+/**
+ * As [`LinkRow::origin`].
+ */
+origin: string | null, };

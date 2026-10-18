@@ -636,8 +636,8 @@ fn expected_filters() -> Vec<(&'static str, Vec<&'static str>)> {
             vec!["rendered", "description_only_rendered"],
         ),
         ("/description-changed", vec!["rendered", "description_updated"]),
-        // A removed element has no filter of its own.
-        ("/h1-removed", vec!["rendered"]),
+        // An element a script removes counts as updated (US3 scenario 5).
+        ("/h1-removed", vec!["rendered", "h1_updated"]),
         (
             "/h1-added",
             vec!["rendered", "h1_only_rendered", "hidden_content"],

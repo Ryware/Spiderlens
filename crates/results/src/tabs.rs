@@ -2745,7 +2745,7 @@ fn javascript_tab() -> TabDef {
             js_filter(
                 "title_updated",
                 "Title updated by JavaScript",
-                on_cmp!("c.title_diff = 'changed'"),
+                on_cmp!("c.title_diff IN ('changed', 'removed')"),
             ),
             js_filter(
                 "description_only_rendered",
@@ -2755,7 +2755,7 @@ fn javascript_tab() -> TabDef {
             js_filter(
                 "description_updated",
                 "Meta description updated by JavaScript",
-                on_cmp!("c.description_diff = 'changed'"),
+                on_cmp!("c.description_diff IN ('changed', 'removed')"),
             ),
             js_filter(
                 "h1_only_rendered",
@@ -2765,7 +2765,7 @@ fn javascript_tab() -> TabDef {
             js_filter(
                 "h1_updated",
                 "H1 updated by JavaScript",
-                on_cmp!("c.h1_diff = 'changed'"),
+                on_cmp!("c.h1_diff IN ('changed', 'removed')"),
             ),
             js_filter(
                 "canonical_only_rendered",
@@ -2775,7 +2775,7 @@ fn javascript_tab() -> TabDef {
             js_filter(
                 "canonical_mismatch",
                 "Canonical mismatch",
-                on_cmp!("c.canonical_diff = 'changed'"),
+                on_cmp!("c.canonical_diff IN ('changed', 'removed')"),
             ),
             js_filter(
                 "noindex_only_original",

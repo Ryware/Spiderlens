@@ -2,7 +2,7 @@
 // the table, copy and export.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, Play, Search, SearchX } from "lucide-react";
+import { Download, FileCode, Play, Search, SearchX } from "lucide-react";
 import type { Features } from "../generated/Features";
 import type { FilterCounts } from "../generated/FilterCounts";
 import type { Need } from "../generated/Need";
@@ -300,6 +300,22 @@ export function ResultsView({
 
   const filterLabel = tab.filters.find((f) => f.id === session.filter)?.label ?? "";
   const totalText = view.ready ? view.total.toLocaleString() : `${view.total.toLocaleString()}+`;
+
+  // FR-034: a crawl that was not rendered has nothing to list here.
+  if (tab.id === "javascript" && features && !available("rendering")) {
+    return (
+      <section aria-label={tab.title} className="flex h-full min-w-0 flex-col">
+        <header className="flex items-center gap-2 border-b border-line bg-bg px-3 pt-2.5 pb-2">
+          <h1 className="m-0 truncate text-md font-semibold tracking-tight">{tab.title}</h1>
+        </header>
+        <div className="min-h-0 flex-1">
+          <EmptyState icon={<FileCode className="size-6" />} title="This crawl was not rendered">
+            The JavaScript tab compares each page as the server sent it with the page after its scripts ran. This crawl read the raw HTML only. Crawl with JavaScript rendering turned on in the crawl settings to see what JavaScript changes.
+          </EmptyState>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label={tab.title} className="flex h-full min-w-0 flex-col">

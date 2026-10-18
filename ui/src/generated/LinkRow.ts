@@ -22,4 +22,10 @@ text: string | null, sponsored: boolean, ugc: boolean,
  * "unknown" (HTML not stored). Null when not worked out yet, or not
  * an anchor.
  */
-position: string | null, };
+position: string | null, 
+/**
+ * Where the link was found, for a rendered page (spec 014 FR-028):
+ * raw (only in the raw HTML), rendered (only after rendering) or
+ * both. Null for pages that were not rendered.
+ */
+origin: string | null, };
