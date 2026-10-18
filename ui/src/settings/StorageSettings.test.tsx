@@ -127,3 +127,22 @@ test("the_cleanup_notice_opens_manage_crawls", async () => {
   expect(await screen.findByRole("dialog", { name: "Manage crawls" })).toBeTruthy();
   expect(await screen.findByText("No crawls here.")).toBeTruthy();
 });
+
+test("a_cleanup_notice_counts_scheduled_runs_moved_to_the_trash", async () => {
+  const t = await renderApp();
+  act(() => t.files.cleanupDone({ schedule_removed: ["/s/a.spiderlens", "/s/b.spiderlens", "/s/c.spiderlens"], freed_bytes: GB }));
+  const notice = (await screen.findByText("Cleaned up unused files")).closest("[role=status]") as HTMLElement;
+  expect(notice.textContent).toContain("3 older scheduled runs were moved to the Trash.");
+  fireEvent.click(within(notice).getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(screen.queryByText("Cleaned up unused files")).toBeNull());
+  act(() => t.files.cleanupDone({ schedule_removed: ["/s/a.spiderlens"], freed_bytes: GB }));
+  const one = (await screen.findByText("Cleaned up unused files")).closest("[role=status]") as HTMLElement;
+  expect(one.textContent).toContain("1 older scheduled run was moved to the Trash.");
+});
+
+test("the_history_labels_a_scheduled_run_removal", async () => {
+  const t = fakeTransport();
+  t.files.history.unshift({ at: new Date().toISOString(), path: "/s/a.spiderlens", bytes: 10, reason: "schedule_retention" });
+  await openStorage(t);
+  expect(panel().textContent).toContain("Scheduled run beyond its keep-last limit: moved to the Trash");
+});

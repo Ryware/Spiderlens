@@ -40,6 +40,7 @@ fn schedule(out: &Path, start_url: String) -> Schedule {
         catch_up: true,
         notify: NotifyLevel::Problems,
         after: vec![],
+        keep_last: None,
         created_at: at(13, 12, 0),
         updated_at: at(13, 12, 0),
     }
