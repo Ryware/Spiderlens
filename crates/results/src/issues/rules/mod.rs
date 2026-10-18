@@ -1,6 +1,7 @@
 //! The first rule set (spec 009, "First rule set" table), one file per
 //! category.
 
+pub mod agents;
 pub mod canonicals;
 pub mod content;
 pub mod directives;

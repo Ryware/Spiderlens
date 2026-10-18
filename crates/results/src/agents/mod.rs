@@ -4,9 +4,15 @@
 
 mod detail;
 mod entry_points;
+mod pass;
+pub mod score;
+mod summary;
 
 pub use detail::{AgentAction, AgentField, AgentForm, AgentLinkRow, PageAgentFindings};
 pub use entry_points::{AgentEntryPoints, EntryPointRow, EntryProblem, Evaluated, evaluate};
+pub use pass::AgentScores;
+pub use score::{AgentPart, WEIGHTS_VERSION};
+pub use summary::{AgentFailedRule, AgentNotChecked, AgentPartScore, AgentsSummary};
 
 use std::borrow::Cow;
 

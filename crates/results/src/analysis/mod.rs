@@ -203,6 +203,7 @@ pub static PASSES: &[&dyn Pass] = &[
     &crate::sitemaps::SitemapAudit,
     &crate::sitemaps::Orphans,
     &crate::agents::AgentEntryPoints,
+    &crate::agents::AgentScores,
 ];
 
 /// One global computation over the crawl.

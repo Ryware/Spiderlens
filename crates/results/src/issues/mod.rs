@@ -28,7 +28,7 @@ use crate::tabs::{Derived, Need};
 
 /// Increases whenever a rule is added, removed or changes its condition
 /// (FR-003).
-pub const RULES_VERSION: u32 = 2;
+pub const RULES_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +51,7 @@ pub enum Category {
     Security,
     Url,
     Sitemaps,
+    Agents,
 }
 
 impl Category {
@@ -73,6 +74,7 @@ impl Category {
             Self::Security => "Security",
             Self::Url => "URL",
             Self::Sitemaps => "Sitemaps",
+            Self::Agents => "AI agents",
         }
     }
 }
@@ -308,6 +310,7 @@ pub fn catalogue() -> &'static [Rule] {
             rules::security::RULES,
             rules::url::RULES,
             rules::sitemaps::RULES,
+            rules::agents::RULES,
         ]
         .concat()
     });
@@ -474,8 +477,8 @@ mod tests {
         let all = catalogue();
         assert_eq!(
             all.len(),
-            102,
-            "first rule set (spec table, with readability) and spec 011's 27"
+            117,
+            "first rule set (spec table, with readability), spec 011's 27 and spec 016's 15"
         );
         let mut ids = HashSet::new();
         let mut cats = HashSet::new();
@@ -515,7 +518,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(cats.len(), 17);
+        assert_eq!(cats.len(), 18);
     }
 
     #[test]
