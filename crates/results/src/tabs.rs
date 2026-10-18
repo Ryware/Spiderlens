@@ -1680,8 +1680,8 @@ fn build_tabs() -> Vec<TabDef> {
                 col("title_length", "Title length", "x.len", Int, 100),
                 col("occurrences", "Occurrences", "x.n", Int, 110),
                 col("title_px", "Title pixels", TITLE_PX, Int, 100),
-                col("title_cut_desktop", "Cut on desktop", concat!("(", px!("u.title", "title"), " > 600)"), Bool, 120),
-                col("title_cut_mobile", "Cut on mobile", concat!("(", px!("u.title", "title"), " > 580)"), Bool, 120),
+                col("title_cut_desktop", "Cut on desktop", "(px_width(u.title, 'title') > thr('serp.title_over_desktop'))", Bool, 120),
+                col("title_cut_mobile", "Cut on mobile", "(px_width(u.title, 'title') > thr('serp.title_over_mobile'))", Bool, 120),
                 ext(
                     "title_2",
                     "Title (second)",
@@ -1728,8 +1728,8 @@ fn build_tabs() -> Vec<TabDef> {
                 ext("meta_description", "Meta description", MD, Text, 360),
                 ext("length", "Length", "length((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id))", Int, 80),
                 ext("desc_px", "Pixels", DESC_PX, Int, 90),
-                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > 990)"), Bool, 120),
-                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > 680)"), Bool, 120),
+                ext("desc_cut_desktop", "Cut on desktop", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_desktop'))"), Bool, 120),
+                ext("desc_cut_mobile", "Cut on mobile", concat!("(", px!(md_expr!(), "desc"), " > thr('serp.desc_over_mobile'))"), Bool, 120),
                 ext(
                     "occurrences",
                     "Occurrences",
