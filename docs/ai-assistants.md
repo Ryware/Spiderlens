@@ -113,5 +113,5 @@ weight. For a page, each part scores
 total weights the parts Access 30, Reading 25, Acting 30 and Discovery 15,
 counting only parts that had a checked rule. The crawl score is the mean of
 its internal HTML pages that returned 200, with site-wide rules (entry points,
-llms.txt) applied once to Discovery. Rules whose data the crawl did not collect
+llms.txt, a search action) counted once for the whole crawl. Rules whose data the crawl did not collect
 are not counted and are listed as not checked.
