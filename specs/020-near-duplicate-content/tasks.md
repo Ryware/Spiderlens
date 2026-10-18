@@ -42,6 +42,6 @@ Input: [plan.md](plan.md), [data-model.md](data-model.md), [contracts/](contract
 
 ## Phase 6: Issues and finish
 
-- [ ] T024 `content.near_duplicate` rule in the spec 009 catalogue (after 009 code is on main), evidence, "available when the crawl ends" state (US3). Tests: rule URL set equals the Near duplicates filter; CLI `issues --fail-on medium` exit code.
+- [x] T024 `content.near_duplicate` rule in the spec 009 catalogue (after 009 code is on main), evidence, "available when the crawl ends" state (US3). Tests: rule URL set equals the Near duplicates filter; CLI `issues --fail-on medium` exit code.
 - [ ] T025 Older files: pre-feature file with HTML is offered analysis and matches a new crawl (US5.1); without HTML shows unavailable (US5.2). Fixture files.
 - [ ] T026 `/speckit-converge`; CI green on Windows, macOS and Linux.
