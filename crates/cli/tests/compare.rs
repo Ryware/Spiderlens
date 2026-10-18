@@ -51,6 +51,7 @@ fn us5_json_matches_the_library_and_exports_write_groups() {
         &a,
         &b,
         CompareSettings::default(),
+        None,
         &AtomicBool::new(false),
         &mut |_| {},
     )
@@ -91,6 +92,7 @@ fn us5_fail_conditions_set_the_exit_code() {
         a.as_ref(),
         b.as_ref(),
         CompareSettings::default(),
+        None,
         &AtomicBool::new(false),
         &mut |_| {},
     )

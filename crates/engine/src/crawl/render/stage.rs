@@ -14,11 +14,12 @@ use std::time::{Duration, Instant};
 use spiderlens_config::{CrawlConfig, UaPreset, UrlFilter, WindowPreset};
 use spiderlens_render::{
     BlockSet, Browser, BrowserInfo, InternalHosts, LaunchError, LaunchOptions, MainResponse, Network,
-    RenderJob, RenderOutcome, ScreenshotOptions, Window,
+    PageProbe, RenderJob, RenderOutcome, ScreenshotOptions, Window,
 };
 use tokio::sync::{RwLock, Semaphore};
 use url::Url;
 
+use super::a11y_probe::{self, ProbeReport};
 use super::guard::{MemoryGuard, MemorySource, SystemMemory, TICK_EVERY};
 use super::net::{EngineNet, NetShared, Note};
 use crate::crawl::store::{CrawlStore, RenderEntry, Result as StoreResult};
@@ -46,6 +47,9 @@ pub(crate) struct Rendered {
     pub header_facts: HeaderFacts,
     /// Compressed serialised DOM and its size, when HTML is kept.
     pub html: Option<(Vec<u8>, usize)>,
+    /// The accessibility and mobile probes, parsed on the render task
+    /// (spec 026). Empty when the job carried no probes.
+    pub probe_report: ProbeReport,
 }
 
 /// The parts of every page's job that come from the settings.
@@ -57,6 +61,11 @@ struct JobTemplate {
     block: BlockSet,
     internal: InternalHosts,
     screenshot: bool,
+    /// Spec 026: the probes every job carries, built once, and the shared
+    /// cap of all of them. Empty unless full checks or mobile checks (with a
+    /// mobile window) are on.
+    probes: Vec<PageProbe>,
+    probes_total: Duration,
 }
 
 pub(crate) struct RenderStage {
@@ -173,6 +182,8 @@ impl RenderStage {
         // edited by hand falls back to rendering every eligible page.
         let filter = UrlFilter::new(&r.include, &r.exclude)
             .unwrap_or_else(|_| UrlFilter::new(&[], &[]).expect("no patterns"));
+        let window = window_for(config);
+        let (probes, probes_total) = a11y_probe::probes_for(&config.accessibility, window.mobile);
         let browser = Browser::launch(info, launch).await?;
         let limit = r
             .concurrency
@@ -184,7 +195,7 @@ impl RenderStage {
             net,
             template: JobTemplate {
                 user_agent,
-                window: window_for(config),
+                window,
                 max_time: Duration::from_secs_f64(r.max_render_secs),
                 min_wait: Duration::from_secs_f64(r.min_wait_secs),
                 block: BlockSet {
@@ -196,6 +207,8 @@ impl RenderStage {
                 },
                 internal,
                 screenshot: r.screenshots,
+                probes,
+                probes_total,
             },
             queue: VecDeque::new(),
             last_seq: None,
@@ -366,6 +379,16 @@ impl RenderStage {
         job.max_time = t.max_time;
         job.min_wait = t.min_wait;
         job.block = t.block;
+        if !t.probes.is_empty() {
+            // Spec 026 FR-012: contrast and layout checks need the page's
+            // fonts and images (media stay blocked as set).
+            job.block.fonts = false;
+            job.block.images = false;
+            job.probes = t.probes.clone();
+            job.probes_max_total = t.probes_total;
+        }
+        let want_full = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_A11Y);
+        let want_mobile = t.probes.iter().any(|p| p.name == a11y_probe::PROBE_MOBILE);
         job.internal_hosts = t.internal.clone();
         job.screenshot = t.screenshot.then(ScreenshotOptions::default);
         let internal = t.internal.clone();
@@ -373,7 +396,7 @@ impl RenderStage {
         let browser = self.browser.clone();
         self.open += 1;
         tokio::spawn(async move {
-            let outcome = {
+            let mut outcome = {
                 let b = browser.read().await;
                 b.render(job, net.clone() as Arc<dyn Network>).await
             };
@@ -388,6 +411,7 @@ impl RenderStage {
             let permit = budget.acquire_many(kib).await;
             let charset = charset_of(&headers);
             let page_url = url.clone();
+            let probe_outcomes = std::mem::take(&mut outcome.probes);
             let work = tokio::task::spawn_blocking(move || {
                 let input = |body: &[u8], charset: Option<&str>| {
                     extract::extract_page_caught(
@@ -421,17 +445,26 @@ impl RenderStage {
                 } else {
                     None
                 };
-                (raw, rendered, comparison, bot_challenge, packed)
+                // Probe results are parsed here, off the coordinator; a bot
+                // challenge page keeps none (spec 026 FR-014).
+                let probe_report = if want_full || want_mobile {
+                    a11y_probe::digest(probe_outcomes, bot_challenge)
+                } else {
+                    ProbeReport::default()
+                };
+                (raw, rendered, comparison, bot_challenge, packed, probe_report)
             });
-            let (raw, rendered, comparison, bot_challenge, html) = work.await.unwrap_or_else(|e| {
-                (
-                    None,
-                    Some(Err(format!("Page extraction failed: {e}"))),
-                    None,
-                    false,
-                    None,
-                )
-            });
+            let (raw, rendered, comparison, bot_challenge, html, probe_report) =
+                work.await.unwrap_or_else(|e| {
+                    (
+                        None,
+                        Some(Err(format!("Page extraction failed: {e}"))),
+                        None,
+                        false,
+                        None,
+                        ProbeReport::default(),
+                    )
+                });
             drop(permit);
             report(Rendered {
                 entry,
@@ -443,6 +476,7 @@ impl RenderStage {
                 bot_challenge,
                 header_facts,
                 html,
+                probe_report,
             });
         });
     }

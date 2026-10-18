@@ -55,7 +55,7 @@ export function ProxyPanel({
         label="Proxy"
         help={
           proxy.mode === "system"
-            ? "The operating system's proxy settings, read when the crawl starts. Automatic configuration scripts (PAC) are not supported."
+            ? "The operating system's proxy settings, read when the crawl starts. An automatic configuration script (PAC) set there is used too; automatic discovery without an address (WPAD) is not."
             : proxy.mode === "manual"
               ? "Every request, robots.txt and sitemaps included, goes through this proxy."
               : "Direct connections, whatever the environment says."

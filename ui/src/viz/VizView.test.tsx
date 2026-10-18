@@ -19,7 +19,7 @@ const last = (t: ReturnType<typeof fakeTransport>) => t.results.viz[t.results.vi
 test("first_scene_is_the_default_state", async () => {
   const { t } = setup();
   await screen.findByRole("application");
-  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "score", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {}, terms: "words", stop_words: true, followed_only: false });
+  expect(t.results.viz[0]).toEqual({ view: "crawl_tree", layout: "tree", colour: "status", size: "score", expanded: null, pages: {}, budget: null, focus: null, distance: 1, pinned: {}, terms: "words", stop_words: true, followed_only: false, positions: [] });
   expect(canvas().getAttribute("aria-label")).toMatch(/^Crawl tree: \d+ nodes/);
 });
 
@@ -171,7 +171,7 @@ test("dragging_a_page_pins_it_and_reset_layout_clears", async () => {
 test("anchor_cloud_opens_on_the_selected_page_and_switches_terms", async () => {
   const { t } = setup("anchors", false, 2);
   const c = await screen.findByRole("application");
-  expect(t.results.viz[0]).toMatchObject({ view: "anchors", layout: "cloud", focus: "u:2", terms: "words", stop_words: true, followed_only: false });
+  expect(t.results.viz[0]).toMatchObject({ view: "anchors", layout: "cloud", focus: "u:2", terms: "words", stop_words: true, followed_only: false, positions: [] });
   expect(c.getAttribute("aria-label")).toMatch(/^Anchor text: 8 nodes\. .*Enter lists the links using a term/);
   expect(screen.getByRole("group", { name: "Legend" }).textContent).toMatch(/Words other pages use when they link here · stop words: en/);
   // No colour or size here.
@@ -187,6 +187,29 @@ test("anchor_cloud_opens_on_the_selected_page_and_switches_terms", async () => {
   fireEvent.click(screen.getByRole("radio", { name: "Whole site" }));
   await waitFor(() => expect(last(t).focus).toBeNull());
   expect(await screen.findByText(/^Words used in internal links/)).toBeTruthy();
+});
+
+test("anchor_cloud_filters_by_link_position", async () => {
+  const { t } = setup("anchors");
+  await screen.findByRole("application");
+  expect(t.results.viz[0].positions).toEqual([]);
+  fireEvent.change(screen.getByRole("combobox", { name: "Link position" }), { target: { value: "footer" } });
+  await waitFor(() => expect(last(t).positions).toEqual(["footer"]));
+});
+
+test("link_position_filter_is_disabled_without_analysis", async () => {
+  const t = fakeTransport();
+  render(<VizView transport={t} path={PATH} view="anchors" live={false} focusId={null} onFocusId={() => {}} analysis={false} />);
+  await screen.findByRole("application");
+  expect((screen.getByRole("combobox", { name: "Link position" }) as HTMLSelectElement).disabled).toBe(true);
+  expect(last(t).positions).toEqual([]);
+});
+
+test("trees_can_use_the_force_layout", async () => {
+  const { t } = setup();
+  await screen.findByRole("application");
+  fireEvent.click(screen.getByRole("radio", { name: "Force" }));
+  await waitFor(() => expect(last(t).layout).toBe("force"));
 });
 
 test("anchor_cloud_without_a_selection_is_site_wide", async () => {

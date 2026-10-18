@@ -162,6 +162,36 @@ fn invalid_schedules_are_refused() {
     assert_eq!(env.json(&["list"]).as_array().unwrap().len(), 0);
 }
 
+#[test]
+fn keep_last_defaults_to_ten_and_can_change() {
+    let env = Env::new();
+    let s = add(&env, "Client A", "https://example.com/", &["--daily", "07:00"]);
+    let id = s["id"].as_str().unwrap().to_string();
+    assert_eq!(s["keep_last"], 10);
+
+    let three = env.json(&["edit", &id, "--keep-last", "3"]);
+    assert_eq!(three["keep_last"], 3);
+    let all = env.json(&["edit", &id, "--keep-last", "all"]);
+    assert!(all["keep_last"].is_null());
+    env.cmd()
+        .args(["show", id.as_str()])
+        .assert()
+        .success()
+        .stdout(contains("all runs"));
+
+    env.cmd()
+        .args(["edit", id.as_str(), "--keep-last", "0"])
+        .assert()
+        .code(2)
+        .stderr(contains("between 1 and 999"));
+    env.cmd()
+        .args(["edit", id.as_str(), "--keep-last", "many"])
+        .assert()
+        .code(2)
+        .stderr(contains("not a number of runs"));
+    assert!(env.json(&["show", &id])["keep_last"].is_null());
+}
+
 fn wait_for_history(env: &Env, id: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {

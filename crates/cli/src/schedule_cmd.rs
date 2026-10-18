@@ -11,8 +11,8 @@ use spiderlens_config::{Mode, Severity};
 use spiderlens_schedule::manage::{ManageError, Manager, Registered};
 use spiderlens_schedule::runner::{self, Context, Launcher, Outcome, TickAction};
 use spiderlens_schedule::{
-    AfterStep, ExportTab, Frequency, MonthDay, NotifyLevel, Paths, Run, Schedule, ScheduleInput, Store,
-    StoreError, TimeOfDay, Trigger, history, notify, os,
+    AfterStep, DEFAULT_KEEP_LAST, ExportTab, Frequency, MonthDay, NotifyLevel, Paths, Run, Schedule,
+    ScheduleInput, Store, StoreError, TimeOfDay, Trigger, history, notify, os,
 };
 
 use crate::options::CrawlArgs;
@@ -140,6 +140,10 @@ pub struct SpecArgs {
     /// Remove all after-run exports.
     #[arg(long, help_heading = "After each run")]
     no_export: bool,
+    /// Keep the newest N runs' files (1 to 999) and move older ones to the Trash, or "all"
+    /// [default: 10].
+    #[arg(long, value_name = "N|all", help_heading = "Old runs")]
+    keep_last: Option<String>,
     /// Save without turning it on.
     #[arg(long)]
     disabled: bool,
@@ -157,7 +161,7 @@ pub struct EditArgs {
     spec: SpecArgs,
 }
 
-fn config_paths() -> Result<Paths, ExitCode> {
+pub(crate) fn config_paths() -> Result<Paths, ExitCode> {
     match spiderlens_schedule::default_config_dir() {
         Some(dir) => Ok(Paths::new(dir)),
         None => {
@@ -502,6 +506,10 @@ fn show(m: &Manager, s: &Schedule, json: bool) {
     println!("{:<12} {}", "When", s.frequency.describe());
     println!("{:<12} {}", "Output", s.output_dir.display());
     println!("{:<12} {}", "Catch up", if s.catch_up { "yes" } else { "no" });
+    let keeps = s
+        .keep_last
+        .map_or("all runs".to_string(), |n| format!("last {n} runs"));
+    println!("{:<12} {keeps}", "Keeps");
     println!("{:<12} {}", "System", registered_text(&m.state(s)));
     for step in &s.after {
         if let AfterStep::Export { tabs } = step {
@@ -574,6 +582,18 @@ fn frequency(a: &SpecArgs) -> Result<Option<Frequency>, String> {
     Ok(a.cron.as_ref().map(|c| Frequency::Advanced { cron: c.clone() }))
 }
 
+/// `--keep-last`: a number of runs, or `all` for no limit. The range is
+/// checked when the schedule is saved.
+fn keep_last(text: &str) -> Result<Option<u32>, String> {
+    let t = text.trim();
+    if t.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    t.parse()
+        .map(Some)
+        .map_err(|_| format!("\"{t}\" is not a number of runs (1 to 999) or \"all\""))
+}
+
 fn exports(list: &[String]) -> Vec<ExportTab> {
     list.iter()
         .map(|e| match e.split_once(':') {
@@ -608,6 +628,7 @@ fn crawl_options_given(sub: &ArgMatches) -> bool {
         "notify",
         "export",
         "no_export",
+        "keep_last",
         "disabled",
         "json",
         "freq",
@@ -660,6 +681,9 @@ fn apply(s: &mut Schedule, a: &SpecArgs, sub: &ArgMatches, new: bool) -> Result<
                 tabs: exports(&a.export),
             },
         );
+    }
+    if let Some(keep) = &a.keep_last {
+        s.keep_last = keep_last(keep)?;
     }
     if a.disabled {
         s.enabled = false;
@@ -726,6 +750,7 @@ fn add(m: &Manager, a: SpecArgs, sub: &ArgMatches) -> ExitCode {
         catch_up: true,
         notify: NotifyLevel::Problems,
         after: Vec::new(),
+        keep_last: Some(DEFAULT_KEEP_LAST),
         created_at: now,
         updated_at: now,
     };

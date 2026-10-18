@@ -7,8 +7,8 @@
 //! workspace. The public API is `contracts/render-crate.md`.
 //!
 //! The browser is a `chrome-headless-shell` downloaded on first use, after
-//! the user agreed ([`fetcher`]). Not yet here: running probes (each probe
-//! is reported as failed until specs 025 and 026 need them).
+//! the user agreed ([`fetcher`]). Probes run after the page settled, in an
+//! isolated world each, under their own budget and the per-page total.
 
 mod fetcher;
 mod find;

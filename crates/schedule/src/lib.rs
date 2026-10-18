@@ -5,6 +5,7 @@
 //! records the history and keeps the OS registrations in shape. It has no
 //! dependency on the desktop shell, so the command line can do everything.
 
+pub mod baseline;
 pub mod cron;
 pub mod due;
 pub mod frequency;
@@ -14,11 +15,13 @@ pub mod model;
 pub mod naming;
 pub mod notify;
 pub mod os;
+pub mod retention;
 pub mod runner;
 pub mod store;
 pub mod validate;
 pub mod view;
 
+pub use baseline::{Baseline, BaselineError, ScheduleRun, baseline_for, previous_complete_run, schedule_of};
 pub use cron::{Cron, CronError};
 pub use due::{Due, due};
 pub use frequency::{Frequency, MonthDay, TimeOfDay};
@@ -27,6 +30,11 @@ pub use model::{
     StepStatus, Trigger,
 };
 pub use store::{Paths, Store, StoreError};
+
+/// How many runs a new schedule keeps unless told otherwise.
+pub const DEFAULT_KEEP_LAST: u32 = 10;
+/// The largest number of runs a schedule can be asked to keep.
+pub const MAX_KEEP_LAST: u32 = 999;
 
 /// The app's identifier, which names its configuration folder.
 pub const APP_ID: &str = "com.ryware.spiderlens";

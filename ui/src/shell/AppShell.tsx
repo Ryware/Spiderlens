@@ -120,6 +120,8 @@ export function AppShell({ transport }: { transport: Transport }) {
   const [pair, setPair] = useState<Pair | null>(null);
   const comparison = useComparison(transport);
   const comparing = comparison.state.phase !== "idle";
+  // The open comparison of the open crawl adds its section to the report (spec 012 FR-033).
+  const reportComparison = comparison.state.phase === "ready" && comparison.state.summary.current.path === crawl.path ? comparison.state.id : null;
   const [sitemapOpen, setSitemapOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const retry = useRetryAvailability(transport, crawl);
@@ -549,7 +551,7 @@ export function AppShell({ transport }: { transport: Transport }) {
           ) : section === "sitemap-files" && crawl.path ? (
             <SitemapFilesView key={crawl.path} transport={transport} path={crawl.path} live={crawl.running} />
           ) : vizView && crawl.path ? (
-            <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} />
+            <VizView key={`${crawl.path}\n${vizView.id}\n${vizView.view === "anchors" ? anchorOpens : 0}`} transport={transport} path={crawl.path} view={vizView.view} live={crawl.running} focusId={results.focusId} onFocusId={onFocusId} analysis={results.features?.available.includes("analysis") ?? false} />
           ) : cookiesOpen && crawl.path ? (
             <CookiesView key={crawl.path} transport={transport} path={crawl.path} features={results.features} live={crawl.running} onFocusId={onFocusId} />
           ) : section === "report" && crawl.path ? (
@@ -563,6 +565,7 @@ export function AppShell({ transport }: { transport: Transport }) {
               onOpenOnFinish={(v) => updateUi({ openReportOnFinish: v })}
               reportFile={ui.reportFile}
               onReportFile={(f) => updateUi({ reportFile: f })}
+              comparison={reportComparison}
             />
           ) : crawl.phase === "idle" ? (
             <StartState setup={setup} error={crawl.error?.replace(/^.*?browser_unavailable: /, "") ?? null} onFocusUrl={() => urlRef.current?.focus()} onOpenSettings={() => openSettings()} library={library} onOpenRecent={(p) => void file.open(p)} onCompare={() => setCompareOpen(true)} onManageCrawls={() => setManageOpen(true)} />

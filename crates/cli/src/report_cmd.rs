@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 use spiderlens_results::bulk::{self, BulkFormat, BulkOptions};
 use spiderlens_results::issues::{ResolvedSettings, resolve};
 use spiderlens_results::report::html::FileOptions;
-use spiderlens_results::report::{Block, Report, ReportOptions, SectionState};
+use spiderlens_results::report::{Block, Report, ReportOptions, Section, SectionState};
 use spiderlens_results::{Error, ExportError, Reader};
 
 use crate::exit;
@@ -54,15 +54,44 @@ fn open(file: &Path, settings: ResolvedSettings) -> Result<Reader, ExitCode> {
     })
 }
 
+/// The "Changes since the previous crawl" section: `file` compared with
+/// `previous`, default comparison settings and the default issue settings
+/// (spec 012 FR-033).
+fn comparison_section(previous: &Path, file: &Path) -> Result<Section, ExitCode> {
+    let cancel = AtomicBool::new(false);
+    let settings = spiderlens_config::CompareSettings::default();
+    spiderlens_compare::Comparison::run(previous, file, settings, None, &cancel, &mut |_| {})
+        .and_then(|mut c| c.report())
+        .map(|r| r.section())
+        .map_err(|e| {
+            eprintln!("error: --compare-with {}: {e}", previous.display());
+            ExitCode::from(exit::USAGE)
+        })
+}
+
+/// Options with the comparison section when `compare_with` is given.
+fn report_options(file: &Path, compare_with: Option<&Path>) -> Result<ReportOptions, ExitCode> {
+    let mut opts = ReportOptions::default();
+    if let Some(previous) = compare_with {
+        opts.extra_sections.push(comparison_section(previous, file)?);
+    }
+    Ok(opts)
+}
+
 pub struct HtmlArgs {
     pub out: PathBuf,
+    pub compare_with: Option<PathBuf>,
     pub title: Option<String>,
     pub note: Option<String>,
     pub urls_per_issue: u32,
     pub force: bool,
 }
 
-pub fn run_audit(file: &Path, issues: Option<&Path>, json: bool) -> ExitCode {
+pub fn run_audit(file: &Path, issues: Option<&Path>, json: bool, compare_with: Option<&Path>) -> ExitCode {
+    let opts = match report_options(file, compare_with) {
+        Ok(o) => o,
+        Err(c) => return c,
+    };
     let settings = match issue_settings(issues) {
         Ok(s) => s,
         Err(c) => return c,
@@ -71,7 +100,7 @@ pub fn run_audit(file: &Path, issues: Option<&Path>, json: bool) -> ExitCode {
         Ok(r) => r,
         Err(c) => return c,
     };
-    let report = match reader.report(&ReportOptions::default()) {
+    let report = match reader.report(&opts) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
@@ -165,6 +194,10 @@ pub fn run_html(file: &Path, issues: Option<&Path>, a: HtmlArgs) -> ExitCode {
         );
         return ExitCode::from(exit::USAGE);
     }
+    let report_opts = match report_options(file, a.compare_with.as_deref()) {
+        Ok(o) => o,
+        Err(c) => return c,
+    };
     let settings = match issue_settings(issues) {
         Ok(s) => s,
         Err(c) => return c,
@@ -173,7 +206,7 @@ pub fn run_html(file: &Path, issues: Option<&Path>, a: HtmlArgs) -> ExitCode {
         Ok(r) => r,
         Err(c) => return c,
     };
-    let html = match reader.report_html(&ReportOptions::default(), &opts) {
+    let html = match reader.report_html(&report_opts, &opts) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("error: {e}");

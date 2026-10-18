@@ -4,13 +4,14 @@ import type { Frequency } from "../generated/Frequency";
 import type { Issue } from "../generated/Issue";
 import type { NotifyLevel } from "../generated/NotifyLevel";
 import type { Preview } from "../generated/Preview";
+import type { Run } from "../generated/Run";
 import type { Schedule } from "../generated/Schedule";
 import type { TabDef } from "../generated/TabDef";
 import type { TimeOfDay } from "../generated/TimeOfDay";
 import type { ScheduleSaved, Transport } from "../transport";
 import { Button, cn, Input, Notice, NumberInput, Segmented, Select, Sheet, SheetClose, Switch } from "../components/ui";
 import { Group, IssueList, issuesAt, Row } from "../settings/fields";
-import { formatRunTime } from "./format";
+import { formatRunTime, DEFAULT_KEEP_LAST } from "./format";
 
 /** How long to wait after a change before asking for the preview and checks. */
 export const EDITOR_DEBOUNCE_MS = 150;
@@ -40,7 +41,7 @@ const notifyOptions: { value: NotifyLevel; label: string }[] = [
 ];
 
 /** Issues shown at their field; the rest (the crawl settings) show at the bottom. */
-const shownAtField = ["name", "input", "frequency", "output_dir"];
+const shownAtField = ["name", "input", "frequency", "output_dir", "keep_last"];
 
 const timeOf = (f: Frequency): TimeOfDay => ("time" in f ? f.time : { hour: 6, minute: 0 });
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -186,6 +187,15 @@ function withExportTabs(after: AfterStep[], tabs: string[]): AfterStep[] {
   return tabs.length ? [{ kind: "export", tabs: tabs.map((tab) => ({ tab, filter: "all" })) }, ...rest] : rest;
 }
 
+function hasCompare(after: AfterStep[]): boolean {
+  return after.some((a) => a.kind === "compare");
+}
+
+function withCompare(after: AfterStep[], on: boolean): AfterStep[] {
+  const rest = after.filter((a) => a.kind !== "compare");
+  return on ? [...rest, { kind: "compare" }] : rest;
+}
+
 /**
  * Create or edit a schedule (spec 021 US1, US2): name, input, frequency with
  * the next five runs, output folder, missed runs, notifications and the
@@ -211,6 +221,7 @@ export function ScheduleEditor({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [tabs, setTabs] = useState<TabDef[]>([]);
+  const [runs, setRuns] = useState<Run[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
 
@@ -224,6 +235,26 @@ export function ScheduleEditor({
   useEffect(() => {
     transport.resultsTabs().then(setTabs, () => setTabs([]));
   }, [transport]);
+
+  // The saved schedule's runs, newest first, to tell how many files a lower limit removes.
+  useEffect(() => {
+    if (!open || !initial || initial.id === "") {
+      setRuns([]);
+      return;
+    }
+    let live = true;
+    transport.scheduleHistory(initial.id, 1000).then(
+      (r) => {
+        if (live) setRuns(r);
+      },
+      () => {
+        if (live) setRuns([]);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [transport, open, initial]);
 
   useEffect(() => {
     if (!draft || !open) return;
@@ -244,6 +275,9 @@ export function ScheduleEditor({
   const errors = issues.filter((i) => i.severity === "error");
   const chosen = exportTabs(draft.after);
   const input = draft.input;
+  const limit = draft.keep_last;
+  const lowered = limit !== null && limit >= 1 && (initial?.keep_last ?? Infinity) > limit;
+  const toTrash = lowered ? Math.max(0, runs.filter((r) => r.file !== null).length - limit) : 0;
 
   const save = async () => {
     setSaving(true);
@@ -331,6 +365,27 @@ export function ScheduleEditor({
                 </span>
               )}
             </Row>
+            <Row
+              label="Remove older runs"
+              help="Older run files of this schedule go to the Trash. Files you moved or saved elsewhere are never removed."
+              issues={issuesAt(issues, "keep_last")}
+            >
+              {(_, labelId) => <Switch labelledBy={labelId} checked={limit !== null} onChange={(on) => set({ keep_last: on ? DEFAULT_KEEP_LAST : null })} />}
+            </Row>
+            {limit !== null && (
+              <Row label="Runs to keep" help={toTrash > 0 ? `${toTrash} older run ${toTrash === 1 ? "file" : "files"} will go to the Trash at the next cleanup.` : undefined}>
+                {(id) => (
+                  <NumberInput
+                    id={id}
+                    className="w-20"
+                    min={1}
+                    max={999}
+                    value={limit}
+                    onChange={(v) => set({ keep_last: v === null || Number.isNaN(v) ? 0 : Math.round(v) })}
+                  />
+                )}
+              </Row>
+            )}
             <Row label="Export CSV after each run" help="Written to a folder next to the crawl file." stacked>
               {() => (
                 <div role="group" aria-label="Tabs to export" className="grid grid-cols-3 gap-x-3 gap-y-1">
@@ -348,8 +403,13 @@ export function ScheduleEditor({
                 </div>
               )}
             </Row>
-            <Row label="Report and comparison" help="The crawl report and Compare with the previous run arrive in a later version.">
-              {() => <span className="text-sm text-fg-3">Not available yet</span>}
+            <Row label="Compare with the previous run" help="Written as comparison.json next to the crawl file, using the latest earlier run that finished. The crawl report arrives in a later version.">
+              {(_, labelId) => (
+                <span className="flex items-center gap-2 text-sm text-fg-2">
+                  <span id={labelId}>Compare</span>
+                  <Switch labelledBy={labelId} checked={hasCompare(draft.after)} onChange={(on) => set({ after: withCompare(draft.after, on) })} />
+                </span>
+              )}
             </Row>
             <Row label="Notify me">
               {() => <Segmented label="Notify me" value={draft.notify} options={notifyOptions} onChange={(notify) => set({ notify })} />}

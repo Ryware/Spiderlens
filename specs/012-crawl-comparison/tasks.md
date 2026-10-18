@@ -53,14 +53,14 @@ Each task ships with its tests. `[P]` = can run in parallel with the other
 
 ## Phase 8: With other features
 
-- [ ] T026 [US3] (needs 009 code) issue deltas via 009's evaluator, analysis versions (FR-024a), Issues view, `--fail-on-new-issues`
-- [ ] T027 (needs 021 code) schedule baseline in app and CLI (FR-002a)
-- [ ] T028 (with 010) `ComparisonReport` handed to the report renderer (FR-033)
+- [x] T026 [US3] (needs 009 code) issue deltas via 009's evaluator, analysis versions (FR-024a), Issues view, `--fail-on-new-issues`
+- [x] T027 (needs 021 code) schedule baseline in app and CLI (FR-002a)
+- [x] T028 (with 010) `ComparisonReport` handed to the report renderer (FR-033)
 
 ## Phase 9: Performance and polish
 
 - [ ] T029 Benchmark: gen_crawl 100k and 1M pairs, summary and full times, peak memory; record in research.md (SC-002, SC-003)
 - [ ] T030 Crawl speed while comparing (SC-008)
-- [ ] T031 Free-space warning for the workspace
-- [ ] T032 Docs: README section, CLI help
+- [x] T031 Free-space warning for the workspace
+- [x] T032 Docs: README section, CLI help
 - [ ] T033 `/speckit-analyze`, then `/speckit-converge`

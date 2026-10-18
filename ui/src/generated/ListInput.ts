@@ -8,4 +8,8 @@ export type ListInput = { urls: Array<string>, duplicates: number, invalid_count
 /**
  * Notes about how the input was read, for example a fallback encoding.
  */
-notices: Array<string>, };
+notices: Array<string>, 
+/**
+ * The sitemap the list was read from, when it came from one (spec 011).
+ */
+sitemap: string | null, };

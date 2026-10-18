@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+spiderlens-compare.workspace = true
 spiderlens-config.workspace = true
 spiderlens-engine.workspace = true
 spiderlens-results.workspace = true

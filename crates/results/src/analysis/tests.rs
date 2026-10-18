@@ -206,3 +206,14 @@ fn bad_dependencies_are_errors() {
     assert!(order(&[&a as &dyn Pass, &b]).is_err());
     assert!(order(&[&a as &dyn Pass]).is_err());
 }
+
+#[test]
+fn skipping_a_pass_also_skips_the_ones_that_read_it() {
+    let a = Fake::new("a", &[]);
+    let b = Fake::new("b", &["a"]);
+    let c = Fake::new("c", &[]);
+    let passes: [&dyn Pass; 3] = [&a, &b, &c];
+    let kept: Vec<_> = without(&passes, &["a"]).iter().map(|p| p.id()).collect();
+    assert_eq!(kept, ["c"]);
+    assert_eq!(without(&passes, &[]).len(), 3);
+}

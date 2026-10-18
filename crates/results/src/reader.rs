@@ -65,6 +65,12 @@ pub(crate) fn connect(
 /// through a `mode=ro` URI, so SQLite refuses any write to it, while a
 /// scratch file attached later stays writable.
 pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
+    connect_attachable_with(path, &ResolvedSettings::default())
+}
+
+/// [`connect_attachable`] with `thr()` reading `settings`' thresholds, so a
+/// filter and an issue rule that share a threshold agree (spec 012 FR-023).
+pub fn connect_attachable_with(path: &Path, settings: &ResolvedSettings) -> Result<(Connection, Features)> {
     if !path.exists() {
         return Err(Error::invalid(format!("{} does not exist", path.display())));
     }
@@ -75,8 +81,7 @@ pub fn connect_attachable(path: &Path) -> Result<(Connection, Features)> {
             | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    // The comparison reads filters with the default issue thresholds.
-    let (conn, features, _) = setup(conn, path, &ResolvedSettings::default())?;
+    let (conn, features, _) = setup(conn, path, settings)?;
     Ok((conn, features))
 }
 
@@ -123,6 +128,7 @@ fn setup(
     let thresholds = Arc::new(RwLock::new(settings.thresholds()));
     sql::register_thresholds(&conn, thresholds.clone())?;
     let features = Features::detect(&conn)?;
+    sql::register_a11y(&conn, &features.a11y)?;
     let limit = features.redirect_limit;
     conn.create_scalar_function(
         "redirect_limit",
@@ -280,6 +286,10 @@ impl Reader {
                 self.ensure_derived([Derived::LinkPositions])?;
             }
             if self.derived.get(&d) != Some(&g) {
+                if matches!(d, Derived::LinkPositions | Derived::LinkMetrics) && self.use_stored_links()? {
+                    self.derived.insert(d, g);
+                    continue;
+                }
                 if d == Derived::IssueHits {
                     self.build_issue_hits()?;
                 } else {
@@ -296,6 +306,23 @@ impl Reader {
         Ok(())
     }
 
+    /// When the file holds current Link Score results for the settings shown
+    /// (spec 023 plan D5), points the unqualified `link_positions` and
+    /// `link_metrics` at them and builds nothing. Any temp copy from an
+    /// earlier build is dropped so it cannot shadow the file's.
+    fn use_stored_links(&self) -> Result<bool> {
+        if crate::analysis::stored_run(&self.conn, &self.features.link_settings)?.is_none() {
+            return Ok(false);
+        }
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS temp.link_positions;
+             DROP TABLE IF EXISTS temp.link_metrics;
+             DROP VIEW IF EXISTS temp.link_metrics;
+             CREATE TEMP VIEW link_metrics AS SELECT * FROM main.link_score;",
+        )?;
+        Ok(true)
+    }
+
     /// Records that a derived table was just built for the current data.
     pub(crate) fn mark_built(&mut self, d: Derived) -> Result<()> {
         self.version()?;
@@ -307,6 +334,15 @@ impl Reader {
     pub(crate) fn has_derived(&mut self, d: Derived) -> Result<bool> {
         self.version()?;
         Ok(self.derived.get(&d) == Some(&self.data_gen))
+    }
+
+    /// Counts accessibility results against another WCAG target without
+    /// checking again (spec 026 FR-020).
+    pub fn set_a11y_target(&mut self, wcag: spiderlens_config::WcagTarget) -> Result<()> {
+        self.features.a11y.wcag = wcag;
+        sql::register_a11y(&self.conn, &self.features.a11y)?;
+        self.bump_version();
+        Ok(())
     }
 
     pub fn link_settings(&self) -> &spiderlens_config::LinkAnalysisSettings {
