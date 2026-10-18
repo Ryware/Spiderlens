@@ -20,4 +20,6 @@ Events to the window:
 - `cleanup-done` `{ removed: number, freed_bytes, announced: path[] }`: shows the notice (FR-020, FR-021).
 - `crawls-changed`: the manager and start screen reload.
 
+Scheduled run retention (plan D11): no new command. `cleanup_run_now` and the automatic pass also apply each schedule's `keep_last` (the spec 021 schedule commands carry the field). The schedule editor shows "Keep the last [10] runs / Keep all" (1 to 999) and, when the limit is lowered, how many existing run files will go to the trash at the next cleanup. The `cleanup-done` event gains `retention_removed: number`, and the notice adds "N older scheduled runs were moved to the Trash (each schedule keeps its last runs)." `cleanup_history` can return the reason `schedule_retention`.
+
 Changed 006 command: `unsaved_delete` calls the same trash path as `crawls_delete` and returns its shape.
