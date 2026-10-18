@@ -15,6 +15,7 @@ mod integrations;
 mod login;
 mod manage;
 mod near_dup;
+mod render;
 mod report;
 mod results;
 mod schedules;
@@ -92,6 +93,7 @@ fn main() {
                 app.manage(s);
             }
             app.manage(report::State::default());
+            app.manage(render::State::default());
             app.manage(login::State::default());
             Ok(())
         })
@@ -116,6 +118,11 @@ fn main() {
             settings::profile_import,
             crawl::crawl_start,
             crawl::crawl_resume,
+            render::render_browser_status,
+            render::render_browser_install,
+            render::render_browser_cancel,
+            render::render_browser_set_path,
+            render::render_browser_network_watch,
             crawl::crawl_pause,
             crawl::crawl_stop,
             crawl::crawl_summary,

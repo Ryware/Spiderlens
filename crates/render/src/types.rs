@@ -76,10 +76,22 @@ pub struct DownloadPlan {
     pub sha256: &'static str,
 }
 
+/// What a download is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadStage {
+    Download,
+    Verify,
+    Unpack,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DownloadProgress {
+    pub stage: DownloadStage,
     pub done_bytes: u64,
     pub total_bytes: u64,
+    /// The connection was lost: the download waits and resumes from
+    /// `done_bytes` when it returns (nothing is deleted).
+    pub waiting: bool,
 }
 
 /// Set by the caller to cancel a download.
@@ -107,8 +119,35 @@ pub enum DownloadError {
     Cancelled,
     /// The archive's SHA-256 differs from the pinned one.
     Checksum,
+    /// No connection to the download host.
     Network(String),
+    /// The connection stayed lost past the caller's limit. The bytes
+    /// already written are kept for a later resume.
+    ConnectionLost,
+    /// The archive was unpacked but holds no usable browser.
+    Unusable(String),
     Io(std::io::Error),
+}
+
+impl std::fmt::Display for DownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPlan => f.write_str("No browser download is available for this platform."),
+            Self::Cancelled => f.write_str("The download was cancelled."),
+            Self::Checksum => {
+                f.write_str("The downloaded browser does not match its expected checksum and was removed.")
+            }
+            Self::Network(m) => write!(
+                f,
+                "No internet connection: the browser can't be downloaded now ({m})."
+            ),
+            Self::ConnectionLost => f.write_str(
+                "Connection lost. The part already downloaded is kept; run the command again to resume.",
+            ),
+            Self::Unusable(m) => write!(f, "The downloaded browser cannot be used: {m}"),
+            Self::Io(e) => write!(f, "Could not write the browser: {e}"),
+        }
+    }
 }
 
 /// Options for one browser process.

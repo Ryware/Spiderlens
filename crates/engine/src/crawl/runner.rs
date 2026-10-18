@@ -340,6 +340,32 @@ pub struct RenderSummary {
     pub renderer: Option<RendererInfo>,
 }
 
+impl RenderSummary {
+    /// The window's and the CLI's words for a render failure or skip reason
+    /// (`renders.reason`), in the order the summary lists them.
+    pub const REASONS: [(&'static str, &'static str); 8] = [
+        ("crash", "Browser crash"),
+        ("renderer_error", "Renderer error"),
+        ("page_too_large", "Page too large"),
+        ("navigation_error", "Navigation error"),
+        ("outside_rules", "Outside rendering rules"),
+        ("crawl_stopped", "Crawl stopped"),
+        ("browser_unavailable", "Browser unavailable"),
+        ("html_not_stored", "Raw HTML not stored"),
+    ];
+
+    /// The reasons with a count, labelled, in listing order.
+    pub fn labelled_reasons(&self) -> Vec<(&'static str, &'static str, u64)> {
+        Self::REASONS
+            .iter()
+            .filter_map(|(key, label)| {
+                let n = self.by_reason.get(*key).copied().unwrap_or(0);
+                (n > 0).then_some((*key, *label, n))
+            })
+            .collect()
+    }
+}
+
 /// What slowed one site down during a run (spec 008 FR-021).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpeedNote {
@@ -2653,8 +2679,26 @@ impl Run {
         let Some(stage) = &mut self.render else {
             return Ok(());
         };
+        stage.guard_tick();
         stage.restart_if_needed();
         let store = &self.c.store;
+        // A browser that cannot be started again: everything still waiting
+        // ends as "Browser unavailable", with one warning (FR-046).
+        if stage.unavailable() {
+            let mut skipped = 0;
+            while let Some(e) = stage.next(store)? {
+                store.skip_render(e.url_id, "browser_unavailable", None)?;
+                stage.on_started();
+                skipped += 1;
+            }
+            if skipped > 0 {
+                self.warn(
+                    "The browser stopped and could not be started again. The pages still waiting were not rendered."
+                        .into(),
+                )?;
+            }
+            return Ok(());
+        }
         while stage.open < stage.limit {
             let Some(mut e) = stage.next(store)? else { break };
             if !store.mark_rendering(e.url_id)? {
@@ -2695,7 +2739,12 @@ impl Run {
             return Ok(());
         };
         stage.open -= 1;
+        stage.page_done();
         let id = r.entry.url_id;
+        if let RenderState::Failed { retryable: true, .. } = r.outcome.state {
+            // The browser may have died with the page (FR-042).
+            stage.browser_suspect();
+        }
         if let RenderState::Failed { retryable: true, .. } = r.outcome.state
             && r.entry.attempts < MAX_ATTEMPTS
         {
@@ -2745,6 +2794,11 @@ impl Run {
                 let note = take_note(&x.url);
                 let (outcome, error, robots_rule) = match (&note, x.failed) {
                     (Some(Note::BlockedByRobots(rule)), _) => ("blocked_robots", None, Some(rule.clone())),
+                    // An answer of 4xx or 5xx is a failed resource too (FR-018, FR-043).
+                    (_, None) if x.status.is_some_and(|c| c >= 400) => {
+                        let code = x.status.unwrap_or_default();
+                        ("failed", Some(format!("HTTP {code}")), None)
+                    }
                     (Some(Note::Cached), None) => ("cached", None, None),
                     (Some(Note::RobotsIgnored(rule)), None) => ("loaded", None, Some(rule.clone())),
                     (_, None) => ("loaded", None, None),

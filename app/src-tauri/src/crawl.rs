@@ -30,7 +30,7 @@ use spiderlens_engine::crawl::{
     retry_preview as engine_retry_preview,
 };
 use spiderlens_engine::net::{ProxyInEffect, ProxyProblem};
-use spiderlens_render::{BrowserInfo, FindOptions, NotUsable};
+use spiderlens_render::BrowserInfo;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -161,6 +161,17 @@ pub struct Report {
     reasons: Vec<ReasonCount>,
     /// Crawled URLs that got no response, per error class (spec 007 FR-004).
     failures: Vec<FailureCount>,
+    /// Why pages failed or were not rendered, with the engine's labels
+    /// (spec 014 FR-041); absent for raw crawls.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    render_reasons: Vec<RenderReasonCount>,
+}
+
+#[derive(Serialize, Clone)]
+struct RenderReasonCount {
+    reason: &'static str,
+    label: &'static str,
+    count: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -190,11 +201,22 @@ impl Report {
                 count: *n,
             })
             .collect();
+        let render_reasons = summary
+            .render
+            .as_ref()
+            .map(|r| {
+                r.labelled_reasons()
+                    .into_iter()
+                    .map(|(reason, label, count)| RenderReasonCount { reason, label, count })
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             path,
             summary,
             reasons,
             failures,
+            render_reasons,
         }
     }
 }
@@ -273,7 +295,7 @@ pub fn crawl_start(
         return Err(e.message);
     }
     // Before the file exists: no browser, no crawl file (spec 014 FR-045).
-    let browser = browser_for(&config)?;
+    let browser = browser_for(&app, &config)?;
     std::fs::create_dir_all(&state.dir)
         .map_err(|e| format!("Could not create {}: {e}", state.dir.display()))?;
     let path = free_path(&state.dir, &default_file_name(&input));
@@ -324,7 +346,7 @@ pub async fn crawl_resume(
             CrawlError::Lock(l) => format!("in_use: {l}"),
             other => other.to_string(),
         })?;
-    let crawler = match browser_for(crawler.config())? {
+    let crawler = match browser_for(&app, crawler.config())? {
         Some(b) => crawler.with_browser(b),
         None => crawler,
     };
@@ -333,40 +355,16 @@ pub async fn crawl_resume(
 }
 
 /// The browser a rendering crawl uses, found before anything starts (spec
-/// 014 FR-045, plan D12). Raw crawls need none. Errors carry the
-/// `browser_unavailable` code the window answers with a prompt.
-fn browser_for(config: &CrawlConfig) -> Cmd<Option<BrowserInfo>> {
+/// 014 FR-045, plan D12): a downloaded one, or the one the person chose.
+/// Raw crawls need none. Errors carry the `browser_unavailable` code the
+/// window answers with the download dialog.
+fn browser_for(app: &AppHandle, config: &CrawlConfig) -> Cmd<Option<BrowserInfo>> {
     if !config.rendering.is_on() {
         return Ok(None);
     }
-    let data_dir = spiderlens_render::data_dir().unwrap_or_else(std::env::temp_dir);
-    spiderlens_render::find_browser(&FindOptions {
-        user_path: None,
-        data_dir,
-    })
-    .map(Some)
-    .map_err(|e| format!("browser_unavailable: {}", browser_message(&e)))
-}
-
-/// Why rendering cannot start, in the window's words.
-fn browser_message(e: &NotUsable) -> String {
-    const FIX: &str = "Install Google Chrome, Chromium or Microsoft Edge, or turn JavaScript rendering off.";
-    match e {
-        NotUsable::NotFound => {
-            format!("JavaScript rendering needs a Chromium-based browser and none was found. {FIX}")
-        }
-        NotUsable::TooOld { found, min_major } => format!(
-            "JavaScript rendering needs a Chromium-based browser version {min_major} or newer; {} {} is too old. {FIX}",
-            found.name.label(),
-            found.version
-        ),
-        NotUsable::Broken { path, message } => {
-            format!(
-                "The browser at {} cannot be used: {message} {FIX}",
-                path.display()
-            )
-        }
-    }
+    crate::render::find_for(app)
+        .map(Some)
+        .map_err(|e| format!("browser_unavailable: {}", crate::render::problem_text(&e)))
 }
 
 /// Adds a sign-in to the running crawl and fetches the origin's 401 URLs
@@ -787,23 +785,6 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn raw_crawls_need_no_browser() {
-        assert_eq!(browser_for(&CrawlConfig::default()).unwrap(), None);
-    }
-
-    #[test]
-    fn browser_messages_name_the_way_out() {
-        let none = browser_message(&NotUsable::NotFound);
-        assert!(none.starts_with("JavaScript rendering needs a Chromium-based browser and none was found."));
-        assert!(none.ends_with("or turn JavaScript rendering off."));
-        let broken = browser_message(&NotUsable::Broken {
-            path: PathBuf::from("/nope"),
-            message: "No browser at this path.".into(),
-        });
-        assert!(broken.contains("/nope") && broken.contains("No browser at this path."));
-    }
 
     #[test]
     fn free_path_never_reuses_a_name() {
