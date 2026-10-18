@@ -126,8 +126,8 @@ pub struct ReportArgs {
     /// Issue settings JSON (rule overrides) for --audit and --html.
     #[arg(long, value_name = "FILE")]
     issues: Option<PathBuf>,
-    /// With --audit or --html: add a section comparing this crawl with an
-    /// earlier crawl file (spec 012).
+    /// With --audit or --html: add a section on what changed since this
+    /// earlier crawl file.
     #[arg(long, value_name = "PREVIOUS", conflicts_with_all = ["not_crawled", "crawled", "reason", "log"])]
     compare_with: Option<PathBuf>,
 }
