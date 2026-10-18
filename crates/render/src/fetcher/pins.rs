@@ -3,10 +3,11 @@
 //!
 //! Chrome for Testing publishes no checksums, so each SpiderLens release
 //! records them here. `scripts/pin-headless-shell.mjs` regenerates this
-//! file's table at release time. A download whose hash differs is refused.
+//! file's table at release time. The version itself is
+//! `find::PINNED_VERSION`, the one constant the script also rewrites. A download whose hash differs is refused.
 
 /// The pinned version.
-pub const VERSION: &str = "141.0.7390.37";
+pub const VERSION: &str = crate::find::PINNED_VERSION;
 
 /// The only host downloads come from.
 pub const HOST: &str = "storage.googleapis.com";
@@ -23,23 +24,23 @@ pub struct Pin {
 pub const PINS: &[Pin] = &[
     Pin {
         platform: "linux64",
-        bytes: 117_889_948,
-        sha256: "b294238e5ac3e04f5f7fc5e5c017692bf64635e8824c3a7a44bea6a7ef6e147d",
+        bytes: 124_203_329,
+        sha256: "39dcb8c46550632a3d911850ab3b8af840b4e3f6d8622faa2018eb8756278786",
     },
     Pin {
         platform: "mac-arm64",
-        bytes: 93_605_553,
-        sha256: "54e85f6626aacac3c2d04077dffbab6f52ed393b5c29994fad85d99c04b38860",
+        bytes: 102_429_510,
+        sha256: "b3e093c06001c41e68decbc8dd4a62f9efe4bf4e4dd247a686ea531863448d75",
     },
     Pin {
         platform: "mac-x64",
-        bytes: 97_835_209,
-        sha256: "5bf32c2321a9562a74508b113437f990eb2fd61216248bbc8b6af818f2c7e622",
+        bytes: 107_758_350,
+        sha256: "6338a784c691f42dd1ed6aeeef650171c7d72cf74bdb8450d0079864e72a8074",
     },
     Pin {
         platform: "win64",
-        bytes: 111_460_826,
-        sha256: "61e454d3dfed20cfc2b9b5cbd002850c483c7ce4c9a2e7c1a741aa9b24361b29",
+        bytes: 124_737_213,
+        sha256: "20798f7c51a22def0b3d02e526a8f52e7ee2c7eddcde9d81a4c23f618e8b5436",
     },
 ];
 // END PINS

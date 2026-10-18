@@ -13,7 +13,7 @@ use std::process::Command;
 use crate::types::{BrowserInfo, BrowserName, BrowserSource, FindOptions, NotUsable};
 
 /// The `chrome-headless-shell` version this release downloads (research R14).
-pub const PINNED_VERSION: &str = crate::fetcher::pins::VERSION;
+pub const PINNED_VERSION: &str = "155.0.8059.39";
 
 /// How many major versions below the pinned one are still accepted
 /// (FR-003, "comparable version").
@@ -414,7 +414,7 @@ mod tests {
         );
         assert_eq!(parse_version("Chrome Headless Shell"), None);
         assert_eq!(major_of("155.0.8059.39"), Some(155));
-        assert_eq!(min_major(), 137);
+        assert_eq!(min_major(), 151);
     }
 
     #[test]
@@ -563,27 +563,27 @@ mod tests {
     fn too_old_is_reported_with_what_was_found() {
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("chromium");
-        fake(&old, "Chromium 136.0.7103.113");
+        fake(&old, "Chromium 141.0.7390.37");
         let installed = vec![(BrowserName::Chromium, old.clone())];
         match find_in(&opts(dir.path()), &installed) {
             Err(NotUsable::TooOld { found, min_major }) => {
-                assert_eq!(found.major, 136);
+                assert_eq!(found.major, 141);
                 assert_eq!(found.path, old);
-                assert_eq!(min_major, 137);
+                assert_eq!(min_major, 151);
             }
             other => panic!("expected TooOld, got {other:?}"),
         }
         // A newer browser later in the list is still used.
         let newer = dir.path().join("msedge");
-        fake(&newer, "Microsoft Edge 142.0.1.1");
+        fake(&newer, "Microsoft Edge 152.0.1.1");
         let installed = vec![
             (BrowserName::Chromium, old),
             (BrowserName::MicrosoftEdge, newer.clone()),
         ];
         assert_eq!(find_in(&opts(dir.path()), &installed).unwrap().path, newer);
         // The oldest accepted major is exactly the pin minus four.
-        let edge = dir.path().join("edge137");
-        fake(&edge, "Microsoft Edge 137.0.0.1");
+        let edge = dir.path().join("edge151");
+        fake(&edge, "Microsoft Edge 151.0.0.1");
         assert!(find_in(&opts(dir.path()), &[(BrowserName::MicrosoftEdge, edge)]).is_ok());
     }
 

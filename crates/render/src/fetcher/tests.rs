@@ -30,7 +30,7 @@ fn fake_archive() -> Vec<u8> {
         let exe = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
         zip.start_file(format!("chrome-headless-shell-{PLATFORM}/chrome-headless-shell"), exe)
             .unwrap();
-        zip.write_all(b"#!/bin/sh\necho 'Chrome Headless Shell 141.0.7390.37'\n")
+        zip.write_all(b"#!/bin/sh\necho 'Chrome Headless Shell 155.0.8059.39'\n")
             .unwrap();
         let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file(format!("chrome-headless-shell-{PLATFORM}/blob.bin"), stored)
@@ -52,7 +52,7 @@ fn leak(s: String) -> &'static str {
 
 fn plan(addr: SocketAddr, body: &[u8], sha256: &'static str) -> DownloadPlan {
     DownloadPlan {
-        version: "141.0.7390.37",
+        version: "155.0.8059.39",
         platform: PLATFORM,
         url: format!("http://{addr}/browser.zip"),
         bytes: body.len() as u64,
@@ -199,8 +199,8 @@ async fn a_good_archive_is_downloaded_verified_and_unpacked() {
     .await
     .unwrap();
     assert_eq!(info.source, BrowserSource::Downloaded);
-    assert_eq!(info.version, "141.0.7390.37");
-    assert!(info.path.starts_with(dir.path().join("browsers/141.0.7390.37")));
+    assert_eq!(info.version, "155.0.8059.39");
+    assert!(info.path.starts_with(dir.path().join("browsers/155.0.8059.39")));
     assert!(!dir.path().join("browsers/.download").exists(), "the archive is deleted");
     let steps = steps.lock().unwrap();
     for stage in [DownloadStage::Download, DownloadStage::Verify, DownloadStage::Unpack] {
@@ -313,7 +313,7 @@ async fn a_connection_dropped_mid_file_resumes_from_the_bytes_written() {
         "{:?}",
         server.ranges.lock().unwrap()
     );
-    assert_eq!(info.version, "141.0.7390.37");
+    assert_eq!(info.version, "155.0.8059.39");
 }
 
 #[tokio::test]
@@ -338,6 +338,6 @@ async fn giving_up_keeps_the_partial_file_for_a_later_resume() {
         .await
         .unwrap_err();
     assert!(matches!(err, DownloadError::ConnectionLost), "{err:?}");
-    let part = dir.path().join("browsers/.download/141.0.7390.37-linux64.zip.part");
+    let part = dir.path().join("browsers/.download/155.0.8059.39-linux64.zip.part");
     assert_eq!(std::fs::metadata(part).unwrap().len(), 50_000);
 }

@@ -23,6 +23,7 @@ import { fakeCustomTransport, type FakeCustom } from "./fakeCustom";
 import { fakeSpellingTransport, type FakeSpelling } from "./fakeSpelling";
 import { fakeSchedulesTransport, type FakeSchedules } from "./fakeSchedules";
 import { fakeLoginTransport, type FakeLogin } from "./fakeLogin";
+import { fakeRenderTransport, type FakeRender } from "./fakeRender";
 
 import type {
   CrawlFinished,
@@ -298,7 +299,7 @@ function fakeReport_(urls: FakeUrl[], o: SitemapGenerateOptions, existingIn: str
 
 export function fakeTransport(
   urls: FakeUrl[] = fakeUrls(30),
-): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin } {
+): Transport & { saved: Map<string, LoadedProfile>; crawls: FakeCrawls; results: FakeResults; files: FakeFiles; assistants: FakeAssistants; picks: FakePicks; sitemaps: FakeSitemaps; compare: FakeCompare; aeo: FakeAeo; schedules: FakeSchedules; issues: FakeIssues; integrations: FakeIntegrations; custom: FakeCustom; audit: FakeAudit; spelling: FakeSpelling; login: FakeLogin; render: FakeRender } {
   const picks: FakePicks = { sitemapFile: null, folder: null };
   const sitemaps: FakeSitemaps = { files: { available: true, files: [] }, orphans: fakeOrphanSummary(), entries: new Map(), existing: new Map(), generated: [], previews: 0, fail: null };
 
@@ -363,9 +364,12 @@ export function fakeTransport(
   );
   const { schedules, api: schedulesApi } = fakeSchedulesTransport((name) => saved.get(name)?.config ?? null);
   const { login, api: loginApi } = fakeLoginTransport();
+  const { render, api: renderApi } = fakeRenderTransport();
   return {
     ...loginApi,
     login,
+    ...renderApi,
+    render,
     ...resultsApi,
     ...agentsApi,
     ...compareApi,
@@ -539,6 +543,9 @@ export function fakeTransport(
       throw new Error("not in tests");
     },
     crawlStart: async (config, startUrl) => {
+      if (config.rendering.mode === "javascript" && render.requireBrowser && !render.status.usable) {
+        throw `browser_unavailable: ${render.status.problem}`;
+      }
       crawls.started.push({ config, startUrl });
       return { id: nextId++, path: "/crawls/example.com.spiderlens" };
     },
