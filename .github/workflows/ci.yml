@@ -87,6 +87,17 @@ jobs:
             fi
           done
 
+      - name: Only the desktop app depends on trash (spec 019)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for crate in spiderlens-engine spiderlens spiderlens-schedule; do
+            if cargo tree -p "$crate" -e normal --prefix none | grep -E '^trash '; then
+              echo "::error::$crate must not depend on trash"
+              exit 1
+            fi
+          done
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
