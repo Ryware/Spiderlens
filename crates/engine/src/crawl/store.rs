@@ -2585,7 +2585,11 @@ impl CrawlStore {
                      WHERE id = ?1",
                 )?
                 .execute(params![id, seq])?;
-            for table in ["links WHERE from_id", "pages WHERE url_id", "headers WHERE url_id"] {
+            for table in [
+                "links WHERE from_id",
+                "pages WHERE url_id",
+                "headers WHERE url_id",
+            ] {
                 self.conn
                     .prepare_cached(&format!("DELETE FROM {table} = ?1"))?
                     .execute([id])?;
@@ -3613,7 +3617,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 3);
-        assert_eq!(super::super::migrate::version(&s.conn).unwrap(), 17);
+        assert_eq!(
+            super::super::migrate::version(&s.conn).unwrap(),
+            super::super::migrate::LATEST
+        );
     }
 
     #[test]

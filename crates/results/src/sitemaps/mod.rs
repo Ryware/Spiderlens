@@ -11,8 +11,8 @@ mod xml;
 
 pub use audit::SitemapAudit;
 pub use files::{SitemapFileRow, SitemapFiles};
+pub use generate::{GenerateError, GenerateReport, GeneratedFile, Output, generate};
 pub use orphans::{OrphanRow, OrphanSummary, Orphans, UrlSitemapEntry};
 pub(crate) use tab::tab;
-pub use generate::{GenerateError, GenerateReport, GeneratedFile, Output, generate};
 #[doc(hidden)]
 pub use xml::check_structure;

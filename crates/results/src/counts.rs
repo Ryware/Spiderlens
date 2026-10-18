@@ -154,9 +154,9 @@ impl Reader {
         if let Some(c) = self.tab_counts.as_ref().filter(|c| c.version == version) {
             return Ok(c.clone());
         }
-        let mut conds: Vec<&str> = Vec::new();
+        let mut conds: Vec<std::borrow::Cow<'_, str>> = Vec::new();
         for t in tabs::tabs() {
-            let c = t.eligible_on_urls();
+            let c = t.all_on_urls();
             if !conds.contains(&c) {
                 conds.push(c);
             }
@@ -172,10 +172,7 @@ impl Reader {
         let counts = tabs::tabs()
             .iter()
             .map(|t| {
-                let i = conds
-                    .iter()
-                    .position(|c| *c == t.eligible_on_urls())
-                    .expect("listed");
+                let i = conds.iter().position(|c| *c == t.all_on_urls()).expect("listed");
                 (t.id.to_string(), values[i] as u64)
             })
             .collect();

@@ -197,7 +197,9 @@ fn folder_of(address: &str) -> Option<Url> {
 }
 
 fn same_origin(a: &Url, b: &Url) -> bool {
-    a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 /// Entries on another host or outside their sitemap's folder (US3
@@ -240,7 +242,9 @@ fn outside_location(conn: &Connection, s: &str, cx: &mut PassContext<'_>) -> Res
         None
     };
     let start: Option<Url> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'start_url'", [], |r| r.get::<_, String>(0))
+        .query_row("SELECT value FROM meta WHERE key = 'start_url'", [], |r| {
+            r.get::<_, String>(0)
+        })
         .optional()?
         .and_then(|u| Url::parse(&u).ok());
 

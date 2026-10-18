@@ -36,7 +36,11 @@ fn a_cookies_file_signs_the_crawl_in_and_sign_out_links_are_skipped() {
         .arg(&file)
         .assert()
         .success();
-    let account = site.page_hits().into_iter().find(|h| h.path == "/account").unwrap();
+    let account = site
+        .page_hits()
+        .into_iter()
+        .find(|h| h.path == "/account")
+        .unwrap();
     assert_eq!(account.cookie.as_deref(), Some("sid=LOGIN-SECRET-9"));
     assert_eq!(site.count(HOST, "/account/logout"), 0, "sign-out link requested");
     let bytes = std::fs::read(&file).unwrap();
@@ -49,7 +53,13 @@ fn a_cookies_file_signs_the_crawl_in_and_sign_out_links_are_skipped() {
 #[test]
 fn a_sign_in_needs_its_password_in_the_environment() {
     spiderlens()
-        .args(["crawl", "https://127.0.0.1:9/", "--auth", "https://127.0.0.1:9=ann", "--quiet"])
+        .args([
+            "crawl",
+            "https://127.0.0.1:9/",
+            "--auth",
+            "https://127.0.0.1:9=ann",
+            "--quiet",
+        ])
         .env_remove("SPIDERLENS_PASSWORD_127_0_0_1_9")
         .assert()
         .code(2)
@@ -59,7 +69,13 @@ fn a_sign_in_needs_its_password_in_the_environment() {
 #[test]
 fn an_unencrypted_sign_in_needs_allow_insecure_auth() {
     spiderlens()
-        .args(["crawl", "http://127.0.0.1:9/", "--auth", "http://127.0.0.1:9=ann", "--quiet"])
+        .args([
+            "crawl",
+            "http://127.0.0.1:9/",
+            "--auth",
+            "http://127.0.0.1:9=ann",
+            "--quiet",
+        ])
         .env("SPIDERLENS_PASSWORD_127_0_0_1_9", "pw")
         .assert()
         .code(2)
@@ -69,7 +85,13 @@ fn an_unencrypted_sign_in_needs_allow_insecure_auth() {
 #[test]
 fn a_proxy_password_is_never_a_plain_argument() {
     spiderlens()
-        .args(["crawl", "http://127.0.0.1:9/", "--proxy", "http://ann:pw@127.0.0.1:3128", "--quiet"])
+        .args([
+            "crawl",
+            "http://127.0.0.1:9/",
+            "--proxy",
+            "http://ann:pw@127.0.0.1:3128",
+            "--quiet",
+        ])
         .assert()
         .code(2)
         .stderr(contains("SPIDERLENS_PROXY_PASSWORD"));

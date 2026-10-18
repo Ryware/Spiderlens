@@ -68,17 +68,49 @@ pub(crate) fn md4(input: &[u8]) -> [u8; 16] {
         }
         for &i in &[0usize, 1, 2, 3] {
             let k = 0x5a82_7999u32;
-            a = a.wrapping_add(g(b, c, d)).wrapping_add(x[i]).wrapping_add(k).rotate_left(3);
-            d = d.wrapping_add(g(a, b, c)).wrapping_add(x[i + 4]).wrapping_add(k).rotate_left(5);
-            c = c.wrapping_add(g(d, a, b)).wrapping_add(x[i + 8]).wrapping_add(k).rotate_left(9);
-            b = b.wrapping_add(g(c, d, a)).wrapping_add(x[i + 12]).wrapping_add(k).rotate_left(13);
+            a = a
+                .wrapping_add(g(b, c, d))
+                .wrapping_add(x[i])
+                .wrapping_add(k)
+                .rotate_left(3);
+            d = d
+                .wrapping_add(g(a, b, c))
+                .wrapping_add(x[i + 4])
+                .wrapping_add(k)
+                .rotate_left(5);
+            c = c
+                .wrapping_add(g(d, a, b))
+                .wrapping_add(x[i + 8])
+                .wrapping_add(k)
+                .rotate_left(9);
+            b = b
+                .wrapping_add(g(c, d, a))
+                .wrapping_add(x[i + 12])
+                .wrapping_add(k)
+                .rotate_left(13);
         }
         for &i in &[0usize, 2, 1, 3] {
             let k = 0x6ed9_eba1u32;
-            a = a.wrapping_add(h(b, c, d)).wrapping_add(x[i]).wrapping_add(k).rotate_left(3);
-            d = d.wrapping_add(h(a, b, c)).wrapping_add(x[i + 8]).wrapping_add(k).rotate_left(9);
-            c = c.wrapping_add(h(d, a, b)).wrapping_add(x[i + 4]).wrapping_add(k).rotate_left(11);
-            b = b.wrapping_add(h(c, d, a)).wrapping_add(x[i + 12]).wrapping_add(k).rotate_left(15);
+            a = a
+                .wrapping_add(h(b, c, d))
+                .wrapping_add(x[i])
+                .wrapping_add(k)
+                .rotate_left(3);
+            d = d
+                .wrapping_add(h(a, b, c))
+                .wrapping_add(x[i + 8])
+                .wrapping_add(k)
+                .rotate_left(9);
+            c = c
+                .wrapping_add(h(d, a, b))
+                .wrapping_add(x[i + 4])
+                .wrapping_add(k)
+                .rotate_left(11);
+            b = b
+                .wrapping_add(h(c, d, a))
+                .wrapping_add(x[i + 12])
+                .wrapping_add(k)
+                .rotate_left(15);
         }
 
         s[0] = s[0].wrapping_add(a);
@@ -196,7 +228,8 @@ fn filetime_now() -> [u8; 8] {
     let since_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let ticks = (since_unix.as_secs() + EPOCH_DIFF_SECS) * 10_000_000 + u64::from(since_unix.subsec_nanos() / 100);
+    let ticks =
+        (since_unix.as_secs() + EPOCH_DIFF_SECS) * 10_000_000 + u64::from(since_unix.subsec_nanos() / 100);
     ticks.to_le_bytes()
 }
 
@@ -250,7 +283,13 @@ pub(crate) fn authenticate_with(
     let key = ntowf_v2(&user, &domain, password);
     let (lm, nt) = responses(&key, server, client_challenge, timestamp);
     let unicode = server.flags & NEGOTIATE_UNICODE != 0;
-    let text = |s: &str| if unicode { utf16le(s) } else { s.as_bytes().to_vec() };
+    let text = |s: &str| {
+        if unicode {
+            utf16le(s)
+        } else {
+            s.as_bytes().to_vec()
+        }
+    };
     let payloads = [lm, nt, text(&domain), text(&user), text(workstation), Vec::new()];
 
     const HEADER: usize = 64;
@@ -274,7 +313,8 @@ pub(crate) fn authenticate_with(
 }
 
 fn header(message: &[u8]) -> HeaderValue {
-    let mut v = HeaderValue::from_str(&format!("NTLM {}", B64.encode(message))).expect("base64 is a valid header");
+    let mut v =
+        HeaderValue::from_str(&format!("NTLM {}", B64.encode(message))).expect("base64 is a valid header");
     v.set_sensitive(true);
     v
 }
@@ -351,7 +391,10 @@ impl NtlmPool {
             let _ = response.bytes().await;
             slot.signed_in = false;
         }
-        let first = build(&slot.client).header(AUTHORIZATION, header(&negotiate())).send().await?;
+        let first = build(&slot.client)
+            .header(AUTHORIZATION, header(&negotiate()))
+            .send()
+            .await?;
         let Some(challenge) = (first.status() == StatusCode::UNAUTHORIZED)
             .then(|| server_challenge(first.headers()))
             .flatten()
@@ -364,7 +407,10 @@ impl NtlmPool {
         // Read the challenge's body so the connection is reused.
         let _ = first.bytes().await;
         let message = authenticate(&self.user, &self.password, &challenge);
-        let response = build(&slot.client).header(AUTHORIZATION, header(&message)).send().await?;
+        let response = build(&slot.client)
+            .header(AUTHORIZATION, header(&message))
+            .send()
+            .await?;
         let refused = response.status() == StatusCode::UNAUTHORIZED;
         slot.signed_in = !refused;
         Ok((response, slot, refused))
@@ -377,7 +423,10 @@ mod tests {
 
     fn from_hex(s: &str) -> Vec<u8> {
         let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     #[test]
@@ -401,7 +450,10 @@ mod tests {
     /// MS-NLMP 4.2.4: user "User", domain "Domain", password "Password".
     #[test]
     fn ntlmv2_matches_ms_nlmp_test_vectors() {
-        assert_eq!(md4(&utf16le("Password")).to_vec(), from_hex("a4f49c406510bdcab6824ee7c30fd852"));
+        assert_eq!(
+            md4(&utf16le("Password")).to_vec(),
+            from_hex("a4f49c406510bdcab6824ee7c30fd852")
+        );
         let key = ntowf_v2("User", "Domain", "Password");
         assert_eq!(key.to_vec(), from_hex("0c868a403bfd7a93a3001ef22ef02e3f"));
 

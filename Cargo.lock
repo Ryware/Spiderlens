@@ -5866,6 +5866,7 @@ dependencies = [
 name = "spiderlens-engine"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cookie",
  "cookie_store",
  "ego-tree",
@@ -5874,9 +5875,11 @@ dependencies = [
  "flate2",
  "fs4",
  "futures-util",
+ "getrandom 0.3.4",
  "html5ever 0.35.0",
  "jiff",
  "lopdf",
+ "md-5",
  "pdf-extract",
  "proptest",
  "quick-xml 0.42.0",
@@ -5887,6 +5890,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_path",
+ "sha2",
  "spiderlens-config",
  "spiderlens-render",
  "spiderlens-test-fixtures",

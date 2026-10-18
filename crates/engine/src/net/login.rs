@@ -115,7 +115,11 @@ impl LoginSession {
                 value: Secret::new(f[6]),
                 host_only: !flag(f[1]) && !f[0].starts_with('.'),
                 domain,
-                path: if f[2].is_empty() { "/".into() } else { f[2].to_string() },
+                path: if f[2].is_empty() {
+                    "/".into()
+                } else {
+                    f[2].to_string()
+                },
                 secure: flag(f[3]),
                 http_only,
                 expires,
@@ -209,10 +213,19 @@ mod tests {
 
     #[test]
     fn sign_out_links_match_by_path_or_query() {
-        let p: Vec<String> = spiderlens_config::DEFAULT_SIGN_OUT_PATTERNS.iter().map(|s| s.to_string()).collect();
+        let p: Vec<String> = spiderlens_config::DEFAULT_SIGN_OUT_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let u = |s: &str| Url::parse(s).unwrap();
-        assert_eq!(is_sign_out(&u("https://example.com/account/LogOut"), &p).as_deref(), Some("logout"));
-        assert_eq!(is_sign_out(&u("https://example.com/?action=sign-out"), &p).as_deref(), Some("sign-out"));
+        assert_eq!(
+            is_sign_out(&u("https://example.com/account/LogOut"), &p).as_deref(),
+            Some("logout")
+        );
+        assert_eq!(
+            is_sign_out(&u("https://example.com/?action=sign-out"), &p).as_deref(),
+            Some("sign-out")
+        );
         assert_eq!(is_sign_out(&u("https://logout.example.com/blog"), &p), None);
     }
 

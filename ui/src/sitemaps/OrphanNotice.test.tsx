@@ -9,7 +9,7 @@ test("orphan_notice_counts_both_classes", async () => {
   const t = fakeTransport();
   t.sitemaps.orphans = fakeOrphanSummary({ orphans: 12, nofollow_only: 1 });
   render(<OrphanNotice transport={t} path={P} live={false} />);
-  expect(await screen.findByRole("status", { name: "Orphan pages" })).toHaveTextContent("12 orphan pages, 1 page linked only through nofollow.");
+  expect((await screen.findByRole("status", { name: "Orphan pages" })).textContent).toContain("12 orphan pages, 1 page linked only through nofollow.");
 });
 
 test("orphan_notice_warns_when_the_crawl_was_incomplete", () => {

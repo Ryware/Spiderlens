@@ -186,15 +186,22 @@ fn orphans_lists_what_the_analysis_found() {
              INSERT OR REPLACE INTO meta (key, value) VALUES ('analysis', '{\"orphans\":{\"version\":1}}');",
         )
         .unwrap();
-        conn.query_row("SELECT url FROM urls WHERE id = 2", [], |r| r.get(0)).unwrap()
+        conn.query_row("SELECT url FROM urls WHERE id = 2", [], |r| r.get(0))
+            .unwrap()
     };
     let out = cli().args(["orphans", p]).output().unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.starts_with(&format!("{url}  ")), "{text}");
-    let out = cli().args(["orphans", p, "--csv", "--nofollow-only"]).output().unwrap();
+    let out = cli()
+        .args(["orphans", p, "--csv", "--nofollow-only"])
+        .output()
+        .unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.starts_with("url,class,sources,status,state,sitemap\n"), "{text}");
+    assert!(
+        text.starts_with("url,class,sources,status,state,sitemap\n"),
+        "{text}"
+    );
     assert!(text.contains(",nofollow_only,sitemap,"), "{text}");
     let out = cli().args(["orphans", p, "--json"]).output().unwrap();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
