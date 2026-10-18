@@ -171,7 +171,7 @@ description: "Task list for spec 014, JavaScript rendering"
 
 - [x] T068 [P] [US7] Dependence ladder fixture in `crates/test-fixtures/src/js_site.rs`: pages whose rendered text is 0%, 25%, 50%, 75% and 100% script-added (exact word counts), plus an empty application shell with title and H1 added by script.
 - [x] T069 [US7] Dependence in results and export in `crates/results/src/tabs.rs` and `crates/results/src/export.rs`: the "JavaScript dependence" column, per-type columns (hidden by default) and the "Content hidden from non-rendering crawlers" filter (overall above the threshold, or title or H1 only in the rendered page). Tests for US7 scenarios 1 to 3 and SC-011 (each value within 2 percentage points) in `crates/results/tests/rendering.rs`, including `spiderlens export --tab javascript` and `spiderlens page --json`.
-- [ ] T070 [US7] UI: a "JavaScript dependence" block in the render section of `ui/src/results/Inspector.tsx` (overall percentage and per-type shares, raw presence of title, description, canonical and directives). Vitest in `ui/src/results/Results.test.tsx`.
+- [x] T070 [US7] UI: a "JavaScript dependence" block in the render section of `ui/src/results/Inspector.tsx` (overall percentage and per-type shares, raw presence of title, description, canonical and directives). Vitest in `ui/src/results/Results.test.tsx`.
 
 ---
 

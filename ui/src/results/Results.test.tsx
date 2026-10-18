@@ -434,6 +434,45 @@ test("the_inspector_compares_raw_and_rendered_values_of_a_rendered_page", async 
   expect(within(detailsPane()).getByText("rendered only")).toBeTruthy();
 });
 
+test("the_inspector_shows_javascript_dependence_by_content_type", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering"];
+  const base = fakeRender();
+  t.results.renders.set(
+    2,
+    fakeRender({
+      comparison: {
+        ...base.comparison!,
+        dependence: 94,
+        dep_text: 0.94,
+        dep_headings: 1,
+        dep_internal_links: 0.25,
+        dep_structured: null,
+        dep_images: 0,
+        raw_has_title: false,
+        raw_has_description: true,
+        raw_has_canonical: true,
+        raw_has_directives: false,
+      },
+    }),
+  );
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  await within(detailsPane()).findByRole("heading", { name: "Raw vs rendered" });
+  const block = within(detailsPane()).getByRole("group", { name: "JavaScript dependence" });
+  expect(within(block).getByText("JavaScript dependence: 94%")).toBeTruthy();
+  const row = (label: string) => within(block).getByText(label).nextElementSibling!.textContent;
+  expect(row("Text added by JavaScript")).toBe("94%");
+  expect(row("Headings added by JavaScript")).toBe("100%");
+  expect(row("Internal links added by JavaScript")).toBe("25%");
+  expect(row("Structured data added by JavaScript")).toBe("none on the page");
+  expect(row("Images added by JavaScript")).toBe("0%");
+  expect(row("Title")).toBe("not in the raw HTML");
+  expect(row("Meta description")).toBe("in the raw HTML");
+  expect(row("Canonical")).toBe("in the raw HTML");
+  expect(row("Robots directives")).toBe("not in the raw HTML");
+});
+
 test("the_comparison_needs_both_versions_stored", async () => {
   const t = fakeTransport();
   t.results.features = ["base", "analysis", "rendering", "raw_html"];

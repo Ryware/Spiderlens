@@ -21,6 +21,7 @@ import type { MobileDetail } from "../generated/MobileDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
 import type { ElementChange } from "../generated/ElementChange";
+import type { RenderComparison } from "../generated/RenderComparison";
 import type { RenderDetail } from "../generated/RenderDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { UrlIssue } from "../generated/UrlIssue";
@@ -384,6 +385,7 @@ function RenderSection({ transport, path, id, url, render, htmlStored }: { trans
         </Notice>
       )}
       <Facts rows={rows} />
+      <DependenceBlock c={c} />
       {!canCompare && <p className="m-0 text-xs text-fg-3">Turn on Store page HTML in the crawl settings and crawl again to compare the HTML side by side.</p>}
       <HtmlDiffSheet transport={transport} path={path} id={id} url={url} open={open} onOpenChange={setOpen} />
     </Section>
@@ -447,6 +449,38 @@ function StoredRenderSections({ transport, path, id, url, render }: { transport:
       </Section>
       <Section title="Screenshot">{image}</Section>
     </>
+  );
+}
+
+/**
+ * How much of a rendered page depends on JavaScript: the share of each
+ * content type that exists only after rendering, and what the raw HTML
+ * already holds (spec 014 FR-029, US7).
+ */
+function DependenceBlock({ c }: { c: RenderComparison }) {
+  const share = (v: number | null) => (v === null ? "none on the page" : `${Math.round(v * 100)}%`);
+  const yes = (v: boolean) => (v ? "in the raw HTML" : "not in the raw HTML");
+  const shares: [string, number | null][] = [
+    ["Text", c.dep_text],
+    ["Headings", c.dep_headings],
+    ["Internal links", c.dep_internal_links],
+    ["Structured data", c.dep_structured],
+    ["Images", c.dep_images],
+  ];
+  const raw: [string, boolean][] = [
+    ["Title", c.raw_has_title],
+    ["Meta description", c.raw_has_description],
+    ["Canonical", c.raw_has_canonical],
+    ["Robots directives", c.raw_has_directives],
+  ];
+  return (
+    <div role="group" aria-label="JavaScript dependence" className="flex flex-col gap-1.5 border-t border-line pt-2">
+      <div className="text-xs font-semibold text-fg-3">
+        JavaScript dependence: {Math.round(c.dependence)}%
+      </div>
+      <Facts rows={shares.map(([k, v]): [string, ReactNode] => [`${k} added by JavaScript`, share(v)])} />
+      <Facts rows={raw.map(([k, v]): [string, ReactNode] => [k, yes(v)])} />
+    </div>
   );
 }
 
