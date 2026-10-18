@@ -3694,6 +3694,11 @@ impl CrawlStore {
                 &empty
             }
         };
+        // What a browser saw: forms, fields and actions beside the raw ones
+        // (spec 016 data-model.md), so the two can be compared.
+        if p.data.is_some() {
+            self.record_agents(id, AgentSource::Rendered, &d.agents, &[])?;
+        }
         let h = |level: u8, n: usize| {
             d.headings
                 .iter()
@@ -4285,6 +4290,79 @@ mod tests {
         let counts = s.render_counts().unwrap();
         assert!(counts.contains(&(RenderStatus::Queued, 1)));
         assert!(counts.contains(&(RenderStatus::NotRendered, 1)));
+    }
+
+    #[test]
+    fn a_rendered_page_writes_rendered_agent_rows_beside_the_raw_ones() {
+        let (_d, mut s) = store();
+        let a = s.record(&disc("https://a.test/a", 0, QUEUE)).unwrap().id();
+        let input = body::compress(b"raw").unwrap();
+        s.enqueue_render(a, Some((&input, 3))).unwrap();
+        s.mark_rendering(a).unwrap();
+        let raw = extracted("<html><head><title>T</title></head><body><h1>H</h1></body></html>");
+        let rendered = extracted(
+            r#"<html><head><title>T</title></head><body><h1>H</h1>
+            <form method="post" action="/contact"><label for="e">Email</label>
+            <input id="e" name="email"><button>Send</button></form></body></html>"#,
+        );
+        s.record_agents(a, AgentSource::Raw, &raw.agents, &[]).unwrap();
+        s.record_render(
+            a,
+            &RenderRecord {
+                status: RenderStatus::Rendered,
+                reason: None,
+                reason_detail: None,
+                render_ms: Some(10),
+                window: None,
+                js_redirect: None,
+                js_redirect_id: None,
+                console_totals: (0, 0),
+                resources_failed: 0,
+                resources_blocked: 0,
+                bot_challenge: false,
+                rendered_at: 1_700_000_000_000,
+                page: Some(RenderedPageRecord {
+                    data: Some(&rendered),
+                    extract_error: None,
+                    raw: Some(&raw),
+                    comparison: None,
+                    noindex: false,
+                    nofollow: false,
+                    canonical: None,
+                    canonical_count: 0,
+                    canonical_conflict: false,
+                    html: None,
+                    raw_only_links: &[],
+                }),
+                resources: &[],
+                console: &[],
+                screenshot: None,
+            },
+        )
+        .unwrap();
+        let rows = |table: &str, source: &str| -> i64 {
+            s.conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE url_id = ?1 AND source = ?2"),
+                    params![a, source],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(rows("page_agent", "raw"), 1);
+        assert_eq!(rows("page_agent", "rendered"), 1);
+        assert_eq!(rows("page_forms", "raw"), 0);
+        assert_eq!(rows("page_forms", "rendered"), 1);
+        assert_eq!(rows("form_fields", "rendered"), 1);
+        let (method, action): (String, Option<String>) = s
+            .conn
+            .query_row(
+                "SELECT method, action FROM page_forms WHERE url_id = ?1 AND source = 'rendered'",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((method.as_str(), action.as_deref()), ("post", Some("/contact")));
     }
 
     #[test]

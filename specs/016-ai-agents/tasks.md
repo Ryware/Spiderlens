@@ -57,7 +57,7 @@ description: "Task list for spec 016, AI agents"
 - [x] T035 [US2] `PageAgentFindings` in `crates/results/src/agents/detail.rs`, desktop command `agents_page`, MCP tool `page_agent_findings`. Tests.
 - [x] T036 [US2] Inspector "Agents" section in `ui/src/results/Inspector.tsx` (forms with fields and raw/rendered badges, actions without a link, declared tools, markdown alternate, score placeholder until T053). Vitest.
 - [ ] T037 [US2] Re-run collection from stored HTML for older files (`agents check`, `agents_run_checks`): parse stored raw (and rendered) HTML with `extract_page`, write only agent rows. Test on a file made before the migration step.
-- [ ] T038 [US2] **(needs 014)** Rendered agent rows from 014's rendered extraction; "Form only after JavaScript" condition (rendered form with no raw form of the same method and resolved action); filters with rendering on and off (acceptance scenario 1). Tests.
+- [x] T038 [US2] **(needs 014)** Rendered agent rows from 014's rendered extraction; "Form only after JavaScript" condition (rendered form with no raw form of the same method and resolved action); filters with rendering on and off (acceptance scenario 1). Tests.
 - [ ] T039 [US2] Playwright: Agents tab with fake data, select a filter, open a page, inspect its forms.
 
 ## Phase 5: User Story 3, machine-readable entry points (P2)

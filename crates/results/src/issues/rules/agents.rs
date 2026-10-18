@@ -13,7 +13,6 @@
 //!   from `agent_mcp_checks`), `llms.txt` and the `SearchAction` of the site.
 //!
 //! Not here, because the data they need is not stored yet:
-//! `form_rendered_only` (rendered `page_agent` rows are never written),
 //! `search_action_out_of_scope` and `prompt_injection_text`.
 //!
 //! `robots_blocks_agents` and `probe_blocked` read spec 015's stored robots
@@ -70,6 +69,32 @@ macro_rules! hidden_share {
 }
 
 pub const RULES: &[Rule] = &[
+    rule(
+        "agents.form_rendered_only",
+        "Form only after JavaScript",
+        A,
+        High,
+        Scope::Pages,
+        cond::FORM_RENDERED_ONLY,
+    )
+    .needs(Need::Rendering)
+    .evidence(concat!(
+        "(SELECT COUNT(*) FROM page_forms r WHERE r.url_id = u.id AND r.source = 'rendered' \
+         AND NOT EXISTS (SELECT 1 FROM page_forms w WHERE w.url_id = r.url_id AND w.source = 'raw' \
+         AND w.method = r.method AND COALESCE(w.action, '') = COALESCE(r.action, ''))) \
+         || ' forms exist only after rendering'",
+        " || COALESCE(', first: ' || upper((SELECT r.method FROM page_forms r WHERE r.url_id = u.id \
+         AND r.source = 'rendered' AND NOT EXISTS (SELECT 1 FROM page_forms w WHERE w.url_id = r.url_id \
+         AND w.source = 'raw' AND w.method = r.method AND COALESCE(w.action, '') = COALESCE(r.action, '')) \
+         ORDER BY r.pos LIMIT 1)) || ' ' || (SELECT COALESCE(NULLIF(r.action, ''), 'the page itself') \
+         FROM page_forms r WHERE r.url_id = u.id AND r.source = 'rendered' AND NOT EXISTS \
+         (SELECT 1 FROM page_forms w WHERE w.url_id = r.url_id AND w.source = 'raw' AND w.method = r.method \
+         AND COALESCE(w.action, '') = COALESCE(r.action, '')) ORDER BY r.pos LIMIT 1), '')"
+    ))
+    .explain(
+        "Most agents and AI crawlers read the HTML as sent and never run scripts. A form that a script builds is not in that HTML, so they cannot find it, fill it or send it.",
+        "Put the form in the server-sent HTML, and let scripts enhance it.",
+    ),
     rule(
         "agents.unlabelled_fields",
         "Form fields without a label",

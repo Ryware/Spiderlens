@@ -242,6 +242,11 @@ fn missing_data(conn: &Connection, id: &str) -> rusqlite::Result<Option<&'static
                 "The AI agent test was not run for agents that act for a person. Run it from the AI search tab.",
             )
         }
+        "agents.form_rendered_only"
+            if !has("SELECT EXISTS (SELECT 1 FROM page_agent WHERE source = 'rendered')")? =>
+        {
+            Some("Pages were not rendered in this crawl.")
+        }
         "agents.markdown_alternate_broken"
             if !has(
                 "SELECT EXISTS (SELECT 1 FROM page_agent WHERE md_outcome IN ('ok', 'wrong_type', 'error'))",
