@@ -9,7 +9,8 @@ use crate::tabs::Need;
 
 pub const TITLE_OVER_DESKTOP: &str = "px_width(u.title, 'title') > thr('serp.title_over_desktop')";
 pub const TITLE_OVER_MOBILE: &str = "px_width(u.title, 'title') > thr('serp.title_over_mobile')";
-pub const TITLE_BELOW: &str = "norm_ws(u.title) <> '' AND px_width(u.title, 'title') < thr('serp.title_below')";
+pub const TITLE_BELOW: &str =
+    "norm_ws(u.title) <> '' AND px_width(u.title, 'title') < thr('serp.title_below')";
 pub const DESC_OVER_DESKTOP: &str = "px_width((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id), 'desc') > thr('serp.desc_over_desktop')";
 pub const DESC_OVER_MOBILE: &str = "px_width((SELECT p.meta_description FROM pages p WHERE p.url_id = u.id), 'desc') > thr('serp.desc_over_mobile')";
 
