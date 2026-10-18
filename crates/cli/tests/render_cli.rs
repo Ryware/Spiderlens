@@ -56,6 +56,39 @@ fn no_usable_browser_exits_9_before_the_file_exists() {
 }
 
 #[test]
+fn browser_status_with_a_missing_path_exits_9() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = spiderlens()
+        .args(["browser", "status", "--json", "--browser"])
+        .arg(dir.path().join("no-such-browser"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(9));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["usable"], false);
+    assert!(v["problem"].as_str().unwrap().contains("No browser at this path."));
+}
+
+/// Offline: the download host cannot be reached (a proxy that refuses), so
+/// the command says so, names `--browser <path>` and exits 9.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn browser_install_offline_exits_9_with_a_clear_message() {
+    let data = tempfile::tempdir().unwrap();
+    spiderlens()
+        .args(["browser", "install", "--yes", "--json"])
+        .env("XDG_DATA_HOME", data.path())
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env("https_proxy", "http://127.0.0.1:9")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .assert()
+        .code(9)
+        .stderr(contains("No internet connection"))
+        .stderr(contains("--browser <path>"));
+}
+
+#[test]
 fn render_crawl_prints_the_renderer_and_the_rendering_block() {
     let Some(browser) = browser_path() else { return };
     let site = us1_site();
