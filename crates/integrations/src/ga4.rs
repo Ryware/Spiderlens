@@ -420,9 +420,7 @@ pub async fn run_pages(
                         let now = Timestamp::now();
                         let (state, resume_at) = match &e {
                             HttpError::RateLimited {
-                                retry_after,
-                                message,
-                                ..
+                                retry_after, message, ..
                             } => (
                                 RunState::PausedQuota,
                                 Some(match retry_after {
@@ -575,7 +573,10 @@ mod tests {
         ];
         suggest(&mut one, "https://a.test/blog/x");
         assert_eq!([one[0].suggested, one[1].suggested], [true, false]);
-        let mut two = [stream("properties/1", "https://a.test"), stream("properties/2", "a.test")];
+        let mut two = [
+            stream("properties/1", "https://a.test"),
+            stream("properties/2", "a.test"),
+        ];
         suggest(&mut two, "https://a.test/");
         assert_eq!([two[0].suggested, two[1].suggested], [false, false]);
     }
@@ -597,7 +598,8 @@ mod tests {
         assert_eq!(r.url, "https://a.test/blog/x?utm=1");
         assert_eq!((r.sessions, r.engaged_sessions), (12, 9));
         assert_eq!((r.engagement_rate, r.key_events, r.revenue), (0.75, 2.0, 30.5));
-        let unset = json!({"dimensionValues": [{"value": "a.test"}, {"value": "(not set)"}], "metricValues": []});
+        let unset =
+            json!({"dimensionValues": [{"value": "a.test"}, {"value": "(not set)"}], "metricValues": []});
         assert!(parse_row(&unset).is_none());
     }
 

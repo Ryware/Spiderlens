@@ -329,7 +329,10 @@ pub async fn run_inspection(
             )
         }
         None => in_tx(conn, || {
-            conn.execute("DELETE FROM integration_status WHERE provider = 'url_inspection'", [])?;
+            conn.execute(
+                "DELETE FROM integration_status WHERE provider = 'url_inspection'",
+                [],
+            )?;
             let id = store::create_run(
                 conn,
                 Provider::UrlInspection,
@@ -413,8 +416,15 @@ pub async fn run_inspection(
                     "siteUrl": req.property,
                     "languageCode": "en-US",
                 });
-                let (r, attempts) =
-                    call(ctx, session, "URL Inspection", Method::POST, &endpoint, Some(&body)).await;
+                let (r, attempts) = call(
+                    ctx,
+                    session,
+                    "URL Inspection",
+                    Method::POST,
+                    &endpoint,
+                    Some(&body),
+                )
+                .await;
                 match r {
                     Ok(v) => {
                         ledger.add(&ledger_key, &day, 1)?;

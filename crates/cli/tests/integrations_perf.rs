@@ -74,8 +74,10 @@ fn connect_key_enable_fetch_field_data_and_lab_tests() {
     };
     for i in 0..4 {
         for device in ["PHONE", "DESKTOP"] {
-            data.crux
-                .insert((site.url(HOST, &format!("/p/{i}")), device.into()), CruxVitals::GOOD);
+            data.crux.insert(
+                (site.url(HOST, &format!("/p/{i}")), device.into()),
+                CruxVitals::GOOD,
+            );
         }
     }
     let fake = FakePerf::start(data);
@@ -167,9 +169,18 @@ fn connect_key_enable_fetch_field_data_and_lab_tests() {
     assert!(csv.contains("2100") && csv.contains("Page data"), "{csv}");
 
     let runs = ok(&mut cli(&home, &fake), &["runs", file]);
-    assert!(runs.contains("field_data") && runs.contains("lab_tests"), "{runs}");
-    ok(&mut cli(&home, &fake), &["remove", file, "--provider", "field-data"]);
-    ok(&mut cli(&home, &fake), &["remove", file, "--provider", "lab-tests"]);
+    assert!(
+        runs.contains("field_data") && runs.contains("lab_tests"),
+        "{runs}"
+    );
+    ok(
+        &mut cli(&home, &fake),
+        &["remove", file, "--provider", "field-data"],
+    );
+    ok(
+        &mut cli(&home, &fake),
+        &["remove", file, "--provider", "lab-tests"],
+    );
     assert!(ok(&mut cli(&home, &fake), &["runs", file]).trim().is_empty());
 }
 
@@ -198,10 +209,24 @@ fn a_quota_stop_exits_with_ten_and_resume_finishes_the_run() {
         r#"{"error":{"code":429,"message":"Quota exceeded for quota metric 'Queries' and limit 'Queries per day'"}}"#,
     );
     let out = cli(&home, &fake)
-        .args(["fetch", file, "--provider", "lab-tests", "--pages", "all", "--max-pages", "3"])
+        .args([
+            "fetch",
+            file,
+            "--provider",
+            "lab-tests",
+            "--pages",
+            "all",
+            "--max-pages",
+            "3",
+        ])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(10), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(String::from_utf8_lossy(&out.stderr).contains("resume after"));
 
     let out = ok(&mut cli(&home, &fake), &["resume", file]);

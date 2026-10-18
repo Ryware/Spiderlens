@@ -10,7 +10,11 @@ use crate::tabs::{HTML_OK, Need, TabDef, ValueKind, c, col, filter};
 /// One value from a page's URL Inspection row.
 macro_rules! insp {
     ($field:literal) => {
-        concat!("(SELECT i.", $field, " FROM gsc_inspection i WHERE i.url_id = u.id)")
+        concat!(
+            "(SELECT i.",
+            $field,
+            " FROM gsc_inspection i WHERE i.url_id = u.id)"
+        )
     };
 }
 
@@ -127,8 +131,7 @@ pub(crate) fn index_status_tab() -> TabDef {
     }
 }
 
-const GA_WITH_SESSIONS: &str =
-    "COALESCE((SELECT g.sessions FROM ga4_pages g WHERE g.url_id = u.id), 0) > 0";
+const GA_WITH_SESSIONS: &str = "COALESCE((SELECT g.sessions FROM ga4_pages g WHERE g.url_id = u.id), 0) > 0";
 const GA_INDEXABLE_NO_SESSIONS: &str = "indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url) = 'Indexable' \
      AND COALESCE((SELECT g.sessions FROM ga4_pages g WHERE g.url_id = u.id), 0) = 0";
 const GA_SESSIONS_NOT_INDEXABLE: &str = "indexability(u.state, u.error_class, u.status, u.content_type, u.noindex, u.canonical, u.url) <> 'Indexable' \
@@ -165,8 +168,22 @@ pub(crate) fn analytics_tab() -> TabDef {
                 160,
             )
             .needs(needs),
-            col("ga_key_events", "Key events (Analytics)", ga!("key_events"), Decimal, 140).needs(needs),
-            col("ga_revenue", "Total revenue (Analytics)", ga!("revenue"), Decimal, 150).needs(needs),
+            col(
+                "ga_key_events",
+                "Key events (Analytics)",
+                ga!("key_events"),
+                Decimal,
+                140,
+            )
+            .needs(needs),
+            col(
+                "ga_revenue",
+                "Total revenue (Analytics)",
+                ga!("revenue"),
+                Decimal,
+                150,
+            )
+            .needs(needs),
             c::INDEXABILITY,
             c::TITLE,
             c::INLINKS,
@@ -179,7 +196,11 @@ pub(crate) fn analytics_tab() -> TabDef {
             filter("all", "All", "1"),
             filter("with_sessions", "With sessions", GA_WITH_SESSIONS),
             filter("no_sessions", "Indexable, no sessions", GA_INDEXABLE_NO_SESSIONS),
-            filter("sessions_not_indexable", "Has sessions, not indexable", GA_SESSIONS_NOT_INDEXABLE),
+            filter(
+                "sessions_not_indexable",
+                "Has sessions, not indexable",
+                GA_SESSIONS_NOT_INDEXABLE,
+            ),
             filter("no_data", "No data from Analytics", GA_NO_DATA),
         ]
         .into_iter()

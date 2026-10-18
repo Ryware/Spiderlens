@@ -137,7 +137,8 @@ fn score(lh: &Value, category: &str) -> Option<i64> {
 }
 
 fn numeric(lh: &Value, audit: &str) -> Option<f64> {
-    lh.pointer(&format!("/audits/{audit}/numericValue")).and_then(Value::as_f64)
+    lh.pointer(&format!("/audits/{audit}/numericValue"))
+        .and_then(Value::as_f64)
 }
 
 /// An audit's table without what is not needed later: debug data, and
@@ -153,7 +154,10 @@ fn trim_details(d: &Value) -> Option<Value> {
         out.insert("headings".into(), h.clone());
     }
     if let Some(items) = d["items"].as_array() {
-        out.insert("items".into(), Value::Array(items.iter().take(AUDIT_ITEMS).cloned().collect()));
+        out.insert(
+            "items".into(),
+            Value::Array(items.iter().take(AUDIT_ITEMS).cloned().collect()),
+        );
     }
     Some(Value::Object(out))
 }
@@ -161,7 +165,10 @@ fn trim_details(d: &Value) -> Option<Value> {
 fn kept_audits(lh: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     for category in KEPT {
-        let refs = lh["categories"][category]["auditRefs"].as_array().into_iter().flatten();
+        let refs = lh["categories"][category]["auditRefs"]
+            .as_array()
+            .into_iter()
+            .flatten();
         for r in refs {
             let Some(id) = r["id"].as_str() else {
                 continue;
@@ -214,7 +221,9 @@ fn top_opportunities(lh: &Value) -> Vec<Opportunity> {
 
 /// Reads a `runPagespeed` answer; `None` when Lighthouse returned nothing.
 pub fn parse_lab(v: &Value) -> Option<Lab> {
-    let lh = v.get("lighthouseResult").filter(|l| l.get("categories").is_some())?;
+    let lh = v
+        .get("lighthouseResult")
+        .filter(|l| l.get("categories").is_some())?;
     Some(Lab {
         performance: score(lh, "performance"),
         accessibility: score(lh, "accessibility"),
@@ -241,7 +250,10 @@ async fn test_page(
 ) -> (std::result::Result<Lab, HttpError>, u32, u64) {
     // The cache holds the compact result, not Lighthouse's large answer.
     let ck = cache::key(&["lab_tests", label, url, strategy.id()]);
-    if let Some(lab) = ctx.cached(&ck).and_then(|v| serde_json::from_value::<Lab>(v).ok()) {
+    if let Some(lab) = ctx
+        .cached(&ck)
+        .and_then(|v| serde_json::from_value::<Lab>(v).ok())
+    {
         return (Ok(lab), 0, 0);
     }
     let endpoint = format!("{}/runPagespeed", api.base);
@@ -456,7 +468,10 @@ mod tests {
 
     #[test]
     fn strategy_choices_expand() {
-        assert_eq!(StrategyChoice::Both.strategies(), [Strategy::Mobile, Strategy::Desktop]);
+        assert_eq!(
+            StrategyChoice::Both.strategies(),
+            [Strategy::Mobile, Strategy::Desktop]
+        );
         assert_eq!(StrategyChoice::Desktop.strategies(), [Strategy::Desktop]);
     }
 }

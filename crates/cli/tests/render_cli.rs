@@ -282,6 +282,37 @@ fn cli_and_engine_render_the_same() {
 }
 
 /// `spiderlens page` for a rendered page (T026, contracts/cli.md).
+/// T065 and T066: `html --rendered` writes the stored serialised DOM; with
+/// no screenshots taken, `screenshot` says so and fails.
+#[test]
+fn html_rendered_and_screenshot_read_what_the_crawl_stored() {
+    let Some(browser) = browser_path() else { return };
+    let site = us1_site();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("stored.spiderlens");
+    crawl_with_cli(&site, &browser, &file);
+    let url = site.local_url("/title-changed");
+
+    let out = spiderlens()
+        .arg("html")
+        .arg(&file)
+        .args([url.as_str(), "--rendered"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let html = String::from_utf8(out.stdout).unwrap();
+    assert!(html.to_ascii_lowercase().starts_with("<!doctype html"), "{html}");
+    assert!(html.contains("Red Shoes | Shop"), "{html}");
+
+    spiderlens()
+        .arg("screenshot")
+        .arg(&file)
+        .arg(&url)
+        .assert()
+        .failure()
+        .stderr(contains("has no screenshot"));
+}
+
 #[test]
 fn page_shows_the_rendered_version_with_origins() {
     let Some(browser) = browser_path() else { return };
@@ -446,4 +477,40 @@ fn killing_spiderlens_during_a_rendered_crawl_leaves_no_browser_behind() {
         );
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+}
+
+/// US7 (T069): `page --json` reports the overall dependence and the share
+/// of each content type, and `export --tab javascript` lists the column.
+#[test]
+fn page_json_and_export_carry_the_dependence() {
+    let Some(browser) = browser_path() else { return };
+    let site = JsSiteBuilder::new().us7_pages().start();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("dep.spiderlens");
+    crawl_with_cli(&site, &browser, &file);
+
+    let p = page_json(&file, &site.local_url("/dep-50"));
+    let overall = p["dependence"]["overall"].as_f64().expect("overall dependence");
+    assert!((overall - 50.0).abs() <= 2.0, "{overall}");
+    let text = p["dependence"]["text"].as_f64().expect("text share");
+    assert!((text - 0.5).abs() <= 0.02, "{text}");
+
+    let out = spiderlens()
+        .arg("export")
+        .arg(&file)
+        .args([
+            "--tab",
+            "javascript",
+            "--columns",
+            "address,js_dependence,js_dep_text",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let csv = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        csv.lines().next().unwrap().contains("JavaScript dependence"),
+        "{csv}"
+    );
+    assert!(csv.contains("/dep-75"), "{csv}");
 }

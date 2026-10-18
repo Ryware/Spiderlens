@@ -66,7 +66,8 @@ pub fn select_urls(conn: &Connection, set: &UrlSet, max: Option<u32>) -> Result<
     let (extra, prefix) = match set {
         UrlSet::List { urls } => {
             let matcher = Matcher::build(conn)?;
-            let mut check = conn.prepare(&format!("SELECT 1 FROM urls u WHERE u.id = ?1 AND {HTML_PAGES}"))?;
+            let mut check =
+                conn.prepare(&format!("SELECT 1 FROM urls u WHERE u.id = ?1 AND {HTML_PAGES}"))?;
             let mut seen = HashSet::new();
             let mut ids = Vec::new();
             let mut unmatched = 0;
@@ -191,7 +192,10 @@ pub fn begin(
     if let Some(id) = resume {
         let p = store::run(conn, id)?.ok_or_else(|| Error::Invalid(format!("no run {id} in this crawl")))?;
         if p.provider != provider {
-            return Err(Error::Invalid(format!("run {id} is not a {} run", provider.label())));
+            return Err(Error::Invalid(format!(
+                "run {id} is not a {} run",
+                provider.label()
+            )));
         }
         store::set_state(conn, id, RunState::Running, None, None)?;
         return Ok((
@@ -434,7 +438,13 @@ impl Driver<'_> {
             (failed > 0).then(|| format!("{failed} pages could not be fetched; see the pages' status."));
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         store::save_progress(self.conn, self.run_id, &counts.borrow(), None)?;
-        store::set_state(self.conn, self.run_id, RunState::Finished, message.as_deref(), None)?;
+        store::set_state(
+            self.conn,
+            self.run_id,
+            RunState::Finished,
+            message.as_deref(),
+            None,
+        )?;
         self.conn.execute_batch("COMMIT")?;
         report()?;
         self.progress()
@@ -497,7 +507,13 @@ impl Driver<'_> {
                 Some(e) => {
                     c.failed += 1;
                     let detail = e.to_string();
-                    self.status(item, "provider_error", Some(e.class()), attempt.attempts, Some(&detail))?;
+                    self.status(
+                        item,
+                        "provider_error",
+                        Some(e.class()),
+                        attempt.attempts,
+                        Some(&detail),
+                    )?;
                     Some("failed")
                 }
             };
@@ -565,7 +581,15 @@ mod tests {
             ("https://a.test/", 1, 0, 200, "text/html; charset=utf-8", 0, None),
             ("https://a.test/blog/a", 1, 1, 200, "text/html", 0, None),
             ("https://a.test/blog/b", 1, 1, 200, "text/html", 1, None),
-            ("https://a.test/blog/c", 1, 2, 200, "text/html", 0, Some("https://a.test/blog/a")),
+            (
+                "https://a.test/blog/c",
+                1,
+                2,
+                200,
+                "text/html",
+                0,
+                Some("https://a.test/blog/a"),
+            ),
             ("https://a.test/missing", 1, 1, 404, "text/html", 0, None),
             ("https://a.test/logo.png", 1, 1, 200, "image/png", 0, None),
             ("https://x.test/", 0, 1, 200, "text/html", 0, None),
@@ -582,7 +606,10 @@ mod tests {
 
     fn urls(c: &Connection, ids: &[i64]) -> Vec<String> {
         ids.iter()
-            .map(|id| c.query_row("SELECT url FROM urls WHERE id = ?1", [id], |r| r.get(0)).unwrap())
+            .map(|id| {
+                c.query_row("SELECT url FROM urls WHERE id = ?1", [id], |r| r.get(0))
+                    .unwrap()
+            })
             .collect()
     }
 
@@ -592,10 +619,18 @@ mod tests {
         let all = select_urls(&c, &UrlSet::All, None).unwrap();
         assert_eq!(
             urls(&c, &all.ids),
-            ["https://a.test/", "https://a.test/blog/a", "https://a.test/blog/b", "https://a.test/blog/c"]
+            [
+                "https://a.test/",
+                "https://a.test/blog/a",
+                "https://a.test/blog/b",
+                "https://a.test/blog/c"
+            ]
         );
         let indexable = select_urls(&c, &UrlSet::Indexable, None).unwrap();
-        assert_eq!(urls(&c, &indexable.ids), ["https://a.test/", "https://a.test/blog/a"]);
+        assert_eq!(
+            urls(&c, &indexable.ids),
+            ["https://a.test/", "https://a.test/blog/a"]
+        );
         let blog = select_urls(
             &c,
             &UrlSet::Prefix {
@@ -604,7 +639,10 @@ mod tests {
             Some(2),
         )
         .unwrap();
-        assert_eq!(urls(&c, &blog.ids), ["https://a.test/blog/a", "https://a.test/blog/b"]);
+        assert_eq!(
+            urls(&c, &blog.ids),
+            ["https://a.test/blog/a", "https://a.test/blog/b"]
+        );
     }
 
     #[test]

@@ -157,9 +157,9 @@ description: "Task list for spec 014, JavaScript rendering"
 
 **Independent Test**: crawl with screenshots on and off; retrieve rendered HTML and screenshots for sample pages and compare with what was produced at crawl time.
 
-- [ ] T065 [US6] Rendered HTML storage (FR-032) in `crates/engine/src/crawl/runner.rs` and `crates/engine/src/crawl/store.rs`: compressed into `rendered_bodies` when "Store page HTML" is on; `CrawlStore::rendered_html`; `spiderlens html --rendered`. Tests for US6 scenarios 1 and 4: bytes identical to the serialised DOM returned by the render (captured in the test), nothing stored with `--no-store-html` while all extracted rendered data still is.
-- [ ] T066 [US6] Screenshots (FR-033, plan D9) in `crates/render/src/page.rs`, `crates/engine/src/crawl/store.rs` and `crates/cli/src/main.rs`: WebP capture after settling, height capped at 8,192 px, stored in `screenshots`, `spiderlens screenshot --out`. Tests for US6 scenarios 2 and 3: an image of the window width exists only with `--screenshots`.
-- [ ] T067 [US6] Desktop sections in `app/src-tauri/src/results.rs` (`url_screenshot`) and `ui/src/results/Inspector.tsx`: "Rendered HTML" (chunked viewer as for raw HTML) and "Screenshot" (shown when stored). Vitest in `ui/src/results/Results.test.tsx`: sections appear only when stored, unavailable reasons shown otherwise.
+- [x] T065 [US6] Rendered HTML storage (FR-032) in `crates/engine/src/crawl/runner.rs` and `crates/engine/src/crawl/store.rs`: compressed into `rendered_bodies` when "Store page HTML" is on; `CrawlStore::rendered_html`; `spiderlens html --rendered`. Tests for US6 scenarios 1 and 4: bytes identical to the serialised DOM returned by the render (captured in the test), nothing stored with `--no-store-html` while all extracted rendered data still is.
+- [x] T066 [US6] Screenshots (FR-033, plan D9) in `crates/render/src/page.rs`, `crates/engine/src/crawl/store.rs` and `crates/cli/src/main.rs`: WebP capture after settling, height capped at 8,192 px, stored in `screenshots`, `spiderlens screenshot --out`. Tests for US6 scenarios 2 and 3: an image of the window width exists only with `--screenshots`.
+- [x] T067 [US6] Desktop sections in `app/src-tauri/src/results.rs` (`url_screenshot`) and `ui/src/results/Inspector.tsx`: "Rendered HTML" (chunked viewer as for raw HTML) and "Screenshot" (shown when stored). Vitest in `ui/src/results/Results.test.tsx`: sections appear only when stored, unavailable reasons shown otherwise.
 
 ---
 
@@ -169,9 +169,9 @@ description: "Task list for spec 014, JavaScript rendering"
 
 **Independent Test**: crawl pages from fully server-rendered to fully client-rendered and check the stored dependence values against the expected shares.
 
-- [ ] T068 [P] [US7] Dependence ladder fixture in `crates/test-fixtures/src/js_site.rs`: pages whose rendered text is 0%, 25%, 50%, 75% and 100% script-added (exact word counts), plus an empty application shell with title and H1 added by script.
-- [ ] T069 [US7] Dependence in results and export in `crates/results/src/tabs.rs` and `crates/results/src/export.rs`: the "JavaScript dependence" column, per-type columns (hidden by default) and the "Content hidden from non-rendering crawlers" filter (overall above the threshold, or title or H1 only in the rendered page). Tests for US7 scenarios 1 to 3 and SC-011 (each value within 2 percentage points) in `crates/results/tests/rendering.rs`, including `spiderlens export --tab javascript` and `spiderlens page --json`.
-- [ ] T070 [US7] UI: a "JavaScript dependence" block in the render section of `ui/src/results/Inspector.tsx` (overall percentage and per-type shares, raw presence of title, description, canonical and directives). Vitest in `ui/src/results/Results.test.tsx`.
+- [x] T068 [P] [US7] Dependence ladder fixture in `crates/test-fixtures/src/js_site.rs`: pages whose rendered text is 0%, 25%, 50%, 75% and 100% script-added (exact word counts), plus an empty application shell with title and H1 added by script.
+- [x] T069 [US7] Dependence in results and export in `crates/results/src/tabs.rs` and `crates/results/src/export.rs`: the "JavaScript dependence" column, per-type columns (hidden by default) and the "Content hidden from non-rendering crawlers" filter (overall above the threshold, or title or H1 only in the rendered page). Tests for US7 scenarios 1 to 3 and SC-011 (each value within 2 percentage points) in `crates/results/tests/rendering.rs`, including `spiderlens export --tab javascript` and `spiderlens page --json`.
+- [x] T070 [US7] UI: a "JavaScript dependence" block in the render section of `ui/src/results/Inspector.tsx` (overall percentage and per-type shares, raw presence of title, description, canonical and directives). Vitest in `ui/src/results/Results.test.tsx`.
 
 ---
 

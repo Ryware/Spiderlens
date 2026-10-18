@@ -55,7 +55,11 @@ fn error(status: u16, message: &str, google_status: &str) -> Response {
 }
 
 fn unauthorised() -> Response {
-    error(401, "Request had invalid authentication credentials.", "UNAUTHENTICATED")
+    error(
+        401,
+        "Request had invalid authentication credentials.",
+        "UNAUTHENTICATED",
+    )
 }
 
 // ---------------------------------------------------------------- URL Inspection
@@ -460,14 +464,22 @@ async fn account_summaries(State(s): State<AnalyticsShared>, headers: HeaderMap)
     .into_response()
 }
 
-async fn data_streams(State(s): State<AnalyticsShared>, Path(p): Path<String>, headers: HeaderMap) -> Response {
+async fn data_streams(
+    State(s): State<AnalyticsShared>,
+    Path(p): Path<String>,
+    headers: HeaderMap,
+) -> Response {
     log_analytics(&s, "GET", &format!("/v1beta/properties/{p}/dataStreams"), "");
     if !authorised(&headers) {
         return unauthorised();
     }
     let g = s.lock().unwrap();
     let Some(prop) = g.data.properties.iter().find(|x| x.id == p) else {
-        return error(403, "User does not have sufficient permissions for this property.", "PERMISSION_DENIED");
+        return error(
+            403,
+            "User does not have sufficient permissions for this property.",
+            "PERMISSION_DENIED",
+        );
     };
     let streams: Vec<Value> = prop
         .streams
@@ -510,7 +522,11 @@ async fn run_report(
         return error(status, &message, "UNAVAILABLE");
     }
     if !g.data.properties.iter().any(|x| x.id == property) {
-        return error(403, "User does not have sufficient permissions for this property.", "PERMISSION_DENIED");
+        return error(
+            403,
+            "User does not have sufficient permissions for this property.",
+            "PERMISSION_DENIED",
+        );
     }
     let cost = g.data.quota.cost;
     if g.hour_left < cost {

@@ -132,7 +132,8 @@ pub struct Record {
 fn p75(metric: &Value) -> Option<f64> {
     let v = metric.pointer("/percentiles/p75")?;
     // CLS arrives as a string, the others as numbers.
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 fn date(d: &Value) -> Option<String> {
@@ -232,7 +233,11 @@ struct Origins(RefCell<HashMap<(String, FormFactor), Slot>>);
 
 impl Origins {
     fn slot(&self, origin: &str, device: FormFactor) -> Slot {
-        self.0.borrow_mut().entry((origin.to_string(), device)).or_default().clone()
+        self.0
+            .borrow_mut()
+            .entry((origin.to_string(), device))
+            .or_default()
+            .clone()
     }
 }
 
@@ -257,8 +262,7 @@ impl Run<'_> {
         let mut error = None;
         let (mut attempts, mut requests) = (0, 0);
         for &device in self.devices {
-            let (r, a, n) =
-                lookup(self.ctx, self.key, self.api, self.label, "url", &item.url, device).await;
+            let (r, a, n) = lookup(self.ctx, self.key, self.api, self.label, "url", &item.url, device).await;
             attempts += a;
             requests += n;
             let own = match r {
@@ -450,8 +454,14 @@ mod tests {
 
     #[test]
     fn origins_are_scheme_host_and_port() {
-        assert_eq!(origin_of("https://a.test/x?y=1").as_deref(), Some("https://a.test"));
-        assert_eq!(origin_of("http://127.0.0.1:8080/p").as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(
+            origin_of("https://a.test/x?y=1").as_deref(),
+            Some("https://a.test")
+        );
+        assert_eq!(
+            origin_of("http://127.0.0.1:8080/p").as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
         assert_eq!(origin_of("not a url"), None);
     }
 

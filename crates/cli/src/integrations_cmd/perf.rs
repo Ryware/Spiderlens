@@ -42,7 +42,9 @@ fn devices(list: &[String]) -> Result<Vec<FormFactor>, Error> {
         .map(|d| match d.trim() {
             "phone" => Ok(FormFactor::Phone),
             "desktop" => Ok(FormFactor::Desktop),
-            other => Err(Error::Invalid(format!("{other} is not a device (phone, desktop)"))),
+            other => Err(Error::Invalid(format!(
+                "{other} is not a device (phone, desktop)"
+            ))),
         })
         .collect()
 }
@@ -52,7 +54,9 @@ fn strategy(s: Option<&str>) -> Result<StrategyChoice, Error> {
         None | Some("mobile") => Ok(StrategyChoice::Mobile),
         Some("desktop") => Ok(StrategyChoice::Desktop),
         Some("both") => Ok(StrategyChoice::Both),
-        Some(other) => Err(Error::Invalid(format!("{other} is not a strategy (mobile, desktop, both)"))),
+        Some(other) => Err(Error::Invalid(format!(
+            "{other} is not a strategy (mobile, desktop, both)"
+        ))),
     }
 }
 
@@ -94,9 +98,9 @@ fn duration(secs: u32) -> String {
 
 /// The estimate goes first, so a long run is never a surprise (FR-004).
 fn print_estimate(p: Provider, e: &PerfEstimate) {
-    let allowance = e
-        .share_of_allowance
-        .map_or(String::new(), |s| format!(", {:.0}% of a day's allowance", s * 100.0));
+    let allowance = e.share_of_allowance.map_or(String::new(), |s| {
+        format!(", {:.0}% of a day's allowance", s * 100.0)
+    });
     eprintln!(
         "{}: {} requests for {} pages, about {} at {} a minute and {} at a time{allowance}. {}",
         p.label(),
@@ -179,7 +183,10 @@ mod tests {
         assert_eq!(strategy(Some("both")).unwrap(), StrategyChoice::Both);
         assert!(strategy(Some("watch")).is_err());
         assert_eq!(url_set(None, UrlSet::All).unwrap(), UrlSet::All);
-        assert_eq!(url_set(Some("indexable"), UrlSet::All).unwrap(), UrlSet::Indexable);
+        assert_eq!(
+            url_set(Some("indexable"), UrlSet::All).unwrap(),
+            UrlSet::Indexable
+        );
         assert_eq!(
             url_set(Some("prefix:https://a.test/blog/"), UrlSet::All).unwrap(),
             UrlSet::Prefix {

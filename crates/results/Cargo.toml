@@ -11,6 +11,7 @@ authors.workspace = true
 [dependencies]
 spiderlens-engine.workspace = true
 spiderlens-config.workspace = true
+base64.workspace = true
 rusqlite = { workspace = true, features = ["functions", "collation"] }
 thiserror.workspace = true
 serde.workspace = true

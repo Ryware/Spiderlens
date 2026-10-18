@@ -18,7 +18,9 @@ use spiderlens_integrations::limits::Limits;
 use spiderlens_integrations::oauth::{Endpoints, Session, StoredGoogle};
 use spiderlens_integrations::run::{Control, Ctx};
 use spiderlens_integrations::store::{self, RunProgress, RunState};
-use spiderlens_test_fixtures::google_apis::{AnalyticsData, FakeAnalytics, GaProperty, GaQuota, GaRow, GaStream};
+use spiderlens_test_fixtures::google_apis::{
+    AnalyticsData, FakeAnalytics, GaProperty, GaQuota, GaRow, GaStream,
+};
 use spiderlens_test_fixtures::providers::{FakeGoogle, GoogleData};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -236,7 +238,9 @@ async fn us4_2_landing_pages_match_crawled_urls_combine_query_strings_and_list_o
     assert_eq!(rig.count("SELECT COUNT(*) FROM ga4_pages"), PAGES as i64);
     assert_eq!(rig.sessions_of(0).0, 0);
     assert_eq!(
-        rig.count("SELECT COUNT(*) FROM integration_status WHERE provider = 'analytics' AND reason = 'no_data'"),
+        rig.count(
+            "SELECT COUNT(*) FROM integration_status WHERE provider = 'analytics' AND reason = 'no_data'"
+        ),
         3
     );
     // The landing page the crawl never found is an orphan candidate from Analytics.

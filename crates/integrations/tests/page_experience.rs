@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use secrecy::SecretString;
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control as CrawlControl, Crawler, open_for_update};
+use spiderlens_integrations::Provider;
 use spiderlens_integrations::cache::Cache;
 use spiderlens_integrations::credentials::MemoryStore;
 use spiderlens_integrations::crux::{self, FieldRequest, FormFactor};
@@ -23,7 +24,6 @@ use spiderlens_integrations::psi::{self, LabRequest, StrategyChoice};
 use spiderlens_integrations::run::{Control, Ctx};
 use spiderlens_integrations::settings::{Folder, ProviderSettings};
 use spiderlens_integrations::store::{self, RunProgress, RunState};
-use spiderlens_integrations::Provider;
 use spiderlens_test_fixtures::perf_providers::{CruxVitals, FakePerf, PerfData, PsiPage};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -95,7 +95,11 @@ fn field_data(site: &Site, own: usize, with_origin: bool) -> PerfData {
         ..PerfData::default()
     };
     for i in 0..own {
-        let v = if i % 2 == 0 { CruxVitals::GOOD } else { CruxVitals::POOR };
+        let v = if i % 2 == 0 {
+            CruxVitals::GOOD
+        } else {
+            CruxVitals::POOR
+        };
         for device in ["PHONE", "DESKTOP"] {
             d.crux.insert((page_url(site, i), device.into()), v);
         }
@@ -117,7 +121,9 @@ async fn fetch_field(
     crux::run_field_data(
         ctx,
         &key(),
-        &crux::Api { base: fake.crux_url() },
+        &crux::Api {
+            base: fake.crux_url(),
+        },
         &update,
         "main",
         req,
@@ -193,7 +199,10 @@ async fn us3_1_field_data_per_page_and_device_with_ratings_and_period() {
     // One request per page and device.
     assert_eq!(fake.crux_calls().len(), PAGES * 2);
     assert_eq!(count(&path, "SELECT COUNT(*) FROM cwv_field"), (PAGES * 2) as i64);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'url'"), (PAGES * 2) as i64);
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'url'"),
+        (PAGES * 2) as i64
+    );
 
     let conn = Connection::open(&path).unwrap();
     let row = |i: usize, device: &str| -> (i64, i64, f64, String, String, String, String, String) {
@@ -218,11 +227,17 @@ async fn us3_1_field_data_per_page_and_device_with_ratings_and_period() {
     };
     let good = row(0, "phone");
     assert_eq!((good.0, good.1, good.2), (2100, 150, 0.05));
-    assert_eq!((good.3.as_str(), good.4.as_str(), good.5.as_str()), ("good", "good", "good"));
+    assert_eq!(
+        (good.3.as_str(), good.4.as_str(), good.5.as_str()),
+        ("good", "good", "good")
+    );
     // The 28-day collection period is stored with the values.
     assert_eq!((good.6.as_str(), good.7.as_str()), ("2026-09-14", "2026-10-11"));
     let poor = row(1, "desktop");
-    assert_eq!((poor.3.as_str(), poor.4.as_str(), poor.5.as_str()), ("poor", "poor", "poor"));
+    assert_eq!(
+        (poor.3.as_str(), poor.4.as_str(), poor.5.as_str()),
+        ("poor", "poor", "poor")
+    );
     // The run is recorded and the feature is listed for the results tabs.
     assert_eq!(store::features(&conn).unwrap(), vec!["field_data".to_string()]);
 }
@@ -240,19 +255,33 @@ async fn us3_2_origin_data_is_labelled_and_fetched_once_per_origin_and_device() 
         &fake,
         &path,
         &FieldRequest::default(),
-        &ctx(Provider::FieldData, 1200, 4, Some(Cache::open(&cache_path).unwrap())),
+        &ctx(
+            Provider::FieldData,
+            1200,
+            4,
+            Some(Cache::open(&cache_path).unwrap()),
+        ),
         None,
     )
     .await;
     assert_eq!(p.state, RunState::Finished);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'url'"), 10);
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'url'"),
+        10
+    );
     // Phones fall back to the origin; the origin has nothing for desktops.
     assert_eq!(
-        count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'origin' AND form_factor = 'phone'"),
+        count(
+            &path,
+            "SELECT COUNT(*) FROM cwv_field WHERE level = 'origin' AND form_factor = 'phone'"
+        ),
         15
     );
     assert_eq!(
-        count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'none' AND form_factor = 'desktop'"),
+        count(
+            &path,
+            "SELECT COUNT(*) FROM cwv_field WHERE level = 'none' AND form_factor = 'desktop'"
+        ),
         15
     );
     // Origin rows carry the origin's numbers, flagged as origin data.
@@ -264,7 +293,11 @@ async fn us3_2_origin_data_is_labelled_and_fetched_once_per_origin_and_device() 
         15
     );
     // Fifteen pages asked about the origin; it was fetched once per device.
-    let origin_calls: Vec<_> = fake.crux_calls().into_iter().filter(|c| c.detail == "origin").collect();
+    let origin_calls: Vec<_> = fake
+        .crux_calls()
+        .into_iter()
+        .filter(|c| c.detail == "origin")
+        .collect();
     assert_eq!(origin_calls.len(), 2, "{origin_calls:?}");
     // Every page has something to show, so none is marked "no data".
     assert_eq!(count(&path, "SELECT COUNT(*) FROM integration_status"), 0);
@@ -275,7 +308,12 @@ async fn us3_2_origin_data_is_labelled_and_fetched_once_per_origin_and_device() 
         &fake,
         &path,
         &FieldRequest::default(),
-        &ctx(Provider::FieldData, 1200, 4, Some(Cache::open(&cache_path).unwrap())),
+        &ctx(
+            Provider::FieldData,
+            1200,
+            4,
+            Some(Cache::open(&cache_path).unwrap()),
+        ),
         None,
     )
     .await;
@@ -296,7 +334,10 @@ async fn us3_2_a_page_with_no_data_anywhere_says_so() {
     let p = fetch_field(&fake, &path, &req, &ctx(Provider::FieldData, 1200, 4, None), None).await;
     assert_eq!(p.state, RunState::Finished);
     assert_eq!(count(&path, "SELECT COUNT(*) FROM cwv_field"), PAGES as i64);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'none'"), (PAGES - 3) as i64);
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM cwv_field WHERE level = 'none'"),
+        (PAGES - 3) as i64
+    );
     assert_eq!(
         count(
             &path,
@@ -364,7 +405,15 @@ async fn us3_3_lab_tests_store_scores_metrics_opportunities_and_audits() {
         max: Some(4),
         fresh: false,
     };
-    let p = fetch_lab(&fake, &path, &req, &ctx(Provider::LabTests, 6000, 4, None), None, None).await;
+    let p = fetch_lab(
+        &fake,
+        &path,
+        &req,
+        &ctx(Provider::LabTests, 6000, 4, None),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(p.state, RunState::Finished);
     assert_eq!(p.done, 4);
     let calls = fake.psi_calls();
@@ -372,7 +421,11 @@ async fn us3_3_lab_tests_store_scores_metrics_opportunities_and_audits() {
     assert_eq!(calls.iter().filter(|c| c.device == "mobile").count(), 4);
     assert_eq!(calls.iter().filter(|c| c.device == "desktop").count(), 4);
     // All four categories are asked for on every call.
-    assert!(calls.iter().all(|c| c.detail == "PERFORMANCE,ACCESSIBILITY,BEST_PRACTICES,SEO"));
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.detail == "PERFORMANCE,ACCESSIBILITY,BEST_PRACTICES,SEO")
+    );
     assert_eq!(count(&path, "SELECT COUNT(*) FROM psi_lab"), 8);
 
     let conn = Connection::open(&path).unwrap();
@@ -408,7 +461,8 @@ async fn us3_3_lab_tests_store_scores_metrics_opportunities_and_audits() {
         )
         .unwrap();
     // The five biggest savings, largest first; the sixth is left out.
-    let opps: Vec<serde_json::Value> = serde_json::from_str(mobile["opportunities"].as_str().unwrap()).unwrap();
+    let opps: Vec<serde_json::Value> =
+        serde_json::from_str(mobile["opportunities"].as_str().unwrap()).unwrap();
     let ids: Vec<&str> = opps.iter().map(|o| o["id"].as_str().unwrap()).collect();
     assert_eq!(
         ids,
@@ -439,7 +493,15 @@ async fn us3_3_lab_tests_store_scores_metrics_opportunities_and_audits() {
         fresh: true,
         ..req
     };
-    fetch_lab(&fake, &path, &one, &ctx(Provider::LabTests, 6000, 4, None), None, None).await;
+    fetch_lab(
+        &fake,
+        &path,
+        &one,
+        &ctx(Provider::LabTests, 6000, 4, None),
+        None,
+        None,
+    )
+    .await;
     let new: Vec<_> = fake.psi_calls().into_iter().skip(before).collect();
     assert_eq!(new.len(), 2);
     assert!(new.iter().all(|c| c.device == "desktop"));
@@ -462,7 +524,15 @@ async fn us3_4_slow_lab_tests_run_in_parallel_up_to_the_concurrency_limit() {
         fresh: false,
     };
     let start = std::time::Instant::now();
-    let p = fetch_lab(&fake, &path, &req, &ctx(Provider::LabTests, 6000, 3, None), None, None).await;
+    let p = fetch_lab(
+        &fake,
+        &path,
+        &req,
+        &ctx(Provider::LabTests, 6000, 3, None),
+        None,
+        None,
+    )
+    .await;
     let took = start.elapsed();
     assert_eq!(p.state, RunState::Finished);
     assert_eq!(p.done, 9);
@@ -489,11 +559,25 @@ async fn fr_006_a_quota_stop_keeps_the_waiting_pages_and_resume_finishes_them() 
     };
     let quota = r#"{"error":{"code":429,"message":"Quota exceeded for quota metric 'Queries' and limit 'Queries per day'"}}"#;
     fake.fail_next("psi", 429, quota);
-    let first = fetch_lab(&fake, &path, &req, &ctx(Provider::LabTests, 6000, 1, None), None, None).await;
+    let first = fetch_lab(
+        &fake,
+        &path,
+        &req,
+        &ctx(Provider::LabTests, 6000, 1, None),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(first.state, RunState::PausedQuota);
     assert!(first.resume_at.is_some());
     assert_eq!(first.done, 0);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM integration_queue WHERE state = 'pending'"), 4);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT COUNT(*) FROM integration_queue WHERE state = 'pending'"
+        ),
+        4
+    );
 
     let second = fetch_lab(
         &fake,
@@ -506,7 +590,13 @@ async fn fr_006_a_quota_stop_keeps_the_waiting_pages_and_resume_finishes_them() 
     .await;
     assert_eq!(second.state, RunState::Finished);
     assert_eq!(second.done, 4);
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM integration_queue WHERE state = 'pending'"), 0);
+    assert_eq!(
+        count(
+            &path,
+            "SELECT COUNT(*) FROM integration_queue WHERE state = 'pending'"
+        ),
+        0
+    );
     assert_eq!(count(&path, "SELECT COUNT(*) FROM psi_lab"), 4);
 }
 
@@ -582,7 +672,12 @@ async fn sc_004_the_key_never_reaches_the_crawl_file_or_the_cache() {
         &fake,
         &path,
         &FieldRequest::default(),
-        &ctx(Provider::FieldData, 1200, 4, Some(Cache::open(&cache_path).unwrap())),
+        &ctx(
+            Provider::FieldData,
+            1200,
+            4,
+            Some(Cache::open(&cache_path).unwrap()),
+        ),
         None,
     )
     .await;
@@ -594,7 +689,12 @@ async fn sc_004_the_key_never_reaches_the_crawl_file_or_the_cache() {
         &fake,
         &path,
         &lab,
-        &ctx(Provider::LabTests, 6000, 2, Some(Cache::open(&cache_path).unwrap())),
+        &ctx(
+            Provider::LabTests,
+            6000,
+            2,
+            Some(Cache::open(&cache_path).unwrap()),
+        ),
         None,
         None,
     )
@@ -627,17 +727,38 @@ async fn fr_011_remove_drops_field_data_and_lab_tests() {
         max: Some(3),
         ..LabRequest::default()
     };
-    fetch_lab(&fake, &path, &lab, &ctx(Provider::LabTests, 6000, 2, None), None, None).await;
+    fetch_lab(
+        &fake,
+        &path,
+        &lab,
+        &ctx(Provider::LabTests, 6000, 2, None),
+        None,
+        None,
+    )
+    .await;
 
     let update = open_for_update(&path, None).unwrap();
     store::remove(update.conn(), Some(Provider::FieldData)).unwrap();
     store::remove(update.conn(), Some(Provider::LabTests)).unwrap();
     drop(update);
-    for t in ["cwv_field", "psi_lab", "integration_runs", "integration_queue", "integration_status"] {
+    for t in [
+        "cwv_field",
+        "psi_lab",
+        "integration_runs",
+        "integration_queue",
+        "integration_status",
+    ] {
         assert_eq!(count(&path, &format!("SELECT COUNT(*) FROM {t}")), 0, "{t}");
     }
-    assert!(store::features(&Connection::open(&path).unwrap()).unwrap().is_empty());
-    assert_eq!(count(&path, "SELECT COUNT(*) FROM urls WHERE internal = 1"), PAGES as i64);
+    assert!(
+        store::features(&Connection::open(&path).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        count(&path, "SELECT COUNT(*) FROM urls WHERE internal = 1"),
+        PAGES as i64
+    );
 }
 
 #[tokio::test]
@@ -695,13 +816,22 @@ async fn us3_page_experience_tab_lists_pages_and_filters_by_poor_vitals_and_orig
     let url0 = page_url(&site, 0);
     let url9 = page_url(&site, 9);
     let rows = list(&mut r, "all");
-    let own = rows.iter().find(|row| row[1].as_str() == Some(url0.as_str())).unwrap();
+    let own = rows
+        .iter()
+        .find(|row| row[1].as_str() == Some(url0.as_str()))
+        .unwrap();
     assert_eq!(own[1 + lcp], serde_json::json!(2100));
     assert_eq!(own[1 + level], serde_json::json!("Page data"));
     // A fallback page shows no page-level number and says why.
-    let fallback = rows.iter().find(|row| row[1].as_str() == Some(url9.as_str())).unwrap();
+    let fallback = rows
+        .iter()
+        .find(|row| row[1].as_str() == Some(url9.as_str()))
+        .unwrap();
     assert_eq!(fallback[1 + lcp], serde_json::Value::Null);
-    assert_eq!(fallback[1 + level], serde_json::json!("No page-level data (origin data)"));
+    assert_eq!(
+        fallback[1 + level],
+        serde_json::json!("No page-level data (origin data)")
+    );
 }
 
 #[test]
@@ -715,7 +845,9 @@ fn the_hub_saves_one_google_key_for_both_providers_and_runs_them() {
     let store = Arc::new(MemoryStore::default());
     let cache = Some(dir.path().join("hub-cache.sqlite"));
     let hub = Hub::new(Folder::new(dir.path()), store, cache).with_perf(
-        crux::Api { base: fake.crux_url() },
+        crux::Api {
+            base: fake.crux_url(),
+        },
         psi::Api { base: fake.psi_url() },
     );
 
@@ -724,7 +856,10 @@ fn the_hub_saves_one_google_key_for_both_providers_and_runs_them() {
         max: Some(5),
         ..FieldRequest::default()
     };
-    assert!(hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {}).is_err());
+    assert!(
+        hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {})
+            .is_err()
+    );
     for p in [Provider::FieldData, Provider::LabTests] {
         hub.save_settings(
             p,
@@ -736,7 +871,10 @@ fn the_hub_saves_one_google_key_for_both_providers_and_runs_them() {
         )
         .unwrap();
     }
-    assert!(hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {}).is_err());
+    assert!(
+        hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {})
+            .is_err()
+    );
 
     // One key, both providers.
     let saved = hub.save_google_api_key("main", SecretString::from(KEY)).unwrap();
@@ -772,7 +910,10 @@ fn the_hub_saves_one_google_key_for_both_providers_and_runs_them() {
 
     // Forgetting a key removes it for that provider only.
     hub.forget("field_data", "main").unwrap();
-    assert!(hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {}).is_err());
+    assert!(
+        hub.fetch_field_data(&path, None, &req, &Control::default(), &mut |_| {})
+            .is_err()
+    );
     assert!(
         hub.fetch_lab_tests(&path, None, &lab, &Control::default(), &mut |_| {})
             .is_ok()

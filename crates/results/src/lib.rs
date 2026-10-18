@@ -44,8 +44,8 @@ pub use custom::CustomResult;
 pub use detail::{
     A11Y_DISCLAIMER, A11yCheckDetail, A11yDetail, A11yNodeDetail, AmpDetail, AmpFailure, ConsoleRow,
     ElementChange, HeadingRow, HtmlMissing, HtmlVersion, LinkMetrics, LinkRow, ListKind, ListPage,
-    MobileDetail, MobileExample, PageHtml, PdfDetail, RedirectHop, RenderComparison, RenderDetail,
-    ResourceRow, Snippet, SpellDetail, SpellFinding, UrlDetail,
+    MobileDetail, MobileExample, PageHtml, PageScreenshot, PdfDetail, RedirectHop, RenderComparison,
+    RenderDetail, ResourceRow, ScreenshotMissing, Snippet, SpellDetail, SpellFinding, UrlDetail,
 };
 pub use export::{
     A11Y_EXPORTS, A11yFormat, COPY_LIMIT, ExportError, csv_field, export_a11y_file, export_file,

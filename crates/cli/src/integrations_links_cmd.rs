@@ -50,7 +50,9 @@ pub fn fetch_links(
             "indexable" => UrlSet::Indexable,
             "all" => UrlSet::All,
             other => {
-                return Err(Error::Invalid(format!("--urls {other}: link metrics take indexable or all")));
+                return Err(Error::Invalid(format!(
+                    "--urls {other}: link metrics take indexable or all"
+                )));
             }
         },
         metrics: a.metrics.clone(),

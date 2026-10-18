@@ -291,7 +291,12 @@ async fn psi(
     headers: HeaderMap,
     Query(q): Query<Vec<(String, String)>>,
 ) -> Response {
-    let param = |k: &str| q.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let param = |k: &str| {
+        q.iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
     let (url, strategy) = (param("url"), param("strategy"));
     let categories: Vec<String> = q
         .iter()
@@ -340,9 +345,7 @@ async fn psi(
             json!({"score": page.seo, "auditRefs": [{"id": "meta-description", "weight": 3}]}),
         );
     }
-    let opportunity = |title: &str, ms: f64| {
-        json!({"title": title, "score": 0.4, "details": {"type": "opportunity", "overallSavingsMs": ms}})
-    };
+    let opportunity = |title: &str, ms: f64| json!({"title": title, "score": 0.4, "details": {"type": "opportunity", "overallSavingsMs": ms}});
     axum::Json(json!({
         "id": url,
         "lighthouseResult": {

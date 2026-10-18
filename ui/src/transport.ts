@@ -29,6 +29,7 @@ import type { HtmlVersion } from "./generated/HtmlVersion";
 import type { ListKind } from "./generated/ListKind";
 import type { ListPage } from "./generated/ListPage";
 import type { PageHtml } from "./generated/PageHtml";
+import type { PageScreenshot } from "./generated/PageScreenshot";
 import type { Refresh } from "./generated/Refresh";
 import type { RowPage } from "./generated/RowPage";
 import type { TabCounts } from "./generated/TabCounts";
@@ -988,6 +989,8 @@ export interface Transport {
   cookieUrls(path: string, name: string, domain: string, cookiePath: string, offset: number, limit: number): Promise<CookieUrlPage>;
   /** The page's stored HTML, or why there is none. `version`: the HTML as received (default) or as rendered (spec 014 FR-032). */
   urlHtml(path: string, id: number, version?: HtmlVersion): Promise<PageHtml>;
+  /** The rendered page's stored screenshot, or why there is none (spec 014 FR-033). */
+  urlScreenshot(path: string, id: number): Promise<PageScreenshot>;
   /** The normalised raw and rendered HTML compared: `maxHunks` differences from number `fromHunk` (spec 014 FR-028). Rejects when either version is not stored. */
   urlHtmlDiff(path: string, id: number, fromHunk: number, maxHunks: number): Promise<HtmlDiff>;
   /** The tabs that list the URL unfiltered, in display order; empty when none does. */
@@ -1325,6 +1328,7 @@ export const tauriTransport: Transport = {
   cookiesList: (path, filter, sort, descending, offset, limit) => invoke("cookies_list", { path, filter, sort, descending, offset, limit }),
   cookieUrls: (path, name, domain, cookiePath, offset, limit) => invoke("cookie_urls", { path, name, domain, cookiePath, offset, limit }),
   urlHtml: (path, id, version) => invoke("url_html", { path, id, version: version ?? null }),
+  urlScreenshot: (path, id) => invoke("url_screenshot", { path, id }),
   urlHtmlDiff: (path, id, fromHunk, maxHunks) => invoke("url_html_diff", { path, id, fromHunk, maxHunks }),
   urlTabs: (path, id) => invoke("url_tabs", { path, id }),
   copyText: (text) => invoke("copy_text", { text }),

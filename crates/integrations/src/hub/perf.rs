@@ -78,7 +78,11 @@ impl Hub {
     pub fn estimate_field_data(&self, crawl: &Path, req: &FieldRequest) -> Result<PerfEstimate> {
         let db = read_only(crawl)?;
         let pages = perf::select_urls(&db, &req.urls, req.max)?.ids.len();
-        Ok(crux::estimate(pages, req.devices.len(), &self.limits(Provider::FieldData)))
+        Ok(crux::estimate(
+            pages,
+            req.devices.len(),
+            &self.limits(Provider::FieldData),
+        ))
     }
 
     /// What a lab test run costs and how long it takes.
@@ -191,7 +195,10 @@ impl Hub {
                     on_progress,
                 ))
             }
-            p => Err(Error::Invalid(format!("{} is not a page experience run", p.label()))),
+            p => Err(Error::Invalid(format!(
+                "{} is not a page experience run",
+                p.label()
+            ))),
         }
     }
 }

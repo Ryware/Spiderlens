@@ -57,8 +57,20 @@ fn field_columns(device: &str, name: &str) -> Vec<ColumnDef> {
     let label = |s: &str| format!("{s} · {name} (field)");
     let f = |c: ColumnDef| c.needs(Need::FieldData);
     vec![
-        f(column(id("lcp"), label("LCP"), field(device, "url", "f.lcp_ms"), ValueKind::Ms, 120)),
-        f(column(id("inp"), label("INP"), field(device, "url", "f.inp_ms"), ValueKind::Ms, 120)),
+        f(column(
+            id("lcp"),
+            label("LCP"),
+            field(device, "url", "f.lcp_ms"),
+            ValueKind::Ms,
+            120,
+        )),
+        f(column(
+            id("inp"),
+            label("INP"),
+            field(device, "url", "f.inp_ms"),
+            ValueKind::Ms,
+            120,
+        )),
         f(column(
             id("cls"),
             label("CLS"),
@@ -73,11 +85,46 @@ fn field_columns(device: &str, name: &str) -> Vec<ColumnDef> {
             ValueKind::Text,
             220,
         )),
-        f(column(id("fcp"), label("FCP"), field(device, "url", "f.fcp_ms"), ValueKind::Ms, 120).hidden()),
-        f(column(id("ttfb"), label("TTFB"), field(device, "url", "f.ttfb_ms"), ValueKind::Ms, 120).hidden()),
-        f(column(id("lcp_rating"), label("LCP rating"), rated(device, "lcp"), ValueKind::Text, 150).hidden()),
-        f(column(id("inp_rating"), label("INP rating"), rated(device, "inp"), ValueKind::Text, 150).hidden()),
-        f(column(id("cls_rating"), label("CLS rating"), rated(device, "cls"), ValueKind::Text, 150).hidden()),
+        f(column(
+            id("fcp"),
+            label("FCP"),
+            field(device, "url", "f.fcp_ms"),
+            ValueKind::Ms,
+            120,
+        )
+        .hidden()),
+        f(column(
+            id("ttfb"),
+            label("TTFB"),
+            field(device, "url", "f.ttfb_ms"),
+            ValueKind::Ms,
+            120,
+        )
+        .hidden()),
+        f(column(
+            id("lcp_rating"),
+            label("LCP rating"),
+            rated(device, "lcp"),
+            ValueKind::Text,
+            150,
+        )
+        .hidden()),
+        f(column(
+            id("inp_rating"),
+            label("INP rating"),
+            rated(device, "inp"),
+            ValueKind::Text,
+            150,
+        )
+        .hidden()),
+        f(column(
+            id("cls_rating"),
+            label("CLS rating"),
+            rated(device, "cls"),
+            ValueKind::Text,
+            150,
+        )
+        .hidden()),
         f(column(
             id("period"),
             format!("Collection period · {name}"),
@@ -144,9 +191,30 @@ fn lab_columns(strategy: &str, name: &str) -> Vec<ColumnDef> {
             130,
         )
         .hidden()),
-        f(column(id("seo"), label("SEO"), lab(strategy, "l.seo"), ValueKind::Int, 110).hidden()),
-        f(column(id("lcp"), label("LCP"), lab(strategy, "l.lcp_ms"), ValueKind::Ms, 120).hidden()),
-        f(column(id("cls"), label("CLS"), lab(strategy, &cls_text("l")), ValueKind::Text, 100).hidden()),
+        f(column(
+            id("seo"),
+            label("SEO"),
+            lab(strategy, "l.seo"),
+            ValueKind::Int,
+            110,
+        )
+        .hidden()),
+        f(column(
+            id("lcp"),
+            label("LCP"),
+            lab(strategy, "l.lcp_ms"),
+            ValueKind::Ms,
+            120,
+        )
+        .hidden()),
+        f(column(
+            id("cls"),
+            label("CLS"),
+            lab(strategy, &cls_text("l")),
+            ValueKind::Text,
+            100,
+        )
+        .hidden()),
         f(column(
             id("tbt"),
             label("Total blocking time"),

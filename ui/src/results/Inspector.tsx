@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Columns2, Copy, CornerDownRight, FileCode, MousePointerClick, TableProperties } from "lucide-react";
+import type { PageScreenshot } from "../generated/PageScreenshot";
 import type { OpenCompare } from "../content/compare";
 import type { CustomResult } from "../generated/CustomResult";
 import type { CustomRules } from "../generated/CustomRules";
@@ -20,6 +21,7 @@ import type { MobileDetail } from "../generated/MobileDetail";
 import type { SpellDetail } from "../generated/SpellDetail";
 import type { PdfDetail } from "../generated/PdfDetail";
 import type { ElementChange } from "../generated/ElementChange";
+import type { RenderComparison } from "../generated/RenderComparison";
 import type { RenderDetail } from "../generated/RenderDetail";
 import type { UrlDetail } from "../generated/UrlDetail";
 import type { UrlIssue } from "../generated/UrlIssue";
@@ -383,9 +385,102 @@ function RenderSection({ transport, path, id, url, render, htmlStored }: { trans
         </Notice>
       )}
       <Facts rows={rows} />
+      <DependenceBlock c={c} />
       {!canCompare && <p className="m-0 text-xs text-fg-3">Turn on Store page HTML in the crawl settings and crawl again to compare the HTML side by side.</p>}
       <HtmlDiffSheet transport={transport} path={path} id={id} url={url} open={open} onOpenChange={setOpen} />
     </Section>
+  );
+}
+
+/**
+ * The rendered page's stored HTML and screenshot (spec 014 FR-032, FR-033):
+ * each offers itself when stored and says why it is missing when not.
+ */
+function StoredRenderSections({ transport, path, id, url, render }: { transport: Transport; path: string; id: number; url: string; render: RenderDetail }) {
+  const [htmlOpen, setHtmlOpen] = useState(false);
+  const [shot, setShot] = useState<{ state: "loading" } | { state: "error"; message: string } | { state: "done"; shot: PageScreenshot }>({ state: "loading" });
+  const stored = render.screenshot_stored;
+  useEffect(() => {
+    if (!stored) return;
+    let off = false;
+    setShot({ state: "loading" });
+    transport.urlScreenshot(path, id).then(
+      (s) => !off && setShot({ state: "done", shot: s }),
+      (e) => !off && setShot({ state: "error", message: String(e) }),
+    );
+    return () => {
+      off = true;
+    };
+  }, [transport, path, id, stored]);
+  let image: ReactNode;
+  if (!stored) {
+    image = <p className="m-0 text-sm text-fg-3">No screenshot was saved for this page. Turn on Settings › Rendering › Save screenshots and crawl again to keep one per rendered page.</p>;
+  } else if (shot.state === "loading") {
+    image = <p className="m-0 text-sm text-fg-3">Loading…</p>;
+  } else if (shot.state === "error") {
+    image = <Notice kind="bad">{shot.message}</Notice>;
+  } else if (shot.shot.webp_base64 === null) {
+    image = <p className="m-0 text-sm text-fg-3">No screenshot was saved for this page.</p>;
+  } else {
+    image = (
+      <div className="max-h-96 overflow-auto rounded border border-line">
+        <img alt={`Screenshot of ${url}`} className="block w-full" src={`data:image/webp;base64,${shot.shot.webp_base64}`} width={shot.shot.width} height={shot.shot.height} />
+      </div>
+    );
+  }
+  return (
+    <>
+      <Section
+        title="Rendered HTML"
+        aside={
+          render.rendered_html_stored && (
+            <Button size="sm" onClick={() => setHtmlOpen(true)}>
+              <FileCode className="size-3.5" /> View rendered source
+            </Button>
+          )
+        }
+      >
+        <p className="m-0 text-sm text-fg-3">
+          {render.rendered_html_stored
+            ? "The page's HTML after scripts ran, as the browser serialised it."
+            : "Not stored in this crawl. Turn on Settings › Page data › Store page HTML and crawl again to keep each page's rendered source."}
+        </p>
+        {render.rendered_html_stored && <HtmlViewer transport={transport} path={path} id={id} url={url} version="rendered" open={htmlOpen} onOpenChange={setHtmlOpen} />}
+      </Section>
+      <Section title="Screenshot">{image}</Section>
+    </>
+  );
+}
+
+/**
+ * How much of a rendered page depends on JavaScript: the share of each
+ * content type that exists only after rendering, and what the raw HTML
+ * already holds (spec 014 FR-029, US7).
+ */
+function DependenceBlock({ c }: { c: RenderComparison }) {
+  const share = (v: number | null) => (v === null ? "none on the page" : `${Math.round(v * 100)}%`);
+  const yes = (v: boolean) => (v ? "in the raw HTML" : "not in the raw HTML");
+  const shares: [string, number | null][] = [
+    ["Text", c.dep_text],
+    ["Headings", c.dep_headings],
+    ["Internal links", c.dep_internal_links],
+    ["Structured data", c.dep_structured],
+    ["Images", c.dep_images],
+  ];
+  const raw: [string, boolean][] = [
+    ["Title", c.raw_has_title],
+    ["Meta description", c.raw_has_description],
+    ["Canonical", c.raw_has_canonical],
+    ["Robots directives", c.raw_has_directives],
+  ];
+  return (
+    <div role="group" aria-label="JavaScript dependence" className="flex flex-col gap-1.5 border-t border-line pt-2">
+      <div className="text-xs font-semibold text-fg-3">
+        JavaScript dependence: {Math.round(c.dependence)}%
+      </div>
+      <Facts rows={shares.map(([k, v]): [string, ReactNode] => [`${k} added by JavaScript`, share(v)])} />
+      <Facts rows={raw.map(([k, v]): [string, ReactNode] => [k, yes(v)])} />
+    </div>
   );
 }
 
@@ -1104,6 +1199,7 @@ export function Inspector({
       </Section>
 
       {d.render && <RenderSection transport={transport} path={path} id={d.id} url={d.url} render={d.render} htmlStored={d.html_stored} />}
+      {d.render?.comparison && <StoredRenderSections transport={transport} path={path} id={d.id} url={d.url} render={d.render} />}
 
       <AgentsSection transport={transport} path={path} id={d.id} />
       {d.amp && <AmpSection amp={d.amp} />}

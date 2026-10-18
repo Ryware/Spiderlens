@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use spiderlens_config::{CrawlConfig, ModeInput, SpeedSettings};
 use spiderlens_engine::crawl::{Control, Crawler};
-use spiderlens_test_fixtures::google_apis::{AnalyticsData, FakeAnalytics, FakeInspection, GaProperty, GaRow, GaStream};
+use spiderlens_test_fixtures::google_apis::{
+    AnalyticsData, FakeAnalytics, FakeInspection, GaProperty, GaRow, GaStream,
+};
 use spiderlens_test_fixtures::providers::{FakeGoogle, GoogleData};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -102,7 +104,15 @@ fn inspect_and_analytics_from_the_command_line() {
 
     ok(
         &mut cli(&home, &f),
-        &["connect", "google", "--no-browser", "--scope", "search-console", "--scope", "analytics"],
+        &[
+            "connect",
+            "google",
+            "--no-browser",
+            "--scope",
+            "search-console",
+            "--scope",
+            "analytics",
+        ],
     );
 
     // Off until turned on: a usage error.
@@ -117,12 +127,23 @@ fn inspect_and_analytics_from_the_command_line() {
 
     // URL Inspection: the count against the allowance is printed first.
     let out = cli(&home, &f)
-        .args(["fetch", file, "--provider", "url-inspection", "--max", "2", "--json"])
+        .args([
+            "fetch",
+            file,
+            "--provider",
+            "url-inspection",
+            "--max",
+            "2",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Today's allowance: 2000 left of 2000"), "{stderr}");
+    assert!(
+        stderr.contains("Today's allowance: 2000 left of 2000"),
+        "{stderr}"
+    );
     let run: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(run["state"], "finished");
     assert_eq!(run["done"], 2);
@@ -131,11 +152,23 @@ fn inspect_and_analytics_from_the_command_line() {
     // Google's allowance is used up: the run pauses with the quota exit code.
     let out = cli(&home, &f)
         .args([
-            "fetch", file, "--provider", "url-inspection", "--max", "3", "--fresh", "--json",
+            "fetch",
+            file,
+            "--provider",
+            "url-inspection",
+            "--max",
+            "3",
+            "--fresh",
+            "--json",
         ])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(10), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(run["state"], "paused_quota");
     assert!(run["resume_at"].is_string());
@@ -162,11 +195,25 @@ fn inspect_and_analytics_from_the_command_line() {
     assert!(csv.contains("Pass"), "{csv}");
 
     // Analytics: the stream for the crawled site is listed and used.
-    let streams = ok(&mut cli(&home, &f), &["properties", "--provider", "analytics", "--crawl", file]);
-    assert!(streams.contains("(suggested)") && streams.contains("--stream 456"), "{streams}");
+    let streams = ok(
+        &mut cli(&home, &f),
+        &["properties", "--provider", "analytics", "--crawl", file],
+    );
+    assert!(
+        streams.contains("(suggested)") && streams.contains("--stream 456"),
+        "{streams}"
+    );
     let json = ok(
         &mut cli(&home, &f),
-        &["fetch", file, "--provider", "analytics", "--last", "28d", "--json"],
+        &[
+            "fetch",
+            file,
+            "--provider",
+            "analytics",
+            "--last",
+            "28d",
+            "--json",
+        ],
     );
     let run: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(run["state"], "finished");
@@ -192,8 +239,14 @@ fn inspect_and_analytics_from_the_command_line() {
     assert!(csv.contains(",9") && csv.contains(",4"), "{csv}");
 
     let runs = ok(&mut cli(&home, &f), &["runs", file]);
-    assert!(runs.contains("url_inspection") && runs.contains("analytics"), "{runs}");
-    ok(&mut cli(&home, &f), &["remove", file, "--provider", "url-inspection"]);
+    assert!(
+        runs.contains("url_inspection") && runs.contains("analytics"),
+        "{runs}"
+    );
+    ok(
+        &mut cli(&home, &f),
+        &["remove", file, "--provider", "url-inspection"],
+    );
     ok(&mut cli(&home, &f), &["remove", file, "--provider", "analytics"]);
     assert!(ok(&mut cli(&home, &f), &["runs", file]).trim().is_empty());
 }

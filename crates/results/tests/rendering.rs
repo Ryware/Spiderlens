@@ -797,3 +797,128 @@ async fn the_html_diff_shows_what_a_script_changed() {
     assert!(u.starts_with("--- raw\n+++ rendered\n"), "{u}");
     assert!(u.contains("data-ready"), "{u}");
 }
+
+fn number(v: Option<serde_json::Value>) -> f64 {
+    v.expect("row listed").as_f64().expect("a number")
+}
+
+/// US7 scenarios 1 to 3 and SC-011 (T069): the dependence ladder is stored
+/// within 2 percentage points of the words a script added, shown in the
+/// JavaScript tab and its export, and the hidden-content filter lists the
+/// pages over the threshold and the shell whose title and H1 only exist
+/// after rendering.
+#[tokio::test]
+async fn us7_dependence_is_shown_filtered_and_exported() {
+    let Some(c) = crawl_pages(RenderMode::Javascript, JsSiteBuilder::new().us7_pages()).await else {
+        return;
+    };
+    let mut r = Reader::open(&c.path).unwrap();
+    let s = &c.site;
+    let all = q("javascript", "all", None);
+
+    // Scenario 1 and SC-011: each value within 2 points of the expected share.
+    for (path, expected) in [
+        ("/dep-0", 0.0),
+        ("/dep-25", 25.0),
+        ("/dep-50", 50.0),
+        ("/dep-75", 75.0),
+        ("/dep-100", 100.0),
+        ("/shell", 100.0),
+    ] {
+        let got = number(cell(&mut r, s, &all, path, "js_dependence"));
+        assert!((got - expected).abs() <= 2.0, "{path}: {got} vs {expected}");
+    }
+    // Per-type shares: the text share equals the overall one; a page
+    // without headings has no heading share.
+    let text = number(cell(&mut r, s, &all, "/dep-25", "js_dep_text"));
+    assert!((text - 25.0).abs() <= 2.0, "{text}");
+    assert!(
+        cell(&mut r, s, &all, "/dep-25", "js_dep_headings")
+            .unwrap()
+            .is_null()
+    );
+    assert!(
+        cell(&mut r, s, &all, "/dep-25", "js_dep_structured")
+            .unwrap()
+            .is_null()
+    );
+    let headings = number(cell(&mut r, s, &all, "/shell", "js_dep_headings"));
+    assert!((headings - 100.0).abs() <= 2.0, "{headings}");
+    // The per-type columns are hidden by default, the overall one is not.
+    let tab = tabs().iter().find(|t| t.id == "javascript").unwrap();
+    for id in [
+        "js_dep_text",
+        "js_dep_headings",
+        "js_dep_links",
+        "js_dep_structured",
+        "js_dep_images",
+    ] {
+        assert!(
+            !tab.columns.iter().find(|c| c.id == id).unwrap().default_visible,
+            "{id}"
+        );
+    }
+    assert!(
+        tab.columns
+            .iter()
+            .find(|c| c.id == "js_dependence")
+            .unwrap()
+            .default_visible
+    );
+
+    // Scenarios 2 and 3: over the default 50 % threshold, or a title or H1
+    // that exists only in the rendered page.
+    let hidden = q("javascript", "hidden_content", None);
+    let listed = |r: &mut Reader, path: &str| cell(r, s, &hidden, path, "address").is_some();
+    assert!(listed(&mut r, "/dep-75"));
+    assert!(listed(&mut r, "/dep-100"));
+    assert!(listed(&mut r, "/shell"));
+    assert!(!listed(&mut r, "/dep-0"));
+    assert!(!listed(&mut r, "/dep-25"));
+    assert!(
+        !listed(&mut r, "/dep-50"),
+        "exactly at the threshold is not over it"
+    );
+    assert_eq!(
+        text(cell(
+            &mut r,
+            s,
+            &q("javascript", "title_only_rendered", None),
+            "/shell",
+            "address"
+        )),
+        s.url(JS_HOST, "/shell")
+    );
+
+    // The export carries the same values (`spiderlens export --tab javascript`).
+    let dest = c.path.with_extension("csv");
+    let columns: Vec<String> = ["address", "js_dependence", "js_dep_text"]
+        .map(String::from)
+        .to_vec();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    spiderlens_results::export_file(
+        &c.path,
+        &all,
+        &columns,
+        None,
+        None,
+        &dest,
+        &cancel,
+        &mut |_, _| {},
+    )
+    .unwrap();
+    let mut csv = csv::Reader::from_path(&dest).unwrap();
+    let headers = csv.headers().unwrap().clone();
+    let dep = headers
+        .iter()
+        .position(|h| h == "JavaScript dependence")
+        .expect("column in the export");
+    let want = s.url(JS_HOST, "/dep-75");
+    let row = csv
+        .records()
+        .map(Result::unwrap)
+        .find(|rec| rec.get(0) == Some(want.as_str()))
+        .expect("row exported");
+    let exported: f64 = row.get(dep).unwrap().trim_end_matches('%').parse().unwrap();
+    assert!((exported - 75.0).abs() <= 2.0, "{exported}");
+}

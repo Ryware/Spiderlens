@@ -223,11 +223,20 @@ async fn us2_1_default_set_is_indexable_html_ordered_by_clicks_then_depth() {
     assert_eq!((p.requested, p.done, p.failed), (4, 4, 0));
     assert_eq!(
         rig.fake.inspected(),
-        vec![page(&rig.site, 7), page(&rig.site, 3), page(&rig.site, 0), page(&rig.site, 1)]
+        vec![
+            page(&rig.site, 7),
+            page(&rig.site, 3),
+            page(&rig.site, 0),
+            page(&rig.site, 1)
+        ]
     );
     // The request carries the property and the page, nothing else about the crawl.
     let log = rig.fake.log();
-    assert!(log[0].body.contains(&format!("\"siteUrl\":\"{}\"", property(&rig.site))));
+    assert!(
+        log[0]
+            .body
+            .contains(&format!("\"siteUrl\":\"{}\"", property(&rig.site)))
+    );
     assert!(log[0].body.contains(&page(&rig.site, 7)));
 }
 
@@ -238,10 +247,14 @@ async fn us2_2_fields_canonical_mismatch_and_robots_state_are_stored() {
         &page(&rig.site, 1),
         InspectionAnswer::canonical_elsewhere(&page(&rig.site, 1), &page(&rig.site, 2)),
     );
-    rig.fake
-        .set_answer(&page(&rig.site, 2), InspectionAnswer::blocked_by_robots(&page(&rig.site, 2)));
-    rig.fake
-        .set_answer(&page(&rig.site, 3), InspectionAnswer::not_indexed(&page(&rig.site, 3)));
+    rig.fake.set_answer(
+        &page(&rig.site, 2),
+        InspectionAnswer::blocked_by_robots(&page(&rig.site, 2)),
+    );
+    rig.fake.set_answer(
+        &page(&rig.site, 3),
+        InspectionAnswer::not_indexed(&page(&rig.site, 3)),
+    );
     let p = rig.run(2000, &rig.request(), None, 0, None).await;
     assert_eq!(p.state, RunState::Finished);
     assert_eq!(p.done, PAGES as i64);
@@ -316,7 +329,9 @@ async fn us2_3_the_allowance_pauses_the_run_and_the_next_day_resumes_without_rep
     // Finished results are kept; the rest are marked as waiting on the allowance.
     assert_eq!(rig.count("SELECT COUNT(*) FROM gsc_inspection"), 4);
     assert_eq!(
-        rig.count("SELECT COUNT(*) FROM integration_status WHERE provider = 'url_inspection' AND reason = 'quota'"),
+        rig.count(
+            "SELECT COUNT(*) FROM integration_status WHERE provider = 'url_inspection' AND reason = 'quota'"
+        ),
         6
     );
     assert_eq!(rig.fake.used_today(), 4);
@@ -383,14 +398,14 @@ fn us2_4_more_urls_than_the_allowance_need_more_than_one_day() {
     };
     let now = clock(0);
     let plan = inspect::plan(&conn, &req, daily, 1, now).unwrap();
-    assert_eq!((plan.selected, plan.remaining_today, plan.days_needed), (10, 3, 3));
+    assert_eq!(
+        (plan.selected, plan.remaining_today, plan.days_needed),
+        (10, 3, 3)
+    );
     assert_eq!(plan.resets_at, "2026-10-15T07:00:00Z");
     let one_day = inspect::plan(&conn, &req, daily, 0, now).unwrap();
     assert_eq!(one_day.days_needed, 3);
-    let few = InspectRequest {
-        max: Some(3),
-        ..req
-    };
+    let few = InspectRequest { max: Some(3), ..req };
     assert_eq!(inspect::plan(&conn, &few, daily, 0, now).unwrap().days_needed, 1);
 }
 
@@ -440,10 +455,14 @@ async fn t030_index_status_tab_lists_and_filters_the_results() {
         &page(&rig.site, 1),
         InspectionAnswer::canonical_elsewhere(&page(&rig.site, 1), &page(&rig.site, 2)),
     );
-    rig.fake
-        .set_answer(&page(&rig.site, 2), InspectionAnswer::blocked_by_robots(&page(&rig.site, 2)));
-    rig.fake
-        .set_answer(&page(&rig.site, 3), InspectionAnswer::not_indexed(&page(&rig.site, 3)));
+    rig.fake.set_answer(
+        &page(&rig.site, 2),
+        InspectionAnswer::blocked_by_robots(&page(&rig.site, 2)),
+    );
+    rig.fake.set_answer(
+        &page(&rig.site, 3),
+        InspectionAnswer::not_indexed(&page(&rig.site, 3)),
+    );
     let req = InspectRequest {
         max: Some(6),
         ..rig.request()

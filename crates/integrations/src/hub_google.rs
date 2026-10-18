@@ -164,7 +164,8 @@ impl Hub {
             }
             Provider::Analytics => {
                 let req: Ga4Request = serde_json::from_value(r.params.clone()).map_err(invalid)?;
-                let (session, label) = self.google_session(Provider::Analytics, r.account_label.as_deref())?;
+                let (session, label) =
+                    self.google_session(Provider::Analytics, r.account_label.as_deref())?;
                 let update = spiderlens_engine::crawl::open_for_update(crawl, None)?;
                 let ctx = self.ctx(Provider::Analytics, req.fresh);
                 run::block_on(ga4::run_pages(
@@ -179,7 +180,10 @@ impl Hub {
                     on_progress,
                 ))
             }
-            p => Err(Error::Invalid(format!("{} is not available in this build", p.label()))),
+            p => Err(Error::Invalid(format!(
+                "{} is not available in this build",
+                p.label()
+            ))),
         }
     }
 }

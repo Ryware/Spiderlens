@@ -18,7 +18,9 @@ use spiderlens_integrations::run::Control;
 use spiderlens_integrations::settings::{Folder, ProviderSettings};
 use spiderlens_integrations::store::RunState;
 use spiderlens_integrations::{Error, Provider};
-use spiderlens_test_fixtures::google_apis::{AnalyticsData, FakeAnalytics, FakeInspection, GaProperty, GaRow, GaStream};
+use spiderlens_test_fixtures::google_apis::{
+    AnalyticsData, FakeAnalytics, FakeInspection, GaProperty, GaRow, GaStream,
+};
 use spiderlens_test_fixtures::providers::{FakeGoogle, GoogleData};
 use spiderlens_test_fixtures::{Site, SiteBuilder};
 use tokio::sync::watch;
@@ -129,7 +131,14 @@ fn inspection_and_analytics_through_the_hub() {
     // Both are in this build, but nothing is connected or on yet.
     let status = h.status();
     for p in [Provider::UrlInspection, Provider::Analytics] {
-        assert!(status.providers.iter().find(|s| s.provider == p).unwrap().available);
+        assert!(
+            status
+                .providers
+                .iter()
+                .find(|s| s.provider == p)
+                .unwrap()
+                .available
+        );
     }
     assert!(matches!(
         h.analytics_streams(None, Some(&path)),
@@ -143,7 +152,10 @@ fn inspection_and_analytics_through_the_hub() {
             follow,
         )
         .unwrap();
-    assert_eq!(c.scopes, vec!["search_console".to_string(), "analytics".to_string()]);
+    assert_eq!(
+        c.scopes,
+        vec!["search_console".to_string(), "analytics".to_string()]
+    );
     let status = h.status();
     for p in [Provider::UrlInspection, Provider::Analytics] {
         let s = status.providers.iter().find(|s| s.provider == p).unwrap();
@@ -160,12 +172,17 @@ fn inspection_and_analytics_through_the_hub() {
 
     // The plan shows the count against the day's allowance.
     let plan = h.inspection_plan(&path, None, &req).unwrap();
-    assert_eq!((plan.selected, plan.remaining_today, plan.days_needed), (5, 2000, 1));
+    assert_eq!(
+        (plan.selected, plan.remaining_today, plan.days_needed),
+        (5, 2000, 1)
+    );
 
     // Paused by the user before the first URL, then resumed through the hub.
     let control = Control::default();
     control.pause();
-    let p = h.fetch_inspection(&path, None, &req, &control, &mut |_| {}).unwrap();
+    let p = h
+        .fetch_inspection(&path, None, &req, &control, &mut |_| {})
+        .unwrap();
     assert_eq!(p.state, RunState::PausedUser);
     let p = h.resume(&path, None, &Control::default(), &mut |_| {}).unwrap();
     assert_eq!(p.provider, Provider::UrlInspection);
@@ -178,11 +195,16 @@ fn inspection_and_analytics_through_the_hub() {
     let streams = h.analytics_streams(None, Some(&path)).unwrap();
     assert!(streams[0].suggested);
     let s = h.suggested_stream(None, &path).unwrap();
-    assert_eq!((s.property.as_str(), s.stream.as_str()), ("properties/123", "456"));
+    assert_eq!(
+        (s.property.as_str(), s.stream.as_str()),
+        ("properties/123", "456")
+    );
     let areq = Ga4Request::last_28_days(s.property, s.stream);
     let control = Control::default();
     control.pause();
-    let p = h.fetch_analytics(&path, None, &areq, &control, &mut |_| {}).unwrap();
+    let p = h
+        .fetch_analytics(&path, None, &areq, &control, &mut |_| {})
+        .unwrap();
     assert_eq!(p.state, RunState::PausedUser);
     let p = h.resume(&path, None, &Control::default(), &mut |_| {}).unwrap();
     assert_eq!(p.provider, Provider::Analytics);

@@ -465,14 +465,7 @@ fn fetch(h: &Hub, a: FetchArgs) -> Result<ExitCode, Error> {
         Provider::Ahrefs | Provider::Majestic | Provider::Moz => {
             let account = a.account.as_deref();
             return crate::integrations_links_cmd::fetch_links(
-                h,
-                p,
-                &a.file,
-                account,
-                &a.urls,
-                &a.links,
-                a.fresh,
-                a.json,
+                h, p, &a.file, account, &a.urls, &a.links, a.fresh, a.json,
             );
         }
         _ => {
@@ -608,8 +601,8 @@ mod test_hooks {
 
     use secrecy::{ExposeSecret, SecretString};
     use spiderlens_integrations::credentials::{CredentialId, CredentialStore, StoreKind};
-    use spiderlens_integrations::gsc::Api;
     use spiderlens_integrations::ga4::Ga4Api;
+    use spiderlens_integrations::gsc::Api;
     use spiderlens_integrations::hub::{GoogleApis, Hub};
     use spiderlens_integrations::inspect::InspectApi;
     use spiderlens_integrations::oauth::{Client, Endpoints};

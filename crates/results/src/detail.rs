@@ -567,6 +567,29 @@ pub struct PageHtml {
     pub encoding_errors: bool,
 }
 
+/// Why a page has no screenshot to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ScreenshotMissing {
+    /// The crawl ran with "Save screenshots" off.
+    NotTaken,
+    /// This page has none: not rendered, or the capture failed.
+    NoImage,
+}
+
+/// A rendered page's stored screenshot (spec 014 FR-033).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct PageScreenshot {
+    /// The WebP image, base64 encoded; null when `missing` says why.
+    pub webp_base64: Option<String>,
+    pub missing: Option<ScreenshotMissing>,
+    /// Image size in pixels.
+    pub width: u32,
+    pub height: u32,
+}
+
 const FINAL_STATE: &str =
     "final_state(x.state, x.reason, x.reason_detail, x.check_only, x.fetched_at, x.error_class, x.status)";
 
@@ -1347,6 +1370,39 @@ impl Reader {
             missing: None,
             bytes: bytes.len() as u64,
             encoding: Some("utf-8".to_string()),
+        })
+    }
+
+    /// The stored screenshot of a rendered page (spec 014 FR-033).
+    pub fn page_screenshot(&mut self, id: i64) -> Result<PageScreenshot> {
+        let none = |missing| PageScreenshot {
+            webp_base64: None,
+            missing: Some(missing),
+            width: 0,
+            height: 0,
+        };
+        if !self.features.has(Need::Screenshots) {
+            return Ok(none(ScreenshotMissing::NotTaken));
+        }
+        let row = self
+            .conn
+            .query_row(
+                "SELECT image, width, height FROM main.screenshots WHERE url_id = ?1",
+                [id],
+                |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, u32>(1)?, r.get::<_, u32>(2)?)),
+            )
+            .optional()?;
+        let Some((image, width, height)) = row else {
+            return Ok(none(ScreenshotMissing::NoImage));
+        };
+        Ok(PageScreenshot {
+            webp_base64: Some(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                image,
+            )),
+            missing: None,
+            width,
+            height,
         })
     }
 

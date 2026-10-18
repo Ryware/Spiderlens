@@ -5,6 +5,7 @@
 
 import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Copy, FileX } from "lucide-react";
+import type { HtmlVersion } from "../generated/HtmlVersion";
 import type { PageHtml } from "../generated/PageHtml";
 import type { Transport } from "../transport";
 import { matches as keyMatches } from "../shell/platform";
@@ -187,6 +188,7 @@ export function HtmlViewer({
   url,
   open,
   onOpenChange,
+  version = "raw",
 }: {
   transport: Transport;
   path: string;
@@ -194,7 +196,10 @@ export function HtmlViewer({
   url: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The HTML as received (default) or the DOM after scripts ran (spec 014 FR-032). */
+  version?: HtmlVersion;
 }) {
+  const title = version === "rendered" ? "Rendered HTML" : "Page HTML";
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [query, setQuery] = useState("");
   const [cur, setCur] = useState({ q: "", i: 0 });
@@ -207,14 +212,14 @@ export function HtmlViewer({
     setLoad({ state: "loading" });
     setQuery("");
     setCopied(null);
-    transport.urlHtml(path, id).then(
+    transport.urlHtml(path, id, version).then(
       (page) => !off && setLoad({ state: "done", page }),
       (e) => !off && setLoad({ state: "error", message: String(e) }),
     );
     return () => {
       off = true;
     };
-  }, [transport, path, id, open]);
+  }, [transport, path, id, open, version]);
 
   const html = load.state === "done" ? load.page.html : null;
   const rows = useMemo(() => (html === null ? null : layoutRows(html)), [html]);
@@ -263,7 +268,7 @@ export function HtmlViewer({
     );
   } else if (load.page.missing === "not_stored") {
     body = (
-      <EmptyState icon={<FileX className="size-6" />} title="Page HTML was not stored">
+      <EmptyState icon={<FileX className="size-6" />} title={`${title} was not stored`}>
         This crawl ran with <span className="text-fg-2">Store page HTML</span> turned off. Turn it on in Settings › Page data › Store page HTML, then run a new crawl to keep each page's source.
       </EmptyState>
     );
@@ -279,10 +284,10 @@ export function HtmlViewer({
 
   const page = load.state === "done" ? load.page : null;
   return (
-    <Sheet open={open} onOpenChange={onOpenChange} title="Page HTML" className="h-180 w-240 sheet-max-w" initialFocus={search}>
+    <Sheet open={open} onOpenChange={onOpenChange} title={title} className="h-180 w-240 sheet-max-w" initialFocus={search}>
       <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKey}>
         <header className="flex flex-col gap-0.5 border-b border-line px-4 pt-4 pb-3">
-          <h2 className="m-0 text-md font-semibold">Page HTML</h2>
+          <h2 className="m-0 text-md font-semibold">{title}</h2>
           <p className="m-0 truncate text-sm text-fg-3" title={url} data-selectable>
             {url}
           </p>

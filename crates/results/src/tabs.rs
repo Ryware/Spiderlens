@@ -2859,6 +2859,17 @@ macro_rules! rx {
     };
 }
 
+/// A share stored as 0 to 1 in `render_comparisons`, shown as a percentage.
+macro_rules! dep_pct {
+    ($field:literal) => {
+        concat!(
+            "(SELECT round(c.",
+            $field,
+            " * 100, 1) FROM render_comparisons c WHERE c.url_id = u.id)"
+        )
+    };
+}
+
 /// One value from a page's `render_comparisons` row (spec 014).
 macro_rules! cx {
     ($field:literal) => {
@@ -2965,6 +2976,49 @@ fn javascript_tab() -> TabDef {
                 Percent,
                 150,
             ),
+            // Shares of each content type that exist only in the rendered
+            // page, as percentages; empty when the rendered page has none of
+            // that type (spec 014 FR-029).
+            js_col(
+                "js_dep_text",
+                "JavaScript dependence (text)",
+                dep_pct!("dep_text"),
+                Percent,
+                190,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_headings",
+                "JavaScript dependence (headings)",
+                dep_pct!("dep_headings"),
+                Percent,
+                210,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_links",
+                "JavaScript dependence (internal links)",
+                dep_pct!("dep_internal_links"),
+                Percent,
+                240,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_structured",
+                "JavaScript dependence (structured data)",
+                dep_pct!("dep_structured"),
+                Percent,
+                250,
+            )
+            .hidden(),
+            js_col(
+                "js_dep_images",
+                "JavaScript dependence (images)",
+                dep_pct!("dep_images"),
+                Percent,
+                200,
+            )
+            .hidden(),
             js_col("js_errors", "JavaScript errors", rx!("console_errors"), Int, 130),
             js_col(
                 "blocked_resources",

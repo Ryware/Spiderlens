@@ -434,6 +434,45 @@ test("the_inspector_compares_raw_and_rendered_values_of_a_rendered_page", async 
   expect(within(detailsPane()).getByText("rendered only")).toBeTruthy();
 });
 
+test("the_inspector_shows_javascript_dependence_by_content_type", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering"];
+  const base = fakeRender();
+  t.results.renders.set(
+    2,
+    fakeRender({
+      comparison: {
+        ...base.comparison!,
+        dependence: 94,
+        dep_text: 0.94,
+        dep_headings: 1,
+        dep_internal_links: 0.25,
+        dep_structured: null,
+        dep_images: 0,
+        raw_has_title: false,
+        raw_has_description: true,
+        raw_has_canonical: true,
+        raw_has_directives: false,
+      },
+    }),
+  );
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  await within(detailsPane()).findByRole("heading", { name: "Raw vs rendered" });
+  const block = within(detailsPane()).getByRole("group", { name: "JavaScript dependence" });
+  expect(within(block).getByText("JavaScript dependence: 94%")).toBeTruthy();
+  const row = (label: string) => within(block).getByText(label).nextElementSibling!.textContent;
+  expect(row("Text added by JavaScript")).toBe("94%");
+  expect(row("Headings added by JavaScript")).toBe("100%");
+  expect(row("Internal links added by JavaScript")).toBe("25%");
+  expect(row("Structured data added by JavaScript")).toBe("none on the page");
+  expect(row("Images added by JavaScript")).toBe("0%");
+  expect(row("Title")).toBe("not in the raw HTML");
+  expect(row("Meta description")).toBe("in the raw HTML");
+  expect(row("Canonical")).toBe("in the raw HTML");
+  expect(row("Robots directives")).toBe("not in the raw HTML");
+});
+
 test("the_comparison_needs_both_versions_stored", async () => {
   const t = fakeTransport();
   t.results.features = ["base", "analysis", "rendering", "raw_html"];
@@ -443,6 +482,25 @@ test("the_comparison_needs_both_versions_stored", async () => {
   const pane = (await within(detailsPane()).findByRole("heading", { name: "Raw vs rendered" })).closest("section") as HTMLElement;
   expect((within(pane).getByRole("button", { name: "Compare HTML" }) as HTMLButtonElement).disabled).toBe(true);
   expect(within(pane).getByText(/Turn on Store page HTML/)).toBeTruthy();
+});
+
+test("rendered_html_and_screenshot_sections_show_when_stored_and_say_why_when_not", async () => {
+  const t = fakeTransport();
+  t.results.features = ["base", "analysis", "rendering", "raw_html", "screenshots"];
+  t.results.renders.set(2, fakeRender({ rendered_html_stored: true, screenshot_stored: true }));
+  t.results.renders.set(3, fakeRender({ rendered_html_stored: false, screenshot_stored: false }));
+  await openInternal(t);
+  fireEvent.click(rows()[1]);
+  const html = (await within(detailsPane()).findByRole("heading", { name: "Rendered HTML" })).closest("section") as HTMLElement;
+  expect((within(html).getByRole("button", { name: /View rendered source/ }) as HTMLButtonElement).disabled).toBe(false);
+  const shot = within(detailsPane()).getByRole("heading", { name: "Screenshot" }).closest("section") as HTMLElement;
+  expect(await within(shot).findByRole("img", { name: /Screenshot of/ })).toBeTruthy();
+
+  fireEvent.click(rows()[2]);
+  const html3 = (await within(detailsPane()).findByText(/Not stored in this crawl\. Turn on Settings/)).closest("section") as HTMLElement;
+  expect(within(html3).queryByRole("button", { name: /View rendered source/ })).toBeNull();
+  expect(within(detailsPane()).getByText(/No screenshot was saved for this page\. Turn on Settings/)).toBeTruthy();
+  expect(within(detailsPane()).queryByRole("img", { name: /Screenshot of/ })).toBeNull();
 });
 
 test("a_page_that_was_not_rendered_has_no_comparison_section", async () => {
