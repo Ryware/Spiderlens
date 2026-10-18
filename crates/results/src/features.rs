@@ -105,11 +105,6 @@ impl Features {
         if meta("spelling")?.is_some() {
             available.push(Need::Spelling);
         }
-        // The near duplicate pass runs after the crawl; until it has, an
-        // empty result is "not compared yet", not "no near duplicates".
-        if crate::near_dup::has_results(conn)? {
-            available.push(Need::NearDupAnalysis);
-        }
         available.extend(pass_needs(conn)?);
         let redirect_limit = config
             .as_ref()

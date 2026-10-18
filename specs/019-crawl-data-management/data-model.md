@@ -59,4 +59,16 @@ Rules: a crawl is in `trash` only if `kind = Crawl`, `in_unsaved_dir`, not locke
 
 ## CleanupRecord (`<config>/cleanup-history.jsonl`, last 500)
 
-`{ "at": ts, "path": "...", "bytes": n, "reason": "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge" }`
+`{ "at": ts, "path": "...", "bytes": n, "reason": "manual_delete" | "manual_delete_permanent" | "auto_age" | "leftover" | "html_purge" | "schedule_retention" }`
+
+## Schedule keep-last (spec 021 record, rule owned by 019)
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `keep_last` | u32? | `10` on new schedules; `null` when absent | 1 to 999; `null` = keep all. Old schedule files have no field and read as `null`. |
+
+Inputs to the rule come from the schedule's own `Run` records: `run` (number), `status`, `file` (path). No new run field.
+
+`retention::plan(runs, keep_last, exists, in_dir) -> Vec<PathBuf>` (crates/schedule, pure). A path is returned only if it is a `Run.file`, `exists(path)` and `in_dir(path)` are true, and it is older (lower run number) than the newest N such files. The app then removes from the result any path that is open, running or locked.
+
+`CleanupReport` gains `retention_removed: u32`.

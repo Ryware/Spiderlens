@@ -70,9 +70,6 @@ pub enum Need {
     Spelling,
     /// Main content signatures for near duplicate analysis (spec 020).
     NearDup,
-    /// The near duplicate analysis has run (spec 020 FR-023): until it has,
-    /// no count means "none found", only "not compared yet".
-    NearDupAnalysis,
 }
 
 impl Need {
@@ -117,7 +114,6 @@ impl Need {
             Self::NearDup => {
                 "Near duplicate data was not collected in this crawl file; it was made before SpiderLens compared page content."
             }
-            Self::NearDupAnalysis => "Compared when the crawl ends. Near duplicates are not analysed yet.",
         }
     }
 
@@ -145,7 +141,6 @@ impl Need {
             Self::AiChecks => "ai_checks",
             Self::Spelling => "spelling",
             Self::NearDup => "near_dup",
-            Self::NearDupAnalysis => "near_dup_analysis",
         }
     }
 }
@@ -2147,7 +2142,7 @@ fn near_dup_tab() -> TabDef {
             filter(
                 "near_duplicates",
                 "Near duplicates",
-                crate::issues::rules::content::NEAR_DUPLICATE,
+                "u.id IN (SELECT n.url_id FROM near_dup_pages n WHERE n.near_count > 0)",
             )
             .needs(Need::NearDup),
             filter(

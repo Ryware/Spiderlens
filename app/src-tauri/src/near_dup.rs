@@ -8,6 +8,11 @@
 //! - `near-dup-progress` while it runs,
 //! - `near-dup-finished` when it completes, fails or is cancelled.
 //!
+//! After a crawl that ended with pages, the analysis starts by itself on its
+//! own thread once `crawl-finished` is out, so it is never on the crawl's
+//! critical path; it is cancelled when another crawl starts. It announces
+//! itself with the same two events as one started from the tab.
+//!
 //! A file that cannot be written is analysed on the reader's connection
 //! instead, into its `temp` schema, so the results last while it is open.
 
@@ -51,6 +56,13 @@ impl State {
         let cancel = Arc::new(AtomicBool::new(false));
         running.insert(path.to_path_buf(), cancel.clone());
         Some(cancel)
+    }
+
+    /// Cancels every running analysis, so none competes with a new crawl.
+    pub(crate) fn cancel_all(&self) {
+        for c in self.running.lock().expect("near dup lock").values() {
+            c.store(true, Ordering::Relaxed);
+        }
     }
 
     fn release(&self, path: &Path) {
@@ -140,6 +152,31 @@ fn analyse_writable(app: &AppHandle, path: &Path, settings: Option<ContentSettin
         near_dup::analyse_file(path, &settings, true, cancel, progress(app, path)).map(|(_, s)| s)
     })();
     finish(app, path, result, cancel);
+}
+
+/// Claims `path` for the analysis that follows a crawl, called on the crawl
+/// thread before `crawl-finished` so the window never sees the file as "not
+/// analysed" in between. `None` when it is already claimed or cannot be
+/// written. Pass the result to `spawn_after_crawl`.
+pub(crate) fn claim_after_crawl(app: &AppHandle, path: &Path) -> Option<Arc<AtomicBool>> {
+    let state = app.state::<State>();
+    let cancel = state.claim(path)?;
+    if read_only(path) || Connection::open_with_flags(path, rw_flags()).is_err() {
+        state.release(path);
+        return None;
+    }
+    Some(cancel)
+}
+
+/// Runs a claimed analysis on its own thread, never the crawl's.
+pub(crate) fn spawn_after_crawl(app: &AppHandle, path: &Path, cancel: Arc<AtomicBool>) {
+    let (thread_app, thread_path) = (app.clone(), path.to_path_buf());
+    let spawned = std::thread::Builder::new()
+        .name("analysis".into())
+        .spawn(move || analyse_writable(&thread_app, &thread_path, None, &cancel));
+    if spawned.is_err() {
+        app.state::<State>().release(path);
+    }
 }
 
 #[tauri::command]

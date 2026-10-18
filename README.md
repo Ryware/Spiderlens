@@ -43,3 +43,4 @@ correctly, and cells that a spreadsheet would run as a formula start with `'`.
 
 Building, testing and running the desktop app: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 Opening an unsigned test build: [docs/unsigned-builds.md](docs/unsigned-builds.md).
+Where crawls live and what cleanup does: [docs/crawl-storage.md](docs/crawl-storage.md).

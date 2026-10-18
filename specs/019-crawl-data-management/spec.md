@@ -6,7 +6,7 @@
 
 **Status**: Approved 2026-10-13 (Ryware), recommended defaults for all open decisions
 
-**Input**: User description: "Did we discuss management and cleanup of the stored crawl data?" Owner direction for the draft: a crawl files manager in the app (list with size and date, open, delete to the trash, purge stored HTML from a file, total disk usage), automatic cleanup only of unsaved crawls and leftover temporary files with a configurable age, and never silent deletion of saved crawls.
+**Input**: User description: "Did we discuss management and cleanup of the stored crawl data?" Owner direction for the draft: a crawl files manager in the app (list with size and date, open, delete to the trash, purge stored HTML from a file, total disk usage), automatic cleanup only of unsaved crawls and leftover temporary files with a configurable age, and never silent deletion of saved crawls. Added 2026-10-18 (owner): each schedule keeps its last 10 runs by default and moves older run files to the trash.
 
 **Numbering note**: 009 to 016 and 017, 018 are taken or reserved in the product backlog, so this spec takes 019.
 
@@ -20,7 +20,7 @@ Crawl storage (spec 006) makes crawls safe: every crawl is one file, unsaved cra
 - A crash or forced quit can leave helper files behind: interrupted Save As copies (`.partial`), lock files of crawls that were deleted, write-ahead log files, and migration backups (`(format N backup)`) that are never removed.
 - The 1 GB free-space safety reserve is fixed; 006 promised it would be user-configurable.
 
-This feature adds one place to see and manage all crawl data, ways to shrink a crawl without losing results, and a narrow, opt-out automatic cleanup for data the user never chose to keep. Saved crawls are the user's documents: the app never deletes them on its own.
+This feature adds one place to see and manage all crawl data, ways to shrink a crawl without losing results, and a narrow, opt-out automatic cleanup for data the user never chose to keep. Saved crawls are the user's documents: the app never deletes them on its own. The one exception is a scheduled run (spec 021) beyond that schedule's "keep the last N runs" limit, which the user chose when setting up the schedule (User Story 6).
 
 This feature belongs to milestone M2. It builds on crawl storage (006), page extraction (005) and the design system shell (017), and is extended by JavaScript rendering (014) when that stores rendered HTML.
 
@@ -84,7 +84,7 @@ A user wants to keep a crawl's results but not its stored HTML. From the manager
 
 ### User Story 4 - Unsaved crawls and leftovers clean themselves up (Priority: P2)
 
-A user who runs many quick crawls never saves most of them. The app removes unsaved crawls not opened for a set number of days (default 30) and leftover helper files from crashes, moving them to the trash. Saved crawls are never touched. Before an unsaved crawl is removed for the first time, the app tells the user once that this setting exists and where to change it.
+A user who runs many quick crawls never saves most of them. The app removes unsaved crawls not opened for a set number of days (default 30) and leftover helper files from crashes, moving them to the trash. Saved crawls are never touched by this age rule (scheduled runs follow their own rule, User Story 6). Before an unsaved crawl is removed for the first time, the app tells the user once that this setting exists and where to change it.
 
 **Why this priority**: It prevents the unsaved folder from silently growing to many gigabytes, which is the most likely way the app fills a disk.
 
@@ -115,6 +115,26 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 2. **Given** the user sets the safety reserve to a value between 256 MB and 50 GB, **When** a crawl runs and free space drops below it, **Then** the crawl pauses as in 006 FR-027 with the new value in the message.
 3. **Given** the user enters a reserve outside the allowed range, **When** they save, **Then** the value is refused with the allowed range shown.
 
+### User Story 6 - Each schedule keeps only its last runs (Priority: P2)
+
+A user has a daily scheduled crawl (spec 021). Every run saves a new crawl file, so the folder grows forever. Each schedule gets a "Keep the last" setting: 10 runs by default, any number from 1 to 999, or "Keep all". When a schedule has more run files than that, the oldest ones are moved to the trash automatically. Only run files that the schedule itself recorded, and that are still where it saved them, are ever considered. Anything the user moved, renamed or saved elsewhere is left alone.
+
+**Why this priority**: Spec 021 asked for it: a daily schedule that is never trimmed fills a disk. The user picks the limit, so this is not a silent deletion of work.
+
+**Independent Test**: Make a schedule with keep-last 3 and 5 finished run files, move one of them to another folder, and run cleanup. Check that only the oldest run files beyond the newest 3 that still exist in the schedule's folder went to the trash, and the moved one is untouched.
+
+**Acceptance Scenarios**:
+
+1. **Given** a schedule with "keep last 3" and 5 run files in its output folder, **When** cleanup runs, **Then** the 2 oldest (lowest run numbers) go to the trash with their helper files, and the newest 3 stay.
+2. **Given** a schedule saved before this feature (no setting stored), **When** cleanup runs, **Then** it keeps all runs and nothing is removed.
+3. **Given** a new schedule, **When** the user creates it without touching the setting, **Then** it keeps the last 10 runs.
+4. **Given** a run file the user moved, renamed or saved elsewhere, **When** cleanup runs, **Then** it is not removed, and it does not count toward the limit.
+5. **Given** a run is in progress, or its crawl is open or being written, **When** cleanup runs, **Then** that file is never removed in this pass.
+6. **Given** the trash is not available, **When** cleanup runs, **Then** nothing is removed and the same files are tried again in the next pass. Nothing is ever deleted permanently by this rule.
+7. **Given** a schedule is set to "Keep all", **When** cleanup runs, **Then** none of its runs are removed.
+8. **Given** run files were removed by this rule, **When** the user opens Settings > Storage, **Then** each removal is in the cleanup history with the reason "scheduled run kept-last limit", and the cleanup notice says how many older scheduled runs were moved to the trash.
+9. **Given** the user lowers the limit on a schedule, **When** they save it, **Then** the app says how many existing run files will go to the trash at the next cleanup.
+
 ### Edge Cases
 
 - A crawl file lives on a removable or network drive that is not connected: it is listed as unavailable with its last known size, excluded from totals, and never deleted by cleanup.
@@ -127,6 +147,10 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 - Very large crawls (tens of gigabytes): sizes and totals appear without reading the file contents; the stored-HTML size may appear a moment later, with a placeholder until then.
 - A crawl with no stored HTML: Remove stored HTML is not offered.
 - The crawl was created by a newer app version (006 view-only): it can be deleted, but Remove stored HTML is not offered.
+- A schedule is deleted: its run files are no longer governed by any rule and are kept like any saved crawl.
+- Two run records point to the same file, or a failed run has no file: only existing files named by a run's own record count, once each.
+- The user opens an older scheduled run: while it is open it is never removed. After it is closed it is judged again at the next pass.
+- A schedule's output folder is on a drive that is not connected: its files do not exist at the recorded path, so none are counted or removed.
 
 ## Requirements *(mandatory)*
 
@@ -160,7 +184,7 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 **Automatic cleanup**
 
 - **FR-017**: At app start (and at most once per day while it runs), the app MUST move to the trash unsaved crawls in the app folder whose last-used date is older than the configured age. Default: on, 30 days; choices 7, 14, 30, 90 days, or off.
-- **FR-018**: Automatic cleanup MUST NEVER remove a saved crawl, a crawl outside the app folder, a file that is not a crawl, the open crawl, or a crawl that is running, paused, locked or recovering.
+- **FR-018**: Automatic cleanup by age MUST NEVER remove a saved crawl, a crawl outside the app folder, a file that is not a crawl, the open crawl, or a crawl that is running, paused, locked or recovering.
 - **FR-019**: Automatic cleanup MUST remove leftover helper files in the app folder and next to recent crawls that belong to no existing crawl file and are older than 24 hours: lock files, write-ahead log and shared-memory files, and interrupted Save As copies.
 - **FR-020**: The first time automatic cleanup would remove an unsaved crawl on a machine, it MUST instead show a one-time notice naming those crawls and the setting, and remove them no earlier than the next start.
 - **FR-021**: After any automatic cleanup that removed something, the app MUST show a short notice with the count and space freed, and links to the trash and the setting.
@@ -176,12 +200,23 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 
 - **FR-026**: The command-line tool MUST be able to list crawl files in a folder with their sizes and stored-HTML sizes, and remove stored HTML from a given crawl file, with the same crash safety and results guarantees. The CLI MUST NOT perform automatic cleanup.
 
+**Scheduled run retention**
+
+- **FR-027**: Each schedule MUST have an optional keep-last limit: a number of runs from 1 to 999, or none (keep all). Schedules created from now on MUST default to 10. Schedules saved before this feature MUST read as keep all.
+- **FR-028**: The desktop app MUST move to the trash the run files of a schedule that are older than its newest N existing run files. Order is by run number, newest first.
+- **FR-029**: Only a file that is named by a run in that schedule's own history, and that still exists at that recorded path inside that schedule's output folder, MUST be counted or removed. A file the user moved, renamed or saved elsewhere MUST NEVER be touched.
+- **FR-030**: The rule MUST NEVER remove a run that is still in progress, nor a crawl that is open or being written (it holds the writer lock). Such a file is skipped for this pass.
+- **FR-031**: The removal MUST use the same trash path as other deletes (FR-008), with the crawl's helper files. When the trash is unavailable, nothing MUST be removed and the next pass MUST try again. The rule MUST NEVER delete permanently.
+- **FR-032**: Each removal MUST be a cleanup history record (FR-022) with the reason `schedule_retention`, and the cleanup notice (FR-021) MUST say how many older scheduled runs were moved to the trash.
+- **FR-033**: The command-line tool MUST be able to set and show the rule (`schedule add` and `schedule edit` with `--keep-last N|all`, shown by `schedule show`). The CLI MUST NOT remove run files.
+
 ### Key Entities
 
 - **Managed crawl**: one crawl file the app knows about: location, saved or unsaved, dates, URL count, status, file size, stored-HTML size, availability, helper files, migration backups.
 - **Helper file**: a file the app creates next to a crawl file (lock, write-ahead log, shared memory, interrupted copy). It belongs to the crawl with the same base name; without one it is a leftover.
 - **Cleanup rule**: on/off and age in days for unsaved crawls; fixed 24 hours for leftovers.
-- **Cleanup record**: one removal: date, path, size, reason (manual delete, automatic age, leftover, HTML removal).
+- **Cleanup record**: one removal: date, path, size, reason (manual delete, automatic age, leftover, HTML removal, scheduled run kept-last limit).
+- **Keep-last rule**: a property of a schedule (spec 021): `keep_last`, a number from 1 to 999 or none for keep all.
 
 ## Success Criteria *(mandatory)*
 
@@ -189,10 +224,11 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 
 - **SC-001**: A user can find the largest crawl and free its space (delete or remove stored HTML) in under 30 seconds from the start screen.
 - **SC-002**: Removing stored HTML from a crawl where HTML is at least half the file reduces the file size by at least 40% and leaves every results export byte-identical.
-- **SC-003**: Automatic cleanup never removes a saved crawl in any test, including clock changes, moved files and crashes during cleanup.
+- **SC-003**: Automatic cleanup never removes a saved crawl, other than a scheduled run beyond its schedule's keep-last limit, in any test, including clock changes, moved files and crashes during cleanup.
 - **SC-004**: After 100 simulated crashes during crawls, Save As and deletes, launching the app leaves no leftover helper files older than 24 hours in the app folder.
 - **SC-005**: Every crawl deleted from the app can be restored from the operating system's trash and opened, on all three supported operating systems.
 - **SC-006**: The manager lists 200 crawls with sizes in under 2 seconds on the reference hardware.
+- **SC-007**: In every test, the keep-last rule removes only files named in the schedule's own run history that exist inside its output folder, never the newest N, never an open, locked or in-progress file, and never anything when the trash is unavailable.
 
 ## Assumptions
 
@@ -202,4 +238,5 @@ When a crawl is upgraded to a newer file format, 006 keeps a backup copy next to
 - Thirty days for unsaved crawls balances disk space against users who return to an unsaved crawl after a few weeks. It can be tuned in planning.
 - Size of stored HTML is known per crawl without reading every page, so the manager stays fast; how is a planning decision.
 - Removing stored HTML is all-or-nothing per crawl in this spec; removing it only for some pages, or only rendered HTML, is out of scope.
-- Out of scope: automatic deletion of saved crawls by age or size, a disk quota for the app folder, moving the unsaved-crawls folder, compressing or archiving crawls, deleting exported CSV files or settings profiles, cloud storage, and managing crawls on other machines.
+- Spec 021 owns the schedule and its run history. This spec owns the rule that trims run files (decided with the owner 2026-10-18: default 10 per schedule, configurable 1 to 999 or keep all).
+- Out of scope: automatic deletion of saved crawls by age or size (except scheduled runs beyond a schedule's keep-last limit, FR-027), a disk quota for the app folder, moving the unsaved-crawls folder, compressing or archiving crawls, deleting exported CSV files or settings profiles, cloud storage, and managing crawls on other machines.
