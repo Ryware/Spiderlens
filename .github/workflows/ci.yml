@@ -24,7 +24,8 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows needs about 35 min since spec 014's rendering tests landed.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
