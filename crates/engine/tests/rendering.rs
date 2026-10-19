@@ -739,6 +739,7 @@ async fn us2_stop_marks_waiting_renders_as_crawl_stopped() {
     );
 }
 
+#[cfg(target_os = "linux")]
 /// The process ids of the browser processes this test started: our own
 /// children whose command line has the debugging pipe or port flag.
 fn browser_children() -> Vec<u32> {
@@ -1367,6 +1368,7 @@ fn kill_browsers() -> usize {
     killed
 }
 
+#[cfg(target_os = "linux")]
 /// Seven slow pages: each render takes about a second.
 fn us5_slow_site() -> JsSite {
     let page = |links: &str| {
