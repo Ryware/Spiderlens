@@ -578,7 +578,27 @@ async fn us2_fetching_pauses_when_the_render_queue_is_full_and_resumes() {
     let site = slow_site(PAGES, Duration::from_millis(1000));
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pressure.spiderlens");
-    let crawler = slow_crawler(&site, &path, browser, 4).with_render_queue_marks(20, 15);
+    // Pages arrive at 20 a second: with all 60 requests open at once, every
+    // page could land before fetching ever asked whether the queue was full.
+    // Adaptive speed is off: the slow API answers would otherwise slow
+    // fetching from the host down to the render pace.
+    let mut c = config(false);
+    c.rendering.mode = RenderMode::Javascript;
+    c.rendering.concurrency = Some(4);
+    c.speed.max_urls_per_sec = Some(20.0);
+    c.speed.adaptive = false;
+    let crawler = Crawler::create(
+        &path,
+        c,
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve())
+    .with_browser(browser)
+    .with_render_launch(LaunchOptions::default())
+    .with_render_queue_marks(20, 15);
     let (control, _keep) = watch::channel(Control::Run);
 
     let mut max_queued = 0;
