@@ -24,7 +24,9 @@ use chromiumoxide::cdp::browser_protocol::emulation::{
 use chromiumoxide::cdp::browser_protocol::fetch::{
     EventRequestPaused, FailRequestParams, FulfillRequestParams, HeaderEntry,
 };
-use chromiumoxide::cdp::browser_protocol::inspector::{EnableParams as InspectorEnable, EventTargetCrashed};
+use chromiumoxide::cdp::browser_protocol::inspector::{
+    EnableParams as InspectorEnable, EventDetached, EventTargetCrashed,
+};
 use chromiumoxide::cdp::browser_protocol::network::{CookieParam, ErrorReason, ResourceType, TimeSinceEpoch};
 use chromiumoxide::cdp::browser_protocol::page::{
     AddScriptToEvaluateOnNewDocumentParams, CaptureScreenshotFormat, CaptureScreenshotParams,
@@ -299,6 +301,7 @@ async fn render_in(
     let mut exceptions = listen!(EventExceptionThrown);
     let mut dialogs = listen!(EventJavascriptDialogOpening);
     let mut crashed = listen!(EventTargetCrashed);
+    let mut detached = listen!(EventDetached);
 
     if setup(&page, cdp, job, &context).await.is_err() {
         return fail(FailedReason::RendererError, true);
@@ -333,6 +336,7 @@ async fn render_in(
     let mut main_answered = false;
     let mut nav_error: Option<String> = None;
     let mut crash = false;
+    let mut gone = false;
     let mut tasks: JoinSet<()> = JoinSet::new();
     let (tx, mut rx) = mpsc::unbounded_channel::<Answered>();
     let navigate = page.execute(NavigateParams::new(job.url.as_str()));
@@ -528,11 +532,24 @@ async fn render_in(
                 crash = true;
                 break Status::TimedOut;
             }
+            // Chromium reports a renderer that ended without crashing as gone
+            // instead of crashed; on Windows that is how running out of heap
+            // ends (its own exit code), with nothing on stderr.
+            Some(d) = detached.next() => {
+                if d.reason.contains("process gone") {
+                    gone = true;
+                    break Status::TimedOut;
+                }
+            }
             _ = sleep => {}
         }
     };
     heap_poll.abort_all();
 
+    if gone {
+        tasks.abort_all();
+        return fail(FailedReason::PageTooLarge, false);
+    }
     if crash {
         let used = heap_used.load(Ordering::Relaxed) as f64;
         let limit = f64::from(heap_limit_mb) * 1024.0 * 1024.0;
