@@ -275,6 +275,27 @@ pub struct NetShared {
 }
 
 /// The [`Network`] of one render: shared parts plus that page's notes.
+/// A granted request slot, released on drop unless `host_key` was taken.
+struct SlotGuard<'a> {
+    shared: &'a NetShared,
+    host_key: Option<String>,
+    third_party: bool,
+    started: Instant,
+}
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(host_key) = self.host_key.take() {
+            (self.shared.send)(NetMsg::Done {
+                host_key,
+                third_party: self.third_party,
+                took: self.started.elapsed(),
+                signal: Signal::Other,
+            });
+        }
+    }
+}
+
 pub struct EngineNet {
     shared: Arc<NetShared>,
     notes: Mutex<Vec<(Url, Note)>>,
@@ -353,7 +374,16 @@ impl EngineNet {
                 };
             }
         }
-        let started = Instant::now();
+        // Gives the slot back if the page is closed while the request is
+        // open (the render loop drops this future): a lost slot stalls the
+        // host, and the crawl waits for it forever.
+        let mut slot = SlotGuard {
+            shared: &self.shared,
+            host_key: Some(host.clone()),
+            third_party: req.third_party,
+            started: Instant::now(),
+        };
+        let started = slot.started;
         let fetched = fetch_resource(
             &self.shared.client,
             &req.url,
@@ -377,6 +407,7 @@ impl EngineNet {
             Err(e) if e.class == ErrorClass::Timeout => Signal::TimedOut,
             Err(_) => Signal::Other,
         };
+        slot.host_key = None;
         (self.shared.send)(NetMsg::Done {
             host_key: host,
             third_party: req.third_party,

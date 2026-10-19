@@ -742,8 +742,8 @@ impl JsSiteBuilder {
     /// a rendering include pattern to render only the one under test.
     ///
     /// - `/settles`: a heading appears after 2 s.
-    /// - `/polls`: asks `/api/poll.json` every 200 ms and rewrites the
-    ///   page, forever.
+    /// - `/polls`: asks `/api/poll.json` (300 ms to answer) again as soon
+    ///   as it answers and rewrites the page, forever.
     /// - `/resources`: an image, a font, a video, a stylesheet, a script of
     ///   its own, a third-party script on `cdn.test` and `/private/app.js`,
     ///   which the fixture's robots.txt disallows.
@@ -799,14 +799,18 @@ impl JsSiteBuilder {
                 "/polls",
                 &page(
                     "Polls",
-                    "<script>var n = 0; setInterval(function () { n++; \
-                     fetch('/api/poll.json?n=' + n).then(function (r) { return r.text(); }).then(function (t) { \
-                     document.getElementById('t').textContent = t + n; }); }, 200);</script>",
+                    // Each answer starts the next request, so one is always
+                    // open: timer throttling on a busy machine cannot let
+                    // the page fall quiet.
+                    "<script>var n = 0; function poll() { n++; \
+                     fetch('/api/poll.json').then(function (r) { return r.text(); }).then(function (t) { \
+                     document.getElementById('t').textContent = t + n; poll(); }); } poll();</script>",
                     "<h1>Polls</h1><p id=\"t\">0</p>",
                 ),
             )
             .json(JS_HOST, "/api/poll.json", "{}")
             .cache_control(JS_HOST, "/api/poll.json", "no-store")
+            .delay(JS_HOST, "/api/poll.json", Duration::from_millis(300))
             .page(
                 "/resources",
                 &page(
