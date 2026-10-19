@@ -84,6 +84,11 @@ pub(crate) fn browser_args(info: &BrowserInfo, profile: &Path, heap_limit_mb: u3
     if cfg!(target_os = "linux") {
         args.push("--disable-dev-shm-usage".into());
     }
+    if cfg!(windows) {
+        // Chromium logs nowhere on Windows by default; V8's out-of-heap
+        // report (read from stderr, see `Running::oom`) needs it on stderr.
+        args.push("--enable-logging=stderr".into());
+    }
     if running_as_root() {
         // Chromium refuses to start its sandbox as root (containers, CI).
         args.push("--no-sandbox".into());
