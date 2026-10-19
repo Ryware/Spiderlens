@@ -204,19 +204,6 @@ pub(crate) fn tree_memory(root: u32) -> u64 {
         .sum()
 }
 
-/// Each process of the tree as (pid, working set, private bytes). TEMP diagnostics.
-pub(crate) fn tree_detail(root: u32) -> Vec<(u32, u64, u64)> {
-    let sys = all_processes();
-    let mut pids = descendants(&sys, root);
-    pids.push(Pid::from_u32(root));
-    pids.iter()
-        .map(|p| match sys.process(*p) {
-            Some(q) => (p.as_u32(), q.memory(), q.virtual_memory()),
-            None => (p.as_u32(), u64::MAX, u64::MAX),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

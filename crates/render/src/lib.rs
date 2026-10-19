@@ -75,54 +75,7 @@ impl Browser {
         let Some(running) = &self.running else {
             return RenderOutcome::failed(FailedReason::RendererError, true, job.window);
         };
-        // The browser's memory, sampled while the page renders: a renderer
-        // that hangs out of heap answers neither the heap poll nor a crash
-        // event (seen on Windows), but its process grows to the limit.
-        let base = running.memory_bytes();
-        let mut peak = base;
-        let render = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb);
-        tokio::pin!(render);
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
-        let mut samples = Vec::new();
-        let mut detail = Vec::new();
-        let (mut out, stuck) = loop {
-            tokio::select! {
-                r = &mut render => break r,
-                _ = tick.tick() => {
-                    let m = running.memory_bytes();
-                    samples.push(m / (1024 * 1024));
-                    peak = peak.max(m);
-                    if cfg!(windows) && samples.len() % 5 == 0 {
-                        detail = running.memory_detail();
-                    }
-                }
-            }
-        };
-        if stuck {
-            // TEMP diagnostics for the Windows out-of-heap check.
-            eprintln!(
-                "RENDER-DEBUG stuck: state {:?} base {} MB peak {} MB samples {samples:?} detail {detail:?}",
-                out.state,
-                base / (1024 * 1024),
-                peak / (1024 * 1024)
-            );
-        }
-        let limit = u64::from(self.opts.heap_limit_mb) * 1024 * 1024;
-        if stuck
-            && matches!(
-                out.state,
-                RenderState::Failed {
-                    reason: FailedReason::RendererError,
-                    ..
-                }
-            )
-            && peak.saturating_sub(base) >= limit * 4 / 5
-        {
-            out.state = RenderState::Failed {
-                reason: FailedReason::PageTooLarge,
-                retryable: false,
-            };
-        }
+        let (out, stuck) = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb).await;
         if stuck {
             self.stuck.store(true, std::sync::atomic::Ordering::Relaxed);
         }
