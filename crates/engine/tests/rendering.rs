@@ -635,7 +635,17 @@ async fn us2_fetching_pauses_when_the_render_queue_is_full_and_resumes() {
         "every page was fetched in the end"
     );
     let store = CrawlStore::open_read_only(&path).unwrap();
-    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1);
+    let states: Vec<(String, Option<String>, i64)> = {
+        let conn = store.conn_for_tests();
+        let mut stmt = conn
+            .prepare("SELECT state, reason, COUNT(*) FROM renders GROUP BY state, reason")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1, "{states:?}");
     assert_eq!(
         render_rows(&store, "queued") + render_rows(&store, "rendering"),
         0
@@ -1325,9 +1335,15 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
 
     // Scenario 3 (heap limit): not retried, raw row untouched.
     let (state, reason) = render_state(&store, &site, "/heavy").unwrap();
+    let heavy_ms: i64 = one(
+        &store,
+        "SELECT render_ms FROM renders WHERE url_id = ?1",
+        id(&store, &site, "/heavy"),
+    );
     assert_eq!(
         (state.as_str(), reason.as_deref()),
-        ("failed", Some("page_too_large"))
+        ("failed", Some("page_too_large")),
+        "after {heavy_ms} ms"
     );
     let heavy = id(&store, &site, "/heavy");
     assert_eq!(
