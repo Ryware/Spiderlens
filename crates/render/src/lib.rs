@@ -75,7 +75,36 @@ impl Browser {
         let Some(running) = &self.running else {
             return RenderOutcome::failed(FailedReason::RendererError, true, job.window);
         };
-        let (out, stuck) = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb).await;
+        // The browser's memory, sampled while the page renders: a renderer
+        // that hangs out of heap answers neither the heap poll nor a crash
+        // event (seen on Windows), but its process grows to the limit.
+        let base = running.memory_bytes();
+        let mut peak = base;
+        let render = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb);
+        tokio::pin!(render);
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        let (mut out, stuck) = loop {
+            tokio::select! {
+                r = &mut render => break r,
+                _ = tick.tick() => peak = peak.max(running.memory_bytes()),
+            }
+        };
+        let limit = u64::from(self.opts.heap_limit_mb) * 1024 * 1024;
+        if stuck
+            && matches!(
+                out.state,
+                RenderState::Failed {
+                    reason: FailedReason::RendererError,
+                    ..
+                }
+            )
+            && peak.saturating_sub(base) >= limit * 4 / 5
+        {
+            out.state = RenderState::Failed {
+                reason: FailedReason::PageTooLarge,
+                retryable: false,
+            };
+        }
         if stuck {
             self.stuck.store(true, std::sync::atomic::Ordering::Relaxed);
         }
