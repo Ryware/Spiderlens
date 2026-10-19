@@ -1,7 +1,7 @@
 // Two pages' main content side by side, changed words marked (US2, FR-020).
 // Aligned paragraphs share a row, so both sides scroll together.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import type { Comparison } from "../generated/Comparison";
 import type { DiffParagraph } from "../generated/DiffParagraph";
@@ -98,6 +98,24 @@ export function CompareSheet({
     const index = request.index + d;
     if (index >= 0 && index < request.targets.length) onRequest({ ...request, index });
   };
+  const stepRef = useRef(step);
+  stepRef.current = step;
+
+  // [ and ] work wherever focus is while the sheet is open (the sheet's own
+  // container may hold focus, outside the content).
+  const open = !!request && !!target;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "[" && e.key !== "]") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      stepRef.current(e.key === "]" ? 1 : -1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   if (!request || !target) return null;
   const sim = cmp?.sim ?? target.sim;
@@ -105,13 +123,7 @@ export function CompareSheet({
 
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()} title="Compare pages" className="h-160 w-275 sheet-max-w">
-      <div
-        className="flex min-h-0 flex-1 flex-col"
-        onKeyDown={(e) => {
-          if (e.key === "[") (e.preventDefault(), step(-1));
-          if (e.key === "]") (e.preventDefault(), step(1));
-        }}
-      >
+      <div className="flex min-h-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b border-line px-4 py-3">
           <h2 className="m-0 text-md font-semibold">Compare pages</h2>
           {sim !== null && <Badge tone={sim === 100 ? "warn" : "info"}>{sim === 100 ? "Exact duplicate" : `${sim}% similar`}</Badge>}
