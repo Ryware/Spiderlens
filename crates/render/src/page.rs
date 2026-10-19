@@ -193,6 +193,7 @@ pub(crate) async fn render(
     heap_limit_mb: u32,
 ) -> (RenderOutcome, bool) {
     let started = Instant::now();
+    let oom_at_start = oom.load(Ordering::Relaxed);
     let deadline = tokio::time::Instant::now() + job.max_time + HARD_STOP_MARGIN;
     let window = job.window;
     let created = tokio::time::timeout_at(
@@ -238,7 +239,13 @@ pub(crate) async fn render(
             (out, !disposed)
         }
         Err(_) => {
-            let mut out = RenderOutcome::failed(FailedReason::RendererError, true, window);
+            // A renderer out of heap may hang instead of crashing; V8's
+            // report on stderr still tells what happened.
+            let mut out = if oom.load(Ordering::Relaxed) != oom_at_start {
+                RenderOutcome::failed(FailedReason::PageTooLarge, false, window)
+            } else {
+                RenderOutcome::failed(FailedReason::RendererError, true, window)
+            };
             out.render_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
             (out, true)
         }
