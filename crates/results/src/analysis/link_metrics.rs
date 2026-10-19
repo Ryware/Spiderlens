@@ -381,7 +381,9 @@ pub fn build(
     lap("rank");
     let t = table(schema);
     // The reader may have a view over the file's copy here.
-    conn.execute_batch("DROP VIEW IF EXISTS temp.link_metrics;")?;
+    if schema != "main" {
+        super::drop_temp(conn, "link_metrics")?;
+    }
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {t} (
            url_id INTEGER PRIMARY KEY, score REAL NOT NULL, rank INTEGER NOT NULL,

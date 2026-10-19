@@ -1087,6 +1087,15 @@ pub(crate) fn apply_all(conn: &Connection) -> rusqlite::Result<()> {
     set_version(conn, LATEST)
 }
 
+/// Builds a file as format `v` wrote it, to test upgrades from it.
+#[cfg(test)]
+pub(crate) fn apply_up_to(conn: &Connection, v: i64) -> rusqlite::Result<()> {
+    for step in STEPS.iter().filter(|s| s.version <= v) {
+        conn.execute_batch(step.sql)?;
+    }
+    set_version(conn, v)
+}
+
 fn set_version(conn: &Connection, v: i64) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare_cached(
         "INSERT INTO meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",

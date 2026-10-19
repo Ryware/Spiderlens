@@ -24,7 +24,8 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows needs about 35 min since spec 014's rendering tests landed.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +59,13 @@ jobs:
       # when no browser is found. A runner without one downloads the pinned
       # chrome-headless-shell first, which also exercises the download path.
       # The CLI is built here once; cargo test below reuses the build cache.
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's
+      # sandbox needs, except for browsers with an AppArmor profile; the
+      # downloaded headless shell has none.
+      - name: Allow the Chromium sandbox
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Browser for rendering tests
         shell: bash
         run: |
@@ -240,8 +248,11 @@ jobs:
       - name: Build
         run: cargo build --release -p spiderlens -p spiderlens-test-fixtures
 
+      # A base branch that does not build (a broken main) leaves the
+      # benchmark without a base run instead of failing it; see below.
       - name: Build base branch CLI
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: cargo build --release -p spiderlens --manifest-path base/Cargo.toml
 
       - name: Benchmark

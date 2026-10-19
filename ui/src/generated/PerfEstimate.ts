@@ -3,23 +3,23 @@
 /**
  * What a run is expected to cost, shown before it starts (FR-004, SC-003).
  */
-export type PerfEstimate = {
+export type PerfEstimate = { 
 /**
  * Pages the run covers.
  */
-urls: number,
+urls: number, 
 /**
  * Requests sent at most (answers already cached send none).
  */
-requests: number, per_minute: number, concurrency: number,
+requests: number, per_minute: number, concurrency: number, 
 /**
  * How long the run takes, at the provider's rate.
  */
-duration_secs: number,
+duration_secs: number, 
 /**
  * Days of the provider's daily allowance the run needs.
  */
-days_needed: number,
+days_needed: number, 
 /**
  * Share of one day's allowance the run uses, when the provider has one.
  */

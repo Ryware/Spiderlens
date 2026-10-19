@@ -187,11 +187,16 @@ struct Answered {
 /// restart the browser.
 pub(crate) async fn render(
     cdp: &chromiumoxide::Browser,
+    oom: &AtomicU64,
     job: RenderJob,
     net: Arc<dyn Network>,
     heap_limit_mb: u32,
 ) -> (RenderOutcome, bool) {
     let started = Instant::now();
+    let oom_at_start = oom.load(Ordering::Relaxed);
+    // Heap use, polled in the background by `render_in`, tells a crash or a
+    // hang from a page that ran out of memory.
+    let heap_used = Arc::new(AtomicU64::new(0));
     let deadline = tokio::time::Instant::now() + job.max_time + HARD_STOP_MARGIN;
     let window = job.window;
     let created = tokio::time::timeout_at(
@@ -220,7 +225,16 @@ pub(crate) async fn render(
     };
     let result = tokio::time::timeout_at(
         deadline,
-        render_in(cdp, &job, net, context.clone(), heap_limit_mb, started),
+        render_in(
+            cdp,
+            oom,
+            &heap_used,
+            &job,
+            net,
+            context.clone(),
+            heap_limit_mb,
+            started,
+        ),
     )
     .await;
     // Closing the context closes its page and every request it holds. When
@@ -237,15 +251,26 @@ pub(crate) async fn render(
             (out, !disposed)
         }
         Err(_) => {
-            let mut out = RenderOutcome::failed(FailedReason::RendererError, true, window);
+            // A renderer out of heap may hang instead of crashing; V8's
+            // report on stderr still tells what happened.
+            let near_limit = heap_used.load(Ordering::Relaxed) as f64
+                >= f64::from(heap_limit_mb) * 1024.0 * 1024.0 * HEAP_NEAR_LIMIT;
+            let mut out = if near_limit || oom.load(Ordering::Relaxed) != oom_at_start {
+                RenderOutcome::failed(FailedReason::PageTooLarge, false, window)
+            } else {
+                RenderOutcome::failed(FailedReason::RendererError, true, window)
+            };
             out.render_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
             (out, true)
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn render_in(
     cdp: &chromiumoxide::Browser,
+    oom: &AtomicU64,
+    heap_used: &Arc<AtomicU64>,
     job: &RenderJob,
     net: Arc<dyn Network>,
     context: BrowserContextId,
@@ -285,20 +310,20 @@ async fn render_in(
         .flatten()
         .map(|f| f.as_ref().to_owned());
 
-    // Heap use, polled in the background, tells a crash from a page that
-    // ran out of memory.
-    let heap_used = Arc::new(AtomicU64::new(0));
-    let heap_poll = {
+    let oom_before = oom.load(Ordering::Relaxed);
+    // Stops with this function, also when the hard stop drops it.
+    let mut heap_poll = tokio::task::JoinSet::new();
+    {
         let (page, heap_used) = (page.clone(), heap_used.clone());
-        tokio::spawn(async move {
+        heap_poll.spawn(async move {
             loop {
                 if let Ok(r) = page.execute(GetHeapUsageParams::default()).await {
                     heap_used.store(r.result.used_size as u64, Ordering::Relaxed);
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
-        })
-    };
+        });
+    }
 
     let nav_start = Instant::now();
     let mut settle = Settle::new(job.min_wait, job.max_time);
@@ -506,13 +531,22 @@ async fn render_in(
             _ = sleep => {}
         }
     };
-    heap_poll.abort();
+    heap_poll.abort_all();
 
     if crash {
         let used = heap_used.load(Ordering::Relaxed) as f64;
         let limit = f64::from(heap_limit_mb) * 1024.0 * 1024.0;
         tasks.abort_all();
-        return if used >= limit * HEAP_NEAR_LIMIT {
+        // A script that allocates fast fills the heap between two polls (and
+        // blocks them); V8's own report on stderr comes just before the crash.
+        let reported = tokio::time::timeout(Duration::from_millis(300), async {
+            while oom.load(Ordering::Relaxed) == oom_before {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        return if reported || used >= limit * HEAP_NEAR_LIMIT {
             fail(FailedReason::PageTooLarge, false)
         } else {
             fail(FailedReason::Crash, true)
@@ -599,7 +633,7 @@ async fn run_probe(page: &Page, probe: &PageProbe) -> ProbeOutcome {
     let mut world = CreateIsolatedWorldParams::new(frame);
     world.world_name = Some(format!("spiderlens-probe-{}", probe.name));
     let context_id = match page.execute(world).await {
-        Ok(r) => r.result.execution_context_id.clone(),
+        Ok(r) => r.result.execution_context_id,
         Err(e) => return ProbeOutcome::Failed(format!("isolated world: {e}")),
     };
     let expression = format!(

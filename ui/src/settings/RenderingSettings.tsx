@@ -169,7 +169,7 @@ export function RenderingSettings({
             </Row>
           </Group>
           <Group title="Window">
-            <Row label="Window" help="Auto uses a phone window for a mobile user agent, such as Googlebot smartphone, and a desktop window otherwise." issues={at("rendering.window")}>
+            <Row label="Window" help="Auto uses a phone window for a mobile user agent, such as Googlebot smartphone, and a desktop window otherwise." issues={at("rendering.window").filter((x) => x.path !== "rendering.window.width" && x.path !== "rendering.window.height")}>
               {(i) => (
                 <Select
                   id={i}

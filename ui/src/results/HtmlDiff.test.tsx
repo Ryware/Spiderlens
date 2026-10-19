@@ -76,7 +76,10 @@ test("next_and_previous_move_through_the_differences_and_wrap", async () => {
 
 test("pages_with_the_same_content_say_there_are_no_differences", async () => {
   open({ ...DIFF, hunks: [], total_hunks: 0 });
-  expect(await screen.findByText("No differences")).toBeTruthy();
+  // Said twice: in the difference counter and as the empty state's title.
+  await waitFor(() => expect(screen.getByTestId("diff-count").textContent).toBe("No differences"));
+  expect(screen.getAllByText("No differences")).toHaveLength(2);
+  expect(screen.getByText(/the raw and rendered HTML are the same/)).toBeTruthy();
   expect((screen.getByRole("button", { name: "Next difference" }) as HTMLButtonElement).disabled).toBe(true);
 });
 

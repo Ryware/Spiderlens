@@ -4,23 +4,23 @@ import type { A11yNodeDetail } from "./A11yNodeDetail";
 /**
  * One check's result on the page.
  */
-export type A11yCheckDetail = { check_id: string, title: string,
+export type A11yCheckDetail = { check_id: string, title: string, 
 /**
  * violation | needs_review
  */
-kind: string,
+kind: string, 
 /**
  * static | full
  */
-source: string, impact: string | null,
+source: string, impact: string | null, 
 /**
  * Space-separated WCAG tags as the checks write them.
  */
-wcag: string | null,
+wcag: string | null, 
 /**
  * Failing elements before the cap.
  */
-nodes_total: number,
+nodes_total: number, 
 /**
  * The rule's public documentation; None for the static checks.
  */

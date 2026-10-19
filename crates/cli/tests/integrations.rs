@@ -208,7 +208,11 @@ fn link_metrics_show_the_estimate_need_a_yes_and_stop_at_the_cap() {
     // The estimate is shown in the provider's units; without --yes nothing is sent.
     let out = run(&["fetch", file, "--provider", "majestic"], "");
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("rows"));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("units"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(links.requests("majestic"), 0);
 
     // A cap below the estimate stops the run: exit 10, and no more units used.

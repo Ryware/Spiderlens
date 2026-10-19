@@ -195,8 +195,7 @@ async fn proxy_with_a_wrong_password_is_rejected() {
     };
     let err = test_proxy(&access, &CheckOptions::default(), &probe(&site))
         .await
-        .err()
-        .expect("the proxy refuses the password");
+        .expect_err("the proxy refuses the password");
     assert_eq!(err, ProxyProblem::Rejected);
     assert!(proxy.denied() >= 1);
     assert!(site.hits().is_empty(), "{:?}", site.hits());
@@ -242,8 +241,7 @@ async fn unreachable_proxy_is_reported() {
         };
         let err = test_proxy(&access, &CheckOptions::default(), &probe(&site))
             .await
-            .err()
-            .expect("nothing listens there");
+            .expect_err("nothing listens there");
         assert!(matches!(err, ProxyProblem::Unreachable(_)), "{kind:?}: {err:?}");
     }
 }

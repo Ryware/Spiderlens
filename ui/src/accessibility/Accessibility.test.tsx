@@ -33,7 +33,10 @@ test("accessibility_section_shows_impact_labels_wcag_and_disclaimer", async () =
   expect(s.getByText("Text has too little contrast")).toBeTruthy();
   expect(s.getByText("Needs review")).toBeTruthy();
   expect(s.getByText("Best practice", { exact: false })).toBeTruthy();
-  expect(s.getByRole("link", { name: "How to fix" }).getAttribute("href")).toContain("dequeuniversity.com");
+  // One link for each check that has a help page (the static check has none).
+  const fixes = s.getAllByRole("link", { name: "How to fix" });
+  expect(fixes).toHaveLength(2);
+  for (const a of fixes) expect(a.getAttribute("href")).toContain("dequeuniversity.com");
   expect(s.getByText(FAKE_A11Y_DISCLAIMER)).toBeTruthy();
 });
 

@@ -196,7 +196,7 @@ pub fn run_accessibility(args: AccessibilityArgs) -> ExitCode {
         eprintln!("error: {}", Need::AccessibilityStatic.unavailable_reason());
         return ExitCode::from(exit::USAGE);
     }
-    if let Some(target) = args.wcag.clone()
+    if let Some(target) = args.wcag
         && let Err(e) = reader.set_a11y_target(target)
     {
         eprintln!("error: {e}");

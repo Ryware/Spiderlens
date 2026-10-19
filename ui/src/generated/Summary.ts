@@ -7,27 +7,27 @@ import type { IssueBasis } from "./IssueBasis";
 import type { IssueDelta } from "./IssueDelta";
 import type { StateDelta } from "./StateDelta";
 
-export type Summary = { previous: CrawlInfo, current: CrawlInfo, config_diffs: Array<ConfigDiff>, by_state: Array<StateDelta>,
+export type Summary = { previous: CrawlInfo, current: CrawlInfo, config_diffs: Array<ConfigDiff>, by_state: Array<StateDelta>, 
 /**
  * URLs with a final state in both crawls.
  */
-matched: number, new: number, missing: number, not_reached: number, collisions: number,
+matched: number, new: number, missing: number, not_reached: number, collisions: number, 
 /**
  * Internal HTML pages of the previous crawl missing from the current one.
  */
-missing_pages: number,
+missing_pages: number, 
 /**
  * Pages indexable in the previous crawl and not in the current one.
  */
-lost_indexable: number,
+lost_indexable: number, 
 /**
  * Fewer than 10% of the smaller crawl's URLs matched (FR-010).
  */
-low_overlap: boolean, filters: Array<FilterDelta>, elements: Array<ElementDelta>,
+low_overlap: boolean, filters: Array<FilterDelta>, elements: Array<ElementDelta>, 
 /**
  * Every enabled issue rule, by priority (story 3).
  */
-issues: Array<IssueDelta>,
+issues: Array<IssueDelta>, 
 /**
  * What both crawls' issues were evaluated with (FR-023).
  */

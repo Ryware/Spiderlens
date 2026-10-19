@@ -45,7 +45,7 @@ pub const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "list_tabs",
-        description: "The results tabs of a crawl (the same tabs as the SpiderLens app) with their columns and filters. Pass `tab` to also get how many URLs each of its filters matches.",
+        description: "The results tabs of a crawl (the same tabs as the SpiderLens app) with their columns and filters. A column or filter the crawl has no data for carries `available: false`; columns the app shows by default carry `visible_by_default: true`. Pass `tab` to also get how many URLs each of its filters matches.",
         schema: || {
             obj(
                 json!({"crawl": crawl_prop(), "tab": {"type": "string", "description": "Tab id, to include filter counts."}}),

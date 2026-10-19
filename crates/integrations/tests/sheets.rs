@@ -209,9 +209,10 @@ async fn us6_1_the_sheet_holds_the_rows_and_columns_of_the_csv_export_of_the_vie
     assert_eq!(got, want);
     assert_eq!(got[0], vec!["Address".to_string(), "Status code".to_string()]);
     assert_eq!(got.len(), PAGES + 1);
-    // Sorted by address, descending.
+    // Sorted by address, descending (natural order: /p/10 after /p/9).
     let addresses: Vec<&String> = got[1..].iter().map(|r| &r[0]).collect();
-    assert!(addresses.windows(2).all(|w| w[0] >= w[1]), "{addresses:?}");
+    let n = |a: &str| a.rsplit('/').next().unwrap().parse::<u32>().unwrap();
+    assert!(addresses.windows(2).all(|w| n(w[0]) > n(w[1])), "{addresses:?}");
     // Numbers arrive as numbers, so a sheet can sum and sort them.
     assert!(sheet.tabs[0].values[1][1].is_number());
     // The grid was made to fit the data exactly.

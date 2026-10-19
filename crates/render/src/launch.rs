@@ -9,6 +9,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -83,6 +84,11 @@ pub(crate) fn browser_args(info: &BrowserInfo, profile: &Path, heap_limit_mb: u3
     if cfg!(target_os = "linux") {
         args.push("--disable-dev-shm-usage".into());
     }
+    if cfg!(windows) {
+        // Chromium logs nowhere on Windows by default; V8's out-of-heap
+        // report (read from stderr, see `Running::oom`) needs it on stderr.
+        args.push("--enable-logging=stderr".into());
+    }
     if running_as_root() {
         // Chromium refuses to start its sandbox as root (containers, CI).
         args.push("--no-sandbox".into());
@@ -140,6 +146,8 @@ pub fn sweep_stale_profiles(root: &Path) -> usize {
 /// A running browser process and the CDP connection to it.
 pub(crate) struct Running {
     pub(crate) cdp: chromiumoxide::Browser,
+    /// Out-of-memory reports seen on the browser's stderr.
+    pub(crate) oom: Arc<AtomicU64>,
     handler: JoinHandle<()>,
     stderr: JoinHandle<()>,
     child: Child,
@@ -239,8 +247,19 @@ impl Running {
                 ));
             }
         };
-        // Keep reading stderr so the browser never blocks on a full pipe.
-        let stderr = tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        // Keep reading stderr so the browser never blocks on a full pipe. V8
+        // reports a page that ran out of heap here, just before its crash.
+        let oom = Arc::new(AtomicU64::new(0));
+        let stderr = {
+            let oom = oom.clone();
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if line.contains("V8 javascript OOM") {
+                        oom.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            })
+        };
         let config = HandlerConfig {
             request_intercept: true,
             cache_enabled: false,
@@ -263,6 +282,7 @@ impl Running {
         });
         Ok(Self {
             cdp,
+            oom,
             handler,
             stderr,
             child,

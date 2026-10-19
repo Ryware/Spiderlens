@@ -578,7 +578,27 @@ async fn us2_fetching_pauses_when_the_render_queue_is_full_and_resumes() {
     let site = slow_site(PAGES, Duration::from_millis(1000));
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pressure.spiderlens");
-    let crawler = slow_crawler(&site, &path, browser, 4).with_render_queue_marks(20, 15);
+    // Pages arrive at 20 a second: with all 60 requests open at once, every
+    // page could land before fetching ever asked whether the queue was full.
+    // Adaptive speed is off: the slow API answers would otherwise slow
+    // fetching from the host down to the render pace.
+    let mut c = config(false);
+    c.rendering.mode = RenderMode::Javascript;
+    c.rendering.concurrency = Some(4);
+    c.speed.max_urls_per_sec = Some(20.0);
+    c.speed.adaptive = false;
+    let crawler = Crawler::create(
+        &path,
+        c,
+        &ModeInput::Spider {
+            start_url: site.url(JS_HOST, "/"),
+        },
+    )
+    .unwrap()
+    .with_resolve(site.resolve())
+    .with_browser(browser)
+    .with_render_launch(LaunchOptions::default())
+    .with_render_queue_marks(20, 15);
     let (control, _keep) = watch::channel(Control::Run);
 
     let mut max_queued = 0;
@@ -615,7 +635,17 @@ async fn us2_fetching_pauses_when_the_render_queue_is_full_and_resumes() {
         "every page was fetched in the end"
     );
     let store = CrawlStore::open_read_only(&path).unwrap();
-    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1);
+    let states: Vec<(String, Option<String>, i64)> = {
+        let conn = store.conn_for_tests();
+        let mut stmt = conn
+            .prepare("SELECT state, reason, COUNT(*) FROM renders GROUP BY state, reason")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(render_rows(&store, "rendered"), PAGES as i64 + 1, "{states:?}");
     assert_eq!(
         render_rows(&store, "queued") + render_rows(&store, "rendering"),
         0
@@ -739,6 +769,7 @@ async fn us2_stop_marks_waiting_renders_as_crawl_stopped() {
     );
 }
 
+#[cfg(target_os = "linux")]
 /// The process ids of the browser processes this test started: our own
 /// children whose command line has the debugging pipe or port flag.
 fn browser_children() -> Vec<u32> {
@@ -1304,9 +1335,15 @@ async fn us5_console_failed_resources_page_too_large_and_bot_challenge_are_store
 
     // Scenario 3 (heap limit): not retried, raw row untouched.
     let (state, reason) = render_state(&store, &site, "/heavy").unwrap();
+    let heavy_ms: i64 = one(
+        &store,
+        "SELECT render_ms FROM renders WHERE url_id = ?1",
+        id(&store, &site, "/heavy"),
+    );
     assert_eq!(
         (state.as_str(), reason.as_deref()),
-        ("failed", Some("page_too_large"))
+        ("failed", Some("page_too_large")),
+        "after {heavy_ms} ms"
     );
     let heavy = id(&store, &site, "/heavy");
     assert_eq!(
@@ -1367,6 +1404,7 @@ fn kill_browsers() -> usize {
     killed
 }
 
+#[cfg(target_os = "linux")]
 /// Seven slow pages: each render takes about a second.
 fn us5_slow_site() -> JsSite {
     let page = |links: &str| {
@@ -1805,6 +1843,20 @@ async fn us4_the_page_sees_the_window_the_settings_ask_for() {
     assert_eq!((text.as_str(), w), ("innerWidth=800", 800));
 }
 
+/// Requests for `p` beyond the crawler's own check of the link (the
+/// crawler requests an `<img src>` once; the browser may too).
+fn browser_requests(store: &CrawlStore, site: &JsSite, p: &str) -> u64 {
+    let crawled: i64 = store
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM urls WHERE url = ?1 AND status IS NOT NULL",
+            [site.url(JS_HOST, p)],
+            |r| r.get(0),
+        )
+        .unwrap();
+    site.count(JS_HOST, p) - crawled as u64
+}
+
 /// US4 scenarios 3 and 4, FR-014 (T048).
 #[tokio::test]
 async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
@@ -1837,7 +1889,11 @@ async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
         ("/media/a.mp4", "/media/a.mp4"),
         ("/fonts/a.woff2", "/fonts/a.woff2"),
     ] {
-        assert_eq!(site.count(JS_HOST, host_path), 0, "{host_path} was requested");
+        assert_eq!(
+            browser_requests(&store, &site, host_path),
+            0,
+            "{host_path} was requested"
+        );
         assert_eq!(
             resource_outcome(&store, &site, "/resources", suffix).as_deref(),
             Some("blocked_setting"),
@@ -1872,7 +1928,7 @@ async fn us4_blocked_resource_types_are_not_requested_and_are_listed() {
         ("/fonts/a.woff2", "/fonts/a.woff2"),
     ] {
         assert!(
-            site.count(JS_HOST, host_path) >= 1,
+            browser_requests(&store, &site, host_path) >= 1,
             "{host_path} was not requested"
         );
         assert_ne!(

@@ -1,6 +1,8 @@
 (args) => {
   const MAX = 20000;
-  const win = window.innerWidth;
+  // The layout viewport: on a phone, content wider than the screen zooms the
+  // page out and grows innerWidth with it.
+  const win = (document.documentElement && document.documentElement.clientWidth) || window.innerWidth;
   const content = Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0);
   const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&'));
   const part = (el) => {
@@ -72,7 +74,20 @@
       if (d !== 'inline' && d !== 'contents') break;
       b = b.parentElement;
     }
-    return (b.textContent || '').trim().length > (el.textContent || '').trim().length;
+    // Text of the line itself: not inside other targets or nested blocks
+    // (a list of links next to a heading is not a sentence).
+    let text = 0;
+    const walk = (node) => {
+      for (const c of node.childNodes) {
+        if (c.nodeType === 3) text += c.nodeValue.trim().length;
+        else if (c.nodeType === 1 && !c.matches(targetSel)) {
+          const d = getComputedStyle(c).display;
+          if (d === 'inline' || d === 'contents') walk(c);
+        }
+      }
+    };
+    walk(b);
+    return text > 0;
   };
   let smallTargets = 0;
   const examples = [];

@@ -555,10 +555,24 @@ async fn fr_038_damaged_files_are_reported_and_partly_recovered() {
     let site = tree_site();
     let dir = tempfile::tempdir().unwrap();
     let path = straight(&site, dir.path()).await;
-    // Overwrite the last fifth of the file with garbage.
+    // Overwrite the root page of the links table with garbage: the schema
+    // pages are spread through the file (the end-of-crawl indexes add some
+    // at the end), so damage by position could hit them.
+    let (page_size, root): (usize, usize) = {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        let size: i64 = c.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
+        let root: i64 = c
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'links'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (size as usize, root as usize)
+    };
     let mut bytes = std::fs::read(&path).unwrap();
-    let half = bytes.len() / 5 * 4;
-    for (i, b) in bytes[half..].iter_mut().enumerate() {
+    let start = (root - 1) * page_size;
+    for (i, b) in bytes[start..start + page_size].iter_mut().enumerate() {
         *b = (i * 7 % 251) as u8;
     }
     std::fs::write(&path, &bytes).unwrap();
@@ -649,7 +663,7 @@ fn a_crawl_that_renders_lists_its_rendering_features() {
     let store = CrawlStore::open_read_only(&path).unwrap();
     let features = store.meta("data_features").unwrap().unwrap();
     assert!(
-        features.ends_with(",rendering,rendered_html,screenshots"),
+        features.ends_with(",rendering,rendered_html,screenshots,mobile_layout"),
         "{features}"
     );
 }

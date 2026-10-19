@@ -42,7 +42,8 @@ fn p(path: &str) -> P {
 
 impl P {
     fn html(&self, path: &str) -> String {
-        let mut head = String::new();
+        let mut head =
+            String::from("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
         if let Some(t) = &self.title {
             head.push_str(&format!("<title>{t}</title>"));
         }
@@ -288,7 +289,8 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    // The clean page only has what a plain-HTTP fixture server cannot avoid.
+    // The clean page only has what a plain-HTTP fixture server cannot avoid,
+    // plus the markdown-alternate opportunity every plain page gets (spec 016).
     let q = ViewQuery {
         tab: "internal".into(),
         filter: "html".into(),
@@ -311,7 +313,14 @@ async fn sc001_first_rule_set_flags_exactly_the_expected_urls() {
         .into_iter()
         .map(|i| i.id)
         .collect();
-    assert_eq!(ids, set(&["security.http_page", "security.no_nosniff"]));
+    assert_eq!(
+        ids,
+        set(&[
+            "agents.no_markdown_alternate",
+            "security.http_page",
+            "security.no_nosniff"
+        ])
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

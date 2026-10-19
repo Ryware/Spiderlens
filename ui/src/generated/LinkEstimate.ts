@@ -4,23 +4,23 @@ import type { Provider } from "./Provider";
 /**
  * The cost shown before a run, in the provider's own units (FR-029).
  */
-export type LinkEstimate = { provider: Provider,
+export type LinkEstimate = { provider: Provider, 
 /**
  * `API units`, `units` or `rows`.
  */
-unit: string, urls: number,
+unit: string, urls: number, 
 /**
  * Pages whose answers are cached and cost nothing.
  */
-cached: number, requests: number,
+cached: number, requests: number, 
 /**
  * For the pages that are not cached.
  */
-units: number,
+units: number, 
 /**
  * The estimate plus 10%.
  */
-default_cap: number,
+default_cap: number, 
 /**
  * The cap that will apply: the request's, or the default.
  */

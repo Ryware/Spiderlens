@@ -108,7 +108,9 @@ export function PageExperiencePanel({
   const [labEstimate, setLabEstimate] = useState<PerfEstimate | null>(null);
   const [runs, setRuns] = useState<RunProgress[]>([]);
   const [live, setLive] = useState<RunProgress | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Which job is running, so its own block shows Pause and Cancel.
+  const [running, setRunning] = useState<"field_data" | "lab_tests" | null>(null);
+  const busy = running !== null;
   const [error, setError] = useState<string | null>(null);
 
   const saved = [...new Set(keys.filter((c) => c.kind === "field_data" || c.kind === "lab_tests").map((c) => c.label))];
@@ -168,15 +170,15 @@ export function PageExperiencePanel({
     };
   }, [transport]);
 
-  const go = async (start: () => Promise<RunProgress>) => {
+  const go = async (job: "field_data" | "lab_tests", start: () => Promise<RunProgress>) => {
     setError(null);
-    setBusy(true);
+    setRunning(job);
     try {
       setLive(await start());
     } catch (e) {
       setError(message(e));
     } finally {
-      setBusy(false);
+      setRunning(null);
       loadRuns();
       onDataChanged();
     }
@@ -316,18 +318,18 @@ export function PageExperiencePanel({
                 <Button
                   variant="primary"
                   disabled={!fieldRequest || crawlRunning}
-                  onClick={() => fieldRequest && void go(() => transport.integrationsRunFieldData(path, null, fieldRequest))}
+                  onClick={() => fieldRequest && void go("field_data", () => transport.integrationsRunFieldData(path, null, fieldRequest))}
                 >
                   <Play aria-hidden className="mr-1 size-3.5" />
                   Fetch field data
                 </Button>
               )}
               {!busy && paused("field_data") && (
-                <Button disabled={crawlRunning} onClick={() => void go(() => transport.integrationsRunResume(path, paused("field_data")!.id))}>
+                <Button disabled={crawlRunning} onClick={() => void go("field_data", () => transport.integrationsRunResume(path, paused("field_data")!.id))}>
                   Resume field data run {paused("field_data")!.id}
                 </Button>
               )}
-              {busy && controls}
+              {running === "field_data" && controls}
             </div>
           </>
         )}
@@ -378,18 +380,18 @@ export function PageExperiencePanel({
                 <Button
                   variant="primary"
                   disabled={!labRequest || crawlRunning}
-                  onClick={() => labRequest && void go(() => transport.integrationsRunLabTests(path, null, labRequest))}
+                  onClick={() => labRequest && void go("lab_tests", () => transport.integrationsRunLabTests(path, null, labRequest))}
                 >
                   <Play aria-hidden className="mr-1 size-3.5" />
                   Run lab tests
                 </Button>
               )}
               {!busy && paused("lab_tests") && (
-                <Button disabled={crawlRunning} onClick={() => void go(() => transport.integrationsRunResume(path, paused("lab_tests")!.id))}>
+                <Button disabled={crawlRunning} onClick={() => void go("lab_tests", () => transport.integrationsRunResume(path, paused("lab_tests")!.id))}>
                   Resume lab test run {paused("lab_tests")!.id}
                 </Button>
               )}
-              {busy && controls}
+              {running === "lab_tests" && controls}
             </div>
           </>
         )}

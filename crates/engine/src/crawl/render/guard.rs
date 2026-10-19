@@ -93,10 +93,6 @@ impl MemoryGuard {
         self.budget_mb.map_or(total / 8, |mb| u64::from(mb) * MB)
     }
 
-    pub(crate) fn limit(&self) -> u32 {
-        self.limit
-    }
-
     /// Whether memory holds the limit below the configured one.
     pub(crate) fn limited(&self) -> bool {
         self.limit < self.configured
@@ -212,7 +208,7 @@ mod tests {
         let t0 = Instant::now();
         g.tick(reading(1.0, 500), t0);
         g.tick(reading(1.0, 500), t0);
-        assert_eq!(g.limit(), 1);
+        assert_eq!(g.limit, 1);
         // Free above 20% and the browser under 80% of 2 GB (1,638 MB).
         let calm = reading(8.0, 1000);
         assert_eq!(g.tick(calm, t0).limit, 1, "the calm period starts");
@@ -231,7 +227,7 @@ mod tests {
         let mut g = MemoryGuard::new(2, None);
         let t0 = Instant::now();
         g.tick(reading(1.0, 500), t0);
-        assert_eq!(g.limit(), 1);
+        assert_eq!(g.limit, 1);
         g.tick(reading(8.0, 1000), t0);
         // Free memory 12% (between 10% and 20%): neither lowers nor counts.
         g.tick(reading(1.9, 1000), t0 + Duration::from_secs(8));

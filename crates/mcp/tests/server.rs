@@ -370,7 +370,7 @@ async fn crawled_text_never_appears_outside_crawled() {
         ));
     }
     let mut found_inside = 0;
-    for a in &answers {
+    for (i, a) in answers.iter().enumerate() {
         let mut outside = Vec::new();
         strings_outside_crawled(a, "", &mut outside);
         for (path, s) in outside {
@@ -380,7 +380,8 @@ async fn crawled_text_never_appears_outside_crawled() {
             );
         }
         found_inside += a.to_string().matches("IGNORE PREVIOUS").count();
-        assert!(a.to_string().len() <= MAX_ANSWER);
+        let len = a.to_string().len();
+        assert!(len <= MAX_ANSWER, "answer {i} is {len} bytes");
     }
     assert!(
         found_inside > 5,

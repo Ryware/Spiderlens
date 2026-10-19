@@ -183,12 +183,11 @@ impl Crawled {
         let mut stmt = conn
             .prepare("SELECT u.url FROM sitemap_problems p JOIN urls u ON u.id = p.url_id WHERE p.rule = ?1")
             .unwrap();
-        let paths = stmt
-            .query_map([rule], |r| r.get::<_, String>(0))
+
+        stmt.query_map([rule], |r| r.get::<_, String>(0))
             .unwrap()
             .map(|u| self.strip(&u.unwrap()))
-            .collect();
-        paths
+            .collect()
     }
 }
 
@@ -407,12 +406,11 @@ async fn us3_us4_audit_records_what_needs_the_whole_crawl() {
                  WHERE p.rule = 'sitemap.lastmod_identical'",
             )
             .unwrap();
-        let found = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .unwrap()
             .map(Result::unwrap)
-            .collect();
-        found
+            .collect()
     };
     assert_eq!(identical.len(), 1, "{identical:?}");
     assert!(identical[0].0.ends_with("/same.xml"));

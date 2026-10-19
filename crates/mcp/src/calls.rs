@@ -68,7 +68,7 @@ impl Calls {
             "query_pages" => self.with_reader(&target.path, |o| query_pages(o, &target.id, args))?,
             "page_details" => self.with_reader(&target.path, |o| page_details(o, args))?,
             "page_agent_findings" => self.with_reader(&target.path, |o| page_agent_findings(o, args))?,
-            "agents_summary" => self.with_reader(&target.path, |o| agents_summary(o))?,
+            "agents_summary" => self.with_reader(&target.path, agents_summary)?,
             "host_entry_points" => self.with_reader(&target.path, |o| host_entry_points(o, args))?,
             "page_html" => page_html(&target.path, args)?,
             "export_rows" => export_rows(&target.path, args)?,
@@ -348,9 +348,9 @@ fn list_tabs(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
             .filters
             .iter()
             .map(|f| {
-                let available = features.has(f.need);
-                let mut v = json!({"id": f.id, "label": f.label, "available": available});
-                if !available {
+                let mut v = json!({"id": f.id, "label": f.label});
+                if !features.has(f.need) {
+                    v["available"] = false.into();
                     v["unavailable_reason"] = f.need.unavailable_reason().into();
                 }
                 if let Some(c) = &counts {
@@ -362,7 +362,17 @@ fn list_tabs(o: &mut Open, args: &Args) -> Result<Value, ToolError> {
         let columns: Vec<Value> = t
             .columns
             .iter()
-            .map(|c| json!({"id": c.id, "label": c.label, "kind": c.kind, "visible_by_default": c.default_visible, "available": features.has(c.need)}))
+            .map(|c| {
+                // Only the exceptions, so the whole list fits one answer.
+                let mut v = json!({"id": c.id, "label": c.label, "kind": c.kind});
+                if c.default_visible {
+                    v["visible_by_default"] = true.into();
+                }
+                if !features.has(c.need) {
+                    v["available"] = false.into();
+                }
+                v
+            })
             .collect();
         out.push(json!({"tab": t.id, "label": t.title, "columns": columns, "filters": filters}));
     }

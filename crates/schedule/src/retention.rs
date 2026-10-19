@@ -26,7 +26,7 @@ pub fn plan(
         .iter()
         .filter(|r| r.status != RunStatus::Running && r.ended_at.is_some())
         .filter_map(|r| r.file.as_deref().map(|f| (r.run, f)))
-        .filter(|(_, f)| f.starts_with(output_dir) && exists(*f))
+        .filter(|(_, f)| f.starts_with(output_dir) && exists(f))
         .collect();
     files.sort_by_key(|(run, _)| std::cmp::Reverse(*run));
     let mut seen: HashSet<&Path> = HashSet::new();

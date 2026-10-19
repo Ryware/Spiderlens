@@ -5,27 +5,27 @@ import type { IssuePriority } from "./IssuePriority";
 /**
  * One rule across the two crawls.
  */
-export type IssueDelta = {
+export type IssueDelta = { 
 /**
  * The stable rule id.
  */
-rule: string,
+rule: string, 
 /**
  * The name with the threshold in force.
  */
-name: string, category: IssueCategory, priority: IssuePriority,
+name: string, category: IssueCategory, priority: IssuePriority, 
 /**
  * URLs affected in each crawl; null when that crawl cannot run the rule.
  */
-previous: number | null, current: number | null,
+previous: number | null, current: number | null, 
 /**
  * Affected now and not before (including URLs new in the current crawl).
  */
-newly_affected: number,
+newly_affected: number, 
 /**
  * Affected before; present, reached and not affected now.
  */
-fixed: number,
+fixed: number, 
 /**
  * Affected before; missing from the current crawl or not reached by it.
  */

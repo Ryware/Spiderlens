@@ -477,7 +477,7 @@ test("accessibility_tab_filters_critical_pages_and_shows_the_inspector_section",
   await page.evaluate(() => window.spiderlens.results.ready());
   await expect(page.getByTestId("row-count")).toHaveText("2 URLs");
   const tab = page.getByRole("region", { name: "Accessibility" });
-  await tab.getByRole("button", { name: /^Critical/ }).click();
+  await tab.locator('[data-filter="critical"]').click();
   await page.evaluate(() => window.spiderlens.results.ready());
   await expect(page.getByTestId("row-count")).toHaveText("1 URL");
   await page.getByRole("grid").getByRole("row").nth(1).click();
@@ -713,7 +713,7 @@ test("integrations_inspect_index_status_and_fetch_analytics_for_the_open_crawl",
 test("integrations_page_experience_estimate_run_and_finish", async ({ page }) => {
   await crawl(page);
   await page.getByRole("button", { name: "Integrations" }).click();
-  await page.getByLabel("API key").fill("AIza-test");
+  await page.getByRole("form", { name: "Save a Google API key" }).getByLabel("API key").fill("AIza-test");
   await page.getByRole("button", { name: "Save key to keychain" }).click();
   await page.locator('[data-provider="field_data"]').getByRole("switch").click();
   await expect(page.getByRole("status", { name: "Field data estimate" })).toContainText("requests for");

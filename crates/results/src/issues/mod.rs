@@ -498,7 +498,7 @@ mod tests {
         let all = catalogue();
         assert_eq!(
             all.len(),
-            166,
+            167,
             "first rule set (spec table, with readability), spec 011's 27, spec 020's near duplicate, spec 027's SERP (5), PDF (5), spelling (4) and AMP (9) rules, spec 026's accessibility and mobile (21) and spec 016's 20"
         );
         let mut ids = HashSet::new();

@@ -4130,18 +4130,12 @@ mod tests {
 
     #[test]
     fn format_16_files_get_the_near_dup_tables_when_upgraded() {
-        let (_d, s) = store();
-        s.conn
-            .execute_batch(
-                "DROP TABLE content_sig; DROP TABLE near_dup_pages; DROP TABLE near_dup_pairs;
-                 DROP TABLE near_dup_clusters; ALTER TABLE pages DROP COLUMN main_words;
-                 ALTER TABLE pages DROP COLUMN main_hash; ALTER TABLE pages DROP COLUMN main_source;
-                 UPDATE meta SET value = '16' WHERE key = 'format_version';",
-            )
-            .unwrap();
-        assert_eq!(super::super::migrate::upgrade(&s.conn).unwrap(), 16);
-        let n: i64 = s
-            .conn
+        // A file as format 16 wrote it: later steps' tables do not exist.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        super::super::migrate::apply_up_to(&conn, 16).unwrap();
+        assert_eq!(super::super::migrate::upgrade(&conn).unwrap(), 16);
+        let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name LIKE 'main_%'",
                 [],
@@ -4150,7 +4144,7 @@ mod tests {
             .unwrap();
         assert_eq!(n, 3);
         assert_eq!(
-            super::super::migrate::version(&s.conn).unwrap(),
+            super::super::migrate::version(&conn).unwrap(),
             super::super::migrate::LATEST
         );
     }

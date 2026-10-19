@@ -85,12 +85,12 @@ pub fn register_a11y(
     conn: &Connection,
     settings: &spiderlens_config::AccessibilitySettings,
 ) -> rusqlite::Result<()> {
-    let target = settings.clone();
+    let target = *settings;
     conn.create_scalar_function("wcag_in_target", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let tags: Option<String> = ctx.get(0)?;
         Ok(tags.is_some_and(|t| wcag_in_target(&t, &target)))
     })?;
-    let values = settings.clone();
+    let values = *settings;
     conn.create_scalar_function("a11y_setting", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let name: String = ctx.get(0)?;
         Ok(match name.as_str() {
