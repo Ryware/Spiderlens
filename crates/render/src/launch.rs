@@ -296,6 +296,11 @@ impl Running {
         tree_memory(self.root_pid)
     }
 
+    /// TEMP diagnostics.
+    pub(crate) fn memory_detail(&self) -> Vec<(u32, u64, u64)> {
+        crate::guard::tree_detail(self.root_pid)
+    }
+
     /// Asks the browser to close, waits for it, then kills whatever is left
     /// and deletes the profile.
     pub(crate) async fn close(mut self) {

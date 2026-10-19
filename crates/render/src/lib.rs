@@ -83,12 +83,30 @@ impl Browser {
         let render = page::render(&running.cdp, &running.oom, job, net, self.opts.heap_limit_mb);
         tokio::pin!(render);
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut samples = Vec::new();
+        let mut detail = Vec::new();
         let (mut out, stuck) = loop {
             tokio::select! {
                 r = &mut render => break r,
-                _ = tick.tick() => peak = peak.max(running.memory_bytes()),
+                _ = tick.tick() => {
+                    let m = running.memory_bytes();
+                    samples.push(m / (1024 * 1024));
+                    peak = peak.max(m);
+                    if cfg!(windows) && samples.len() % 5 == 0 {
+                        detail = running.memory_detail();
+                    }
+                }
             }
         };
+        if stuck {
+            // TEMP diagnostics for the Windows out-of-heap check.
+            eprintln!(
+                "RENDER-DEBUG stuck: state {:?} base {} MB peak {} MB samples {samples:?} detail {detail:?}",
+                out.state,
+                base / (1024 * 1024),
+                peak / (1024 * 1024)
+            );
+        }
         let limit = u64::from(self.opts.heap_limit_mb) * 1024 * 1024;
         if stuck
             && matches!(
